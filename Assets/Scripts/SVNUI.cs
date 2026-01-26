@@ -32,12 +32,14 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI branchInfoText; // Ma³y tekst na górze lub w rogu ekranu
         [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
+        [Header("Commit")]
+        [SerializeField] private TextMeshProUGUI commitSizeText;
+        [SerializeField] private TextMeshProUGUI commitTreeDisplay;
+        [SerializeField] private TextMeshProUGUI commitStatsText;
         [Header("Loading Indicator")]
         [SerializeField] private GameObject loadingOverlay; // Przeci¹gnij tutaj swój obiekt LoadingOverlay
         [SerializeField] private TextMeshProUGUI treeDisplay;
-        [SerializeField] private TextMeshProUGUI commitTreeDisplay;
         [SerializeField] private TextMeshProUGUI statsText;
-        [SerializeField] private TextMeshProUGUI commitStatsText;
         [SerializeField] private GameObject conflictGroup;
         [Header("Settings UI")]
         [SerializeField] private TMP_InputField settingsRepoUrlInput;
@@ -67,6 +69,7 @@ namespace SVN.Core
         public TextMeshProUGUI BranchInfoText => branchInfoText;
         public TextMeshProUGUI LocksText => locksText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
+        public TextMeshProUGUI CommitSizeText => commitSizeText;
         public GameObject LoadingOverlay => loadingOverlay;
         public TextMeshProUGUI TreeDisplay
         {

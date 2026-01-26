@@ -104,26 +104,32 @@ namespace SVN.Core
 
         public async void LoadSettings()
         {
+            // 1. Pobieranie wszystkich danych z PlayerPrefs
             string savedDir = PlayerPrefs.GetString(SVNManager.KEY_WORKING_DIR, "");
             string savedKey = PlayerPrefs.GetString(SVNManager.KEY_SSH_PATH, "");
             string savedUrl = PlayerPrefs.GetString(SVNManager.KEY_REPO_URL, "");
+            // FIX: Dodaj pobieranie œcie¿ki edytora
+            string savedMerge = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
 
-            // Wype³nianie pól w Settings
+            // 2. Wype³nianie pól w Settings
             if (svnUI.SettingsWorkingDirInput != null) svnUI.SettingsWorkingDirInput.text = savedDir;
             if (svnUI.SettingsSshKeyPathInput != null) svnUI.SettingsSshKeyPathInput.text = savedKey;
+            // FIX: Wype³nij pole edytora w UI
+            if (svnUI.SettingsMergeToolPathInput != null) svnUI.SettingsMergeToolPathInput.text = savedMerge;
 
-            // Wype³nianie pól w Checkout (¿eby nie wpisywaæ tego co restart)
+            // 3. Wype³nianie pozosta³ych paneli (Checkout itp.)
             if (svnUI.CheckoutRepoUrlInput != null) svnUI.CheckoutRepoUrlInput.text = savedUrl;
             if (svnUI.CheckoutDestFolderInput != null) svnUI.CheckoutDestFolderInput.text = savedDir;
             if (svnUI.CheckoutPrivateKeyInput != null) svnUI.CheckoutPrivateKeyInput.text = savedKey;
 
-            // Synchronizacja logiczna
+            // 4. Synchronizacja logiczna Managera
             svnManager.WorkingDir = savedDir;
             svnManager.CurrentKey = savedKey;
             SvnRunner.KeyPath = savedKey;
 
             if (!string.IsNullOrEmpty(savedDir))
             {
+                // To wywo³a RefreshRepositoryInfo i UpdateBranchInfo w Managerze
                 await svnManager.SetWorkingDirectory(savedDir);
             }
         }

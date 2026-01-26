@@ -32,7 +32,7 @@ namespace SVN.Core
 
         private bool isProcessing = false;
         
-        public string RepositoryUrl { get; private set; } = string.Empty;
+        public string RepositoryUrl { get; set; } = string.Empty;
 
         public string CurrentUserName
         {
@@ -54,7 +54,6 @@ namespace SVN.Core
             set
             {
                 workingDir = value;
-                _ = RefreshRepositoryInfo();
             }
         }
 
@@ -107,19 +106,31 @@ namespace SVN.Core
 
         public async Task RefreshRepositoryInfo()
         {
-            // Korzystamy z załadowanego już WorkingDir
-            if (string.IsNullOrEmpty(WorkingDir) || !System.IO.Directory.Exists(WorkingDir))
-                return;
+            if (string.IsNullOrEmpty(WorkingDir) || !Directory.Exists(WorkingDir)) return;
 
             try
             {
+                // 1. Pobieramy URL bezpośrednio z metadanych .svn
                 string url = await SvnRunner.GetRepoUrlAsync(WorkingDir);
-                this.RepositoryUrl = url.Trim();
-                Debug.Log($"[SVN] URL Synchronized: {RepositoryUrl}");
+
+                // 2. AKTUALIZUJEMY TYLKO JEŚLI SVN COŚ ZNALAZŁ
+                if (!string.IsNullOrWhiteSpace(url) && !url.Contains("not a working copy"))
+                {
+                    this.RepositoryUrl = url.Trim();
+                    Debug.Log($"[SVN] URL metadata synced: {RepositoryUrl}");
+
+                    // 3. AKTUALIZACJA UI
+                    // Używamy SetTextWithoutNotify, aby zmiana kodu nie wywołała 
+                    // ponownie listenera onValueChanged (unikamy pętli zapisu).
+                    if (svnUI != null && svnUI.SettingsRepoUrlInput != null)
+                    {
+                        svnUI.SettingsRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
+                    }
+                }
             }
             catch (Exception ex)
             {
-                Debug.LogWarning("Could not refresh Repo URL: " + ex.Message);
+                Debug.LogWarning("[SVN] Could not fetch URL from disk: " + ex.Message);
             }
         }
 
@@ -127,31 +138,60 @@ namespace SVN.Core
         {
             if (svnUI == null) return;
 
-            // 1. Inicjalizacja modułu ustawień
+            // 1. Inicjalizacja modułów
             SVNSettings svnSettings = new SVNSettings(svnUI, this);
 
-            // 2. ŁADOWANIE (Wypełnia pola tekstowe i zmienne Managera)
+            // 2. Ładowanie ustawień z PlayerPrefs (Wypełnia pola we wszystkich panelach)
             svnSettings.LoadSettings();
 
-            // 3. PODPINANIE LISTENERÓW (Dopiero teraz!)
-            // Używamy lambdy, by tylko aktualizować zmienne "w locie", 
-            // ale NIE zapisywać do PlayerPrefs przy każdym wpisanym znaku.
+            // 3. Podpinanie inteligentnych listenerów
+
+            // REPO URL
+            if (svnUI.SettingsRepoUrlInput != null)
+            {
+                svnUI.SettingsRepoUrlInput.onValueChanged.AddListener(val => {
+                    string cleaned = val.Trim();
+                    // Rozsyłamy do wszystkich pól URL w UI
+                    BroadcastUrlChange(cleaned);
+                    PlayerPrefs.SetString(KEY_REPO_URL, cleaned);
+                    PlayerPrefs.Save();
+                });
+            }
+
+            // SSH KEY PATH
             if (svnUI.SettingsSshKeyPathInput != null)
             {
                 svnUI.SettingsSshKeyPathInput.onValueChanged.AddListener(val => {
-                    this.CurrentKey = val;
-                    SvnRunner.KeyPath = val;
+                    string cleaned = val.Trim();
+                    // Rozsyłamy do wszystkich pól SSH w UI + aktualizujemy Runnera
+                    BroadcastSshKeyChange(cleaned);
+                    PlayerPrefs.SetString(KEY_SSH_PATH, cleaned);
+                    PlayerPrefs.Save();
                 });
             }
 
+            // WORKING DIRECTORY
             if (svnUI.SettingsWorkingDirInput != null)
             {
                 svnUI.SettingsWorkingDirInput.onValueChanged.AddListener(val => {
-                    this.WorkingDir = val;
+                    string cleaned = val.Trim();
+                    // Rozsyłamy do wszystkich pól Path w UI
+                    BroadcastWorkingDirChange(cleaned);
+                    PlayerPrefs.SetString(KEY_WORKING_DIR, cleaned);
+                    PlayerPrefs.Save();
                 });
             }
 
-            // 4. Reszta inicjalizacji (Diagnostics, Refresh itd.)
+            // MERGE TOOL (Tylko w Settings, więc bez broadcastu)
+            if (svnUI.SettingsMergeToolPathInput != null)
+            {
+                svnUI.SettingsMergeToolPathInput.onValueChanged.AddListener(val => {
+                    PlayerPrefs.SetString(KEY_MERGE_TOOL, val.Trim());
+                    PlayerPrefs.Save();
+                });
+            }
+
+            // 4. Inicjalizacja repozytorium przy starcie
             if (!string.IsNullOrEmpty(WorkingDir) && Directory.Exists(WorkingDir))
             {
                 await RefreshRepositoryInfo();
@@ -159,6 +199,53 @@ namespace SVN.Core
                 await Task.Delay(300);
                 Button_RefreshStatus();
             }
+        }
+
+        public void BroadcastWorkingDirChange(string newPath)
+        {
+            // Normalization
+            this.WorkingDir = newPath.Replace("\\", "/");
+
+            // Sync all related Input Fields
+            if (svnUI.SettingsWorkingDirInput != null)
+                svnUI.SettingsWorkingDirInput.SetTextWithoutNotify(this.WorkingDir);
+
+            if (svnUI.CheckoutDestFolderInput != null)
+                svnUI.CheckoutDestFolderInput.SetTextWithoutNotify(this.WorkingDir);
+
+            if (svnUI.LoadDestFolderInput != null)
+                svnUI.LoadDestFolderInput.SetTextWithoutNotify(this.WorkingDir);
+
+            Debug.Log($"[SVN] WorkingDir broadcasted: {this.WorkingDir}");
+        }
+
+        public void BroadcastSshKeyChange(string newKeyPath)
+        {
+            this.CurrentKey = newKeyPath.Replace("\\", "/");
+            SvnRunner.KeyPath = this.CurrentKey;
+
+            if (svnUI.SettingsSshKeyPathInput != null)
+                svnUI.SettingsSshKeyPathInput.SetTextWithoutNotify(this.CurrentKey);
+
+            if (svnUI.CheckoutPrivateKeyInput != null)
+                svnUI.CheckoutPrivateKeyInput.SetTextWithoutNotify(this.CurrentKey);
+
+            if (svnUI.LoadPrivateKeyInput != null)
+                svnUI.LoadPrivateKeyInput.SetTextWithoutNotify(this.CurrentKey);
+        }
+
+        public void BroadcastUrlChange(string newUrl)
+        {
+            this.RepositoryUrl = newUrl.Trim();
+
+            if (svnUI.SettingsRepoUrlInput != null)
+                svnUI.SettingsRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
+
+            if (svnUI.CheckoutRepoUrlInput != null)
+                svnUI.CheckoutRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
+
+            if (svnUI.LoadRepoUrlInput != null)
+                svnUI.LoadRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
         }
 
         public async void UpdateBranchInfo()

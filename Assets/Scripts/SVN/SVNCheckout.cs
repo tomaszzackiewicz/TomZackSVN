@@ -26,42 +26,57 @@ namespace SVN.Core
             // 2. VALIDATION
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(path))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> Please provide both Repository URL and Destination Path.\n";
+                svnUI.LogText.text += "<color=red>Error:</color> Provide both URL and Destination Path.\n";
                 return;
             }
 
-            // 3. PERSISTENCE
-            SaveInputsToSettings(path, keyPath, url);
+            // --- NEW SECURITY CHECK ---
+            if (Directory.Exists(path))
+            {
+                // Check if it's already an SVN repository
+                if (Directory.Exists(Path.Combine(path, ".svn")))
+                {
+                    svnUI.LogText.text += "<color=red>Abort:</color> Destination already contains an SVN repository!\n";
+                    return;
+                }
 
-            // 4. INITIALIZE PROCESS
+                // Check if directory is not empty
+                if (Directory.GetFileSystemEntries(path).Length > 0)
+                {
+                    svnUI.LogText.text += "<color=orange>Warning:</color> Destination folder is not empty. Proceeding with --force...\n";
+                }
+            }
+            // ---------------------------
+
             IsProcessing = true;
             _checkoutCTS = new CancellationTokenSource();
 
-            svnUI.LogText.text += $"<b>Initializing SSH Checkout...</b> <color=yellow>(Cancel available)</color>\n" +
-                                  $"Source: <color=cyan>{url}</color>\n";
-
             try
             {
+                // 3. PERSISTENCE (Save after validation)
+                SaveInputsToSettings(path, keyPath, url);
+
                 string safeKey = keyPath.Replace("\\", "/");
                 string sshConfig = !string.IsNullOrEmpty(safeKey)
                     ? $"--config-option config:tunnels:ssh=\"ssh -i '{safeKey}' -o StrictHostKeyChecking=no\""
                     : "";
 
-                string cmd = $"checkout \"{url}\" \"{path}\" {sshConfig} --non-interactive";
+                // Added --force to handle non-empty directories safely
+                string cmd = $"checkout \"{url}\" \"{path}\" {sshConfig} --non-interactive --force";
 
-                // Ensure parent directory exists
-                string parentDir = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+                // 4. DIRECTORY PREPARATION
+                if (!Directory.Exists(path))
                 {
-                    Directory.CreateDirectory(parentDir);
+                    Directory.CreateDirectory(path);
                 }
+
+                svnUI.LogText.text += $"<b>Starting Checkout...</b>\nPath: <color=cyan>{path}</color>\n";
 
                 // 5. EXECUTION
                 await SvnRunner.RunAsync(cmd, "", true, _checkoutCTS.Token);
 
-                // 6. SUCCESS HANDLING
-                svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed successfully.\n";
-
+                // 6. SUCCESS & SYNC
+                svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed.\n";
                 svnManager.WorkingDir = path;
 
                 await svnManager.RefreshRepositoryInfo();
@@ -70,7 +85,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                svnUI.LogText.text += "<color=orange>CANCELLED:</color> Checkout process was stopped by user.\n";
+                svnUI.LogText.text += "<color=orange>CANCELLED:</color> Process stopped by user.\n";
             }
             catch (Exception ex)
             {

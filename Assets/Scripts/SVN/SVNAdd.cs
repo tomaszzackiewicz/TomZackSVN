@@ -1,4 +1,4 @@
-using System;
+ï»¿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,132 +11,146 @@ namespace SVN.Core
     {
         public SVNAdd(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        public async void PrepareAllNewItemsForCommit()
-        {
-            svnUI.LogText.text = "Starting full project scan...\n";
-
-            // 1. Add Folders first
-            AddAllNewFolders();
-
-            // Czekamy chwilê na odœwie¿enie statusu przez SVN
-            await Task.Delay(500);
-
-            // 2. Add Files next
-            AddAllNewFiles();
-
-            svnUI.LogText.text += "<color=blue>Ready to Commit!</color>\n";
-        }
-
-        /// <summary>
-        /// Scans for unversioned directories and adds them to SVN with '--depth empty'
-        /// </summary>
-        public async void AddAllNewFolders()
+        public async void AddAll()
         {
             if (IsProcessing) return;
-
             IsProcessing = true;
-            svnUI.LogText.text = "Scanning for unversioned folders (respecting ignores)...\n";
 
             try
             {
-                string root = svnManager.WorkingDir;
+                svnUI.LogText.text = "<b>[Full Scan]</b> Starting project synchronization...\n";
 
-                // 1. Fetch status: includeIgnored MUST be false.
-                // This way, SVN handles the heavy lifting of filtering out 
-                // /Intermediate/, /Saved/, /Binaries/, etc., based on your svn:ignore rules.
-                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+                // 1. Folders first
+                await AddFoldersLogic();
 
-                // 2. Filter: Only unversioned (?) entries that are actually directories
-                var foldersToAdd = statusDict
-                    .Where(x => x.Value.status == "?" && Directory.Exists(Path.Combine(root, x.Key)))
-                    .Select(x => x.Key)
-                    .ToArray();
+                // Small delay to let SVN index folders before files
+                await Task.Delay(300);
 
-                if (foldersToAdd.Length > 0)
-                {
-                    foreach (var folderPath in foldersToAdd)
-                    {
-                        // Double check: In Unreal, we never want to accidentally add these
-                        // even if svn:ignore is misconfigured.
-                        svnUI.LogText.text += $"Adding folder: {folderPath}\n";
-                        await SvnRunner.AddFolderOnlyAsync(root, folderPath);
-                    }
+                // 2. Files next
+                await AddFilesLogic();
 
-                    svnUI.LogText.text += $"<color=green>Successfully added {foldersToAdd.Length} folders.</color>\n";
-                    svnManager.Button_RefreshStatus();
-                }
-                else
-                {
-                    svnUI.LogText.text += "No new unversioned folders found.\n";
-                }
+                svnUI.LogText.text += "<color=green><b>[Scan Complete]</b> All items are now under version control.</color>\n";
+                svnManager.Button_RefreshStatus();
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>AddFolders Error:</color> {ex.Message}\n";
-                Debug.LogError($"[SVNAdd] {ex.Message}");
+                svnUI.LogText.text += $"<color=red>Scan Error:</color> {ex.Message}\n";
             }
-            finally
-            {
-                IsProcessing = false;
-            }
+            finally { IsProcessing = false; }
+        }
+
+        public async void AddAllNewFolders()
+        {
+            if (IsProcessing) return;
+            IsProcessing = true;
+            try { await AddFoldersLogic(); }
+            finally { IsProcessing = false; }
         }
 
         public async void AddAllNewFiles()
         {
             if (IsProcessing) return;
             IsProcessing = true;
+            try { await AddFilesLogic(); }
+            finally { IsProcessing = false; }
+        }
 
-            svnUI.LogText.text = "Searching for unversioned files (respecting ignores)...\n";
+        private async Task AddFoldersLogic()
+        {
+            svnUI.LogText.text += "Scanning for unversioned folders...\n";
+            string root = svnManager.WorkingDir;
 
+            var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+            var foldersToAdd = statusDict
+                .Where(x => x.Value.status == "?" && Directory.Exists(Path.Combine(root, x.Key)))
+                .Select(x => x.Key)
+                .ToArray();
+
+            if (foldersToAdd.Length > 0)
+            {
+                foreach (var folderPath in foldersToAdd)
+                {
+                    svnUI.LogText.text += $"Adding folder: {folderPath}\n";
+                    await SvnRunner.AddFolderOnlyAsync(root, folderPath);
+                }
+                svnUI.LogText.text += $"<color=green>Added {foldersToAdd.Length} folders.</color>\n";
+            }
+            else
+            {
+                svnUI.LogText.text += "No new folders found.\n";
+            }
+        }
+
+        private async Task AddFilesLogic()
+        {
+            svnUI.LogText.text += "Searching for unversioned files...\n";
+            string root = svnManager.WorkingDir;
+
+            string output = await SvnRunner.RunAsync("status", root);
+            List<string> filesToAdd = new List<string>();
+            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var line in lines)
+            {
+                if (line.Length >= 8 && line[0] == '?')
+                {
+                    string path = line.Substring(8).Trim().Replace('\\', '/');
+                    if (File.Exists(Path.Combine(root, path)))
+                    {
+                        filesToAdd.Add(path);
+                    }
+                }
+            }
+
+            if (filesToAdd.Count > 0)
+            {
+                await SvnRunner.AddAsync(root, filesToAdd.ToArray());
+                svnUI.LogText.text += $"<color=green>Successfully added {filesToAdd.Count} files.</color>\n";
+            }
+            else
+            {
+                svnUI.LogText.text += "No new files found.\n";
+            }
+        }
+
+        // WewnÄ…trz klasy SVNAdd.cs
+
+        public async Task<int> GetUnversionedCountAsync()
+        {
             try
             {
                 string root = svnManager.WorkingDir;
+                if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return 0;
 
-                // 1. Pobieramy status BEZ flagi --no-ignore.
-                // Wywo³uj¹c 'svn status', SVN sam odfiltruje wszystko, co jest zignorowane.
-                // Pliki zignorowane w ogóle nie pojawi¹ siê na liœcie z kodem '?'.
+                // Pobieramy status (SVN sam odfiltruje ignorowane)
                 string output = await SvnRunner.RunAsync("status", root);
-
-                List<string> filesToAdd = new List<string>();
                 string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
 
-                foreach (var line in lines)
-                {
-                    // Sprawdzamy tylko pliki ze statusem '?' (Unversioned)
-                    // SVN nie poka¿e tu plików ignorowanych, chyba ¿e u¿ylibyœmy --no-ignore
-                    if (line.Length >= 8 && line[0] == '?')
-                    {
-                        string path = line.Substring(8).Trim().Replace('\\', '/');
-                        string fullPath = Path.Combine(root, path);
-
-                        // Sprawdzamy czy to plik, a nie folder (foldery dodajemy inn¹ metod¹)
-                        if (File.Exists(fullPath))
-                        {
-                            filesToAdd.Add(path);
-                        }
-                    }
-                }
-
-                if (filesToAdd.Count > 0)
-                {
-                    svnUI.LogText.text += $"Found {filesToAdd.Count} new files to add.\n";
-
-                    // Dodajemy pliki. U¿ywamy cudzys³owów dla bezpieczeñstwa œcie¿ek ze spacjami.
-                    await SvnRunner.AddAsync(root, filesToAdd.ToArray());
-
-                    svnUI.LogText.text += $"<color=green>Successfully added {filesToAdd.Count} files.</color>\n";
-                    svnManager.Button_RefreshStatus();
-                }
-                else
-                {
-                    svnUI.LogText.text += "No new unversioned files found.\n";
-                }
+                // Liczymy tylko linie zaczynajÄ…ce siÄ™ od '?'
+                return lines.Count(line => line.Length >= 1 && line[0] == '?');
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                svnUI.LogText.text += $"<color=red>Add Error:</color> {ex.Message}\n";
+                return 0;
             }
-            finally { IsProcessing = false; }
         }
+
+        //private async void UpdateUnversionedWarning()
+        //{
+        //    if (svnUI.UnversionedWarningText == null) return;
+
+        //    int count = await SvnAdd.GetUnversionedCountAsync();
+
+        //    if (count > 0)
+        //    {
+        //        svnUI.UnversionedWarningText.text = $"<color=orange>Found {count} new items not in SVN!</color>";
+        //        if (svnUI.AutoAddButton != null) svnUI.AutoAddButton.gameObject.SetActive(true);
+        //    }
+        //    else
+        //    {
+        //        svnUI.UnversionedWarningText.text = ""; // Ukryj komunikat, jeÅ›li wszystko jest OK
+        //        if (svnUI.AutoAddButton != null) svnUI.AutoAddButton.gameObject.SetActive(false);
+        //    }
+        //}
     }
 }

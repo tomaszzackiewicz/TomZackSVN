@@ -9,11 +9,9 @@ namespace SVN.Core
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        // --- KLUCZOWA POPRAWKA ---
         public void ShowOnlyModified()
         {
             _isCurrentViewIgnored = false;
-            // Musimy wywo³aæ metodê z AutoExpand, ¿eby system "zauwa¿y³" nowe pliki
             ExecuteRefreshWithAutoExpand();
         }
 
@@ -29,47 +27,40 @@ namespace SVN.Core
             IsProcessing = true;
 
             string root = svnManager.WorkingDir;
-
-            // ADD FEEDBACK HERE:
-            string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            svnUI.LogText.text += $"[{timestamp}] <color=#0FF>Refreshing SVN status...</color>\n";
-
-            // Clear the tree so the user sees a "blink" or change
-            svnUI.TreeDisplay.text = "<color=orange>Scanning repository structure...</color>";
-            svnUI.CommitTreeDisplay.text = "<color=orange>Scanning repository structure...</color>";
+            svnUI.LogText.text += $"[{DateTime.Now:HH:mm:ss}] <color=#0FF>Refreshing...</color>\n";
 
             try
             {
-                // 1. Pobieramy pe³ny s³ownik (modeOnlyIgnored: true w parametrze Runnera oznacza status --no-ignore)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, true);
 
-                // 2. Czyœcimy i obliczamy co rozwin¹æ
+                long totalBytes = 0;
+                string normalizedRoot = root.Trim().Replace("\\", "/");
+                if (!normalizedRoot.EndsWith("/")) normalizedRoot += "/";
+
                 svnManager.ExpandedPaths.Clear();
-                svnManager.ExpandedPaths.Add(""); // root
+                svnManager.ExpandedPaths.Add("");
 
                 foreach (var item in statusDict)
                 {
                     string path = item.Key;
                     string stat = item.Value.status;
 
-                    bool shouldExpand = false;
-                    if (_isCurrentViewIgnored)
-                    {
-                        shouldExpand = (stat == "I");
-                    }
-                    else
-                    {
-                        // To z³apie Twoje nowe pliki tekstowe (?) oraz M, A, !, C
-                        shouldExpand = !string.IsNullOrEmpty(stat) && stat != "I";
-                    }
+                    bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : (!string.IsNullOrEmpty(stat) && stat != "I");
+                    if (shouldExpand) AddParentFoldersToExpanded(path);
 
-                    if (shouldExpand)
+                    if (!_isCurrentViewIgnored && !string.IsNullOrEmpty(stat) && "MA?C".Contains(stat))
                     {
-                        AddParentFoldersToExpanded(path);
+                        string fullPath = System.IO.Path.GetFullPath(normalizedRoot + path);
+                        if (System.IO.File.Exists(fullPath))
+                        {
+                            totalBytes += new System.IO.FileInfo(fullPath).Length;
+                        }
                     }
                 }
 
-                // 3. Rysowanie
+                string sizeStr = FormatBytes(totalBytes);
+                svnUI.CommitSizeText.text += $"<color=yellow>Total Size of Changes to Commit: {sizeStr}</color>\n";
+
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
                 svnUI.TreeDisplay.text = result.tree;
                 svnUI.CommitTreeDisplay.text = result.tree;
@@ -77,9 +68,21 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>View Error:</color> {ex.Message}\n";
+                svnUI.LogText.text += $"<color=red>Error:</color> {ex.Message}\n";
             }
             finally { IsProcessing = false; }
+        }
+
+        private string FormatBytes(long bytes)
+        {
+            string[] Suffix = { "B", "KB", "MB", "GB", "TB" };
+            int i;
+            double dblSByte = bytes;
+            for (i = 0; i < Suffix.Length && bytes >= 1024; i++, bytes /= 1024)
+            {
+                dblSByte = bytes / 1024.0;
+            }
+            return $"{dblSByte:0.##} {Suffix[i]}";
         }
 
         private void AddParentFoldersToExpanded(string filePath)
@@ -163,5 +166,7 @@ namespace SVN.Core
             // i automatycznie rozwijaj¹c nowo wykryte zmiany
             ExecuteRefreshWithAutoExpand();
         }
+
+        
     }
 }

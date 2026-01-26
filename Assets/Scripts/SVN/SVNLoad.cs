@@ -1,6 +1,7 @@
-using UnityEngine;
+using System;
 using System.IO;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace SVN.Core
 {
@@ -13,29 +14,21 @@ namespace SVN.Core
             if (IsProcessing) return;
 
             // 1. DATA RETRIEVAL
-            // Priority: Load specific inputs > Global Runner state
             string path = svnUI.LoadDestFolderInput.text.Trim();
-            string url = svnUI.LoadRepoUrlInput != null ? svnUI.LoadRepoUrlInput.text.Trim() : "";
-
+            string manualUrl = svnUI.LoadRepoUrlInput != null ? svnUI.LoadRepoUrlInput.text.Trim() : "";
             string keyPath = (svnUI.LoadPrivateKeyInput != null && !string.IsNullOrWhiteSpace(svnUI.LoadPrivateKeyInput.text))
                              ? svnUI.LoadPrivateKeyInput.text.Trim()
                              : SvnRunner.KeyPath;
 
-            // 2. VALIDATION
-            if (string.IsNullOrEmpty(path))
+            // 2. PRE-VALIDATION
+            if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> Destination path cannot be empty!\n";
-                return;
-            }
-
-            if (!Directory.Exists(path))
-            {
-                svnUI.LogText.text += $"<color=red>Error:</color> Directory not found: {path}\n";
+                svnUI.LogText.text += "<color=red>Error:</color> Invalid destination path!\n";
                 return;
             }
 
             IsProcessing = true;
-            svnUI.LogText.text += $"<b>Linking existing repository...</b>\nPath: <color=cyan>{path}</color>\n";
+            svnUI.LogText.text += $"<b>Processing path:</b> <color=cyan>{path}</color>\n";
 
             try
             {
@@ -51,33 +44,62 @@ namespace SVN.Core
                     svnManager.CurrentKey = keyPath;
                 }
 
-                // 5. METADATA VERIFICATION
-                if (!Directory.Exists(Path.Combine(normalizedPath, ".svn")))
+                // 5. METADATA & PROTECTION CHECK
+                bool hasSvnFolder = Directory.Exists(Path.Combine(normalizedPath, ".svn"));
+
+                if (hasSvnFolder)
                 {
-                    svnUI.LogText.text += "<color=yellow>Warning:</color> No .svn folder found. Attempting to fetch info anyway...\n";
+                    // PROTECTED: Already an SVN project, just link it
+                    svnUI.LogText.text += "<b>Existing repository detected.</b> Linking files...\n";
+                    await svnManager.RefreshRepositoryInfo();
+                }
+                else
+                {
+                    // CHECKOUT SCENARIO: No .svn folder found
+                    if (!string.IsNullOrEmpty(manualUrl))
+                    {
+                        // Check if the directory is empty
+                        bool isFolderEmpty = Directory.GetFileSystemEntries(normalizedPath).Length == 0;
+                        string forceFlag = isFolderEmpty ? "" : " --force";
+
+                        if (!isFolderEmpty)
+                            svnUI.LogText.text += "<color=orange>Note:</color> Folder not empty. Merging with existing files...\n";
+
+                        svnUI.LogText.text += "<color=yellow>Starting Checkout...</color>\n";
+
+                        // Execute checkout with or without --force
+                        await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath);
+
+                        svnUI.LogText.text += "<color=green>Checkout completed!</color>\n";
+                        await svnManager.RefreshRepositoryInfo();
+                    }
+                    else
+                    {
+                        svnUI.LogText.text += "<color=red>Error:</color> Path is not a repository and no URL provided!\n";
+                        IsProcessing = false;
+                        return;
+                    }
                 }
 
-                // 6. REFRESH & DISCOVER URL
-                // We run RefreshRepositoryInfo to let SVN tell us the "Truth" about the URL
-                await svnManager.RefreshRepositoryInfo();
+                // 6. FINAL SYNC & PERSISTENCE
+                if (string.IsNullOrEmpty(svnManager.RepositoryUrl) && !string.IsNullOrEmpty(manualUrl))
+                    svnManager.RepositoryUrl = manualUrl;
 
                 if (svnUI.LoadRepoUrlInput != null)
-                {
                     svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
-                }
 
-                // 7. PERSISTENCE (Global Keys)
                 SaveToSettings(normalizedPath, keyPath, svnManager.RepositoryUrl);
 
-                // 8. UI UPDATE
+                // 8. REFRESH SYSTEM
                 svnManager.UpdateBranchInfo();
                 svnManager.Button_RefreshStatus();
 
-                svnUI.LogText.text += "<color=green>SUCCESS:</color> Repository linked and synchronized.\n";
+                svnUI.LogText.text += "<color=green>SUCCESS:</color> System synchronized.\n";
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Load Error:</color> {ex.Message}\n";
+                svnUI.LogText.text += $"<color=red>Operation Failed:</color> {ex.Message}\n";
+                Debug.LogError($"[SVN] Load Error: {ex}");
             }
             finally
             {

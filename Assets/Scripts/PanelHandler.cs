@@ -5,6 +5,7 @@ namespace SVN.Core
     public class PanelHandler : MonoBehaviour
     {
         [SerializeField] private GameObject helpPanel = null;
+        [SerializeField] private GameObject conflictPanel = null;
         [SerializeField] private GameObject settingsPanel = null;
         [SerializeField] private GameObject branchPanel = null;
         [SerializeField] private GameObject mergePanel = null;
@@ -30,6 +31,22 @@ namespace SVN.Core
             if (helpPanel != null)
             {
                 helpPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenConflict()
+        {
+            if (conflictPanel != null)
+            {
+                conflictPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseConflict()
+        {
+            if (conflictPanel != null)
+            {
+                conflictPanel.SetActive(false);
             }
         }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -118,11 +119,7 @@ namespace SVN.Core
 
             try
             {
-                // 1. Pobieramy status (bez --no-ignore, bo ignorowanych nie commitujemy)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(svnManager.WorkingDir, false);
-
-                // 2. Filtrujemy tylko to, co nadaje siê do commitu (M, A, D, C)
-                // Pomijamy '?' (unversioned) - u¿ytkownik musi je najpierw dodaæ przyciskiem Add New
                 var commitables = statusDict
                     .Where(x => "MADC".Contains(x.Value.status))
                     .Select(x => new CommitItemData
@@ -135,7 +132,6 @@ namespace SVN.Core
 
                 _items = commitables;
 
-                // 3. Renderowanie listy w UI (wywo³anie metody w SVNUI)
                 svnUI.RenderCommitList(_items);
             }
             finally { IsProcessing = false; }
