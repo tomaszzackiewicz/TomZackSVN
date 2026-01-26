@@ -36,7 +36,7 @@ namespace SVN.Core
                     svnUI.LogText.text += $"<color=green>Success:</color> Working Directory updated and synchronized.\n";
 
                     // Refresh file explorer
-                    svnManager.Button_RefreshStatus();
+                    svnManager.RefreshStatus();
                 }
                 catch (Exception ex)
                 {
@@ -164,7 +164,7 @@ namespace SVN.Core
                 svnUI.LogText.text += "<b>You must Commit the root folder</b> for these filters to affect other team members.\n";
 
                 // Refresh status to show the property change on the root folder
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {

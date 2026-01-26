@@ -7,7 +7,7 @@ using UnityEngine;
 
 public class MergePanel : MonoBehaviour
 {
-    private SVNMerge merge;
+    
     private SVNUI svnUI;
     private SVNManager svnManager;
 
@@ -15,32 +15,29 @@ public class MergePanel : MonoBehaviour
     {
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
-
-        merge = new SVNMerge(svnUI, svnManager);
     }
 
-    public void Button_Compare() => merge.CompareWithTrunk();
+    public void Button_Compare() => svnManager.SVNMerge.CompareWithTrunk();
 
     public void Button_DryRunMerge()
     {
         string url = svnUI.MergeSourceInput.text;
-        merge.ExecuteMerge(url, true);
+        svnManager.SVNMerge.ExecuteMerge(url, true);
     }
 
     public void Button_ConfirmMerge()
     {
         string url = svnUI.MergeSourceInput.text;
-        merge.ExecuteMerge(url, false);
+        svnManager.SVNMerge.ExecuteMerge(url, false);
     }
 
     public async void Button_RefreshBranchDropdown()
     {
-        string[] branches = await merge.FetchAvailableBranches();
+        string[] branches = await svnManager.SVNMerge.FetchAvailableBranches();
 
         svnUI.MergeBranchesDropdown.ClearOptions();
         svnUI.MergeBranchesDropdown.AddOptions(branches.ToList());
 
-        // Dodaj opcjê "trunk" rêcznie, jeœli jej nie ma
         svnUI.MergeBranchesDropdown.AddOptions(new List<string> { "trunk" });
     }
 
@@ -54,7 +51,6 @@ public class MergePanel : MonoBehaviour
         else
             fullUrl = svnUI.SettingsWorkingDirInput.text + "/branches/" + selectedBranch;
 
-        // Automatycznie wpisz URL do pola tekstowego
         svnUI.MergeSourceInput.text = fullUrl;
     }
 

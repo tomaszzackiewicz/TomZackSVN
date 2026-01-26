@@ -37,7 +37,7 @@ namespace SVN.Core
 
                     // 2. TRIGGER REFRESH via Manager
                     // Manager knows which module handles the tree (SVNStatus)
-                    svnManager.Button_RefreshStatus();
+                    svnManager.RefreshStatus();
                 }
                 else
                 {
@@ -77,7 +77,7 @@ namespace SVN.Core
                     svnUI.LogText.text += $"<color=green>Locks released.</color>\n";
 
                     // Trigger Refresh
-                    svnManager.Button_RefreshStatus();
+                    svnManager.RefreshStatus();
                 }
                 else
                 {

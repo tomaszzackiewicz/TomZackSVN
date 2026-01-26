@@ -30,7 +30,7 @@ namespace SVN.Core
                 if (!string.IsNullOrWhiteSpace(output)) svnUI.LogText.text += output + "\n";
 
                 // Refresh UI to reflect current state
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
@@ -62,7 +62,7 @@ namespace SVN.Core
                 svnUI.LogText.text += "<color=green>Vacuum Cleanup Successful!</color>\n";
                 if (!string.IsNullOrWhiteSpace(output)) svnUI.LogText.text += output + "\n";
 
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {

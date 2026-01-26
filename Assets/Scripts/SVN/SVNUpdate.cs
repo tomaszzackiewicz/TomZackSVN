@@ -1,90 +1,115 @@
 ﻿using System;
 using UnityEngine;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace SVN.Core
 {
     public class SVNUpdate : SVNBase
     {
+        // Zmienna do bezpiecznego przechowywania ostatniej linii z wątku tła
+        private string _lastLiveLine = string.Empty;
+        private bool _hasNewLine = false;
+
         public SVNUpdate(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
         public async void Update()
         {
             if (IsProcessing) return;
 
-            // Pobieramy dane z Managera, nie z InputFielda UI
             string targetPath = svnManager.WorkingDir;
-
-            // Sprawdzamy czy ścieżka jest ustawiona
             if (string.IsNullOrEmpty(targetPath))
             {
                 if (svnUI.LogText != null)
-                    svnUI.LogText.text = "<color=red>Error:</color> Working Directory is not set in SVNManager.";
+                    svnUI.LogText.text = "<color=red>Error:</color> Working Directory not set.";
                 return;
             }
 
             IsProcessing = true;
+            _lastLiveLine = "Connecting to repository...";
+            _hasNewLine = true;
 
-            if (svnUI.LogText != null)
-                svnUI.LogText.text = "<b>[SVN]</b> Checking for server updates...\n";
+            // Uruchamiamy prostą pętlę monitorującą w tle, która odświeża UI
+            // (Zamiast Dispatchera, jeśli go nie masz)
+            var uiUpdateTask = UpdateUILive();
 
             try
             {
-                Debug.Log($"[SVN] Starting Update for: {targetPath}");
+                Debug.Log($"[SVN] Starting update for: {targetPath}");
 
-                if (svnUI.LogText != null)
-                    svnUI.LogText.text += "<color=orange>Connecting to repository...</color>\n";
+                // Wykonujemy update
+                string output = await SvnRunner.RunLiveAsync(
+                    "update --accept postpone",
+                    targetPath,
+                    (line) =>
+                    {
+                        // Przechwytujemy linię z wątku tła
+                        _lastLiveLine = line;
+                        _hasNewLine = true;
+                    }
+                );
 
-                // Wykonanie komendy SVN
-                string output = await SvnRunner.UpdateAsync(targetPath);
-                Debug.Log($"[SVN] Update Output: {output}");
+                // Zatrzymujemy odświeżanie live przed raportem końcowym
+                _hasNewLine = false;
 
-                // 1. Liczymy zaktualizowane elementy (Regex szuka linii zaczynających się od U, G, A, D)
-                int updatedCount = System.Text.RegularExpressions.Regex.Matches(output, @"^[UGAD]\s", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
+                // 1. Analiza końcowa - liczymy zmiany
+                int updatedCount = Regex.Matches(output, @"^[UGADR]\s", RegexOptions.Multiline).Count;
 
-                // 2. Wyciągamy numer rewizji z outputu (np. z "At revision 19.")
+                // 2. Pobieramy rewizję
                 string revision = svnManager.ParseRevision(output);
 
-                // 3. Fallback: jeśli update nic nie zmienił, output może nie zawierać numeru w czytelny sposób
                 if (string.IsNullOrEmpty(revision) || revision == "Unknown")
                 {
                     string infoOutput = await SvnRunner.GetInfoAsync(targetPath);
                     revision = svnManager.ParseRevisionFromInfo(infoOutput);
                 }
 
-                // 4. Wyświetlanie wyników w UI
+                // 3. Finalny raport w UI
                 if (svnUI.LogText != null)
                 {
-                    // Czyścimy log i wypisujemy podsumowanie
-                    svnUI.LogText.text = "<b>[SVN UPDATE COMPLETED]</b>\n";
-
+                    string summary = "<b>[SVN UPDATE COMPLETED]</b>\n";
                     if (updatedCount > 0)
-                    {
-                        svnUI.LogText.text += $"<color=green>Success!</color> Updated <b>{updatedCount}</b> items.\n";
-                    }
+                        summary += $"<color=green>Success!</color> Updated <b>{updatedCount}</b> items.\n";
                     else
-                    {
-                        svnUI.LogText.text += "<color=blue>No changes found.</color> Project is already up to date.\n";
-                    }
+                        summary += "<color=blue>No changes found.</color> Project is up to date.\n";
 
-                    svnUI.LogText.text += $"Current Revision: <color=#FFD700><b>{revision}</b></color>\n";
-                    svnUI.LogText.text += "-----------------------------------";
+                    summary += $"Current Revision: <color=#FFD700><b>{revision}</b></color>\n";
+                    summary += "-----------------------------------";
+                    svnUI.LogText.text = summary;
                 }
 
-                // 5. Odświeżamy informacje o gałęzi i drzewo plików
+                // 4. Odświeżamy resztę systemu
                 svnManager.UpdateBranchInfo();
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SVN] Update Critical Error: {ex}");
+                Debug.LogError($"[SVN] Update Error: {ex}");
                 if (svnUI.LogText != null)
                     svnUI.LogText.text += $"\n<color=red><b>Update Failed:</b></color> {ex.Message}";
             }
             finally
             {
                 IsProcessing = false;
+                _hasNewLine = false;
+            }
+        }
+
+        // Pomocnicza metoda, która "pcha" tekst do UI na głównym wątku Unity
+        private async Task UpdateUILive()
+        {
+            while (IsProcessing)
+            {
+                if (_hasNewLine && svnUI.LogText != null)
+                {
+                    // Czyścimy log i pokazujemy tylko aktualnie przetwarzany plik
+                    // dzięki temu UI jest responsywne i czytelne
+                    svnUI.LogText.text = $"<b>[SVN]</b> Updating: <color=orange>{_lastLiveLine}</color>";
+                    _hasNewLine = false;
+                }
+                await Task.Yield(); // Czekaj na następną klatkę Unity
             }
         }
     }
-
 }

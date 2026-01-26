@@ -117,7 +117,7 @@ namespace SVN.Core
                     }
 
                     // 6. Odœwie¿amy widok (ukryje to panel konfliktów i odœwie¿y drzewo)
-                    svnManager.Button_RefreshStatus();
+                    svnManager.RefreshStatus();
                 }
                 else
                 {
@@ -190,7 +190,7 @@ namespace SVN.Core
                     }
 
                     // 5. Automatyczne odœwie¿enie drzewa plików
-                    svnManager.Button_RefreshStatus();
+                    svnManager.RefreshStatus();
                 }
                 else
                 {
@@ -261,7 +261,7 @@ namespace SVN.Core
                     }
 
                     // 5. Odœwie¿amy widok w managerze
-                    svnManager.Button_RefreshStatus();
+                    svnManager.RefreshStatus();
                 }
                 else
                 {

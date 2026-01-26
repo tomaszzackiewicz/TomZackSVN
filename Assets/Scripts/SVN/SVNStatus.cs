@@ -59,7 +59,7 @@ namespace SVN.Core
                 }
 
                 string sizeStr = FormatBytes(totalBytes);
-                svnUI.CommitSizeText.text += $"<color=yellow>Total Size of Changes to Commit: {sizeStr}</color>\n";
+                svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {sizeStr}</color>\n";
 
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
                 svnUI.TreeDisplay.text = result.tree;

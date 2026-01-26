@@ -66,7 +66,7 @@ namespace SVN.Core
                 svnUI.LogText.text += $"<color=green>Success!</color> Removed {missingPaths.Length} missing meta-entries.\n";
 
                 // 4. Refresh the explorer view
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
             else
             {

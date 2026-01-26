@@ -143,7 +143,7 @@ namespace SVN.Core
                 svnUI.LogText.text += $"<color=green>SUCCESS:</color> Switched to {targetName}.\n";
 
                 // Refresh UI
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
                 svnManager.UpdateBranchInfo();
             }
             catch (Exception ex)
@@ -298,7 +298,7 @@ namespace SVN.Core
                 svnUI.LogText.text += $"<color=green>Switch successful!</color> You are now on {subFolder}: <b>{targetName}</b>\n";
 
                 // Refresh the whole UI to reflect new file states
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
                 svnManager.UpdateBranchInfo(); // Update the "Current Branch" display
             }
             catch (Exception ex)
@@ -500,7 +500,7 @@ namespace SVN.Core
                 svnUI.LogText.text += "<color=green>Prze³¹czono pomyœlnie!</color>\n";
 
                 // 3. Po prze³¹czeniu musimy odœwie¿yæ drzewo, bo pliki na dysku w³aœnie siê zmieni³y
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {

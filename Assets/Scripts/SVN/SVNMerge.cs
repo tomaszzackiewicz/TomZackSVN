@@ -117,7 +117,7 @@ namespace SVN.Core
                 // 4. Refresh status only if files were actually changed
                 if (!isDryRun)
                 {
-                    svnManager.Button_RefreshStatus();
+                    svnManager.RefreshStatus();
                 }
             }
             catch (Exception ex)

@@ -108,7 +108,7 @@ namespace SVN.Core
                 svnManager.UpdateBranchInfo();
 
                 // Assuming your manager has this method to trigger the Status module's refresh
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
         }
 

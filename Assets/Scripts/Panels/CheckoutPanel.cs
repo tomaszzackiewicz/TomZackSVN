@@ -6,19 +6,18 @@ using System.Threading.Tasks;
 using Unity.Burst.Intrinsics;
 using UnityEngine;
 
-public class SettingsPanel : MonoBehaviour
+public class CheckoutPanel : MonoBehaviour
 {
     private SVNUI svnUI;
     private SVNManager svnManager;
-
-    private SVNSettings svnSettings;
 
     private void Start()
     {
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
-
-        svnSettings = new SVNSettings(svnUI, svnManager);
-        svnSettings.UpdateUIFromManager();
     }
+
+    public void Button_Browse() => svnManager.SVNExternal.BrowseLocalPath();
+    public void Button_Checkout() => svnManager.SVNCheckout.Checkout();
+    public void Button_Cancel() => svnManager.SVNCheckout.CancelCheckout();
 }

@@ -11,20 +11,14 @@ public class LoadPanel : MonoBehaviour
     private SVNUI svnUI;
     private SVNManager svnManager;
 
-    private SVNExternal svnExternal;
-    private SVNLoad svnLoad;
-
     private void Start()
     {
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
 
-        svnExternal = new SVNExternal(svnUI, svnManager);
-        svnLoad = new SVNLoad(svnUI, svnManager);
-
-        svnLoad.UpdateUIFromManager();
+        svnManager.SVNLoad.UpdateUIFromManager();
     }
 
-    public void Button_Browse() => svnExternal.BrowseLocalPath();
-    public void Button_LoadRepo() => svnLoad.LoadRepoPathAndRefresh();
+    public void Button_Browse() => svnManager.SVNExternal.BrowseLocalPath();
+    public void Button_LoadRepo() => svnManager.SVNLoad.LoadRepoPathAndRefresh();
 }

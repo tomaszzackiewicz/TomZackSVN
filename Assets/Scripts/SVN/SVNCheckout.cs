@@ -81,7 +81,7 @@ namespace SVN.Core
 
                 await svnManager.RefreshRepositoryInfo();
                 svnManager.UpdateBranchInfo();
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
             }
             catch (OperationCanceledException)
             {

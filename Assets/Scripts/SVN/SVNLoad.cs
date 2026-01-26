@@ -92,7 +92,7 @@ namespace SVN.Core
 
                 // 8. REFRESH SYSTEM
                 svnManager.UpdateBranchInfo();
-                svnManager.Button_RefreshStatus();
+                svnManager.RefreshStatus();
 
                 svnUI.LogText.text += "<color=green>SUCCESS:</color> System synchronized.\n";
             }

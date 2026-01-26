@@ -4,9 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace SVN.Core
 {
@@ -31,7 +29,19 @@ namespace SVN.Core
         private string currentKey = string.Empty;
 
         private bool isProcessing = false;
-        
+
+        public SVNStatus SVNStatus { get; private set; }
+        public SVNCommit SVNCommit { get; private set; }
+        public SVNAdd SVNAdd { get; private set; }
+        public SVNMissing SVNMissing { get; private set; }
+        public SVNUpdate SVNUpdate { get; private set; }
+        public SVNBranchTag SVNBranchTag { get; private set; }
+        public SVNExternal SVNExternal { get; private set; }
+        public SVNCheckout SVNCheckout { get; private set; }
+        public SVNLoad SVNLoad { get; private set; }
+        public SVNMerge SVNMerge { get; private set; }
+        public SVNSettings SVNSettings { get; private set; }
+
         public string RepositoryUrl { get; set; } = string.Empty;
 
         public string CurrentUserName
@@ -80,6 +90,18 @@ namespace SVN.Core
                 return;
             }
             Instance = this;
+
+            SVNStatus = new SVNStatus(svnUI, this);
+            SVNCommit = new SVNCommit(svnUI, this);
+            SVNAdd = new SVNAdd(svnUI, this);
+            SVNMissing = new SVNMissing(svnUI, this);
+            SVNUpdate = new SVNUpdate(svnUI, this);
+            SVNBranchTag = new SVNBranchTag(svnUI, this);
+            SVNExternal = new SVNExternal(svnUI, this);
+            SVNCheckout = new SVNCheckout(svnUI, this);
+            SVNLoad = new SVNLoad(svnUI, this);
+            SVNMerge = new SVNMerge(svnUI, this);
+            SVNSettings = new SVNSettings(svnUI, this);
         }
 
         private void SetLoading(bool isLoading)
@@ -197,7 +219,7 @@ namespace SVN.Core
                 await RefreshRepositoryInfo();
                 UpdateBranchInfo();
                 await Task.Delay(300);
-                Button_RefreshStatus();
+                RefreshStatus();
             }
         }
 
@@ -376,7 +398,7 @@ namespace SVN.Core
             }
         }
 
-        public async void Button_RefreshStatus()
+        public async void RefreshStatus()
         {
             if (isProcessing) return;
 
@@ -681,7 +703,7 @@ namespace SVN.Core
             if (focus && !string.IsNullOrEmpty(workingDir))
             {
                 // Automatyczne odświeżenie statusu po powrocie do okna Unity
-                Button_RefreshStatus();
+                RefreshStatus();
             }
         }
     }

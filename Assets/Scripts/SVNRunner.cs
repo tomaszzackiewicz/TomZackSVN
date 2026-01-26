@@ -135,6 +135,61 @@ namespace SVN.Core
             }
         }
 
+        public static async Task<string> RunLiveAsync(string args, string workingDir, Action<string> onLineReceived, CancellationToken token = default)
+        {
+            // 1. Zwiększamy timeout dla Update do np. 10 minut lub wyłączamy go
+            int dynamicTimeout = args.Contains("update") ? 600 : 45;
+
+            string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
+            var psi = new ProcessStartInfo
+            {
+                FileName = "svn",
+                Arguments = args + " --non-interactive --trust-server-cert", // Kluczowe dla SSH!
+                WorkingDirectory = workingDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8
+            };
+
+            psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+
+            using var process = new Process { StartInfo = psi };
+            var outputBuilder = new StringBuilder();
+
+            // Przechwytywanie linii na żywo
+            process.OutputDataReceived += (s, e) => {
+                if (e.Data != null)
+                {
+                    outputBuilder.AppendLine(e.Data);
+                    // Wysyłamy linię do UI (np. przez Dispatcher)
+                    onLineReceived?.Invoke(e.Data);
+                }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            DateTime startTime = DateTime.Now;
+            while (!process.HasExited)
+            {
+                if (token.IsCancellationRequested) { process.Kill(); throw new OperationCanceledException(); }
+
+                // Elastyczny timeout
+                if ((DateTime.Now - startTime).TotalSeconds > dynamicTimeout)
+                {
+                    process.Kill();
+                    throw new Exception($"SVN Timeout: Operation exceeded {dynamicTimeout} seconds.");
+                }
+
+                await Task.Delay(100);
+            }
+
+            return outputBuilder.ToString();
+        }
+
         public static async Task<bool> CheckIfSvnInstalled()
         {
             try
@@ -263,8 +318,6 @@ namespace SVN.Core
         {
             return await RunAsync($"log -l {lastN}", workingDir);
         }
-
-        // Dodaj te metody do klasy SvnRunner
 
         /// <summary>
         /// Naprawia zablokowane repozytorium (np. po crashu procesu).

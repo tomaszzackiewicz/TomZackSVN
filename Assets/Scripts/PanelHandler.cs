@@ -13,8 +13,14 @@ namespace SVN.Core
         [SerializeField] private GameObject checkoutPanel = null;
         [SerializeField] private GameObject loadPanel = null;
 
+        private SVNUI svnUI;
+        private SVNManager svnManager;
+
         private void Start()
         {
+            svnUI = SVNUI.Instance;
+            svnManager = SVNManager.Instance;
+
             Button_CloseHelp();
         }
 
@@ -104,6 +110,8 @@ namespace SVN.Core
             {
                 commitPanel.SetActive(true);
             }
+
+            svnManager.SVNStatus.ShowOnlyModified();
         }
 
         public void Button_CloseCommit()
