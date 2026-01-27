@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Unity.Burst.Intrinsics;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 public class CommitPanel : MonoBehaviour
 {
@@ -19,6 +20,7 @@ public class CommitPanel : MonoBehaviour
     }
 
     public async void Button_ShowModified() => svnManager.SVNStatus.ShowOnlyModified();
+    public void Button_Revert() => svnManager.SVNRevert.RevertAll();
     public void Button_Commit() => svnManager.SVNCommit.CommitAll();
     public void Button_Add() => svnManager.SVNAdd.AddAll();
     public void Button_FixMissing() => svnManager.SVNMissing.FixMissingFiles();

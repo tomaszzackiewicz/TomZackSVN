@@ -18,8 +18,9 @@ namespace SVN.Core
         public const string KEY_REPO_URL = "SVN_Persisted_RepositoryURL";
 
         [SerializeField] private SVNUI svnUI = null;
-        [SerializeField] private GameObject loadingOverlay; // Przeciągnij tutaj swój obiekt LoadingOverlay
-        
+        [SerializeField] private GameObject loadingOverlay = null;
+        [SerializeField] private PanelHandler panelHandler = null;
+
         private (string status, string[] files) currentStatus;
 
         [Header("State")]
@@ -41,6 +42,12 @@ namespace SVN.Core
         public SVNLoad SVNLoad { get; private set; }
         public SVNMerge SVNMerge { get; private set; }
         public SVNSettings SVNSettings { get; private set; }
+        public SVNResolve SVNResolve { get; private set; }
+        public SVNRevert SVNRevert { get; private set; }
+        public SVNTerminal SVNTerminal { get; private set; }
+        public SVNClean SVNClean { get; private set; }
+        public SVNLog SVNLog { get; private set; }
+        public SVNLock SVNLock { get; private set; }
 
         public string RepositoryUrl { get; set; } = string.Empty;
 
@@ -102,6 +109,12 @@ namespace SVN.Core
             SVNLoad = new SVNLoad(svnUI, this);
             SVNMerge = new SVNMerge(svnUI, this);
             SVNSettings = new SVNSettings(svnUI, this);
+            SVNResolve = new SVNResolve(svnUI, this);
+            SVNRevert = new SVNRevert(svnUI, this);
+            SVNTerminal = new SVNTerminal(svnUI, this);
+            SVNClean = new SVNClean(svnUI, this);
+            SVNLog = new SVNLog(svnUI, this);
+            SVNLock = new SVNLock(svnUI, this);
         }
 
         private void SetLoading(bool isLoading)
@@ -160,20 +173,12 @@ namespace SVN.Core
         {
             if (svnUI == null) return;
 
-            // 1. Inicjalizacja modułów
-            SVNSettings svnSettings = new SVNSettings(svnUI, this);
+            SVNSettings.LoadSettings();
 
-            // 2. Ładowanie ustawień z PlayerPrefs (Wypełnia pola we wszystkich panelach)
-            svnSettings.LoadSettings();
-
-            // 3. Podpinanie inteligentnych listenerów
-
-            // REPO URL
             if (svnUI.SettingsRepoUrlInput != null)
             {
                 svnUI.SettingsRepoUrlInput.onValueChanged.AddListener(val => {
                     string cleaned = val.Trim();
-                    // Rozsyłamy do wszystkich pól URL w UI
                     BroadcastUrlChange(cleaned);
                     PlayerPrefs.SetString(KEY_REPO_URL, cleaned);
                     PlayerPrefs.Save();
@@ -425,23 +430,21 @@ namespace SVN.Core
 
             try
             {
-                // 3. Pobranie danych z SVN (używamy zmiennej root)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
                 CurrentStatusDict = statusDict;
 
-                // 4. Logika konfliktów
                 bool hasConflicts = statusDict.Values.Any(v => v.status.Contains("C"));
-                if (svnUI.ConflictGroup != null)
-                    svnUI.ConflictGroup.SetActive(hasConflicts);
+                if (panelHandler && hasConflicts)
+                {
+                    panelHandler.Button_OpenResolve();
+                }
 
-                // 5. Budowanie drzewa plików
                 var stats = new SvnStats();
                 var sb = new StringBuilder();
                 HashSet<string> relevantFolders = MapRelevantFolders(statusDict);
 
                 BuildTreeString(root, root, 0, statusDict, sb, stats, expandedPaths, new bool[64], false, relevantFolders);
 
-                // 6. Wyświetlenie wyników w UI
                 if (svnUI.TreeDisplay != null)
                     svnUI.TreeDisplay.text = sb.ToString();
 

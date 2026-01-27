@@ -9,36 +9,10 @@ namespace SVN.Core
         private SVNUI svnUI = null;
         private SVNManager svnManager = null;
 
-        private SVNCheckout checkout;
-        private SVNLoad load;
-        private SVNUpdate update;
-        private SVNStatus status;
-        private SVNCommit commit;
-        private SVNSettings settings;
-        private SVNRevert revert;
-        private SVNClean clean;
-        private SVNLog log;
-        private SVNExternal external;
-        private SVNLock svnLock;
-        private SVNTerminal terminal;
-
         private void Start()
         {
             svnUI = SVNUI.Instance;
             svnManager = SVNManager.Instance;
-
-            checkout = new SVNCheckout(svnUI, svnManager);
-            load = new SVNLoad(svnUI, svnManager);
-            update = new SVNUpdate(svnUI, svnManager);
-            status = new SVNStatus(svnUI, svnManager);
-            commit = new SVNCommit(svnUI, svnManager);
-            revert = new SVNRevert(svnUI, svnManager);
-            clean = new SVNClean(svnUI, svnManager);
-            log = new SVNLog(svnUI, svnManager);
-            external = new SVNExternal(svnUI, svnManager);
-            svnLock = new SVNLock(svnUI, svnManager);
-            settings = new SVNSettings(svnUI, svnManager);
-            terminal = new SVNTerminal(svnUI, svnManager);
 
             if (svnUI.TerminalInputField != null)
             {
@@ -50,33 +24,30 @@ namespace SVN.Core
         {
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
-                terminal.ExecuteTerminalCommand();
+                svnManager.SVNTerminal.ExecuteTerminalCommand();
             }
         }
 
-        //public void Button_Checkout() => checkout.Checkout();
-        public void Button_Load() => load.LoadRepoPathAndRefresh();
-        public void Button_Update() => update.Update();
-        public void Button_Refresh() => status.RefreshLocal();
-        public void Button_Commit() => commit.CommitAll();
-        public void Button_Revert() => revert.RevertAll();
-        public void Button_Clean() => clean.LightCleanup();
-        public void Button_Vacuum() => clean.VacuumCleanup();
-        public void Button_Log() => log.ShowLog();
-        public void Button_ShowModified() => status.ShowOnlyModified();
-        public void Button_ShowOnlyIgnored() => status.ShowOnlyIgnored();
-        public void Button_CollapseAll() => status.CollapseAll();
-        public void Button_Explore() => external.OpenInExplorer();
-        public void Button_Lock() => svnLock.LockModified();
-        public void Button_Unlock() => svnLock.UnlockAll();
-        public void Button_ShowToCommit() => commit.ShowWhatWillBeCommitted();
-        public void Button_ShowLocks() => svnLock.ShowAllLocks();
-        public void Button_BreakLocks() => svnLock.BreakAllLocks();
+        public void Button_Load() => svnManager.SVNLoad.LoadRepoPathAndRefresh();
+        public void Button_Update() => svnManager.SVNUpdate.Update();
+        public void Button_Refresh() => svnManager.SVNStatus.RefreshLocal();
+        public void Button_Clean() => svnManager.SVNClean.LightCleanup();
+        public void Button_Vacuum() => svnManager.SVNClean.VacuumCleanup();
+        public void Button_Log() => svnManager.SVNLog.ShowLog();
+        public void Button_ShowModified() => svnManager.SVNStatus.ShowOnlyModified();
+        public void Button_ShowOnlyIgnored() => svnManager.SVNStatus.ShowOnlyIgnored();
+        public void Button_CollapseAll() => svnManager.SVNStatus.CollapseAll();
+        public void Button_Explore() => svnManager.SVNExternal.OpenInExplorer();
+        public void Button_Lock() => svnManager.SVNLock.LockModified();
+        public void Button_Unlock() => svnManager.SVNLock.UnlockAll();
+        public void Button_ShowToCommit() => svnManager.SVNCommit.ShowWhatWillBeCommitted();
+        public void Button_ShowLocks() => svnManager.SVNLock.ShowAllLocks();
+        public void Button_BreakLocks() => svnManager.SVNLock.BreakAllLocks();
         public void Button_TerminalSubmit() => OnTerminalSubmit();
 
         public void Button_ClearTerminalLog()
         {
-            terminal.ClearLog();
+            svnManager.SVNTerminal.ClearLog();
             svnUI.TerminalInputField.ActivateInputField();
         }
 

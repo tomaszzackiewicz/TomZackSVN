@@ -9,6 +9,20 @@ namespace SVN.Core
     {
         public SVNSettings(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
+        public void SaveRepoUrl()
+        {
+            if (svnUI.SettingsRepoUrlInput == null) return;
+
+            string newUrl = svnUI.SettingsRepoUrlInput.text.Trim();
+
+            PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, newUrl);
+            PlayerPrefs.Save();
+
+            svnManager.RepositoryUrl = newUrl;
+
+            svnUI.LogText.text += $"<color=green>Saved:</color> Repository URL updated to: {newUrl}\n";
+        }
+
         public async void SaveWorkingDir()
         {
             if (IsProcessing) return;
