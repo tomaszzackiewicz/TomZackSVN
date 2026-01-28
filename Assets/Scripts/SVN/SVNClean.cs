@@ -83,8 +83,6 @@ namespace SVN.Core
 
         private string GetTargetPath()
         {
-            // Manager zawsze trzyma aktualn¹ œcie¿kê (za³adowan¹ z PlayerPrefs 
-            // lub zaktualizowan¹ przez InputField.onValueChanged)
             string path = svnManager.WorkingDir;
 
             if (string.IsNullOrEmpty(path))

@@ -160,15 +160,12 @@ namespace SVN.Core
             }
         }
 
-        // Dodaj do SVNMerge.cs
         public async Task<string[]> FetchAvailableBranches()
         {
             try
             {
-                // 1. Pobieramy info o aktualnym repozytorium, ¿eby znaæ Root URL
                 string info = await SvnRunner.RunAsync("info --xml", svnManager.WorkingDir);
-                // (Tutaj mo¿na u¿yæ prostego Regexa lub XML parsera, by wyci¹gn¹æ <repository><root>)
-                // Dla uproszczenia za³ó¿my, ¿e svnManager ma ju¿ RootURL:
+
                 string rootUrl = svnUI.SettingsWorkingDirInput.text;
 
                 if (string.IsNullOrEmpty(rootUrl)) return new string[0];

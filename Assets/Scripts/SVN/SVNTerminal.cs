@@ -26,14 +26,12 @@ namespace SVN.Core
                 return;
             }
 
-            // Dodaj do historii
             if (commandHistory.Count == 0 || commandHistory[commandHistory.Count - 1] != rawInput)
             {
                 commandHistory.Add(rawInput);
             }
             historyIndex = -1;
 
-            // Oczyszczanie komendy (nasz SvnRunner sam wywo³uje "svn")
             string cmd = rawInput.ToLower().StartsWith("svn ") ? rawInput.Substring(4).Trim() : rawInput;
 
             svnUI.TerminalInputField.text = "";
@@ -43,13 +41,10 @@ namespace SVN.Core
 
             try
             {
-                // KLUCZOWA ZMIANA: U¿ywamy Twojej klasy SvnRunner zamiast SVNRun
-                // Dziêki temu terminal otrzyma klucze SSH, IdentitiesOnly i StrictHostKeyChecking
                 string result = await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
                 LogToView(result, "white");
 
-                // Auto-refresh po komendach zmieniaj¹cych stan
                 if (cmd.Contains("update") || cmd.Contains("commit") || cmd.Contains("switch") || cmd.Contains("checkout"))
                 {
                     svnManager.UpdateBranchInfo();
@@ -58,7 +53,6 @@ namespace SVN.Core
             }
             catch (System.Exception ex)
             {
-                // SvnRunner wyrzuca b³êdy jako Exception, tutaj je ³apiemy i wyœwietlamy w UI
                 LogToView(ex.Message, "red");
             }
             finally
@@ -68,7 +62,6 @@ namespace SVN.Core
             }
         }
 
-        // Metoda do obs³ugi strza³ek (wywo³ywana z Update w SVNManager)
         public void HandleHistoryNavigation()
         {
             if (commandHistory.Count == 0 || !svnUI.TerminalInputField.isFocused) return;
@@ -103,7 +96,7 @@ namespace SVN.Core
             if (historyIndex >= 0 && historyIndex < commandHistory.Count)
             {
                 svnUI.TerminalInputField.text = commandHistory[historyIndex];
-                // Przesuñ kursor na koniec tekstu
+                
                 svnUI.TerminalInputField.caretPosition = svnUI.TerminalInputField.text.Length;
             }
         }
@@ -132,7 +125,7 @@ namespace SVN.Core
             if (svnUI.LogText != null)
             {
                 svnUI.LogText.text = "";
-                LogToView("Terminal log cleared.", "#888888"); // Opcjonalna informacja systemowa
+                LogToView("Terminal log cleared.", "#888888");
             }
         }
     }

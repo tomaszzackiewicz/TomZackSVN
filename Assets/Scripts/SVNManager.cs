@@ -28,6 +28,7 @@ namespace SVN.Core
 
         private string workingDir = string.Empty;
         private string currentKey = string.Empty;
+        private string mergeToolPath = string.Empty;
 
         private bool isProcessing = false;
 
@@ -80,6 +81,12 @@ namespace SVN.Core
             set => currentKey = value;
         }
 
+        public string MergeToolPath
+        {
+            get => mergeToolPath;
+            set => mergeToolPath = value;
+        }
+
         public HashSet<string> ExpandedPaths
         {
             get => expandedPaths;
@@ -90,10 +97,9 @@ namespace SVN.Core
         {
             if (Instance != null && Instance != this)
             {
-                // Hide from inspector and disable before destroying to stop UI repaints
                 gameObject.hideFlags = HideFlags.HideAndDontSave;
                 this.enabled = false;
-                DestroyImmediate(gameObject); // Force removal to stop Inspector lag
+                DestroyImmediate(gameObject);
                 return;
             }
             Instance = this;
@@ -129,12 +135,11 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(path)) return;
 
-            workingDir = path; // pole prywatne używane przez metody wewnętrzne
-            WorkingDir = path; // właściwość publiczna dla innych klas
+            workingDir = path;
+            WorkingDir = path;
 
             Debug.Log($"[SVN] Working Directory set to: {path}");
 
-            // Automatycznie odśwież URL i status po zmianie ścieżki
             await RefreshRepositoryInfo();
             UpdateBranchInfo();
         }
@@ -145,18 +150,13 @@ namespace SVN.Core
 
             try
             {
-                // 1. Pobieramy URL bezpośrednio z metadanych .svn
                 string url = await SvnRunner.GetRepoUrlAsync(WorkingDir);
 
-                // 2. AKTUALIZUJEMY TYLKO JEŚLI SVN COŚ ZNALAZŁ
                 if (!string.IsNullOrWhiteSpace(url) && !url.Contains("not a working copy"))
                 {
                     this.RepositoryUrl = url.Trim();
                     Debug.Log($"[SVN] URL metadata synced: {RepositoryUrl}");
 
-                    // 3. AKTUALIZACJA UI
-                    // Używamy SetTextWithoutNotify, aby zmiana kodu nie wywołała 
-                    // ponownie listenera onValueChanged (unikamy pętli zapisu).
                     if (svnUI != null && svnUI.SettingsRepoUrlInput != null)
                     {
                         svnUI.SettingsRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
@@ -190,7 +190,6 @@ namespace SVN.Core
             {
                 svnUI.SettingsSshKeyPathInput.onValueChanged.AddListener(val => {
                     string cleaned = val.Trim();
-                    // Rozsyłamy do wszystkich pól SSH w UI + aktualizujemy Runnera
                     BroadcastSshKeyChange(cleaned);
                     PlayerPrefs.SetString(KEY_SSH_PATH, cleaned);
                     PlayerPrefs.Save();
@@ -202,23 +201,23 @@ namespace SVN.Core
             {
                 svnUI.SettingsWorkingDirInput.onValueChanged.AddListener(val => {
                     string cleaned = val.Trim();
-                    // Rozsyłamy do wszystkich pól Path w UI
                     BroadcastWorkingDirChange(cleaned);
                     PlayerPrefs.SetString(KEY_WORKING_DIR, cleaned);
                     PlayerPrefs.Save();
                 });
             }
 
-            // MERGE TOOL (Tylko w Settings, więc bez broadcastu)
             if (svnUI.SettingsMergeToolPathInput != null)
             {
                 svnUI.SettingsMergeToolPathInput.onValueChanged.AddListener(val => {
+                    if (IsProcessing || string.IsNullOrWhiteSpace(val)) return;
+
                     PlayerPrefs.SetString(KEY_MERGE_TOOL, val.Trim());
                     PlayerPrefs.Save();
+                    this.MergeToolPath = val.Trim();
                 });
             }
 
-            // 4. Inicjalizacja repozytorium przy starcie
             if (!string.IsNullOrEmpty(WorkingDir) && Directory.Exists(WorkingDir))
             {
                 await RefreshRepositoryInfo();
@@ -230,10 +229,8 @@ namespace SVN.Core
 
         public void BroadcastWorkingDirChange(string newPath)
         {
-            // Normalization
             this.WorkingDir = newPath.Replace("\\", "/");
 
-            // Sync all related Input Fields
             if (svnUI.SettingsWorkingDirInput != null)
                 svnUI.SettingsWorkingDirInput.SetTextWithoutNotify(this.WorkingDir);
 
@@ -279,7 +276,6 @@ namespace SVN.Core
         {
             string rootPath = WorkingDir;
 
-            // 1. Validate if directory exists
             if (string.IsNullOrEmpty(rootPath) || !System.IO.Directory.Exists(rootPath))
             {
                 if (svnUI?.BranchInfoText != null)
@@ -289,7 +285,6 @@ namespace SVN.Core
 
             try
             {
-                // 2. Fetch data in XML format (Locale-independent)
                 string output = await SvnRunner.RunAsync("info --xml", rootPath);
 
                 if (string.IsNullOrEmpty(output)) return;
@@ -298,7 +293,6 @@ namespace SVN.Core
                 string relativeUrl = "Unknown";
                 string revision = "0";
 
-                // 3. XML Parsing
                 System.Xml.XmlDocument doc = new System.Xml.XmlDocument();
                 doc.LoadXml(output);
 
@@ -310,22 +304,16 @@ namespace SVN.Core
                 if (relativeUrlNode != null) relativeUrl = relativeUrlNode.InnerText;
                 if (entryNode != null) revision = entryNode.Attributes["revision"]?.Value ?? "0";
 
-                // 4. Sync URL with Manager for other modules (like Checkout/Update)
                 this.RepositoryUrl = fullUrl.TrimEnd('/');
 
-                // 5. Clean up Branch Display Name
-                // Remove technical SVN prefix "^/"
                 string branchDisplayName = relativeUrl.Replace("^/", "");
 
-                // --- IMPROVED LOGIC FOR EMPTY/ROOT BRANCHES ---
                 if (string.IsNullOrEmpty(branchDisplayName) || branchDisplayName == "/")
                 {
-                    // If we are at the root of the repo, it's usually the 'trunk'
                     branchDisplayName = "trunk (root)";
                 }
                 else if (branchDisplayName.Contains("/"))
                 {
-                    // If path is "branches/feature-login", extract only "feature-login"
                     string[] parts = branchDisplayName.Split(new[] { '/' }, System.StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Length > 0)
                     {
@@ -333,7 +321,6 @@ namespace SVN.Core
                     }
                 }
 
-                // 6. Final UI Update
                 if (svnUI?.BranchInfoText != null)
                 {
                     svnUI.BranchInfoText.text = $"<color=#00E5FF>Branch:</color> {branchDisplayName} | <color=#FFD700>Rev:</color> {revision}";
@@ -349,15 +336,12 @@ namespace SVN.Core
 
         public async Task RunDiagnostics()
         {
-            // 1. Sprawdź czy svnUI i LogText istnieją (potrzebne tylko do wyświetlania wyniku)
             if (svnUI == null || svnUI.LogText == null)
             {
                 Debug.LogError("[SVN Manager] SVNUI or LogText reference is missing. Diagnostics cannot be displayed.");
                 return;
             }
 
-            // 2. Synchronizacja klucza: Pobieramy dane z Managera (CurrentKey), nie z InputFielda
-            // Te dane zostały tam załadowane w metodzie LoadSettings()
             if (!string.IsNullOrEmpty(CurrentKey))
             {
                 SvnRunner.KeyPath = CurrentKey;
@@ -367,25 +351,21 @@ namespace SVN.Core
                 Debug.LogWarning("[SVN Manager] No SSH Key path found in Manager. SSH operations may fail.");
             }
 
-            // 3. Rozpoczęcie diagnostyki w UI
             svnUI.LogText.text = "<b>[SYSTEM DIAGNOSTICS]</b>\n";
             svnUI.LogText.text += $"Working Dir: <color=#AAAAAA>{WorkingDir}</color>\n";
 
             try
             {
-                // Test silnika SVN
                 bool svnOk = await SvnRunner.CheckIfSvnInstalled();
                 svnUI.LogText.text += svnOk
                     ? "<color=green>✔ SVN CLI:</color> Found\n"
                     : "<color=red>✘ SVN CLI:</color> Missing (Add to PATH!)\n";
 
-                // Test silnika SSH
                 bool sshOk = await SvnRunner.CheckIfSshInstalled();
                 svnUI.LogText.text += sshOk
                     ? "<color=green>✔ OpenSSH:</color> Found\n"
                     : "<color=red>✘ OpenSSH:</color> Missing!\n";
 
-                // Opcjonalnie: Test istnienia pliku klucza
                 if (!string.IsNullOrEmpty(CurrentKey))
                 {
                     bool keyExists = System.IO.File.Exists(CurrentKey);
@@ -407,15 +387,12 @@ namespace SVN.Core
         {
             if (isProcessing) return;
 
-            // 1. Sprawdzamy czy UI w ogóle istnieje (do wypisywania logów)
             if (svnUI == null)
             {
                 Debug.LogError("[SVN] SVNUI reference is missing in SVNManager!");
                 return;
             }
 
-            // 2. Pobieramy ścieżkę bezpośrednio z Managera (pole 'workingDir' lub właściwość 'WorkingDir')
-            // Nie dotykamy już svnUI.AddRepoPathInput!
             string root = WorkingDir;
 
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
@@ -467,7 +444,6 @@ namespace SVN.Core
             }
         }
 
-        // Pomocnicza metoda dla czystości kodu
         private HashSet<string> MapRelevantFolders(Dictionary<string, (string status, string size)> statusDict)
         {
             HashSet<string> folders = new HashSet<string>();
@@ -484,10 +460,8 @@ namespace SVN.Core
             return folders;
         }
 
-        // Helper method to extract revision number from SVN output
         public string ParseRevision(string input)
         {
-            // SVN output usually ends with: "Committed revision 123."
             System.Text.RegularExpressions.Match match =
                 System.Text.RegularExpressions.Regex.Match(input, @"revision\s+(\d+)");
 
@@ -496,7 +470,6 @@ namespace SVN.Core
 
         public string ParseRevisionFromInfo(string infoOutput)
         {
-            // Szuka linii "Revision: 123" w komendzie svn info
             var match = System.Text.RegularExpressions.Regex.Match(infoOutput, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
             return match.Success ? match.Groups[1].Value : "Unknown";
         }
@@ -505,7 +478,7 @@ namespace SVN.Core
         string currentDir,
         string rootDir,
         int indent,
-        Dictionary<string, (string status, string size)> statusDict, // POPRAWIONY TYP ARGUMENTU
+        Dictionary<string, (string status, string size)> statusDict,
         StringBuilder sb,
         SvnStats stats,
         HashSet<string> expandedPaths,
@@ -534,13 +507,12 @@ namespace SVN.Core
                 bool isDirectory = Directory.Exists(entry);
                 string relPath = entry.Replace(rootDir.Replace('\\', '/'), "").TrimStart('/');
 
-                // --- POPRAWKA: Rozpakowanie krotki ---
                 string status = "";
                 string sizeInfo = "";
                 if (statusDict.TryGetValue(relPath, out var statusData))
                 {
-                    status = statusData.status; // Pobieramy status
-                    sizeInfo = statusData.size;   // Pobieramy rozmiar
+                    status = statusData.status;
+                    sizeInfo = statusData.size;
                 }
 
                 if (showIgnored)
@@ -559,7 +531,6 @@ namespace SVN.Core
                     else if (string.IsNullOrEmpty(status)) continue;
                 }
 
-                // --- STATYSTYKI ---
                 if (isDirectory) stats.FolderCount++;
                 else
                 {
@@ -574,8 +545,6 @@ namespace SVN.Core
                     }
                 }
 
-                // --- RYSOWANIE ---
-                // --- RYSOWANIE ---
                 StringBuilder indentBuilder = new StringBuilder();
                 for (int j = 0; j < indent - 1; j++)
                     indentBuilder.Append(parentIsLast[j] ? "    " : "│   ");
@@ -585,14 +554,11 @@ namespace SVN.Core
 
                 string expandIcon = isDirectory ? (expandedPaths.Contains(relPath) ? "[-] " : "[+] ") : "    ";
 
-                // POPRAWKA: Konwersja char na string za pomocą .ToString()
-                // Jeśli status jest pusty, przekazujemy spację jako string
                 char statusCode = !string.IsNullOrEmpty(status) ? status[0] : ' ';
                 string statusIcon = SvnRunner.GetStatusIcon(statusCode.ToString());
 
                 string typeTag = isDirectory ? "<color=#FFCA28><b><D></b></color>" : "<color=#4FC3F7><F></color>";
 
-                // Wyświetlanie rozmiaru pobranego ze słownika
                 string sizeText = (!isDirectory && !string.IsNullOrEmpty(sizeInfo)) ? $" <color=#555555>.... ({sizeInfo})</color>" : "";
 
                 sb.AppendLine($"{indentBuilder}{statusIcon} {expandIcon}{typeTag} {name}{sizeText}");
@@ -615,26 +581,16 @@ namespace SVN.Core
             if (newStatus == null) return;
 
             CurrentStatusDict = newStatus;
-
-            // Opcjonalnie: Tutaj możesz wywołać inne zdarzenia, 
-            // które powinny zareagować na zmianę statusu plików.
         }
 
-        /// <summary>
-        /// Centralna funkcja aktualizująca statystyki w całym UI (Pasek dolny i Panel Commitu).
-        /// </summary>
-        /// <param name="stats">Obiekt statystyk pobrany z SvnRunner</param>
-        /// <param name="isIgnoredView">Czy aktualnie przeglądamy pliki ignorowane?</param>
         public void UpdateAllStatisticsUI(SvnStats stats, bool isIgnoredView)
         {
             if (svnUI == null) return;
 
-            // --- 1. LOGIKA GŁÓWNEGO PASKA STATUSU (Main Bottom Bar) ---
             if (svnUI.StatsText != null)
             {
                 if (isIgnoredView)
                 {
-                    // Detale dla trybu Ignored
                     svnUI.StatsText.text = $"<color=#AAAAAA><b>VIEW: IGNORED</b></color> | " +
                                            $"Folders: {stats.IgnoredFolderCount} | " +
                                            $"Files: {stats.IgnoredFileCount} | " +
@@ -642,7 +598,6 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // Pełne detale dla trybu Modified (Working Copy)
                     svnUI.StatsText.text = $"<color=#FFD700><b>VIEW: WORKING COPY</b></color> | " +
                                            $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | " +
                                            $"<color=#FFD700>Modified (M): {stats.ModifiedCount}</color> | " +
@@ -653,32 +608,27 @@ namespace SVN.Core
                 }
             }
 
-            // --- 2. LOGIKA PANELU COMMITU (Commit Panel Summary) ---
             if (svnUI.CommitStatsText != null)
             {
                 if (isIgnoredView)
                 {
-                    // Ostrzeżenie, gdy użytkownik zapomni przełączyć widok
                     svnUI.CommitStatsText.text = "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>";
                 }
                 else
                 {
-                    // Suma wszystkiego, co zostanie wysłane na serwer (łącznie z nowymi plikami, które doda CommitAll)
                     int totalToCommit = stats.ModifiedCount + stats.AddedCount + stats.NewFilesCount + stats.DeletedCount;
 
-                    // Formułujemy ostrzeżenie o konfliktach - w Unrealu to krytyczne!
                     string conflictPart = "";
                     if (stats.ConflictsCount > 0)
                     {
                         conflictPart = $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>";
                     }
 
-                    // "Full wypas" opis zmian
                     svnUI.CommitStatsText.text = $"<b>Pending Changes:</b> " +
                         $"<color=#FFD700>Modified (M): {stats.ModifiedCount}</color> | " +
                         $"<color=#00FF00>Added (A): {stats.AddedCount}</color> | " +
-                        $"<color=#00E5FF>New assets (?): {stats.NewFilesCount}</color> | " +
-                        $"<color=#FF4444>To Delete (D): {stats.DeletedCount}</color> | " +
+                        $"<color=#00E5FF>New (?): {stats.NewFilesCount}</color> | " +
+                        $"<color=#FF4444>Deleted (D): {stats.DeletedCount}</color> | " +
                         $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>" +
                         conflictPart;
                 }
@@ -688,12 +638,9 @@ namespace SVN.Core
         public string GetRepoRoot()
         {
             if (string.IsNullOrEmpty(RepositoryUrl)) return "";
-
-            // Jeśli jesteśmy w trunk, root jest poziom wyżej
             if (RepositoryUrl.EndsWith("/trunk"))
                 return RepositoryUrl.Replace("/trunk", "");
 
-            // Jeśli jesteśmy w branchu, szukamy cięcia przed /branches/
             if (RepositoryUrl.Contains("/branches/"))
                 return RepositoryUrl.Substring(0, RepositoryUrl.IndexOf("/branches/"));
 
@@ -705,7 +652,6 @@ namespace SVN.Core
         {
             if (focus && !string.IsNullOrEmpty(workingDir))
             {
-                // Automatyczne odświeżenie statusu po powrocie do okna Unity
                 RefreshStatus();
             }
         }

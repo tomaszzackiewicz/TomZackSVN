@@ -39,12 +39,10 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // 1. USTAWIANIE TEKSTU
                     svnUI.LogText.text = "------------------------------------------\n";
                     svnUI.LogText.text += output;
                     svnUI.LogText.text += "\n------------------------------------------\n";
 
-                    // 2. PRZEWIJANIE (Czekamy chwilê, a¿ UI siê odœwie¿y)
                     await ScrollToBottom();
                 }
             }
@@ -68,14 +66,12 @@ namespace SVN.Core
             }
         }
 
-        // Metoda pomocnicza do przewijania
         private async Task ScrollToBottom()
         {
             if (svnUI.LogScrollRect != null)
             {
-                // Wymuszamy aktualizacjê siatki UI
                 Canvas.ForceUpdateCanvases();
-                // Czekamy jeden cykl ramki, ¿eby Content Size Fitter zd¹¿y³ zareagowaæ
+
                 await Task.Yield();
                 svnUI.LogScrollRect.verticalNormalizedPosition = 0f;
             }

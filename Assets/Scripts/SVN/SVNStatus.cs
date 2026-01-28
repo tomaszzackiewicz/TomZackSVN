@@ -162,11 +162,7 @@ namespace SVN.Core
 
         public void RefreshView()
         {
-            // Odœwie¿a widok zachowuj¹c obecny tryb (Modified lub Ignored)
-            // i automatycznie rozwijaj¹c nowo wykryte zmiany
             ExecuteRefreshWithAutoExpand();
         }
-
-        
     }
 }

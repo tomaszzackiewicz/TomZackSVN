@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using System.Text;
 using System.Threading.Tasks;
-using UnityEngine; // Dodane dla Debug.Log
 
 namespace SVN.Core
 {
@@ -10,7 +9,6 @@ namespace SVN.Core
     {
         public static async Task<string> ExecuteAsync(string arguments, string workingDir)
         {
-            // Debugowanie œcie¿ki - zobaczysz to w konsoli Unity
             UnityEngine.Debug.Log($"[SVNRun] Executing: svn {arguments} | Directory: {workingDir}");
 
             return await Task.Run(() =>
@@ -20,7 +18,7 @@ namespace SVN.Core
                 {
                     ProcessStartInfo psi = new ProcessStartInfo
                     {
-                        FileName = "svn", // Mo¿esz tu wpisaæ pe³n¹ œcie¿kê jeœli dalej nie dzia³a
+                        FileName = "svn",
                         Arguments = arguments,
                         WorkingDirectory = workingDir,
                         UseShellExecute = false,
@@ -30,7 +28,6 @@ namespace SVN.Core
                         StandardOutputEncoding = Encoding.UTF8
                     };
 
-                    // Jeœli œcie¿ka robocza jest pusta, proces mo¿e zwariowaæ
                     if (string.IsNullOrEmpty(workingDir) || !System.IO.Directory.Exists(workingDir))
                     {
                         return "<color=red>Error: Working Directory is invalid or not set.</color>";
@@ -40,7 +37,6 @@ namespace SVN.Core
                     {
                         process.Start();
 
-                        // Czytamy oba strumienie jednoczeœnie
                         string output = process.StandardOutput.ReadToEnd();
                         string error = process.StandardError.ReadToEnd();
 
@@ -52,7 +48,6 @@ namespace SVN.Core
                         if (!string.IsNullOrEmpty(error))
                             outputBuilder.Append($"\n<color=red>SVN Error: {error}</color>");
 
-                        // Jeœli oba s¹ puste, a proces zakoñczy³ siê b³êdem
                         if (outputBuilder.Length == 0 && process.ExitCode != 0)
                         {
                             outputBuilder.Append($"<color=red>Process exited with code {process.ExitCode} without output.</color>");

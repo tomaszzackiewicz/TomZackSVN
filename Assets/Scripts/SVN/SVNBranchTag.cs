@@ -198,28 +198,23 @@ namespace SVN.Core
 
         private async System.Threading.Tasks.Task ExecuteRemoteDeleteTask(string targetName, string subFolder)
         {
-            // 1. Pobierz aktualny URL, na którym pracuje u¿ytkownik
             string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
 
-            // 2. Wyznacz URL obiektu do usuniêcia
             string repoRoot = currentUrl.Substring(0, currentUrl.LastIndexOf('/'));
             string targetUrl = $"{repoRoot}/{subFolder}/{targetName}";
 
-            // ZABEZPIECZENIE A: Zakaz usuwania Trunka
             if (targetUrl.ToLower().EndsWith("/trunk"))
             {
                 svnUI.LogText.text += "<color=red><b>DENIED:</b> You cannot delete the Trunk!</color>\n";
                 return;
             }
 
-            // ZABEZPIECZENIE B: Zakaz usuwania aktualnie u¿ywanej ga³êzi
             if (currentUrl.TrimEnd('/') == targetUrl.TrimEnd('/'))
             {
                 svnUI.LogText.text += "<color=red><b>DENIED:</b> You cannot delete the branch/tag you are currently using!</color>\n";
                 return;
             }
 
-            // Jeœli przesz³o testy - wykonaj usuwanie
             IsProcessing = true;
             try
             {
@@ -415,42 +410,39 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            string tagName = svnUI.BranchNameInput.text; // U¿ywamy tego samego pola co dla brancha
+            string tagName = svnUI.BranchNameInput.text;
             string baseUrl = svnManager.RepositoryUrl;
 
             if (string.IsNullOrWhiteSpace(tagName))
             {
-                svnUI.LogText.text += "<color=red>B³¹d: Podaj nazwê taga!</color>\n";
+                svnUI.LogText.text += "<color=red>Error: Provide a tag name!</color>\n";
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(baseUrl))
             {
-                svnUI.LogText.text += "<color=red>B³¹d: Brak URL repozytorium!</color>\n";
+                svnUI.LogText.text += "<color=red>Error: Missing repository URL!</color>\n";
                 return;
             }
 
             IsProcessing = true;
-            svnUI.LogText.text = $"Tworzenie taga (snapshot): {tagName}...\n";
+            svnUI.LogText.text = $"Creating tag (snapshot): {tagName}...\n";
 
             try
             {
-                // 1. Bezpieczne wyznaczenie œcie¿ki do folderu /tags/
                 baseUrl = baseUrl.TrimEnd('/');
                 string rootUrl = baseUrl.Contains("/") ? baseUrl.Substring(0, baseUrl.LastIndexOf('/')) : baseUrl;
                 string destUrl = $"{rootUrl}/tags/{tagName}";
 
-                svnUI.LogText.text += $"Kopiowanie z: {baseUrl}\nDo: {destUrl}\n";
+                svnUI.LogText.text += $"Copying from: {baseUrl}\nTo: {destUrl}\n";
 
-                // 2. Wykonanie kopii na serwerze
-                // addRepoPathInput.text s³u¿y jako kontekst dla poœwiadczeñ SVN
                 string output = await SvnRunner.CopyAsync(svnManager.RepositoryUrl, baseUrl, destUrl, $"Release Tag: {tagName}");
 
-                svnUI.LogText.text += $"<color=green>Sukces!</color> Tag {tagName} zosta³ utworzony.\n";
+                svnUI.LogText.text += $"<color=green>Success!</color> Tag {tagName} has been created.\n";
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>B³¹d Tagowania:</color> {ex.Message}\n";
+                svnUI.LogText.text += $"<color=red>Tagging Error:</color> {ex.Message}\n";
             }
 
             IsProcessing = false;
@@ -465,49 +457,49 @@ namespace SVN.Core
 
             if (string.IsNullOrWhiteSpace(branchName))
             {
-                svnUI.LogText.text += "<color=red>B³¹d: Podaj nazwê brancha lub pe³ny URL!</color>\n";
+                svnUI.LogText.text += "<color=red>Error: Provide a branch name or full URL!</color>\n";
                 return;
             }
 
             IsProcessing = true;
             //loadingOverlay?.SetActive(true);
-            svnUI.LogText.text = "Rozpoczynanie operacji Switch...\n";
+            svnUI.LogText.text = "Starting Switch operation...\n";
 
             try
             {
                 string rootPath = svnManager.RepositoryUrl;
                 string targetUrl;
 
-                // 1. Logika wyznaczania adresu docelowego
+                // 1. Target address determination logic
                 if (branchName.Contains("://"))
                 {
-                    // Jeœli u¿ytkownik wklei³ pe³ny adres URL
+                    // If the user pasted a full URL
                     targetUrl = branchName;
                 }
                 else
                 {
-                    // Jeœli poda³ tylko nazwê, budujemy URL na podstawie baseUrl (Trunk)
+                    // If they only provided a name, build the URL based on baseUrl (Trunk)
                     string cleanBase = baseUrl.TrimEnd('/');
                     string repoRoot = cleanBase.Contains("/") ? cleanBase.Substring(0, cleanBase.LastIndexOf('/')) : cleanBase;
                     targetUrl = $"{repoRoot}/branches/{branchName}";
                 }
 
-                svnUI.LogText.text += $"Prze³¹czanie folderu roboczego na:\n<color=#4FC3F7>{targetUrl}</color>\n";
+                svnUI.LogText.text += $"Switching working folder to:\n<color=#4FC3F7>{targetUrl}</color>\n";
 
-                // 2. Wywo³anie SvnRunner.SwitchAsync
+                // 2. Call SvnRunner.SwitchAsync
                 string output = await SvnRunner.SwitchAsync(rootPath, targetUrl);
 
-                svnUI.LogText.text += "<color=green>Prze³¹czono pomyœlnie!</color>\n";
+                svnUI.LogText.text += "<color=green>Switched successfully!</color>\n";
 
-                // 3. Po prze³¹czeniu musimy odœwie¿yæ drzewo, bo pliki na dysku w³aœnie siê zmieni³y
+                // 3. After switching, we must refresh the tree as files on disk have changed
                 svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>B³¹d Switch:</color> {ex.Message}\n";
+                svnUI.LogText.text += $"<color=red>Switch Error:</color> {ex.Message}\n";
             }
 
-            // Aktualizacja informacji o aktualnym branchu w UI
+            // Update current branch info in the UI
             svnManager.UpdateBranchInfo();
 
             //loadingOverlay?.SetActive(false);

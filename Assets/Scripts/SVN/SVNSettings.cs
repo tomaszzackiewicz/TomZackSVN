@@ -82,70 +82,115 @@ namespace SVN.Core
 
         public void SaveMergeEditorPath()
         {
-            string path = svnUI.SettingsMergeToolPathInput.text.Trim();
-            PlayerPrefs.SetString(SVNManager.KEY_MERGE_TOOL, path);
+            if (svnUI.SettingsMergeToolPathInput == null) return;
+
+            string newPath = svnUI.SettingsMergeToolPathInput.text.Trim();
+
+            // 1. Safety Check: If the new path is empty, do NOT overwrite the existing save
+            if (string.IsNullOrEmpty(newPath))
+            {
+                Debug.LogWarning("[SVN] Attempted to save an empty Merge Tool path. Action cancelled to prevent data loss.");
+
+                // Optional: Restore the UI text from the last known good value in Manager
+                svnUI.SettingsMergeToolPathInput.SetTextWithoutNotify(svnManager.MergeToolPath);
+                return;
+            }
+
+            // 2. Persistent Save
+            PlayerPrefs.SetString(SVNManager.KEY_MERGE_TOOL, newPath);
             PlayerPrefs.Save();
 
-            svnUI.LogText.text += $"<color=green>Saved:</color> External Merge Tool path updated.\n";
+            // 3. Logical Sync
+            svnManager.MergeToolPath = newPath;
+
+            // 4. Feedback
+            if (svnUI.LogText != null)
+            {
+                svnUI.LogText.text += $"<color=green>Saved:</color> External Merge Tool path updated to: {newPath}\n";
+            }
         }
 
         public void UpdateUIFromManager()
         {
+            // Safety check for UI reference
+            if (svnUI == null) return;
+
             // 1. Repository Path (Working Directory)
             if (svnUI.SettingsWorkingDirInput != null)
             {
-                svnUI.SettingsWorkingDirInput.text = svnManager.WorkingDir;
+                // Use SetTextWithoutNotify to prevent triggering 'onValueChanged' listeners
+                svnUI.SettingsWorkingDirInput.SetTextWithoutNotify(svnManager.WorkingDir);
             }
 
             // 2. SSH Private Key Path
             if (svnUI.SettingsSshKeyPathInput != null)
             {
-                svnUI.SettingsSshKeyPathInput.text = svnManager.CurrentKey;
+                svnUI.SettingsSshKeyPathInput.SetTextWithoutNotify(svnManager.CurrentKey);
             }
 
-            // 3. Repository URL (The "link" to the repo)
+            // 3. Repository URL
             if (svnUI.SettingsRepoUrlInput != null)
             {
-                svnUI.SettingsRepoUrlInput.text = svnManager.RepositoryUrl;
+                svnUI.SettingsRepoUrlInput.SetTextWithoutNotify(svnManager.RepositoryUrl);
             }
 
-            // 4. Merge Tool Path (Loaded directly from PlayerPrefs)
+            // 4. Merge Tool Path
             if (svnUI.SettingsMergeToolPathInput != null)
             {
-                svnUI.SettingsMergeToolPathInput.text = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+                svnUI.SettingsMergeToolPathInput.SetTextWithoutNotify(svnManager.MergeToolPath);
             }
         }
 
         public async void LoadSettings()
         {
-            // 1. Pobieranie wszystkich danych z PlayerPrefs
+            // 1. Start loading - lock listeners
+            svnManager.IsProcessing = true;
+
+            // 2. Fetch from PlayerPrefs
             string savedDir = PlayerPrefs.GetString(SVNManager.KEY_WORKING_DIR, "");
             string savedKey = PlayerPrefs.GetString(SVNManager.KEY_SSH_PATH, "");
             string savedUrl = PlayerPrefs.GetString(SVNManager.KEY_REPO_URL, "");
-            // FIX: Dodaj pobieranie œcie¿ki edytora
             string savedMerge = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
 
-            // 2. Wype³nianie pól w Settings
-            if (svnUI.SettingsWorkingDirInput != null) svnUI.SettingsWorkingDirInput.text = savedDir;
-            if (svnUI.SettingsSshKeyPathInput != null) svnUI.SettingsSshKeyPathInput.text = savedKey;
-            // FIX: Wype³nij pole edytora w UI
-            if (svnUI.SettingsMergeToolPathInput != null) svnUI.SettingsMergeToolPathInput.text = savedMerge;
-
-            // 3. Wype³nianie pozosta³ych paneli (Checkout itp.)
-            if (svnUI.CheckoutRepoUrlInput != null) svnUI.CheckoutRepoUrlInput.text = savedUrl;
-            if (svnUI.CheckoutDestFolderInput != null) svnUI.CheckoutDestFolderInput.text = savedDir;
-            if (svnUI.CheckoutPrivateKeyInput != null) svnUI.CheckoutPrivateKeyInput.text = savedKey;
-
-            // 4. Synchronizacja logiczna Managera
+            // 3. Logical Sync
             svnManager.WorkingDir = savedDir;
             svnManager.CurrentKey = savedKey;
+            svnManager.RepositoryUrl = savedUrl;
+            svnManager.MergeToolPath = savedMerge;
             SvnRunner.KeyPath = savedKey;
 
-            if (!string.IsNullOrEmpty(savedDir))
+            // Wait for UI to be ready
+            await System.Threading.Tasks.Task.Yield();
+
+            // 4. UI Sync (Using SetTextWithoutNotify to be extra safe)
+            if (svnUI != null)
             {
-                // To wywo³a RefreshRepositoryInfo i UpdateBranchInfo w Managerze
-                await svnManager.SetWorkingDirectory(savedDir);
+                // Settings Panel
+                if (svnUI.SettingsWorkingDirInput != null) svnUI.SettingsWorkingDirInput.SetTextWithoutNotify(savedDir);
+                if (svnUI.SettingsSshKeyPathInput != null) svnUI.SettingsSshKeyPathInput.SetTextWithoutNotify(savedKey);
+                if (svnUI.SettingsRepoUrlInput != null) svnUI.SettingsRepoUrlInput.SetTextWithoutNotify(savedUrl);
+                if (svnUI.SettingsMergeToolPathInput != null) svnUI.SettingsMergeToolPathInput.SetTextWithoutNotify(savedMerge);
+
+                // Checkout & Load Panels (These often cause the overwrite!)
+                if (svnUI.CheckoutRepoUrlInput != null) svnUI.CheckoutRepoUrlInput.SetTextWithoutNotify(savedUrl);
+                if (svnUI.CheckoutDestFolderInput != null) svnUI.CheckoutDestFolderInput.SetTextWithoutNotify(savedDir);
+                if (svnUI.CheckoutPrivateKeyInput != null) svnUI.CheckoutPrivateKeyInput.SetTextWithoutNotify(savedKey);
+
+                if (svnUI.LoadRepoUrlInput != null) svnUI.LoadRepoUrlInput.SetTextWithoutNotify(savedUrl);
+                if (svnUI.LoadDestFolderInput != null) svnUI.LoadDestFolderInput.SetTextWithoutNotify(savedDir);
+                if (svnUI.LoadPrivateKeyInput != null) svnUI.LoadPrivateKeyInput.SetTextWithoutNotify(savedKey);
             }
+
+            // 5. Operational Init
+            if (!string.IsNullOrEmpty(savedDir) && System.IO.Directory.Exists(savedDir))
+            {
+                await svnManager.SetWorkingDirectory(savedDir);
+                svnManager.RefreshStatus();
+            }
+
+            // 6. Unlock listeners
+            svnManager.IsProcessing = false;
+            Debug.Log("[SVN] Settings loaded and listeners unlocked.");
         }
 
         public async void SetupUnrealIgnore()
@@ -214,8 +259,7 @@ namespace SVN.Core
             // 4. Fill Merge Tool (This one is only in Settings)
             if (svnUI.SettingsMergeToolPathInput != null)
             {
-                string savedMerge = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-                svnUI.SettingsMergeToolPathInput.text = savedMerge;
+                svnUI.SettingsMergeToolPathInput.text = svnManager.MergeToolPath;
             }
         }
     }

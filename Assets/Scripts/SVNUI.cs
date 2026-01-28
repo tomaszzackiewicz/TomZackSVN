@@ -22,14 +22,14 @@ namespace SVN.Core
         [SerializeField] private TMP_InputField checkoutPrivateKeyInput;
         [Header("Branching & Tagging")]
         [SerializeField] private TMP_InputField mergeSourceInput;
-        [SerializeField] private TMP_InputField branchNameInput; // Nazwa np. "feature/new-ai" lub "tags/v1.0"
+        [SerializeField] private TMP_InputField branchNameInput;
         [SerializeField] private TMP_InputField branchCommitMsgInput;
         [SerializeField] private TMP_Dropdown typeSelector;
         [SerializeField] private TMP_Dropdown branchesDropdown;
         [SerializeField] private TMP_Dropdown tagsDropdown;
         [SerializeField] private TMP_Dropdown mergeBranchesDropdown;
         [Header("Status Info")]
-        [SerializeField] private TextMeshProUGUI branchInfoText; // Ma³y tekst na górze lub w rogu ekranu
+        [SerializeField] private TextMeshProUGUI branchInfoText;
         [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
         [Header("Commit")]
@@ -37,15 +37,15 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI commitTreeDisplay;
         [SerializeField] private TextMeshProUGUI commitStatsText;
         [Header("Loading Indicator")]
-        [SerializeField] private GameObject loadingOverlay; // Przeci¹gnij tutaj swój obiekt LoadingOverlay
+        [SerializeField] private GameObject loadingOverlay;
         [SerializeField] private TextMeshProUGUI treeDisplay;
         [SerializeField] private TextMeshProUGUI statsText;
         [SerializeField] private GameObject conflictGroup;
         [Header("Settings UI")]
         [SerializeField] private TMP_InputField settingsRepoUrlInput;
-        [SerializeField] private TMP_InputField settingsWorkingDirInput; // Pole w zak³adce Settings
+        [SerializeField] private TMP_InputField settingsWorkingDirInput;
         [SerializeField] private TMP_InputField settingsSshKeyPathInput;
-        [SerializeField] private TMP_InputField settingsMergeToolPathInput; // Œcie¿ka do .exe edytora
+        [SerializeField] private TMP_InputField settingsMergeToolPathInput;
         [Header("Terminal")]
         [SerializeField] private TMP_InputField terminalInputField;
         [SerializeField] private ScrollRect logScrollRect;
@@ -101,27 +101,7 @@ namespace SVN.Core
             Instance = this;
         }
 
-        public void RenderCommitList(List<CommitItemData> items)
-        {
-            if (LogText == null) return;
-
-            if (items.Count == 0)
-            {
-                LogText.text = "No changes to commit.";
-                return;
-            }
-
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            sb.AppendLine("<b>Files to be committed:</b>");
-
-            foreach (var item in items)
-            {
-                string color = item.Status == "M" ? "yellow" : (item.Status == "A" ? "green" : "white");
-                sb.AppendLine($"<color={color}>[{item.Status}]</color> {item.Path}");
-            }
-
-            LogText.text = sb.ToString();
-        }
+        
 
     }
 }

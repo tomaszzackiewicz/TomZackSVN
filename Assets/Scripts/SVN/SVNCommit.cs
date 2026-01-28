@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
-using UnityEngine;
+using static UnityEditor.Timeline.TimelinePlaybackControls;
 
 namespace SVN.Core
 {
@@ -18,7 +16,6 @@ namespace SVN.Core
             var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(svnManager.WorkingDir, false);
             var commitables = statusDict.Where(x => "MADC?".Contains(x.Value.status)).ToList();
 
-            // Loguj to do g³ównego okna logów
             svnUI.LogText.text += "<b>Current changes to send:</b>\n";
             foreach (var item in commitables)
             {
@@ -132,9 +129,31 @@ namespace SVN.Core
 
                 _items = commitables;
 
-                svnUI.RenderCommitList(_items);
+                RenderCommitList(_items);
             }
             finally { IsProcessing = false; }
+        }
+
+        public void RenderCommitList(List<CommitItemData> items)
+        {
+            if (svnUI.LogText == null) return;
+
+            if (items.Count == 0)
+            {
+                svnUI.LogText.text = "No changes to commit.";
+                return;
+            }
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.AppendLine("<b>Files to be committed:</b>");
+
+            foreach (var item in items)
+            {
+                string color = item.Status == "M" ? "yellow" : (item.Status == "A" ? "green" : "white");
+                sb.AppendLine($"<color={color}>[{item.Status}]</color> {item.Path}");
+            }
+
+            svnUI.LogText.text = sb.ToString();
         }
 
         public async void ExecuteCommit()
@@ -147,7 +166,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Pobieramy œcie¿ki tylko zaznaczonych plików
             string[] selectedPaths = _items
                 .Where(x => x.IsSelected)
                 .Select(x => x.Path)
@@ -160,11 +178,10 @@ namespace SVN.Core
 
             try
             {
-                // Wywo³anie komendy: svn commit -m "msg" path1 path2 ...
                 string result = await SvnRunner.RunAsync($"commit -m \"{message}\" {string.Join(" ", selectedPaths)}", svnManager.WorkingDir);
 
                 svnUI.LogText.text += $"<color=green>Commit successful!</color>\n{result}\n";
-                svnUI.CommitMessageInput.text = ""; // Czyœcimy pole po sukcesie
+                svnUI.CommitMessageInput.text = "";
                 RefreshCommitList();
             }
             catch (Exception ex)

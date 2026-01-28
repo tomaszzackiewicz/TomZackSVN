@@ -8,7 +8,6 @@ namespace SVN.Core
 {
     public class SVNUpdate : SVNBase
     {
-        // Zmienna do bezpiecznego przechowywania ostatniej linii z wątku tła
         private string _lastLiveLine = string.Empty;
         private bool _hasNewLine = false;
 
@@ -30,33 +29,26 @@ namespace SVN.Core
             _lastLiveLine = "Connecting to repository...";
             _hasNewLine = true;
 
-            // Uruchamiamy prostą pętlę monitorującą w tle, która odświeża UI
-            // (Zamiast Dispatchera, jeśli go nie masz)
             var uiUpdateTask = UpdateUILive();
 
             try
             {
                 Debug.Log($"[SVN] Starting update for: {targetPath}");
 
-                // Wykonujemy update
                 string output = await SvnRunner.RunLiveAsync(
                     "update --accept postpone",
                     targetPath,
                     (line) =>
                     {
-                        // Przechwytujemy linię z wątku tła
                         _lastLiveLine = line;
                         _hasNewLine = true;
                     }
                 );
 
-                // Zatrzymujemy odświeżanie live przed raportem końcowym
                 _hasNewLine = false;
 
-                // 1. Analiza końcowa - liczymy zmiany
                 int updatedCount = Regex.Matches(output, @"^[UGADR]\s", RegexOptions.Multiline).Count;
 
-                // 2. Pobieramy rewizję
                 string revision = svnManager.ParseRevision(output);
 
                 if (string.IsNullOrEmpty(revision) || revision == "Unknown")
@@ -65,7 +57,6 @@ namespace SVN.Core
                     revision = svnManager.ParseRevisionFromInfo(infoOutput);
                 }
 
-                // 3. Finalny raport w UI
                 if (svnUI.LogText != null)
                 {
                     string summary = "<b>[SVN UPDATE COMPLETED]</b>\n";
@@ -79,7 +70,6 @@ namespace SVN.Core
                     svnUI.LogText.text = summary;
                 }
 
-                // 4. Odświeżamy resztę systemu
                 svnManager.UpdateBranchInfo();
                 svnManager.RefreshStatus();
             }
@@ -96,19 +86,16 @@ namespace SVN.Core
             }
         }
 
-        // Pomocnicza metoda, która "pcha" tekst do UI na głównym wątku Unity
         private async Task UpdateUILive()
         {
             while (IsProcessing)
             {
                 if (_hasNewLine && svnUI.LogText != null)
                 {
-                    // Czyścimy log i pokazujemy tylko aktualnie przetwarzany plik
-                    // dzięki temu UI jest responsywne i czytelne
                     svnUI.LogText.text = $"<b>[SVN]</b> Updating: <color=orange>{_lastLiveLine}</color>";
                     _hasNewLine = false;
                 }
-                await Task.Yield(); // Czekaj na następną klatkę Unity
+                await Task.Yield();
             }
         }
     }

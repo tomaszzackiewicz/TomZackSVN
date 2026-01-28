@@ -96,7 +96,6 @@ namespace SVN.Core
         public void OpenTortoiseLog()
         {
             string root = svnManager.RepositoryUrl;
-            // Wywo³anie TortoiseSVN bezpoœrednio z komendy (jeœli u¿ytkownik ma go zainstalowanego)
             string args = $"/command:log /path:\"{root}\"";
             System.Diagnostics.Process.Start("TortoiseProc.exe", args);
         }

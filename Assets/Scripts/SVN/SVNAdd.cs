@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using UnityEngine;
 
 namespace SVN.Core
 {
@@ -113,8 +112,6 @@ namespace SVN.Core
             }
         }
 
-        // Wewnątrz klasy SVNAdd.cs
-
         public async Task<int> GetUnversionedCountAsync()
         {
             try
@@ -122,11 +119,9 @@ namespace SVN.Core
                 string root = svnManager.WorkingDir;
                 if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return 0;
 
-                // Pobieramy status (SVN sam odfiltruje ignorowane)
                 string output = await SvnRunner.RunAsync("status", root);
                 string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
 
-                // Liczymy tylko linie zaczynające się od '?'
                 return lines.Count(line => line.Length >= 1 && line[0] == '?');
             }
             catch (Exception)
@@ -134,23 +129,5 @@ namespace SVN.Core
                 return 0;
             }
         }
-
-        //private async void UpdateUnversionedWarning()
-        //{
-        //    if (svnUI.UnversionedWarningText == null) return;
-
-        //    int count = await SvnAdd.GetUnversionedCountAsync();
-
-        //    if (count > 0)
-        //    {
-        //        svnUI.UnversionedWarningText.text = $"<color=orange>Found {count} new items not in SVN!</color>";
-        //        if (svnUI.AutoAddButton != null) svnUI.AutoAddButton.gameObject.SetActive(true);
-        //    }
-        //    else
-        //    {
-        //        svnUI.UnversionedWarningText.text = ""; // Ukryj komunikat, jeśli wszystko jest OK
-        //        if (svnUI.AutoAddButton != null) svnUI.AutoAddButton.gameObject.SetActive(false);
-        //    }
-        //}
     }
 }

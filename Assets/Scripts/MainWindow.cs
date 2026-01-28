@@ -55,7 +55,7 @@ namespace SVN.Core
         {
             if (svnUI.LocksText != null)
             {
-                svnUI.LocksText.text = "";
+                svnUI.LocksText.text = string.Empty;
             }
         }
     }

@@ -13,52 +13,52 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            // 1. Pobranie œcie¿ki do edytora z Twojego InputFielda w Settings
+            // 1. Get the editor path from your Settings InputField
             string editorPath = svnUI.SettingsMergeToolPathInput.text;
 
             if (string.IsNullOrEmpty(editorPath) || !File.Exists(editorPath))
             {
-                svnUI.LogText.text += "<color=red>B³¹d:</color> Podaj poprawn¹ œcie¿kê do edytora (.exe) w Settings!\n";
+                svnUI.LogText.text += "<color=red>Error:</color> Provide a valid editor path (.exe) in Settings!\n";
                 return;
             }
 
-            // 2. Ustalenie folderu roboczego
+            // 2. Determine the working directory
             if (string.IsNullOrEmpty(svnManager.WorkingDir) || !Directory.Exists(svnManager.WorkingDir))
             {
-                svnUI.LogText.text += "<color=red>B³¹d:</color> Nieprawid³owy folder roboczy (Working Directory)!\n";
+                svnUI.LogText.text += "<color=red>Error:</color> Invalid Working Directory!\n";
                 return;
             }
 
             try
             {
-                // 3. Pobieramy aktualny status (zwraca krotki status i rozmiar)
+                // 3. Get the current status (returns status and size tuples)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(svnManager.WorkingDir, false);
 
-                // POPRAWKA: Sprawdzamy pole .status w krotce Value
-                // U¿ywamy Any() przed FirstOrDefault(), aby bezpieczniej obs³u¿yæ brak wyników
+                // FIX: Checking the .status field in the Value tuple
+                // Using Any() before FirstOrDefault() to safely handle missing results
                 var conflictEntry = statusDict.FirstOrDefault(x =>
                     !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("C"));
 
                 if (!string.IsNullOrEmpty(conflictEntry.Key))
                 {
-                    // Budujemy pe³n¹ œcie¿kê do pliku
+                    // Build the full file path
                     string fullFilePath = Path.Combine(svnManager.WorkingDir, conflictEntry.Key);
 
-                    svnUI.LogText.text += $"Otwieranie edytora dla: <color=cyan>{conflictEntry.Key}</color>...\n";
+                    svnUI.LogText.text += $"Opening editor for: <color=cyan>{conflictEntry.Key}</color>...\n";
 
-                    // 4. Uruchomienie zewnêtrznego procesu
+                    // 4. Start the external process
                     System.Diagnostics.Process.Start(editorPath, $"\"{fullFilePath}\"");
 
-                    svnUI.LogText.text += "<color=yellow>Instrukcja:</color> Napraw konflikt w edytorze, zapisz plik i kliknij <b>Mark as Resolved</b>.\n";
+                    svnUI.LogText.text += "<color=yellow>Instructions:</color> Fix the conflict in the editor, save the file, and click <b>Mark as Resolved</b>.\n";
                 }
                 else
                 {
-                    svnUI.LogText.text += "<color=yellow>Nie znaleziono plików w stanie konfliktu (C).</color>\n";
+                    svnUI.LogText.text += "<color=yellow>No files found in conflict state (C).</color>\n";
                 }
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>B³¹d otwierania edytora:</color> {ex.Message}\n";
+                svnUI.LogText.text += $"<color=red>Error opening editor:</color> {ex.Message}\n";
             }
         }
 
@@ -66,7 +66,7 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            // 1. Pobieramy œcie¿kê bezpoœrednio z Managera
+            // 1. Get the path directly from the Manager
             string root = svnManager.WorkingDir;
 
             if (string.IsNullOrEmpty(root))
@@ -88,10 +88,10 @@ namespace SVN.Core
                 if (svnUI.LogText != null)
                     svnUI.LogText.text = "Checking for conflicts to mark as resolved...\n";
 
-                // 2. Pobieramy aktualne statusy
+                // 2. Get current statuses
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
-                // 3. Szukamy plików ze statusem 'C' (Conflict)
+                // 3. Look for files with status 'C' (Conflict)
                 var conflictedPaths = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("C"))
                     .Select(x => x.Key)
@@ -102,12 +102,12 @@ namespace SVN.Core
                     if (svnUI.LogText != null)
                         svnUI.LogText.text += $"Marking {conflictedPaths.Length} items as resolved...\n";
 
-                    // 4. Budujemy argumenty komendy 'svn resolved'
-                    // U¿ywamy cudzys³owów dla ka¿dej œcie¿ki, aby obs³u¿yæ spacje
+                    // 4. Build arguments for the 'svn resolved' command
+                    // Use quotes for each path to handle spaces
                     string pathsJoined = "\"" + string.Join("\" \"", conflictedPaths) + "\"";
                     string args = $"resolved {pathsJoined}";
 
-                    // 5. Wywo³ujemy SvnRunner
+                    // 5. Call SvnRunner
                     await SvnRunner.RunAsync(args, root);
 
                     if (svnUI.LogText != null)
@@ -116,7 +116,7 @@ namespace SVN.Core
                         svnUI.LogText.text += "Local metadata cleaned. You can now commit.\n";
                     }
 
-                    // 6. Odœwie¿amy widok (ukryje to panel konfliktów i odœwie¿y drzewo)
+                    // 6. Refresh the view (this will hide the conflict panel and refresh the tree)
                     svnManager.RefreshStatus();
                 }
                 else
@@ -137,16 +137,16 @@ namespace SVN.Core
             }
         }
 
-        // --- ROZWI¥ZYWANIE KONFLIKTÓW ---
-        // Przyjmuje wersjê z serwera (nadpisuje Twoje zmiany)
+        // --- CONFLICT RESOLUTION ---
+        // Accepts the server version (overwrites your changes)
         public async void Button_ResolveTheirs()
         {
             if (IsProcessing) return;
 
-            // 1. Pobieramy œcie¿kê bezpoœrednio z managera (eliminacja b³êdu Input)
+            // 1. Get the path directly from the manager (eliminates Input error)
             string root = svnManager.WorkingDir;
 
-            // Podstawowe sprawdzenie œcie¿ki i referencji UI
+            // Basic path and UI reference check
             if (string.IsNullOrEmpty(root))
             {
                 Debug.LogWarning("[SVN] ResolveTheirs: Working directory is empty.");
@@ -166,10 +166,10 @@ namespace SVN.Core
 
             try
             {
-                // 2. Pobieramy statusy z repozytorium
+                // 2. Get statuses from the repository
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
-                // 3. Filtrujemy pliki w stanie konfliktu (status 'C')
+                // 3. Filter files in conflict state (status 'C')
                 var conflictedPaths = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("C"))
                     .Select(x => x.Key)
@@ -180,16 +180,16 @@ namespace SVN.Core
                     if (svnUI.LogText != null)
                         svnUI.LogText.text += $"Resolving {conflictedPaths.Length} items using <color=orange>theirs-full</color>...\n";
 
-                    // 4. Wywo³anie komendy SVN Resolve ze strategi¹ 'theirs-full' (false)
+                    // 4. Call SVN Resolve command with 'theirs-full' strategy (false)
                     await SvnRunner.ResolveAsync(root, conflictedPaths, false);
 
                     if (svnUI.LogText != null)
                     {
                         svnUI.LogText.text += "<color=green><b>Conflicts Resolved!</b></color>\n";
-                        svnUI.LogText.text += "<color=yellow>Remember:</color> You MUST <b>Commit</b>i te pliki teraz, aby zakoñczyæ proces.\n";
+                        svnUI.LogText.text += "<color=yellow>Remember:</color> You MUST <b>Commit</b> these files now to finish the process.\n";
                     }
 
-                    // 5. Automatyczne odœwie¿enie drzewa plików
+                    // 5. Automatic file tree refresh
                     svnManager.RefreshStatus();
                 }
                 else
@@ -214,10 +214,10 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            // 1. Pobieramy œcie¿kê bezpoœrednio z managera (eliminacja b³êdu Input)
+            // 1. Get the path directly from the manager (eliminates Input error)
             string root = svnManager.WorkingDir;
 
-            // Podstawowe sprawdzenie œcie¿ki i UI
+            // Basic path and UI check
             if (string.IsNullOrEmpty(root))
             {
                 Debug.LogWarning("[SVN] ResolveMine: Working directory is empty.");
@@ -237,10 +237,10 @@ namespace SVN.Core
 
             try
             {
-                // 2. Pobieramy statusy
+                // 2. Get statuses
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
-                // 3. Szukamy plików ze statusem 'C' (Conflict)
+                // 3. Look for files with status 'C' (Conflict)
                 var conflictedPaths = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("C"))
                     .Select(x => x.Key)
@@ -251,7 +251,7 @@ namespace SVN.Core
                     if (svnUI.LogText != null)
                         svnUI.LogText.text += $"Resolving {conflictedPaths.Length} conflicts using strategy: <color=cyan>mine-full</color>...\n";
 
-                    // 4. Wywo³anie SvnRunner.ResolveAsync (mine-full)
+                    // 4. Call SvnRunner.ResolveAsync (mine-full)
                     await SvnRunner.ResolveAsync(root, conflictedPaths, true);
 
                     if (svnUI.LogText != null)
@@ -260,7 +260,7 @@ namespace SVN.Core
                         svnUI.LogText.text += "<color=#AAAAAA>Your local changes preserved.</color>\n";
                     }
 
-                    // 5. Odœwie¿amy widok w managerze
+                    // 5. Refresh the manager view
                     svnManager.RefreshStatus();
                 }
                 else
@@ -281,5 +281,4 @@ namespace SVN.Core
             }
         }
     }
-
 }

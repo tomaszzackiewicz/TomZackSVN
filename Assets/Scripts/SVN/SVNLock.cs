@@ -99,20 +99,17 @@ namespace SVN.Core
             if (IsProcessing) return;
             IsProcessing = true;
 
-            // Czyœcimy widok i dajemy znaæ, ¿e pracujemy
             svnUI.LocksText.text = "<b><color=orange>Scanning Repository for Locks...</color></b>\n";
 
             try
             {
                 var locks = await GetDetailedLocks(svnManager.WorkingDir);
 
-                // Tutaj czyœcimy komunikat o skanowaniu, ¿eby pokazaæ wyniki
                 svnUI.LocksText.text = "<b><color=white>Active Repository Locks:</color></b>\n";
                 svnUI.LocksText.text += "----------------------------------\n";
 
                 if (locks == null || locks.Count == 0)
                 {
-                    // INFORMACJA O BRAKU BLOKAD
                     svnUI.LocksText.text += "<color=yellow>No active locks found in the repository.</color>\n";
                     svnUI.LocksText.text += "<size=80%>(Files are free to be locked and edited)</size>\n";
                 }
@@ -120,7 +117,6 @@ namespace SVN.Core
                 {
                     foreach (var lockItem in locks)
                     {
-                        // Sprawdzanie w³aœciciela (wymaga CurrentUserName w Managerze)
                         bool isMe = lockItem.Owner.Equals(svnManager.CurrentUserName, StringComparison.OrdinalIgnoreCase);
                         string color = isMe ? "#00FF00" : "#FF4444";
                         string prefix = isMe ? "[MY LOCK]" : "[LOCKED]";
@@ -144,24 +140,12 @@ namespace SVN.Core
             {
                 IsProcessing = false;
 
-                // Przewijamy Scroll View na sam¹ górê
                 if (svnUI.LogScrollRect != null)
                 {
                     Canvas.ForceUpdateCanvases();
                     svnUI.LogScrollRect.verticalNormalizedPosition = 1f;
                 }
             }
-        }
-
-        private string FormatSvnDate(string rawDate)
-        {
-            // SVN XML dates look like: 2026-01-22T15:30:00.000000Z
-            // Simple cleanup for readability
-            if (rawDate.Contains("T"))
-            {
-                return rawDate.Split('T')[0] + " " + rawDate.Split('T')[1].Substring(0, 5);
-            }
-            return rawDate;
         }
 
         public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath)
