@@ -5,3 +5,16 @@ TomZackSVN was created because there are currently no modern, free SVN clients t
 The application relies on the TortoiseSVN command‑line interface (CLI), so TortoiseSVN must be installed on the system. Additionally, OpenSSH needs to be added to the system’s environment variables, and users must generate SSH keys for authentication in order for the client to work correctly.
 
 You only need to download the project, open it in Unity, and build the Windows executable to start using the client.
+
+
+Third-Party Libraries
+
+This project utilizes the following open-source library to handle native file and folder dialogues:
+
+    Unity Standalone File Browser
+
+        Author: Gökhan Gökçe (gkngkc)
+
+        License: MIT
+
+        Description: Used for providing native Windows/Mac/Linux file selection interfaces within the SVN Client.

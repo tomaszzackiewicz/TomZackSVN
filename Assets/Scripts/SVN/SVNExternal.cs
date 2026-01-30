@@ -1,6 +1,6 @@
 using System;
 using UnityEngine;
-using System.Runtime.InteropServices;
+using SFB;
 
 namespace SVN.Core
 {
@@ -69,28 +69,65 @@ namespace SVN.Core
 
         public void BrowseLocalPath()
         {
-            //// W Standalone u¿ywamy System.Windows.Forms
-            //string selectedPath = "";
-            //using (var dialog = new System.Windows.Forms.FolderBrowserDialog())
-            //{
-            //    dialog.Description = "Select SVN Working Directory";
-            //    if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-            //    {
-            //        selectedPath = dialog.SelectedPath;
-            //    }
-            //}
+            string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select SVN Working Directory", "", false);
 
-            //if (!string.IsNullOrEmpty(selectedPath))
-            //{
-            //    selectedPath = selectedPath.Replace('\\', '/');
-            //    svnManager.WorkingDir = selectedPath;
+            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
+            {
+                string selectedPath = paths[0];
 
-            //    // Aktualizacja UI (opcjonalnie)
-            //    if (svnUI.WorkingDirInput != null) svnUI.WorkingDirInput.text = selectedPath;
+                selectedPath = selectedPath.Replace('\\', '/');
 
-            //    // Odœwie¿enie danych w Managerze
-            //    _ = svnManager.SetWorkingDirectory(selectedPath);
-            //}
+                svnManager.WorkingDir = selectedPath;
+
+                if (svnUI.LoadDestFolderInput != null)
+                    svnUI.LoadDestFolderInput.text = selectedPath;
+
+                _ = svnManager.SetWorkingDirectory(selectedPath);
+
+                Debug.Log($"Wybrano œcie¿kê SVN: {selectedPath}");
+            }
+            else
+            {
+                Debug.Log("Anulowano wybór folderu.");
+            }
+        }
+
+        public void BrowsePrivateKeyPath()
+        {
+            // 1. Define file filters
+            // Since keys often have no extension, we provide an "All Files" filter.
+            // Some systems still use .ppk or .key, so we include those for convenience.
+            var extensions = new[] {
+            new ExtensionFilter("All Files", "*"),
+            new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh")
+        };
+
+            // 2. Open File Dialog
+            // Parameters: Title, Starting Directory, Extension Filters, Multiselect
+            string[] paths = StandaloneFileBrowser.OpenFilePanel("Select Private Key File", "", extensions, false);
+
+            // 3. Validation
+            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
+            {
+                string selectedPath = paths[0].Replace('\\', '/');
+
+                // 4. Update Manager
+                // Adjust the field name 'PrivateKeyPath' to match your svnManager structure
+                svnManager.CurrentKey = selectedPath;
+
+                // 5. Update UI
+                // Adjust the field name 'PrivateKeyInput' to match your svnUI structure
+                if (svnUI.LoadPrivateKeyInput != null)
+                {
+                    svnUI.LoadPrivateKeyInput.text = selectedPath;
+                }
+
+                Debug.Log($"Private Key path set to: {selectedPath}");
+            }
+            else
+            {
+                Debug.Log("Private Key selection canceled by user.");
+            }
         }
 
         public void OpenTortoiseLog()

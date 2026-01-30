@@ -19,6 +19,7 @@ public class LoadPanel : MonoBehaviour
         svnManager.SVNLoad.UpdateUIFromManager();
     }
 
-    public void Button_Browse() => svnManager.SVNExternal.BrowseLocalPath();
+    public void Button_BrowseDestFolder() => svnManager.SVNExternal.BrowseLocalPath();
+    public void Button_BrowsePrivateKey() => svnManager.SVNExternal.BrowsePrivateKeyPath();
     public void Button_LoadRepo() => svnManager.SVNLoad.LoadRepoPathAndRefresh();
 }
