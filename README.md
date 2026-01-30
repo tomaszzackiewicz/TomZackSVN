@@ -7,6 +7,14 @@ The application relies on the TortoiseSVN command‑line interface (CLI), so Tor
 You only need to download the project, open it in Unity, and build the Windows executable to start using the client.
 
 
+Installation Checklist for Using the Application:
+
+- Install TortoiseSVN (make sure to select Command Line Tools) or SlikSVN (which includes only CLI tools for Windows). 
+- Verify that the OpenSSH Client is enabled in Windows Features and that its path is included in the Windows environment variables.
+- Generate SSH keys (the application requires a private key for authentication). 
+- Ensure you have write permissions for the folder you choose as your Working Directory. 
+
+
 Third-Party Libraries
 
 This project utilizes the following open-source library to handle native file and folder dialogues:

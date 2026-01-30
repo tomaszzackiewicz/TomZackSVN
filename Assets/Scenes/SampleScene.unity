@@ -3990,7 +3990,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1911977654}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.48815128
+  m_Size: 0.47857353
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -8891,9 +8891,9 @@ RectTransform:
   m_Father: {fileID: 1292663642}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 1, y: 1}
+  m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: -17, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &555299651
 MonoBehaviour:
@@ -15058,7 +15058,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &1016106614
 RectTransform:
   m_ObjectHideFlags: 0
@@ -18921,9 +18921,9 @@ RectTransform:
   - {fileID: 210136150}
   m_Father: {fileID: 1417358465}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 960, y: -513.8664}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 1821.6267, y: 1009.8141}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1292663643
@@ -21281,9 +21281,9 @@ RectTransform:
   - {fileID: 1292663642}
   m_Father: {fileID: 1016106614}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 960.00006, y: -565}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 1920, y: 1027.7328}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1417358466
@@ -23761,7 +23761,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 1058.8358}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1662562891
 MonoBehaviour:
@@ -23800,13 +23800,13 @@ MonoBehaviour:
   m_text: "\nTomZackSVN ver. 1.0\n\nInstallation Checklist for Using the Application:\n\r\nInstall
     TortoiseSVN (make sure to select Command Line Tools) or SlikSVN (which includes
     only CLI tools for Windows). \r\nVerify that the OpenSSH Client is enabled in
-    your Windows system features. \r\nGenerate SSH keys (the application requires
-    a private key for authentication). \r\nEnsure you have write permissions for
-    the folder you choose as your Working Directory. \n\r\nSVN CLIENT - QUICK HELP
-    GUIDE\r\n1. CORE OPERATIONS (Daily Workflow)\r\n    \u2022 Update: Downloads
-    the latest changes from the server to your local computer.\r\n        \u25E6
-    When to use: Every morning before starting work and before you commit your own
-    changes.\r\n    \u2022 Commit: Uploads your local changes to the server.\r\n       
+    Windows Features and that its path is included in the Windows environment variables.\r\nGenerate
+    SSH keys (the application requires a private key for authentication). \r\nEnsure
+    you have write permissions for the folder you choose as your Working Directory.
+    \n\r\nSVN CLIENT - QUICK HELP GUIDE\r\n1. CORE OPERATIONS (Daily Workflow)\r\n   
+    \u2022 Update: Downloads the latest changes from the server to your local computer.\r\n       
+    \u25E6 When to use: Every morning before starting work and before you commit
+    your own changes.\r\n    \u2022 Commit: Uploads your local changes to the server.\r\n       
     \u25E6 When to use: When you have finished a task and want to share your progress
     with the team.\r\n    \u2022 Refresh Status: Checks the current state of your
     files.\r\n        \u25E6 ? (Unversioned): New file, not yet in SVN.\r\n       
@@ -29119,8 +29119,8 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1657918751}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.5118487}
-  m_AnchorMax: {x: 1, y: 1}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -31001,7 +31001,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMin.x
@@ -31009,7 +31009,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_SizeDelta.x
@@ -31049,11 +31049,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 960
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -25
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -31073,11 +31073,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2776955487470277373, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2776955487470277373, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2776955487470277373, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_SizeDelta.x
@@ -31085,35 +31085,35 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2776955487470277373, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 300.7536
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 2776955487470277373, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -25
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3630292181935682570, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3630292181935682570, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3630292181935682570, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 958.89166
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3630292181935682570, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -25
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3711847270542635936, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3711847270542635936, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3711847270542635936, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_SizeDelta.x
@@ -31121,27 +31121,27 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3711847270542635936, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1590.7537
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3711847270542635936, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -25
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3939994985998483358, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3939994985998483358, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3939994985998483358, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1912.6155
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3939994985998483358, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -25
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4166240329750315535, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
