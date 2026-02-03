@@ -31,6 +31,7 @@ namespace SVN.Core
 
             try
             {
+                // Pobieramy s³ownik (upewnij siê, ¿e SvnRunner.GetFullStatusDictionaryAsync obs³uguje status '!')
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, true);
 
                 long totalBytes = 0;
@@ -38,16 +39,25 @@ namespace SVN.Core
                 if (!normalizedRoot.EndsWith("/")) normalizedRoot += "/";
 
                 svnManager.ExpandedPaths.Clear();
-                svnManager.ExpandedPaths.Add("");
+                svnManager.ExpandedPaths.Add(""); // Root zawsze rozwiniêty
 
                 foreach (var item in statusDict)
                 {
                     string path = item.Key;
                     string stat = item.Value.status;
 
-                    bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : (!string.IsNullOrEmpty(stat) && stat != "I");
-                    if (shouldExpand) AddParentFoldersToExpanded(path);
+                    // --- POPRAWKA 1: Rozwijanie folderów dla usuniêtych plików ---
+                    // Dodajemy "!" (Missing) oraz "D" (Deleted) do warunku rozwijania drzewa
+                    bool isChange = !string.IsNullOrEmpty(stat) && (stat == "M" || stat == "A" || stat == "?" || stat == "C" || stat == "!" || stat == "D");
 
+                    bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : isChange;
+
+                    if (shouldExpand)
+                        AddParentFoldersToExpanded(path);
+
+                    // --- POPRAWKA 2: Bezpieczne liczenie rozmiaru ---
+                    // Liczymy rozmiar tylko dla plików, które FIZYCZNIE s¹ na dysku (M, A, ?, C)
+                    // Pomijamy "!" i "D", bo File.Exists zwróci false
                     if (!_isCurrentViewIgnored && !string.IsNullOrEmpty(stat) && "MA?C".Contains(stat))
                     {
                         string fullPath = System.IO.Path.GetFullPath(normalizedRoot + path);
@@ -61,14 +71,19 @@ namespace SVN.Core
                 string sizeStr = FormatBytes(totalBytes);
                 svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {sizeStr}</color>\n";
 
+                // 3. Pobranie wizualnego drzewa (wynik tej metody zale¿y od Twojego BuildTreeString)
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
+
                 svnUI.TreeDisplay.text = result.tree;
                 svnUI.CommitTreeDisplay.text = result.tree;
-                svnManager.UpdateAllStatisticsUI(result.stats, false);
+
+                // Wa¿ne: Przekazujemy stats do UI
+                svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
             }
             catch (Exception ex)
             {
                 svnUI.LogText.text += $"<color=red>Error:</color> {ex.Message}\n";
+                Debug.LogError($"[SVN] Refresh Error: {ex}");
             }
             finally { IsProcessing = false; }
         }
@@ -163,6 +178,16 @@ namespace SVN.Core
         public void RefreshView()
         {
             ExecuteRefreshWithAutoExpand();
+        }
+
+        public void ClearUI()
+        {
+            if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "<i>No changes found.</i>";
+            if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "";
+            if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "<color=yellow>Total Size: 0 B</color>";
+
+            svnManager.ExpandedPaths.Clear();
+            svnManager.ExpandedPaths.Add("");
         }
     }
 }

@@ -275,10 +275,25 @@ namespace SVN.Core
 
         public static async Task<string> CommitAsync(string workingDir, string[] paths, string message)
         {
-            string pathsArg = (paths != null && paths.Length > 0 && paths[0] == ".") ? "." : "";
-            if (string.IsNullOrEmpty(pathsArg) && paths != null)
-                pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
+            string pathsArg;
 
+            // Check if we are committing the whole directory
+            if (paths != null && paths.Length > 0 && paths[0] == ".")
+            {
+                pathsArg = ".";
+            }
+            else if (paths != null && paths.Length > 0)
+            {
+                // Quote each individual file path
+                pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
+            }
+            else
+            {
+                // Default to current directory if no paths provided
+                pathsArg = ".";
+            }
+
+            // Wrap message in quotes to handle spaces in commit messages
             string cmd = $"commit -m \"{message}\" {pathsArg}";
             return await RunAsync(cmd, workingDir);
         }
@@ -459,41 +474,101 @@ namespace SVN.Core
             return await RunAsync("info", workingDir);
         }
 
-        // --- IMPROVED RECURSIVE FUNCTION ---
         private static void BuildTreeString(
-        string currentDir,
-        string rootDir,
-        int indent,
-        Dictionary<string, (string status, string size)> statusDict, // Corrected type
-        StringBuilder sb,
-        SvnStats stats,
-        HashSet<string> expandedPaths,
-        bool[] parentIsLast,
-        bool showIgnored,
-        HashSet<string> foldersWithRelevantContent)
+    string currentDir,
+    string rootDir,
+    int indent,
+    Dictionary<string, (string status, string size)> statusDict,
+    StringBuilder sb,
+    SvnStats stats,
+    HashSet<string> expandedPaths,
+    bool[] parentIsLast,
+    bool showIgnored,
+    HashSet<string> foldersWithRelevantContent)
         {
-            string[] entries;
-            try { entries = Directory.GetFileSystemEntries(currentDir); }
-            catch { return; }
+            // 1. Standaryzacja ścieżek
+            string normRootDir = rootDir.Replace('\\', '/').TrimEnd('/');
+            string normCurrentDir = currentDir.Replace('\\', '/').TrimEnd('/');
 
-            var sortedEntries = entries
-                .Select(e => e.Replace('\\', '/'))
-                .OrderBy(e => !Directory.Exists(e))
+            // Obliczamy relatywną ścieżkę obecnego folderu (pusta dla Root)
+            string currentRelDir = "";
+            if (normCurrentDir.Length > normRootDir.Length)
+            {
+                currentRelDir = normCurrentDir.Substring(normRootDir.Length).TrimStart('/').Replace('\\', '/');
+            }
+
+            // 2. ZBIERANIE ELEMENTÓW (Łączymy Fizyczne i SVN w jedną listę)
+            HashSet<string> combinedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // A. Dodaj elementy fizyczne (np. New Text Document (7).txt)
+            if (Directory.Exists(normCurrentDir))
+            {
+                try
+                {
+                    foreach (var fsEntry in Directory.GetFileSystemEntries(normCurrentDir))
+                    {
+                        string cleanFsEntry = fsEntry.Replace('\\', '/');
+                        combinedEntries.Add(cleanFsEntry);
+                    }
+                }
+                catch { }
+            }
+
+            // B. Dodaj "Duchy" (Pliki usunięte/nieobecne fizycznie)
+            foreach (var kvp in statusDict)
+            {
+                string svnPath = kvp.Key.Replace('\\', '/').Trim('/');
+
+                // Wyliczamy rodzica dla wpisu ze słownika
+                int lastSlash = svnPath.LastIndexOf('/');
+                string svnParent = (lastSlash == -1) ? "" : svnPath.Substring(0, lastSlash);
+
+                // Jeśli rodzic ze słownika to nasz obecny folder, dodaj go jako pełną ścieżkę
+                if (string.Equals(svnParent, currentRelDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    string fullPath = $"{normRootDir}/{svnPath}";
+                    combinedEntries.Add(fullPath);
+                }
+            }
+
+            // C. Dodaj wirtualne foldery (ścieżki do zmian)
+            foreach (var fPath in foldersWithRelevantContent)
+            {
+                string f = fPath.Replace('\\', '/').Trim('/');
+                int lastSlash = f.LastIndexOf('/');
+                string fParent = (lastSlash == -1) ? "" : f.Substring(0, lastSlash);
+
+                if (string.Equals(fParent, currentRelDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    string fullPath = $"{normRootDir}/{f}";
+                    combinedEntries.Add(fullPath);
+                }
+            }
+
+            // 3. SORTOWANIE (Katalogi zawsze na górę)
+            var allEntries = combinedEntries
+                .OrderBy(e => {
+                    string rP = e.Length > normRootDir.Length ? e.Substring(normRootDir.Length).TrimStart('/') : "";
+                    bool isDir = Directory.Exists(e) || foldersWithRelevantContent.Contains(rP) || string.IsNullOrEmpty(Path.GetExtension(e));
+                    return !isDir;
+                })
                 .ThenBy(e => e)
                 .ToArray();
 
-            for (int i = 0; i < sortedEntries.Length; i++)
+            // 4. PĘTLA RYSUJĄCA
+            for (int i = 0; i < allEntries.Length; i++)
             {
-                string entry = sortedEntries[i];
+                string entry = allEntries[i];
                 string name = Path.GetFileName(entry);
+                if (string.IsNullOrEmpty(name) || name == ".svn" || name.EndsWith(".meta")) continue;
 
-                if (name == ".svn" || name.EndsWith(".meta")) continue;
+                // BARDZO WAŻNE: Klucz relatywny musi być identyczny jak w logu [FINAL KEY]
+                string relPath = entry.Length > normRootDir.Length
+                    ? entry.Substring(normRootDir.Length).TrimStart('/')
+                    : "";
 
-                bool isLast = (i == sortedEntries.Length - 1);
-                bool isDirectory = Directory.Exists(entry);
-                string relPath = entry.Replace(rootDir.Replace('\\', '/'), "").TrimStart('/');
+                relPath = relPath.Replace('\\', '/');
 
-                // --- FIX HERE: Retrieve tuple and decompose it ---
                 string status = "";
                 string sizeDisplay = "";
                 if (statusDict.TryGetValue(relPath, out var statusTuple))
@@ -502,66 +577,58 @@ namespace SVN.Core
                     sizeDisplay = statusTuple.size;
                 }
 
-                if (showIgnored)
-                {
-                    if (status != "I" && !foldersWithRelevantContent.Contains(relPath)) continue;
-                    if (isDirectory && status != "I") status = "I";
-                }
-                else // Modified Mode
-                {
-                    if (status == "I") continue; // Hide ignored
+                bool isDirectory = Directory.Exists(entry) || foldersWithRelevantContent.Contains(relPath) ||
+                                  (string.IsNullOrEmpty(Path.GetExtension(name)) && (status == "!" || status == "D"));
+                bool isLast = (i == allEntries.Length - 1);
 
+                // --- FILTROWANIE ---
+                if (!showIgnored)
+                {
+                    if (status == "I") continue;
                     if (isDirectory)
                     {
-                        bool hasChanges = foldersWithRelevantContent.Contains(relPath);
-                        bool isExpanded = expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath);
-
-                        // Show folder ONLY if it has a status, leads to changes, or is expanded
-                        if (string.IsNullOrEmpty(status) && !hasChanges && !isExpanded) continue;
-
-                        // If folder itself has no status but contains changes inside, mark it as [M]
-                        if (string.IsNullOrEmpty(status) && hasChanges) status = "M";
+                        if (string.IsNullOrEmpty(status) && !foldersWithRelevantContent.Contains(relPath) && !expandedPaths.Contains(relPath))
+                            continue;
                     }
-                    else
-                    {
-                        // FILE: Show only if it has any status (M, A, ?, !, C)
-                        if (string.IsNullOrEmpty(status)) continue;
-                    }
+                    else if (string.IsNullOrEmpty(status)) continue;
                 }
 
-                // Statistics
-                if (isDirectory) stats.FolderCount++;
-                else
+                // --- STATYSTYKI ---
+                if (!isDirectory)
                 {
-                    if (status == "I") stats.IgnoredCount++;
-                    else
+                    if (status != "" && status != "I")
                     {
                         stats.FileCount++;
                         if (status == "M") stats.ModifiedCount++;
-                        if (status == "A" || status == "?") stats.NewFilesCount++;
-                        if (status == "C") stats.ConflictsCount++;
-                        if (status == "!") stats.FileCount++;
+                        else if (status == "A" || status == "?") stats.NewFilesCount++;
+                        else if (status == "C") stats.ConflictsCount++;
+                        else if (status == "!" || status == "D") stats.DeletedCount++;
                     }
                 }
+                else
+                {
+                    stats.FolderCount++;
+                    if (status == "!" || status == "D") stats.DeletedCount++;
+                }
 
-                // Drawing
-                StringBuilder indentBuilder = new StringBuilder();
+                // --- RYSOWANIE ---
+                StringBuilder indentStr = new StringBuilder();
                 for (int j = 0; j < indent - 1; j++)
-                    indentBuilder.Append(parentIsLast[j] ? "    " : "│   ");
+                    indentStr.Append(parentIsLast[j] ? "    " : "│   ");
 
                 if (indent > 0)
-                    indentBuilder.Append(isLast ? "└── " : "├── ");
+                    indentStr.Append(isLast ? "└── " : "├── ");
 
                 string expandIcon = isDirectory ? (expandedPaths.Contains(relPath) ? "[-] " : "[+] ") : "    ";
                 string statusIcon = GetStatusIcon(status);
                 string typeTag = isDirectory ? "<color=#FFCA28><b><D></b></color>" : "<color=#4FC3F7><F></color>";
+                string displayName = (status == "!" || status == "D") ? $"<color=#FF4444>{name}</color>" : name;
+                string sizeStr = (!isDirectory && !string.IsNullOrEmpty(sizeDisplay)) ? $" <color=#555555>({sizeDisplay})</color>" : "";
 
-                // Use pre-calculated size from dictionary
-                string sizeInfo = !isDirectory && !string.IsNullOrEmpty(sizeDisplay) ? $" <color=#555555>.... ({sizeDisplay})</color>" : "";
+                sb.AppendLine($"{indentStr}{statusIcon} {expandIcon}{typeTag} {displayName}{sizeStr}");
 
-                sb.AppendLine($"{indentBuilder}{statusIcon} {expandIcon}{typeTag} {name}{sizeInfo}");
-
-                if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath)))
+                // --- REKURENCJA ---
+                if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath) || foldersWithRelevantContent.Contains(relPath)))
                 {
                     if (indent < parentIsLast.Length) parentIsLast[indent] = isLast;
                     BuildTreeString(entry, rootDir, indent + 1, statusDict, sb, stats, expandedPaths, parentIsLast, showIgnored, foldersWithRelevantContent);
@@ -640,7 +707,6 @@ namespace SVN.Core
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(string workingDir, bool includeIgnored = true)
         {
-            // Always use --no-ignore to see everything
             string output = await RunAsync("status --no-ignore", workingDir);
             var statusDict = new Dictionary<string, (string status, string size)>();
 
@@ -649,28 +715,41 @@ namespace SVN.Core
             string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var line in lines)
             {
-                if (line.Length >= 8)
+                if (line.Length < 8) continue;
+
+                char rawCode = line[0];
+                string stat = rawCode.ToString().ToUpper();
+                string rawPath = line.Substring(8).Trim().Replace('\\', '/');
+
+                // --- AGRESYWNE CZYSZCZENIE ŚCIEŻKI ---
+                string cleanPath = rawPath;
+
+                // Jeśli ścieżka zawiera "trunk/", "branches/", itd. - usuwamy to.
+                // Szukamy gdzie zaczyna się faktyczna treść projektu (zazwyczaj Content lub Assets)
+                if (rawPath.Contains("/"))
                 {
-                    // SVN status has the code at the 1st position (index 0)
-                    char rawCode = line[0];
-                    string path = line.Substring(8).Trim().Replace('\\', '/');
-                    string fullPath = Path.Combine(workingDir, path);
-
-                    // Standardize status code
-                    string stat = rawCode.ToString().ToUpper();
-
-                    // LOGIC:
-                    // If looking for ignored (I)
-                    if (includeIgnored && stat == "I")
+                    // Jeśli Twoje drzewo w Unity/Unreal zaczyna się od Content, 
+                    // a SVN zwraca trunk/Content, to tniemy wszystko przed Content.
+                    int contentIndex = rawPath.IndexOf("Content/", StringComparison.OrdinalIgnoreCase);
+                    if (contentIndex != -1)
                     {
-                        statusDict[path] = ("I", GetFileSizeSafe(fullPath));
+                        cleanPath = rawPath.Substring(contentIndex);
                     }
-                    // If looking for changes (M, A, ?, !, C, D)
-                    else if (stat != " " && stat != "I" && stat != "X")
+                    else
                     {
-                        // SVN sometimes returns '?' for new files - ensure we catch it
-                        statusDict[path] = (stat, GetFileSizeSafe(fullPath));
+                        // Jeśli nie ma Content, tniemy po prostu pierwszy człon (np. "trunk/")
+                        int firstSlash = rawPath.IndexOf('/');
+                        cleanPath = rawPath.Substring(firstSlash + 1);
                     }
+                }
+
+                bool isRelevant = "MA?!DC".Contains(stat) || (includeIgnored && stat == "I");
+
+                if (isRelevant)
+                {
+                    // Ten log MUSI pokazać: "Content/ScreenSelector1.uasset" (bez trunk/)
+                    UnityEngine.Debug.Log($"<color=cyan>[FINAL KEY]: {cleanPath}</color>");
+                    statusDict[cleanPath] = (stat, GetFileSizeSafe(Path.Combine(workingDir, cleanPath)));
                 }
             }
             return statusDict;
@@ -678,13 +757,18 @@ namespace SVN.Core
 
         private static string GetFileSizeSafe(string fullPath)
         {
-            if (Directory.Exists(fullPath)) return "";
+            // Jeśli to katalog lub plik nie istnieje (bo został usunięty), nie rzucamy błędem
+            if (Directory.Exists(fullPath) || !File.Exists(fullPath)) return "";
+
             try
             {
-                long bytes = new FileInfo(fullPath).Length;
-                return FormatBytes(bytes);
+                FileInfo fi = new FileInfo(fullPath);
+                return FormatBytes(fi.Length);
             }
-            catch { return "err"; }
+            catch
+            {
+                return ""; // Zwracamy pusty string zamiast "err", żeby nie psuć widoku w UI
+            }
         }
 
         public static async Task<string> AddWithMetasAsync(string workingDir, string[] files)

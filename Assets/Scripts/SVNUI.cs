@@ -36,6 +36,8 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI commitSizeText;
         [SerializeField] private TextMeshProUGUI commitTreeDisplay;
         [SerializeField] private TextMeshProUGUI commitStatsText;
+        [SerializeField] private TextMeshProUGUI commitConsoleContent;
+        [SerializeField] private Slider operationProgressBar;
         [Header("Loading Indicator")]
         [SerializeField] private GameObject loadingOverlay;
         [SerializeField] private TextMeshProUGUI treeDisplay;
@@ -84,6 +86,8 @@ namespace SVN.Core
         }
         public TextMeshProUGUI StatsText => statsText;
         public TextMeshProUGUI CommitStatsText => commitStatsText;
+        public TextMeshProUGUI CommitConsoleContent => commitConsoleContent;
+        public Slider OperationProgressBar => operationProgressBar;
         public GameObject ConflictGroup => conflictGroup;
         public TMP_InputField SettingsRepoUrlInput => settingsRepoUrlInput;
         public TMP_InputField SettingsWorkingDirInput => settingsWorkingDirInput;

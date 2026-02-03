@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -225,6 +226,14 @@ namespace SVN.Core
                 await Task.Delay(300);
                 RefreshStatus();
             }
+
+            StartCoroutine(Initialize_Coroutine());
+        }
+
+        IEnumerator Initialize_Coroutine()
+        {
+            yield return new WaitForSeconds(5.0f);
+            SVNStatus.ShowOnlyModified();
         }
 
         public void BroadcastWorkingDirChange(string newPath)
@@ -358,20 +367,20 @@ namespace SVN.Core
             {
                 bool svnOk = await SvnRunner.CheckIfSvnInstalled();
                 svnUI.LogText.text += svnOk
-                    ? "<color=green>✔ SVN CLI:</color> Found\n"
-                    : "<color=red>✘ SVN CLI:</color> Missing (Add to PATH!)\n";
+                    ? "<color=green>SVN CLI:</color> Found\n"
+                    : "<color=red>SVN CLI:</color> Missing (Add to PATH!)\n";
 
                 bool sshOk = await SvnRunner.CheckIfSshInstalled();
                 svnUI.LogText.text += sshOk
-                    ? "<color=green>✔ OpenSSH:</color> Found\n"
-                    : "<color=red>✘ OpenSSH:</color> Missing!\n";
+                    ? "<color=green>OpenSSH:</color> Found\n"
+                    : "<color=red>OpenSSH:</color> Missing!\n";
 
                 if (!string.IsNullOrEmpty(CurrentKey))
                 {
                     bool keyExists = System.IO.File.Exists(CurrentKey);
                     svnUI.LogText.text += keyExists
-                        ? "<color=green>✔ SSH Key:</color> File verified\n"
-                        : "<color=orange>⚠ SSH Key:</color> Path set but file not found!\n";
+                        ? "<color=green>SSH Key:</color> File verified\n"
+                        : "<color=orange>SSH Key:</color> Path set but file not found!\n";
                 }
 
                 svnUI.LogText.text += "-----------------------------------\n";
@@ -398,7 +407,7 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
             {
                 if (svnUI.LogText != null)
-                    svnUI.LogText.text = "<color=red>Error:</color> Valid working directory not found. Please set it in settings.";
+                    svnUI.LogText.text = "<color=red>Error:</color> Valid working directory not found.";
                 return;
             }
 
@@ -407,29 +416,40 @@ namespace SVN.Core
 
             try
             {
+                // 1. Dodajemy mały delay, aby uniknąć nakładania się operacji dyskowych (opcjonalne)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
                 CurrentStatusDict = statusDict;
 
-                bool hasConflicts = statusDict.Values.Any(v => v.status.Contains("C"));
-                if (panelHandler && hasConflicts)
+                // 2. POPRAWKA: Bezpieczne sprawdzanie konfliktów (dodane null-check dla v.status)
+                bool hasConflicts = statusDict != null && statusDict.Values.Any(v => !string.IsNullOrEmpty(v.status) && v.status.Contains("C"));
+
+                if (panelHandler != null && hasConflicts)
                 {
                     panelHandler.Button_OpenResolve();
                 }
 
                 var stats = new SvnStats();
                 var sb = new StringBuilder();
-                HashSet<string> relevantFolders = MapRelevantFolders(statusDict);
 
-                BuildTreeString(root, root, 0, statusDict, sb, stats, expandedPaths, new bool[64], false, relevantFolders);
+                // 3. POPRAWKA: Sprawdzamy czy statusDict nie jest pusty przed mapowaniem
+                HashSet<string> relevantFolders = (statusDict != null) ? MapRelevantFolders(statusDict) : new HashSet<string>();
+
+                // 4. Budowanie drzewa - dodajemy reset sb na wszelki wypadek
+                BuildTreeString(root, root, 0, statusDict, sb, stats, expandedPaths, new bool[128], false, relevantFolders);
 
                 if (svnUI.TreeDisplay != null)
-                    svnUI.TreeDisplay.text = sb.ToString();
+                {
+                    string finalTree = sb.ToString();
+                    svnUI.TreeDisplay.text = string.IsNullOrEmpty(finalTree) ? "<i>Working copy clean (no changes).</i>" : finalTree;
+                }
+
+                UpdateAllStatisticsUI(stats, false);
 
                 if (svnUI.LogText != null)
                 {
-                    string conflictAlert = hasConflicts ? " <color=red><b>(CONFLICTS!)</b></color>" : "";
+                    string conflictAlert = hasConflicts ? " <color=red><b>(CONFLICTS DETECTED!)</b></color>" : "";
                     svnUI.LogText.text = $"Last Refresh: {DateTime.Now:HH:mm:ss}\n" +
-                                         $"Modified: {stats.ModifiedCount} | Conflicts: {stats.ConflictsCount}{conflictAlert}";
+                                         $"Modified: {stats.ModifiedCount} | Deleted/Missing: {stats.DeletedCount}{conflictAlert}";
                 }
             }
             catch (Exception ex)
@@ -475,37 +495,54 @@ namespace SVN.Core
         }
 
         private void BuildTreeString(
-        string currentDir,
-        string rootDir,
-        int indent,
-        Dictionary<string, (string status, string size)> statusDict,
-        StringBuilder sb,
-        SvnStats stats,
-        HashSet<string> expandedPaths,
-        bool[] parentIsLast,
-        bool showIgnored,
-        HashSet<string> foldersWithRelevantContent)
+    string currentDir,
+    string rootDir,
+    int indent,
+    Dictionary<string, (string status, string size)> statusDict,
+    StringBuilder sb,
+    SvnStats stats,
+    HashSet<string> expandedPaths,
+    bool[] parentIsLast,
+    bool showIgnored,
+    HashSet<string> foldersWithRelevantContent)
         {
-            string[] entries;
-            try { entries = Directory.GetFileSystemEntries(currentDir); }
-            catch { return; }
+            string normCurrentDir = currentDir.Replace('\\', '/').TrimEnd('/');
+            string normRootDir = rootDir.Replace('\\', '/').TrimEnd('/');
+            string currentRelDir = normCurrentDir.Replace(normRootDir, "").TrimStart('/');
 
-            var sortedEntries = entries
+            List<string> physicalEntries = new List<string>();
+            if (Directory.Exists(normCurrentDir))
+            {
+                try { physicalEntries.AddRange(Directory.GetFileSystemEntries(normCurrentDir)); }
+                catch { }
+            }
+
+            var missingInSvn = statusDict
+                .Where(kvp => kvp.Value.status == "!" || kvp.Value.status == "D")
+                .Where(kvp => {
+                    string svnPath = kvp.Key.Replace('\\', '/');
+                    int lastSlash = svnPath.LastIndexOf('/');
+                    string svnParent = lastSlash == -1 ? "" : svnPath.Substring(0, lastSlash);
+                    return string.Equals(svnParent, currentRelDir, StringComparison.OrdinalIgnoreCase);
+                })
+                .Select(kvp => Path.Combine(normRootDir, kvp.Key).Replace('\\', '/'))
+                .ToList();
+
+            var allEntries = physicalEntries
                 .Select(e => e.Replace('\\', '/'))
-                .OrderBy(e => !Directory.Exists(e))
+                .Union(missingInSvn)
+                .Distinct()
+                .OrderBy(e => !Directory.Exists(e) && !statusDict.ContainsKey(e.Replace(normRootDir, "").TrimStart('/')))
                 .ThenBy(e => e)
                 .ToArray();
 
-            for (int i = 0; i < sortedEntries.Length; i++)
+            for (int i = 0; i < allEntries.Length; i++)
             {
-                string entry = sortedEntries[i];
+                string entry = allEntries[i];
                 string name = Path.GetFileName(entry);
-
                 if (name == ".svn" || name.EndsWith(".meta")) continue;
 
-                bool isLast = (i == sortedEntries.Length - 1);
-                bool isDirectory = Directory.Exists(entry);
-                string relPath = entry.Replace(rootDir.Replace('\\', '/'), "").TrimStart('/');
+                string relPath = entry.Replace(normRootDir, "").TrimStart('/');
 
                 string status = "";
                 string sizeInfo = "";
@@ -515,53 +552,48 @@ namespace SVN.Core
                     sizeInfo = statusData.size;
                 }
 
-                if (showIgnored)
-                {
-                    if (status != "I" && !foldersWithRelevantContent.Contains(relPath)) continue;
-                    if (isDirectory && status != "I") status = "I";
-                }
-                else
+                bool isMissing = (status == "!");
+                bool isDeleted = (status == "D");
+                bool isDirectory = Directory.Exists(entry) || ((isMissing || isDeleted) && string.IsNullOrEmpty(Path.GetExtension(name)));
+
+                if (!showIgnored)
                 {
                     if (status == "I") continue;
-                    if (isDirectory)
-                    {
-                        if (string.IsNullOrEmpty(status) && !foldersWithRelevantContent.Contains(relPath)) continue;
-                        if (string.IsNullOrEmpty(status) && foldersWithRelevantContent.Contains(relPath)) status = "M";
-                    }
-                    else if (string.IsNullOrEmpty(status)) continue;
+                    if (string.IsNullOrEmpty(status) && !foldersWithRelevantContent.Contains(relPath)) continue;
                 }
 
-                if (isDirectory) stats.FolderCount++;
+                if (isDirectory)
+                {
+                    stats.FolderCount++;
+                    if (isMissing || isDeleted) stats.DeletedCount++;
+                }
                 else
                 {
-                    if (status == "I") stats.IgnoredCount++;
-                    else
+                    stats.FileCount++;
+                    if (status == "M") stats.ModifiedCount++;
+                    else if (status == "A" || status == "?") stats.NewFilesCount++;
+                    else if (status == "C") stats.ConflictsCount++;
+                    else if (isMissing || isDeleted)
                     {
-                        stats.FileCount++;
-                        if (status == "M") stats.ModifiedCount++;
-                        if (status == "A" || status == "?") stats.NewFilesCount++;
-                        if (status == "C") stats.ConflictsCount++;
-                        if (status == "!") stats.FileCount++;
+                        stats.DeletedCount++;
                     }
                 }
 
-                StringBuilder indentBuilder = new StringBuilder();
+                bool isLast = (i == allEntries.Length - 1);
+                string indentStr = "";
                 for (int j = 0; j < indent - 1; j++)
-                    indentBuilder.Append(parentIsLast[j] ? "    " : "│   ");
+                    indentStr += parentIsLast[j] ? "    " : "│   ";
 
-                if (indent > 0)
-                    indentBuilder.Append(isLast ? "└── " : "├── ");
-
+                string prefix = (indent > 0) ? (isLast ? "└── " : "├── ") : "";
                 string expandIcon = isDirectory ? (expandedPaths.Contains(relPath) ? "[-] " : "[+] ") : "    ";
+                string statusIcon = SvnRunner.GetStatusIcon(string.IsNullOrEmpty(status) ? " " : status[0].ToString());
 
-                char statusCode = !string.IsNullOrEmpty(status) ? status[0] : ' ';
-                string statusIcon = SvnRunner.GetStatusIcon(statusCode.ToString());
+                string colorTag = isDirectory ? "<color=#FFCA28>" : "<color=#4FC3F7>";
+                if (isMissing) name = $"<color=#FF4444>{name} (MISSING !)</color>";
+                else if (isDeleted) name = $"<color=#FF8888>{name} (DELETED D)</color>";
+                else name = $"{colorTag}{name}</color>";
 
-                string typeTag = isDirectory ? "<color=#FFCA28><b><D></b></color>" : "<color=#4FC3F7><F></color>";
-
-                string sizeText = (!isDirectory && !string.IsNullOrEmpty(sizeInfo)) ? $" <color=#555555>.... ({sizeInfo})</color>" : "";
-
-                sb.AppendLine($"{indentBuilder}{statusIcon} {expandIcon}{typeTag} {name}{sizeText}");
+                sb.AppendLine($"{indentStr}{prefix}{statusIcon} {expandIcon}{name}");
 
                 if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath)))
                 {
@@ -600,11 +632,11 @@ namespace SVN.Core
                 {
                     svnUI.StatsText.text = $"<color=#FFD700><b>VIEW: WORKING COPY</b></color> | " +
                                            $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | " +
-                                           $"<color=#FFD700>Modified (M): {stats.ModifiedCount}</color> | " +
-                                           $"<color=#00FF00>Added (A): {stats.AddedCount}</color> | " +
+                                           $"<color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | " +
+                                           $"<color=#00FF00>Add (A): {stats.AddedCount}</color> | " +
                                            $"<color=#00E5FF>New (?): {stats.NewFilesCount}</color> | " +
-                                           $"<color=#FF4444>Deleted (D): {stats.DeletedCount}</color> | " +
-                                           $"<color=#FF00FF>Conflicted (C): {stats.ConflictsCount}</color>";
+                                           $"<color=#FF4444>Deleted (D/!): {stats.DeletedCount}</color> | " + // Zmieniono etykietę
+                                           $"<color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
                 }
             }
 
@@ -625,10 +657,10 @@ namespace SVN.Core
                     }
 
                     svnUI.CommitStatsText.text = $"<b>Pending Changes:</b> " +
-                        $"<color=#FFD700>Modified (M): {stats.ModifiedCount}</color> | " +
-                        $"<color=#00FF00>Added (A): {stats.AddedCount}</color> | " +
-                        $"<color=#00E5FF>New (?): {stats.NewFilesCount}</color> | " +
-                        $"<color=#FF4444>Deleted (D): {stats.DeletedCount}</color> | " +
+                        $"<color=#FFD700>M: {stats.ModifiedCount}</color> | " +
+                        $"<color=#00FF00>A: {stats.AddedCount}</color> | " +
+                        $"<color=#00E5FF>?: {stats.NewFilesCount}</color> | " +
+                        $"<color=#FF4444>D/!: {stats.DeletedCount}</color> | " +
                         $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>" +
                         conflictPart;
                 }
@@ -652,7 +684,7 @@ namespace SVN.Core
         {
             if (focus && !string.IsNullOrEmpty(workingDir))
             {
-                RefreshStatus();
+                //SVNStatus.ShowOnlyModified();
             }
         }
     }

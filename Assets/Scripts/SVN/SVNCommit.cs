@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEngine;
 
 namespace SVN.Core
 {
@@ -18,7 +19,7 @@ namespace SVN.Core
             svnUI.LogText.text += "<b>Current changes to send:</b>\n";
             foreach (var item in commitables)
             {
-                svnUI.LogText.text += $"[{item.Value.status}] {item.Key}\n";
+                svnUI.CommitConsoleContent.text += $"[{item.Value.status}] {item.Key}\n";
             }
         }
 
@@ -32,79 +33,92 @@ namespace SVN.Core
             string message = svnUI.CommitMessageInput?.text;
             if (string.IsNullOrWhiteSpace(message))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> Commit message cannot be empty!\n";
+                svnUI.CommitConsoleContent.text += "<color=red>Error:</color> Commit message is empty!\n";
                 return;
             }
 
             string root = svnManager.WorkingDir;
-            if (string.IsNullOrEmpty(root)) return;
-
             IsProcessing = true;
-            svnUI.LogText.text = "<b>Analyzing changes before commit...</b>\n";
+
+            if (svnUI.OperationProgressBar != null)
+            {
+                svnUI.OperationProgressBar.gameObject.SetActive(true);
+                svnUI.OperationProgressBar.value = 0.05f;
+            }
 
             try
             {
-                // 1. Get current status to identify new and modified files
-                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+                // STEP 1: Cleanup
+                svnUI.CommitConsoleContent.text = "<b>[1/4]</b> Cleaning up database...\n";
+                await SvnRunner.RunAsync("cleanup", root);
+                if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.25f;
 
-                // 2. Handle unversioned files (status '?')
-                var filesToAdd = statusDict
-                    .Where(x => x.Value.status == "?")
-                    .Select(x => x.Key)
-                    .ToArray();
+                // STEP 2: Handle Missing Files (!)
+                svnUI.CommitConsoleContent.text += "<b>[2/4]</b> Removing missing files (Fixing '!')...\n";
+                string rawStatus = await SvnRunner.RunAsync("status", root);
 
-                if (filesToAdd.Length > 0)
+                using (var reader = new System.IO.StringReader(rawStatus))
                 {
-                    svnUI.LogText.text += $"Scheduling {filesToAdd.Length} unversioned files for addition...\n";
-                    await SvnRunner.AddAsync(root, filesToAdd);
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (line.StartsWith("!"))
+                        {
+                            string pathInSvn = line.Substring(1).Trim();
+                            try { await SvnRunner.RunAsync($"delete --force \"{pathInSvn}\"", root); } catch { }
+                        }
+                    }
                 }
+                if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.50f;
 
-                // 3. Check if there are any changes to send (Modified, Added, Deleted, etc.)
-                bool hasChanges = statusDict.Any(x =>
-                    !string.IsNullOrEmpty(x.Value.status) && "MADRC?".Contains(x.Value.status));
+                // STEP 3: Add New Files (?)
+                svnUI.CommitConsoleContent.text += "<b>[3/4]</b> Adding new files...\n";
+                await SvnRunner.RunAsync("add . --force --parents", root);
+                if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.75f;
 
-                if (!hasChanges)
+                // STEP 4: Commit
+                svnUI.CommitConsoleContent.text += "<b>[4/4]</b> Sending to server...\n";
+                string commitResult = await SvnRunner.RunAsync($"commit -m \"{message}\" --non-interactive .", root);
+
+                if (commitResult.Contains("Committed revision"))
                 {
-                    svnUI.LogText.text += "<color=yellow>Nothing to commit. Working copy is clean.</color>\n";
+                    if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 1.0f;
+
+                    string revision = svnManager.ParseRevision(commitResult);
+                    await SvnRunner.RunAsync("update --depth empty", root);
+
+                    svnManager.SVNStatus.ClearUI();
+                    svnManager.RefreshStatus();
+
+                    svnUI.CommitConsoleContent.text = $"<color=green><b>SUCCESS!</b></color> Revision: {revision}";
+                    if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
                 }
                 else
                 {
-                    svnUI.LogText.text += "Sending changes to server...\n";
-
-                    // Perform the commit on the current directory
-                    string commitResult = await SvnRunner.CommitAsync(root, new string[] { "." }, message);
-
-                    // 4. Parse and display revision info
-                    string revision = svnManager.ParseRevision(commitResult);
-
-                    if (!string.IsNullOrEmpty(revision))
-                    {
-                        svnUI.LogText.text += $"<color=green><b>Success!</b></color> Committed revision: <b>{revision}</b>\n";
-                    }
-                    else
-                    {
-                        svnUI.LogText.text += $"<color=green>Success!</color>\n{commitResult}\n";
-                    }
-
-                    // Clear message input on success
-                    if (svnUI.CommitMessageInput != null)
-                        svnUI.CommitMessageInput.text = "";
+                    svnUI.CommitConsoleContent.text += "<color=yellow>Info:</color> The server did not accept the changes. Check Console.";
+                    if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0f;
                 }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Commit Failed:</color> {ex.Message}\n";
+                svnUI.CommitConsoleContent.text += $"\n<color=red>Error:</color> {ex.Message}";
+                if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0f;
             }
             finally
             {
                 IsProcessing = false;
-
-                // 5. Final UI Refresh
-                // Updates branch info (revision number) and rebuilds the tree view
-                svnManager.UpdateBranchInfo();
-
-                // Assuming your manager has this method to trigger the Status module's refresh
                 svnManager.RefreshStatus();
+                HideProgressBarAfterDelay(2.0f);
+            }
+        }
+
+        private async void HideProgressBarAfterDelay(float delaySeconds)
+        {
+            await System.Threading.Tasks.Task.Delay((int)(delaySeconds * 1000));
+            if (!IsProcessing && svnUI.OperationProgressBar != null)
+            {
+                svnUI.OperationProgressBar.value = 0f;
+                svnUI.OperationProgressBar.gameObject.SetActive(false);
             }
         }
 
@@ -139,7 +153,7 @@ namespace SVN.Core
 
             if (items.Count == 0)
             {
-                svnUI.LogText.text = "No changes to commit.";
+                svnUI.CommitConsoleContent.text = "No changes to commit.";
                 return;
             }
 
@@ -152,46 +166,75 @@ namespace SVN.Core
                 sb.AppendLine($"<color={color}>[{item.Status}]</color> {item.Path}");
             }
 
-            svnUI.LogText.text = sb.ToString();
+            svnUI.CommitConsoleContent.text = sb.ToString();
         }
 
         public async void ExecuteCommit()
         {
+            if (svnUI.CommitMessageInput == null || _items == null) return;
+
             string message = svnUI.CommitMessageInput.text;
 
             if (string.IsNullOrWhiteSpace(message))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> Commit message cannot be empty!\n";
+                svnUI.CommitConsoleContent.text += "<color=red>Error:</color> Commit message cannot be empty!\n";
                 return;
             }
 
-            string[] selectedPaths = _items
-                .Where(x => x.IsSelected)
-                .Select(x => x.Path)
-                .ToArray();
+            var selectedItems = _items.Where(x => x.IsSelected).ToList();
 
-            if (selectedPaths.Length == 0) return;
+            if (selectedItems.Count == 0)
+            {
+                svnUI.CommitConsoleContent.text += "<color=yellow>Warning:</color> No files selected for commit.\n";
+                return;
+            }
 
             IsProcessing = true;
-            svnUI.LogText.text = "Committing changes...\n";
+            svnUI.CommitConsoleContent.text = "<b>Starting commit process...</b>\n";
 
             try
             {
-                string result = await SvnRunner.RunAsync($"commit -m \"{message}\" {string.Join(" ", selectedPaths)}", svnManager.WorkingDir);
+                var unversionedPaths = selectedItems
+                    .Where(x => x.Status == "?")
+                    .Select(x => $"\"{x.Path}\"")
+                    .ToArray();
 
-                svnUI.LogText.text += $"<color=green>Commit successful!</color>\n{result}\n";
+                if (unversionedPaths.Length > 0)
+                {
+                    svnUI.CommitConsoleContent.text += $"Adding {unversionedPaths.Length} new files to version control...\n";
+                    string addArgs = $"add {string.Join(" ", unversionedPaths)}";
+                    await SvnRunner.RunAsync(addArgs, svnManager.WorkingDir);
+                }
+
+                string[] pathsToCommit = selectedItems
+                    .Select(x => $"\"{x.Path}\"")
+                    .ToArray();
+
+                string commitArgs = $"commit -m \"{message}\" {string.Join(" ", pathsToCommit)}";
+
+                svnUI.CommitConsoleContent.text += "Uploading changes to server...\n";
+                string result = await SvnRunner.RunAsync(commitArgs, svnManager.WorkingDir);
+
+                svnUI.CommitConsoleContent.text += $"<color=green><b>Commit successful!</b></color>\n";
+
                 svnUI.CommitMessageInput.text = "";
+
                 RefreshCommitList();
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Commit failed:</color> {ex.Message}\n";
+                svnUI.CommitConsoleContent.text += $"<color=red>Commit failed:</color> {ex.Message}\n";
             }
-            finally { IsProcessing = false; }
+            finally
+            {
+                IsProcessing = false;
+
+                svnManager.RefreshStatus();
+            }
         }
     }
 
-    public class CommitItemData
+        public class CommitItemData
     {
         public string Path;
         public string Status;

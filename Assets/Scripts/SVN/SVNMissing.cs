@@ -37,40 +37,35 @@ namespace SVN.Core
         /// <summary>
         /// Logic that can be awaited by other modules (e.g., during a full cleanup before Commit).
         /// </summary>
-        private async Task FixMissingLogic()
+        public async Task FixMissingLogic()
         {
             string root = svnManager.WorkingDir;
-
-            if (string.IsNullOrEmpty(root))
-            {
-                svnUI.LogText.text += "<color=red>Error:</color> Working directory is not set.\n";
-                return;
-            }
-
-            // 1. Get status of all files (includeIgnored = false)
+            // 1. Pobieramy statusy wszystkich plików
             var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
-            // 2. Filter for status '!' (missing - exists in DB but not on disk)
-            var missingPaths = statusDict
-                .Where(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("!"))
+            // 2. Szukamy tylko tych, które maj¹ status '!' (Brakuj¹cy w bazie)
+            var missingFiles = statusDict
+                .Where(x => x.Value.status.Contains("!"))
                 .Select(x => x.Key)
-                .ToArray();
+                .ToList();
 
-            if (missingPaths.Length > 0)
+            if (missingFiles.Count > 0)
             {
-                svnUI.LogText.text += $"Found {missingPaths.Length} missing files. Removing from SVN index...\n";
-
-                // 3. Execute 'svn delete' on those paths to synchronize SVN DB with disk
-                string output = await SvnRunner.DeleteAsync(root, missingPaths);
-
-                svnUI.LogText.text += $"<color=green>Success!</color> Removed {missingPaths.Length} missing meta-entries.\n";
-
-                // 4. Refresh the explorer view
-                svnManager.RefreshStatus();
-            }
-            else
-            {
-                svnUI.LogText.text += "No missing files found. Everything is synchronized.\n";
+                foreach (var path in missingFiles)
+                {
+                    try
+                    {
+                        // --force jest kluczowe, aby usun¹æ wpis z bazy nawet bez pliku na dysku.
+                        // Jeœli plik rzuci b³êdem "not a working copy", catch go z³apie i przejdzie dalej.
+                        await SvnRunner.RunAsync($"delete --force \"{path}\"", root);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        // Jeœli plik nie jest w Working Copy, to znaczy ¿e i tak go nie ma w SVN.
+                        // Mo¿emy to bezpiecznie zignorowaæ.
+                        UnityEngine.Debug.LogWarning($"[SVN] Ignorowanie nieœledzonego pliku: {path}");
+                    }
+                }
             }
         }
     }
