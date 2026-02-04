@@ -59,11 +59,11 @@ namespace SVN.Core
             }
         }
 
-        public void OnClick_SwitchProject()
-        {
-            svnManager.MainUIPanel.SetActive(true);
-            svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
-            svnManager.ProjectSelectionPanel.RefreshList();
-        }
+        //public void OnClick_SwitchProject()
+        //{
+        //    svnManager.MainUIPanel.SetActive(true);
+        //    svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
+        //    svnManager.ProjectSelectionPanel.RefreshList();
+        //}
     }
 }

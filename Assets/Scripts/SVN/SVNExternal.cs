@@ -130,6 +130,30 @@ namespace SVN.Core
             }
         }
 
+        public void BrowseNewProjectFolder()
+        {
+            string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select SVN Working Directory", "", false);
+            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
+            {
+                SVNUI.Instance.AddProjectFolderPathInput.text = paths[0].Replace('\\', '/');
+
+                if (string.IsNullOrEmpty(SVNUI.Instance.AddProjectNameInput.text))
+                {
+                    SVNUI.Instance.AddProjectNameInput.text = System.IO.Path.GetFileName(paths[0]);
+                }
+            }
+        }
+
+        public void BrowseNewProjectPrivateKey()
+        {
+            var extensions = new[] { new ExtensionFilter("All Files", "*") };
+            string[] paths = StandaloneFileBrowser.OpenFilePanel("Select Private Key", "", extensions, false);
+            if (paths != null && paths.Length > 0)
+            {
+                SVNUI.Instance.AddProjectKeyPathInput.text = paths[0].Replace('\\', '/');
+            }
+        }
+
         public void OpenTortoiseLog()
         {
             string root = svnManager.RepositoryUrl;

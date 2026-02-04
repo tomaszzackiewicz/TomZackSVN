@@ -12,6 +12,11 @@ namespace SVN.Core
         [Header("Logs")]
         [SerializeField] private TextMeshProUGUI logText;
         [SerializeField] private TMP_InputField logCountInputField;
+        [Header("Add New Project Settings (Popup)")]
+        [SerializeField] private TMP_InputField addProjectNameInput;
+        [SerializeField] private TMP_InputField addProjectRepoUrlInput;
+        [SerializeField] private TMP_InputField addProjectFolderPathInput;
+        [SerializeField] private TMP_InputField addProjectKeyPathInput;
         [Header("Add Repo Settings")]
         [SerializeField] private TMP_InputField loadRepoUrlInput = null;
         [SerializeField] private TMP_InputField loadDestFolderInput;
@@ -55,6 +60,10 @@ namespace SVN.Core
 
         public TextMeshProUGUI LogText => logText;
         public TMP_InputField LogCountInputField => logCountInputField;
+        public TMP_InputField AddProjectNameInput => addProjectNameInput;
+        public TMP_InputField AddProjectRepoUrlInput => addProjectRepoUrlInput;
+        public TMP_InputField AddProjectFolderPathInput => addProjectFolderPathInput;
+        public TMP_InputField AddProjectKeyPathInput => addProjectKeyPathInput;
         public TMP_InputField LoadRepoUrlInput => loadRepoUrlInput;
         public TMP_InputField LoadDestFolderInput => loadDestFolderInput;
         public TMP_InputField LoadPrivateKeyInput => loadPrivateKeyInput;

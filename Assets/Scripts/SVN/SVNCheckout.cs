@@ -1,7 +1,8 @@
 using System;
-using UnityEngine;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using UnityEngine;
 
 namespace SVN.Core
 {
@@ -54,7 +55,7 @@ namespace SVN.Core
             try
             {
                 // 3. PERSISTENCE (Save after validation)
-                SaveInputsToSettings(path, keyPath, url);
+                RegisterNewProjectAfterCheckout(path, url, keyPath);
 
                 string safeKey = keyPath.Replace("\\", "/");
                 string sshConfig = !string.IsNullOrEmpty(safeKey)
@@ -77,8 +78,12 @@ namespace SVN.Core
 
                 // 6. SUCCESS & SYNC
                 svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed.\n";
-                svnManager.WorkingDir = path;
 
+                // Zamiast SaveInputsToSettings, u¿ywamy nowej logiki:
+                RegisterNewProjectAfterCheckout(path, url, keyPath);
+
+                // Reszta odœwie¿ania pozostaje bez zmian
+                svnManager.WorkingDir = path;
                 await svnManager.RefreshRepositoryInfo();
                 svnManager.UpdateBranchInfo();
                 svnManager.RefreshStatus();
@@ -108,17 +113,30 @@ namespace SVN.Core
             }
         }
 
-        private void SaveInputsToSettings(string workingDir, string sshKey, string repoUrl)
+        private void RegisterNewProjectAfterCheckout(string path, string repoUrl, string keyPath)
         {
-            svnManager.WorkingDir = workingDir;
-            SvnRunner.KeyPath = sshKey;
+            // 1. Tworzymy obiekt nowego projektu
+            var newProj = new SVNProject
+            {
+                projectName = Path.GetFileName(path), // Automatyczna nazwa z folderu
+                repoUrl = repoUrl,
+                workingDir = path,
+                privateKeyPath = keyPath,
+                lastOpened = DateTime.Now
+            };
 
-            PlayerPrefs.SetString(SVNManager.KEY_WORKING_DIR, workingDir);
-            PlayerPrefs.SetString(SVNManager.KEY_SSH_PATH, sshKey);
-            PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, repoUrl);
+            // 2. Pobieramy listê i dodajemy projekt (o ile ju¿ nie istnieje)
+            List<SVNProject> projects = ProjectSettings.LoadProjects();
+            if (!projects.Exists(p => p.workingDir == path))
+            {
+                projects.Add(newProj);
+                ProjectSettings.SaveProjects(projects);
+                svnUI.LogText.text += $"<color=green>Project '{newProj.projectName}' added to Selection List.</color>\n";
+            }
+
+            // 3. Ustawiamy go jako ostatnio otwarty
+            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", path);
             PlayerPrefs.Save();
-
-            svnUI.LogText.text += "<color=#888888>Settings persisted to system storage.</color>\n";
         }
     }
 }

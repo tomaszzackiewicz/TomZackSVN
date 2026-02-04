@@ -88,7 +88,9 @@ namespace SVN.Core
                 if (svnUI.LoadRepoUrlInput != null)
                     svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
 
-                SaveToSettings(normalizedPath, keyPath, svnManager.RepositoryUrl);
+                // ZAMIAST: SaveToSettings(normalizedPath, keyPath, svnManager.RepositoryUrl);
+                // U¯YWAMY:
+                RegisterProjectInList(normalizedPath, keyPath, svnManager.RepositoryUrl);
 
                 // 8. REFRESH SYSTEM
                 svnManager.UpdateBranchInfo();
@@ -105,6 +107,47 @@ namespace SVN.Core
             {
                 IsProcessing = false;
             }
+        }
+
+        private void RegisterProjectInList(string path, string key, string url)
+        {
+            // 1. Przygotowujemy dane projektu
+            var newProj = new SVNProject
+            {
+                projectName = System.IO.Path.GetFileName(path.TrimEnd('/')), // Nazwa folderu jako nazwa projektu
+                repoUrl = url,
+                workingDir = path,
+                privateKeyPath = key,
+                lastOpened = DateTime.Now
+            };
+
+            // 2. £adujemy obecn¹ listê z JSON
+            var projects = ProjectSettings.LoadProjects();
+
+            // 3. Sprawdzamy czy projekt o tej œcie¿ce ju¿ istnieje
+            int existingIndex = projects.FindIndex(p => p.workingDir == path);
+
+            if (existingIndex != -1)
+            {
+                // Jeœli istnieje, tylko aktualizujemy dane (np. nowy klucz lub URL)
+                projects[existingIndex].repoUrl = url;
+                projects[existingIndex].privateKeyPath = key;
+                projects[existingIndex].lastOpened = DateTime.Now;
+                svnUI.LogText.text += "<color=#888888>Existing project entry updated in list.</color>\n";
+            }
+            else
+            {
+                // Jeœli to nowy folder, dodajemy go do listy
+                projects.Add(newProj);
+                svnUI.LogText.text += $"<color=green>New project '{newProj.projectName}' added to Selection List.</color>\n";
+            }
+
+            // 4. Zapisujemy listê do JSON
+            ProjectSettings.SaveProjects(projects);
+
+            // 5. Ustawiamy jako ostatnio otwarty dla mechanizmu Auto-Load
+            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", path);
+            PlayerPrefs.Save();
         }
 
         public void UpdateUIFromManager()

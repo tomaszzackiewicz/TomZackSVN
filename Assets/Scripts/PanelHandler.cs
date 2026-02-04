@@ -13,6 +13,7 @@ namespace SVN.Core
         [SerializeField] private GameObject commitPanel = null;
         [SerializeField] private GameObject checkoutPanel = null;
         [SerializeField] private GameObject loadPanel = null;
+        [SerializeField] private GameObject projectSelectionPanel = null;
 
         private SVNUI svnUI;
         private SVNManager svnManager;
@@ -152,6 +153,25 @@ namespace SVN.Core
             if (loadPanel != null)
             {
                 loadPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenProjectSelection()
+        {
+            if (projectSelectionPanel != null)
+            {
+                //svnManager.MainUIPanel.SetActive(true);
+                svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
+                svnManager.ProjectSelectionPanel.RefreshList();
+                projectSelectionPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseProjectSelection()
+        {
+            if (projectSelectionPanel != null)
+            {
+                projectSelectionPanel.SetActive(false);
             }
         }
 

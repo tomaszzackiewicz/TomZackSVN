@@ -11,12 +11,19 @@ public class SettingsPanel : MonoBehaviour
     private SVNUI svnUI;
     private SVNManager svnManager;
 
-    private void Start()
+    private void OnEnable()
     {
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
 
         svnManager.SVNSettings.UpdateUIFromManager();
+    }
+
+    private void Start()
+    {
+       
+
+        //svnManager.SVNSettings.UpdateUIFromManager();
     }
 
     public void Button_SaveWorkingDir() => svnManager.SVNSettings.SaveWorkingDir();
