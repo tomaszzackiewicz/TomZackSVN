@@ -21,6 +21,8 @@ namespace SVN.Core
         [SerializeField] private SVNUI svnUI = null;
         [SerializeField] private GameObject loadingOverlay = null;
         [SerializeField] private PanelHandler panelHandler = null;
+        [SerializeField] private GameObject mainUIPanel; // Przeciągnij tutaj swój główny panel UI w Inspektorze
+        [SerializeField] private ProjectSelectionPanel projectSelectionPanel; // Przeciągnij tutaj skrypt panelu wyboru
 
         private (string status, string[] files) currentStatus;
 
@@ -52,6 +54,9 @@ namespace SVN.Core
         public SVNLock SVNLock { get; private set; }
 
         public string RepositoryUrl { get; set; } = string.Empty;
+
+        public GameObject MainUIPanel => mainUIPanel;
+        public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
 
         public string CurrentUserName
         {
@@ -174,67 +179,266 @@ namespace SVN.Core
         {
             if (svnUI == null) return;
 
-            SVNSettings.LoadSettings();
+            SetupInputListeners();
+            MigrateOldSettingsToJSON();
 
-            if (svnUI.SettingsRepoUrlInput != null)
+            string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
+            var allProjects = ProjectSettings.LoadProjects();
+            var lastProject = allProjects.Find(p => p.workingDir == lastPath);
+
+            if (lastProject != null)
             {
-                svnUI.SettingsRepoUrlInput.onValueChanged.AddListener(val => {
-                    string cleaned = val.Trim();
-                    BroadcastUrlChange(cleaned);
-                    PlayerPrefs.SetString(KEY_REPO_URL, cleaned);
-                    PlayerPrefs.Save();
-                });
-            }
+                LoadProject(lastProject);
 
-            // SSH KEY PATH
-            if (svnUI.SettingsSshKeyPathInput != null)
+                if (projectSelectionPanel != null) projectSelectionPanel.gameObject.SetActive(false);
+                if (mainUIPanel != null) mainUIPanel.SetActive(true);
+            }
+            else
             {
-                svnUI.SettingsSshKeyPathInput.onValueChanged.AddListener(val => {
-                    string cleaned = val.Trim();
-                    BroadcastSshKeyChange(cleaned);
-                    PlayerPrefs.SetString(KEY_SSH_PATH, cleaned);
-                    PlayerPrefs.Save();
-                });
+                if (mainUIPanel != null) mainUIPanel.SetActive(false);
+                if (projectSelectionPanel != null)
+                {
+                    projectSelectionPanel.gameObject.SetActive(true);
+                    projectSelectionPanel.RefreshList();
+                }
             }
+        }
 
-            // WORKING DIRECTORY
-            if (svnUI.SettingsWorkingDirInput != null)
+        public void MigrateOldSettingsToJSON()
+        {
+            // Sprawdzamy, czy w ogóle mamy stare dane w PlayerPrefs
+            if (PlayerPrefs.HasKey(KEY_WORKING_DIR))
             {
-                svnUI.SettingsWorkingDirInput.onValueChanged.AddListener(val => {
-                    string cleaned = val.Trim();
-                    BroadcastWorkingDirChange(cleaned);
-                    PlayerPrefs.SetString(KEY_WORKING_DIR, cleaned);
-                    PlayerPrefs.Save();
-                });
-            }
+                string oldDir = PlayerPrefs.GetString(KEY_WORKING_DIR);
 
-            if (svnUI.SettingsMergeToolPathInput != null)
+                // Jeśli plik JSON już istnieje i ma ten projekt, nie migrujemy ponownie
+                List<SVNProject> projects = ProjectSettings.LoadProjects();
+                if (projects.Exists(p => p.workingDir == oldDir)) return;
+
+                string oldUrl = PlayerPrefs.GetString(KEY_REPO_URL, "");
+                string oldKey = PlayerPrefs.GetString(KEY_SSH_PATH, "");
+
+                SVNProject legacyProject = new SVNProject
+                {
+                    projectName = "Imported Project",
+                    workingDir = oldDir,
+                    repoUrl = oldUrl,
+                    privateKeyPath = oldKey,
+                    lastOpened = System.DateTime.Now
+                };
+
+                projects.Add(legacyProject);
+                ProjectSettings.SaveProjects(projects);
+
+                Debug.Log("[SVN] Successfully migrated old settings to JSON.");
+            }
+        }
+
+        //private async void Start()
+        //{
+        //    if (svnUI == null) return;
+
+        //    // 1. Inicjalizacja Listenerów (tylko raz, przy starcie apki)
+        //    SetupInputListeners();
+
+        //    // 2. Migracja starych danych (jeśli istnieją) do pliku JSON
+        //    MigrateOldSettingsToJSON();
+
+        //    // 3. Sprawdź, jaki projekt był otwarty ostatnio
+        //    string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
+        //    List<SVNProject> allProjects = ProjectSettings.LoadProjects();
+
+        //    if (!string.IsNullOrEmpty(lastPath))
+        //    {
+        //        SVNProject lastProject = allProjects.Find(p => p.workingDir == lastPath);
+        //        if (lastProject != null)
+        //        {
+        //            // Ładujemy ostatni projekt i wychodzimy ze Start
+        //            LoadProject(lastProject);
+
+        //            // Uruchamiamy odświeżanie po krótkiej chwili
+        //            StartCoroutine(Initialize_Coroutine());
+        //            return;
+        //        }
+        //    }
+
+        //    // 4. Jeśli nie znaleziono ostatniego projektu, pokaż panel wyboru
+        //    if (panelHandler != null)
+        //    {
+        //        // Zakładam, że masz metodę do otwierania panelu projektów
+        //        // panelHandler.OpenProjectSelection(); 
+        //        // Lub bezpośrednio:
+        //        // projectSelectionPanel.gameObject.SetActive(true);
+        //    }
+        //}
+
+        // Przeniosłem Listenery do osobnej metody, żeby Start był czytelny
+        private void SetupInputListeners()
+        {
+            // URL
+            svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(val =>
             {
-                svnUI.SettingsMergeToolPathInput.onValueChanged.AddListener(val => {
-                    if (IsProcessing || string.IsNullOrWhiteSpace(val)) return;
+                string cleaned = val.Trim();
+                BroadcastUrlChange(cleaned);
+                UpdateCurrentProjectData(); // Zapisujemy zmiany w JSON zamiast tylko w PlayerPrefs
+            });
 
-                    PlayerPrefs.SetString(KEY_MERGE_TOOL, val.Trim());
-                    PlayerPrefs.Save();
-                    this.MergeToolPath = val.Trim();
-                });
+            // SSH
+            svnUI.SettingsSshKeyPathInput?.onValueChanged.AddListener(val =>
+            {
+                string cleaned = val.Trim();
+                BroadcastSshKeyChange(cleaned);
+                UpdateCurrentProjectData();
+            });
+
+            // Working Dir
+            svnUI.SettingsWorkingDirInput?.onValueChanged.AddListener(val =>
+            {
+                string cleaned = val.Trim();
+                BroadcastWorkingDirChange(cleaned);
+                UpdateCurrentProjectData();
+            });
+        }
+
+        private void UpdateCurrentProjectData()
+        {
+            List<SVNProject> projects = ProjectSettings.LoadProjects();
+            var current = projects.Find(p => p.workingDir == this.WorkingDir);
+
+            if (current != null)
+            {
+                current.repoUrl = this.RepositoryUrl;
+                current.privateKeyPath = this.CurrentKey;
+                ProjectSettings.SaveProjects(projects);
             }
+        }
 
-            if (!string.IsNullOrEmpty(WorkingDir) && Directory.Exists(WorkingDir))
+        public async void LoadProject(SVNProject project)
+        {
+            this.WorkingDir = project.workingDir;
+            this.RepositoryUrl = project.repoUrl;
+            this.CurrentKey = project.privateKeyPath;
+            SvnRunner.KeyPath = this.CurrentKey;
+
+            // Wizualna aktualizacja pól w UI Settings
+            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
+            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
+            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
+
+            // Zapisz jako ostatnio używany
+            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
+            PlayerPrefs.Save();
+
+            // Odśwież dane SVN
+            if (Directory.Exists(WorkingDir))
             {
                 await RefreshRepositoryInfo();
                 UpdateBranchInfo();
-                await Task.Delay(300);
                 RefreshStatus();
             }
-
-            StartCoroutine(Initialize_Coroutine());
         }
+
+        //private async void Start()
+        //{
+        //    if (svnUI == null) return;
+
+        //    SVNSettings.LoadSettings();
+
+        //    if (svnUI.SettingsRepoUrlInput != null)
+        //    {
+        //        svnUI.SettingsRepoUrlInput.onValueChanged.AddListener(val => {
+        //            string cleaned = val.Trim();
+        //            BroadcastUrlChange(cleaned);
+        //            PlayerPrefs.SetString(KEY_REPO_URL, cleaned);
+        //            PlayerPrefs.Save();
+        //        });
+        //    }
+
+        //    // SSH KEY PATH
+        //    if (svnUI.SettingsSshKeyPathInput != null)
+        //    {
+        //        svnUI.SettingsSshKeyPathInput.onValueChanged.AddListener(val => {
+        //            string cleaned = val.Trim();
+        //            BroadcastSshKeyChange(cleaned);
+        //            PlayerPrefs.SetString(KEY_SSH_PATH, cleaned);
+        //            PlayerPrefs.Save();
+        //        });
+        //    }
+
+        //    // WORKING DIRECTORY
+        //    if (svnUI.SettingsWorkingDirInput != null)
+        //    {
+        //        svnUI.SettingsWorkingDirInput.onValueChanged.AddListener(val => {
+        //            string cleaned = val.Trim();
+        //            BroadcastWorkingDirChange(cleaned);
+        //            PlayerPrefs.SetString(KEY_WORKING_DIR, cleaned);
+        //            PlayerPrefs.Save();
+        //        });
+        //    }
+
+        //    if (svnUI.SettingsMergeToolPathInput != null)
+        //    {
+        //        svnUI.SettingsMergeToolPathInput.onValueChanged.AddListener(val => {
+        //            if (IsProcessing || string.IsNullOrWhiteSpace(val)) return;
+
+        //            PlayerPrefs.SetString(KEY_MERGE_TOOL, val.Trim());
+        //            PlayerPrefs.Save();
+        //            this.MergeToolPath = val.Trim();
+        //        });
+        //    }
+
+        //    if (!string.IsNullOrEmpty(WorkingDir) && Directory.Exists(WorkingDir))
+        //    {
+        //        await RefreshRepositoryInfo();
+        //        UpdateBranchInfo();
+        //        await Task.Delay(300);
+        //        RefreshStatus();
+        //    }
+
+        //    StartCoroutine(Initialize_Coroutine());
+        //}
 
         IEnumerator Initialize_Coroutine()
         {
             yield return new WaitForSeconds(5.0f);
             SVNStatus.ShowOnlyModified();
         }
+
+        // Wewnątrz klasy SVNManager
+        //public void LoadProject(SVNProject project)
+        //{
+        //    // 1. Przypisanie danych do zmiennych managera
+        //    this.WorkingDir = project.workingDir;
+        //    this.RepositoryUrl = project.repoUrl;
+        //    this.CurrentKey = project.privateKeyPath;
+
+        //    // Ustawienie klucza dla biegacza SVN
+        //    SvnRunner.KeyPath = project.privateKeyPath;
+
+        //    // 2. Aktualizacja wizualna pól Input w ustawieniach (bez wywoływania listenerów)
+        //    svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(project.workingDir);
+        //    svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(project.repoUrl);
+        //    svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(project.privateKeyPath);
+
+        //    // 3. Zapisanie ścieżki jako ostatnio otwartej
+        //    PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
+        //    PlayerPrefs.Save();
+
+        //    // 4. Inicjalizacja danych repozytorium
+        //    FinalizeProjectLoad();
+        //}
+
+        //private async void FinalizeProjectLoad()
+        //{
+        //    if (System.IO.Directory.Exists(WorkingDir))
+        //    {
+        //        await RefreshRepositoryInfo();
+        //        UpdateBranchInfo();
+        //        // Mały delay, żeby UI zdążyło się odświeżyć
+        //        await System.Threading.Tasks.Task.Delay(300);
+        //        RefreshStatus();
+        //    }
+        //}
 
         public void BroadcastWorkingDirChange(string newPath)
         {

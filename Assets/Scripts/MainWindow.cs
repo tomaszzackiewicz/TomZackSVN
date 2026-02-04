@@ -58,5 +58,12 @@ namespace SVN.Core
                 svnUI.LocksText.text = string.Empty;
             }
         }
+
+        public void OnClick_SwitchProject()
+        {
+            svnManager.MainUIPanel.SetActive(true);
+            svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
+            svnManager.ProjectSelectionPanel.RefreshList();
+        }
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace SVN.Core
@@ -158,5 +159,21 @@ namespace SVN.Core
         {
             Application.Quit();
         }
+    }
+
+    [System.Serializable]
+    public class SVNProject
+    {
+        public string projectName;
+        public string repoUrl;
+        public string workingDir;
+        public string privateKeyPath;
+        public System.DateTime lastOpened;
+    }
+
+    [System.Serializable]
+    public class SVNProjectList
+    {
+        public List<SVNProject> projects = new List<SVNProject>();
     }
 }
