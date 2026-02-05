@@ -1,8 +1,6 @@
 using SVN.Core;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
-using TMPro;
 using System;
 
 public class ProjectSelectionPanel : MonoBehaviour
@@ -10,11 +8,11 @@ public class ProjectSelectionPanel : MonoBehaviour
     [Header("UI References")]
     [SerializeField] private GameObject projectButtonPrefab;
     [SerializeField] private Transform container;
-    [SerializeField] private GameObject mainUIPanel;
 
     [Header("Add Project UI Container")]
     [SerializeField] private GameObject addProjectSubPanel;
 
+    private SVNUI svnUI;
     private SVNManager svnManager;
 
     private List<SVNProject> projects = new List<SVNProject>();
@@ -22,6 +20,8 @@ public class ProjectSelectionPanel : MonoBehaviour
     void Start()
     {
         svnManager = SVNManager.Instance;
+        svnUI = SVNUI.Instance;
+
         RefreshList();
     }
 
@@ -50,8 +50,7 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private void OnProjectSelected(SVNProject project)
     {
-        SVNManager.Instance.LoadProject(project);
-        if (mainUIPanel != null) mainUIPanel.SetActive(true);
+        svnManager.LoadProject(project);
         this.gameObject.SetActive(false);
     }
 
@@ -80,12 +79,11 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     public void Button_SaveNewProject()
     {
-        var ui = SVNUI.Instance;
 
-        string name = ui.AddProjectNameInput.text;
-        string url = ui.AddProjectRepoUrlInput.text;
-        string path = ui.AddProjectFolderPathInput.text;
-        string key = ui.AddProjectKeyPathInput.text;
+        string name = svnUI.AddProjectNameInput.text;
+        string url = svnUI.AddProjectRepoUrlInput.text;
+        string path = svnUI.AddProjectFolderPathInput.text;
+        string key = svnUI.AddProjectKeyPathInput.text;
 
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
         {

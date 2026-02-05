@@ -1,7 +1,7 @@
 using System;
 using System.IO;
-using System.Threading.Tasks;
 using UnityEngine;
+using System.Threading.Tasks;
 
 namespace SVN.Core
 {
@@ -81,22 +81,24 @@ namespace SVN.Core
                     }
                 }
 
-                // 6. FINAL SYNC & PERSISTENCE
                 if (string.IsNullOrEmpty(svnManager.RepositoryUrl) && !string.IsNullOrEmpty(manualUrl))
                     svnManager.RepositoryUrl = manualUrl;
 
                 if (svnUI.LoadRepoUrlInput != null)
                     svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
 
-                // ZAMIAST: SaveToSettings(normalizedPath, keyPath, svnManager.RepositoryUrl);
-                // U¯YWAMY:
                 RegisterProjectInList(normalizedPath, keyPath, svnManager.RepositoryUrl);
 
-                // 8. REFRESH SYSTEM
                 svnManager.UpdateBranchInfo();
                 svnManager.RefreshStatus();
 
                 svnUI.LogText.text += "<color=green>SUCCESS:</color> System synchronized.\n";
+
+                if (svnManager.PanelHandler != null)
+                {
+                    await Task.Delay(500);
+                    svnManager.PanelHandler.Button_CloseLoad();
+                }
             }
             catch (Exception ex)
             {
@@ -111,25 +113,21 @@ namespace SVN.Core
 
         private void RegisterProjectInList(string path, string key, string url)
         {
-            // 1. Przygotowujemy dane projektu
             var newProj = new SVNProject
             {
-                projectName = System.IO.Path.GetFileName(path.TrimEnd('/')), // Nazwa folderu jako nazwa projektu
+                projectName = System.IO.Path.GetFileName(path.TrimEnd('/')),
                 repoUrl = url,
                 workingDir = path,
                 privateKeyPath = key,
                 lastOpened = DateTime.Now
             };
 
-            // 2. £adujemy obecn¹ listê z JSON
             var projects = ProjectSettings.LoadProjects();
 
-            // 3. Sprawdzamy czy projekt o tej œcie¿ce ju¿ istnieje
             int existingIndex = projects.FindIndex(p => p.workingDir == path);
 
             if (existingIndex != -1)
             {
-                // Jeœli istnieje, tylko aktualizujemy dane (np. nowy klucz lub URL)
                 projects[existingIndex].repoUrl = url;
                 projects[existingIndex].privateKeyPath = key;
                 projects[existingIndex].lastOpened = DateTime.Now;
@@ -137,15 +135,12 @@ namespace SVN.Core
             }
             else
             {
-                // Jeœli to nowy folder, dodajemy go do listy
                 projects.Add(newProj);
                 svnUI.LogText.text += $"<color=green>New project '{newProj.projectName}' added to Selection List.</color>\n";
             }
 
-            // 4. Zapisujemy listê do JSON
             ProjectSettings.SaveProjects(projects);
 
-            // 5. Ustawiamy jako ostatnio otwarty dla mechanizmu Auto-Load
             PlayerPrefs.SetString("SVN_LastOpenedProjectPath", path);
             PlayerPrefs.Save();
         }
@@ -168,16 +163,6 @@ namespace SVN.Core
             {
                 svnUI.LoadPrivateKeyInput.text = svnManager.CurrentKey;
             }
-        }
-
-        private void SaveToSettings(string path, string key, string url)
-        {
-            PlayerPrefs.SetString(SVNManager.KEY_WORKING_DIR, path);
-            PlayerPrefs.SetString(SVNManager.KEY_SSH_PATH, key);
-            PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, url);
-            PlayerPrefs.Save();
-
-            svnUI.LogText.text += "<color=#888888>System configuration synchronized.</color>\n";
         }
     }
 }

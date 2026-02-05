@@ -885,5 +885,161 @@ namespace SVN.Core
                 return false;
             }
         }
+
+        private static string CleanSvnPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            string p = path.Replace('\\', '/').Trim('/');
+
+            // Usuwamy techniczne przedrostki SVN, jeśli istnieją
+            if (p.StartsWith("trunk/", StringComparison.OrdinalIgnoreCase))
+                return p.Substring(6);
+
+            if (p.StartsWith("branches/", StringComparison.OrdinalIgnoreCase))
+            {
+                int secondSlash = p.IndexOf('/', 9);
+                return (secondSlash != -1) ? p.Substring(secondSlash + 1) : p;
+            }
+
+            // Jeśli ścieżka to po prostu "Build/Win64", zostanie zwrócona bez zmian
+            return p;
+        }
+
+        public static async Task<Dictionary<string, (string status, string size)>> GetChangesDictionaryAsync(string workingDir)
+        {
+            // Nie używamy --no-ignore, więc SVN sam odsieje śmieci
+            string output = await RunAsync("status", workingDir);
+            var statusDict = new Dictionary<string, (string status, string size)>();
+
+            if (string.IsNullOrEmpty(output)) return statusDict;
+
+            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                if (line.Length < 8) continue;
+
+                char rawCode = line[0];
+                string stat = rawCode.ToString().ToUpper();
+
+                // Interesują nas tylko zmiany, a nie ignorowane
+                if ("MA?!DC".Contains(stat))
+                {
+                    string rawPath = line.Substring(8).Trim();
+                    string cleanPath = CleanSvnPath(rawPath); // Ta sama bezpieczna metoda czyszcząca
+
+                    string fullPath = Path.Combine(workingDir, cleanPath);
+                    statusDict[cleanPath] = (stat, GetFileSizeSafe(fullPath));
+                }
+            }
+            return statusDict;
+        }
+
+        public static async Task<Dictionary<string, (string status, string size)>> GetIgnoredOnlyAsync(string workingDir)
+        {
+            // Musimy wymusić --no-ignore, żeby SVN w ogóle o nich wspomniał
+            string output = await RunAsync("status --no-ignore", workingDir);
+            var ignoredDict = new Dictionary<string, (string status, string size)>();
+
+            if (string.IsNullOrEmpty(output)) return ignoredDict;
+
+            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                if (line.Length < 8) continue;
+
+                if (line[0] == 'I') // Szukamy TYLKO statusu 'I'
+                {
+                    string rawPath = line.Substring(8).Trim();
+                    string cleanPath = CleanSvnPath(rawPath);
+
+                    // Dla ignorowanych często nie potrzebujemy dokładnego rozmiaru (oszczędność czasu)
+                    // ale jeśli chcesz, możesz użyć GetFileSizeSafe
+                    ignoredDict[cleanPath] = ("I", "<IGNORED>");
+                }
+            }
+            return ignoredDict;
+        }
+
+        public static async Task<List<string>> GetIgnoreRulesAsync(string workingDir)
+        {
+            List<string> rules = new List<string>();
+            try
+            {
+                // -R (recursive) przeszuka wszystkie foldery i znajdzie ukryte reguły
+                string output = await RunAsync("propget svn:ignore -R .", workingDir);
+
+                var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
+                {
+                    // SVN propget -R zwraca format: "sciezka - wzorzec"
+                    // Wyciągamy sam wzorzec (pattern)
+                    string pattern = line.Contains(" - ") ? line.Split(new[] { " - " }, StringSplitOptions.None)[1] : line;
+
+                    string trimmed = pattern.Trim();
+                    if (!string.IsNullOrEmpty(trimmed) && !rules.Contains(trimmed))
+                        rules.Add(trimmed);
+                }
+
+                // Dodaj standardowe Unrealowe wzorce na wypadek, gdyby SVN był "czysty"
+                string[] defaults = { "Binaries", "Intermediate", "Saved", "DerivedDataCache", ".vs", "*.sln" };
+                foreach (var d in defaults) if (!rules.Contains(d)) rules.Add(d);
+            }
+            catch { }
+            return rules;
+        }
+
+        public static async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir)
+        {
+            List<string> rules = new List<string>();
+            try
+            {
+                // 1. Try to get GLOBAL ignores
+                string globalOutput = await RunAsync("propget svn:global-ignores -R .", workingDir);
+                // 2. Try to get STANDARD ignores
+                string standardOutput = await RunAsync("propget svn:ignore -R .", workingDir);
+
+                string combinedOutput = globalOutput + "\n" + standardOutput;
+
+                if (string.IsNullOrEmpty(combinedOutput) || combinedOutput.Contains("ERROR"))
+                    return rules;
+
+                string[] lines = combinedOutput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
+                {
+                    string pattern = line;
+                    if (line.Contains(" - "))
+                    {
+                        var parts = line.Split(new[] { " - " }, StringSplitOptions.None);
+                        pattern = parts.Length > 1 ? parts[1] : parts[0];
+                    }
+
+                    string trimmed = pattern.Trim();
+                    // Filter out SVN error messages that might slip in
+                    if (!string.IsNullOrEmpty(trimmed) && !trimmed.Contains(" ") && !rules.Contains(trimmed))
+                    {
+                        rules.Add(trimmed);
+                    }
+                }
+            }
+            catch (Exception e) { UnityEngine.Debug.LogError(e.Message); }
+            return rules;
+        }
+
+        public static async Task<bool> SetSvnGlobalIgnorePropertyAsync(string workingDir, string rulesRawText)
+        {
+            string tempFilePath = Path.Combine(workingDir, "temp_global_ignore.txt");
+            File.WriteAllText(tempFilePath, rulesRawText.Replace("\r\n", "\n"));
+
+            string result = await RunAsync($"propset svn:global-ignores -F \"{tempFilePath}\" .", workingDir);
+
+            if (File.Exists(tempFilePath)) File.Delete(tempFilePath);
+
+            if (result.StartsWith("ERROR"))
+            {
+                UnityEngine.Debug.LogError(result);
+                return false;
+            }
+            return true;
+        }
     }
 }

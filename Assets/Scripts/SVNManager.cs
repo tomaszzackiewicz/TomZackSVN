@@ -56,6 +56,7 @@ namespace SVN.Core
         public string RepositoryUrl { get; set; } = string.Empty;
 
         public GameObject MainUIPanel => mainUIPanel;
+        public PanelHandler PanelHandler => panelHandler;
         public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
 
         public string CurrentUserName
@@ -180,7 +181,7 @@ namespace SVN.Core
             if (svnUI == null) return;
 
             SetupInputListeners();
-            MigrateOldSettingsToJSON();
+            //MigrateOldSettingsToJSON();
 
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
             var allProjects = ProjectSettings.LoadProjects();
@@ -191,11 +192,11 @@ namespace SVN.Core
                 LoadProject(lastProject);
 
                 if (projectSelectionPanel != null) projectSelectionPanel.gameObject.SetActive(false);
-                if (mainUIPanel != null) mainUIPanel.SetActive(true);
+                //if (mainUIPanel != null) mainUIPanel.SetActive(true);
             }
             else
             {
-                if (mainUIPanel != null) mainUIPanel.SetActive(false);
+                //if (mainUIPanel != null) mainUIPanel.SetActive(false);
                 if (projectSelectionPanel != null)
                 {
                     projectSelectionPanel.gameObject.SetActive(true);

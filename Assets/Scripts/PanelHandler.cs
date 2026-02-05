@@ -14,6 +14,7 @@ namespace SVN.Core
         [SerializeField] private GameObject checkoutPanel = null;
         [SerializeField] private GameObject loadPanel = null;
         [SerializeField] private GameObject projectSelectionPanel = null;
+        [SerializeField] private GameObject ignoredPanel = null;
 
         private SVNUI svnUI;
         private SVNManager svnManager;
@@ -172,6 +173,22 @@ namespace SVN.Core
             if (projectSelectionPanel != null)
             {
                 projectSelectionPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenIgnored()
+        {
+            if (ignoredPanel != null)
+            {
+                ignoredPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseIgnored()
+        {
+            if (ignoredPanel != null)
+            {
+                ignoredPanel.SetActive(false);
             }
         }
 

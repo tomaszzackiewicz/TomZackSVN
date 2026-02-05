@@ -37,6 +37,8 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI branchInfoText;
         [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
+        [Header("Ignored")]
+        [SerializeField] private TextMeshProUGUI ignoredText;
         [Header("Commit")]
         [SerializeField] private TextMeshProUGUI commitSizeText;
         [SerializeField] private TextMeshProUGUI commitTreeDisplay;
@@ -80,6 +82,7 @@ namespace SVN.Core
         public TextMeshProUGUI BranchInfoText => branchInfoText;
         public TextMeshProUGUI LocksText => locksText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
+        public TextMeshProUGUI IgnoredText => ignoredText;
         public TextMeshProUGUI CommitSizeText => commitSizeText;
         public GameObject LoadingOverlay => loadingOverlay;
         public TextMeshProUGUI TreeDisplay
