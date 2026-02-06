@@ -1041,5 +1041,54 @@ namespace SVN.Core
             }
             return true;
         }
+
+        public static async Task<string> GetCommitSizeReportAsync(string workingDir)
+        {
+            var statusDict = await GetFullStatusDictionaryAsync(workingDir, false);
+            if (statusDict == null || statusDict.Count == 0) return "Files: 0, Size: 0B";
+
+            long totalBytes = 0;
+            int filesToCommit = 0;
+            string normRoot = workingDir.Replace("\\", "/").TrimEnd('/');
+
+            foreach (var item in statusDict)
+            {
+                string status = item.Value.status;
+                // Only count Added (A), Modified (M), or Unversioned (?) files
+                if (!"MA?".Contains(status)) continue;
+
+                string relPath = item.Key.Replace("\\", "/").TrimStart('/');
+
+                // Attempt 1: Standard path (Root + Key)
+                string standardPath = $"{normRoot}/{relPath}";
+
+                if (File.Exists(standardPath))
+                {
+                    totalBytes += new FileInfo(standardPath).Length;
+                    filesToCommit++;
+                }
+                else
+                {
+                    // LAST RESORT: Search for the file by name within the entire workingDir
+                    // This fixes path discrepancies like "Content/" vs "ProjectName/Content/"
+                    string fileName = Path.GetFileName(relPath);
+                    string[] foundFiles = Directory.GetFiles(normRoot, fileName, SearchOption.AllDirectories);
+
+                    if (foundFiles.Length > 0)
+                    {
+                        // Take the first matching file found
+                        totalBytes += new FileInfo(foundFiles[0]).Length;
+                        filesToCommit++;
+                    }
+                    else
+                    {
+                        UnityEngine.Debug.LogWarning($"[SVN] File not found: {relPath} (Searched at: {standardPath})");
+                    }
+                }
+            }
+
+            // Returns a formatted report string
+            return $"Files: {filesToCommit}, Size: {FormatBytes(totalBytes)}";
+        }
     }
 }

@@ -13,5 +13,6 @@ namespace SVN.Core
         public int IgnoredCount = 0;
         public int DeletedCount = 0;
         public int AddedCount = 0;
+        public long TotalBytes = 0;
     }
 }

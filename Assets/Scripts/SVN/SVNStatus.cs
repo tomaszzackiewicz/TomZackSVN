@@ -40,26 +40,20 @@ namespace SVN.Core
 
             try
             {
-                // Pobieramy s³ownik (upewnij siê, ¿e SvnRunner.GetFullStatusDictionaryAsync obs³uguje status '!')
-                // Wybór dedykowanej metody zale¿nie od trybu widoku
                 var statusDict = _isCurrentViewIgnored
                     ? await SvnRunner.GetIgnoredOnlyAsync(root)
                     : await SvnRunner.GetChangesDictionaryAsync(root);
 
-                long totalBytes = 0;
                 string normalizedRoot = root.Trim().Replace("\\", "/");
                 if (!normalizedRoot.EndsWith("/")) normalizedRoot += "/";
 
                 svnManager.ExpandedPaths.Clear();
-                svnManager.ExpandedPaths.Add(""); // Root zawsze rozwiniêty
+                svnManager.ExpandedPaths.Add("");
 
                 foreach (var item in statusDict)
                 {
                     string path = item.Key;
                     string stat = item.Value.status;
-
-                    // --- POPRAWKA 1: Rozwijanie folderów dla usuniêtych plików ---
-                    // Dodajemy "!" (Missing) oraz "D" (Deleted) do warunku rozwijania drzewa
                     bool isChange = !string.IsNullOrEmpty(stat) && (stat == "M" || stat == "A" || stat == "?" || stat == "C" || stat == "!" || stat == "D");
 
                     bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : isChange;
@@ -67,29 +61,17 @@ namespace SVN.Core
                     if (shouldExpand)
                         AddParentFoldersToExpanded(path);
 
-                    // --- POPRAWKA 2: Bezpieczne liczenie rozmiaru ---
-                    // Liczymy rozmiar tylko dla plików, które FIZYCZNIE s¹ na dysku (M, A, ?, C)
-                    // Pomijamy "!" i "D", bo File.Exists zwróci false
-                    if (!_isCurrentViewIgnored && !string.IsNullOrEmpty(stat) && "MA?C".Contains(stat))
-                    {
-                        string fullPath = System.IO.Path.GetFullPath(normalizedRoot + path);
-                        if (System.IO.File.Exists(fullPath))
-                        {
-                            totalBytes += new System.IO.FileInfo(fullPath).Length;
-                        }
-                    }
+                   
                 }
 
-                string sizeStr = FormatBytes(totalBytes);
-                svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {sizeStr}</color>\n";
+                string report = await SvnRunner.GetCommitSizeReportAsync(root);
+                svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {report}</color>\n";
 
-                // 3. Pobranie wizualnego drzewa (wynik tej metody zale¿y od Twojego BuildTreeString)
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
 
                 svnUI.TreeDisplay.text = result.tree;
                 svnUI.CommitTreeDisplay.text = result.tree;
 
-                // Wa¿ne: Przekazujemy stats do UI
                 svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
             }
             catch (Exception ex)
@@ -98,19 +80,6 @@ namespace SVN.Core
                 Debug.LogError($"[SVN] Refresh Error: {ex}");
             }
             finally { IsProcessing = false; }
-        }
-
-        private string FormatBytes(long bytes)
-        {
-            string[] Suffix = { "B", "KB", "MB", "GB", "TB" };
-            double dblSByte = bytes;
-            int i = 0;
-            while (dblSByte >= 1024 && i < Suffix.Length - 1)
-            {
-                i++;
-                dblSByte /= 1024;
-            }
-            return $"{dblSByte:F2} {Suffix[i]}";
         }
 
         private void AddParentFoldersToExpanded(string filePath)
@@ -186,11 +155,6 @@ namespace SVN.Core
             {
                 IsProcessing = false;
             }
-        }
-
-        public void RefreshView()
-        {
-            ExecuteRefreshWithAutoExpand();
         }
 
         public void ClearUI()
@@ -370,14 +334,6 @@ namespace SVN.Core
                 UpdateStatusInUI("SUCCESS: Global ignores set. Commit the root folder.");
                 _ = RefreshIgnoredPanelAsync();
             }
-        }
-
-        // Pomocnicza metoda do wyœwietlania komunikatów w UI zamiast dialogów
-        private void UpdateStatusText(string msg)
-        {
-            if (svnUI.IgnoredText != null)
-                svnUI.IgnoredText.text = $"<color=#FFFF00>{msg}</color>\n" + svnUI.IgnoredText.text;
-            Debug.Log(msg);
         }
 
         private void UpdateStatusInUI(string message)
