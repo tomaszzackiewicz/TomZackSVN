@@ -24,11 +24,27 @@ namespace SVN.Core
             svnUI = SVNUI.Instance;
             svnManager = SVNManager.Instance;
 
+            ResetAllPanels();
+        }
+
+        private void ResetAllPanels()
+        {
             Button_CloseHelp();
+            Button_CloseResolve();
+            Button_CloseSettings();
+            Button_CloseBranch();
+            Button_CloseMerge();
+            Button_CloseCommit();
+            Button_CloseCheckout();
+            Button_CloseLoad();
+            Button_CloseProjectSelection();
+            Button_CloseIgnored();
         }
 
         public void Button_OpenHelp()
         {
+            ResetAllPanels();
+
             if (helpPanel != null)
             {
                 helpPanel.SetActive(true);
@@ -45,6 +61,8 @@ namespace SVN.Core
 
         public void Button_OpenResolve()
         {
+            ResetAllPanels();
+
             if (resolvePanel != null)
             {
                 resolvePanel.SetActive(true);
@@ -61,6 +79,8 @@ namespace SVN.Core
 
         public void Button_OpenSettings()
         {
+            ResetAllPanels();
+
             if (settingsPanel != null)
             {
                 settingsPanel.SetActive(true);
@@ -77,6 +97,8 @@ namespace SVN.Core
 
         public void Button_OpenBranch()
         {
+            ResetAllPanels();
+
             if (branchPanel != null)
             {
                 branchPanel.SetActive(true);
@@ -93,6 +115,8 @@ namespace SVN.Core
 
         public void Button_OpenMerge()
         {
+            ResetAllPanels();
+
             if (mergePanel != null)
             {
                 mergePanel.SetActive(true);
@@ -109,6 +133,8 @@ namespace SVN.Core
 
         public void Button_OpenCommit()
         {
+            ResetAllPanels();
+
             if (commitPanel != null)
             {
                 commitPanel.SetActive(true);
@@ -127,6 +153,8 @@ namespace SVN.Core
 
         public void Button_OpenCheckout()
         {
+            ResetAllPanels();
+
             if (checkoutPanel != null)
             {
                 checkoutPanel.SetActive(true);
@@ -143,6 +171,8 @@ namespace SVN.Core
 
         public void Button_OpenLoad()
         {
+            ResetAllPanels();
+
             if (loadPanel != null)
             {
                 loadPanel.SetActive(true);
@@ -159,6 +189,8 @@ namespace SVN.Core
 
         public void Button_OpenProjectSelection()
         {
+            ResetAllPanels();
+
             if (projectSelectionPanel != null)
             {
                 //svnManager.MainUIPanel.SetActive(true);
@@ -178,6 +210,8 @@ namespace SVN.Core
 
         public void Button_OpenIgnored()
         {
+            ResetAllPanels();
+
             if (ignoredPanel != null)
             {
                 ignoredPanel.SetActive(true);

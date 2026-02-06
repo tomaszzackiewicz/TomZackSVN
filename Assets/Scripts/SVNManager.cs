@@ -130,6 +130,32 @@ namespace SVN.Core
             SVNLock = new SVNLock(svnUI, this);
         }
 
+        private async void Start()
+        {
+            if (svnUI == null) return;
+
+            SetupInputListeners();
+
+            string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
+            var allProjects = ProjectSettings.LoadProjects();
+            var lastProject = allProjects.Find(p => p.workingDir == lastPath);
+
+            if (lastProject != null)
+            {
+                LoadProject(lastProject);
+
+                if (projectSelectionPanel != null) projectSelectionPanel.gameObject.SetActive(false);
+            }
+            else
+            {
+                if (projectSelectionPanel != null)
+                {
+                    projectSelectionPanel.gameObject.SetActive(true);
+                    projectSelectionPanel.RefreshList();
+                }
+            }
+        }
+
         private void SetLoading(bool isLoading)
         {
             if (loadingOverlay != null)
@@ -173,32 +199,6 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 Debug.LogWarning("[SVN] Could not fetch URL from disk: " + ex.Message);
-            }
-        }
-
-        private async void Start()
-        {
-            if (svnUI == null) return;
-
-            SetupInputListeners();
-
-            string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
-            var allProjects = ProjectSettings.LoadProjects();
-            var lastProject = allProjects.Find(p => p.workingDir == lastPath);
-
-            if (lastProject != null)
-            {
-                LoadProject(lastProject);
-
-                if (projectSelectionPanel != null) projectSelectionPanel.gameObject.SetActive(false);
-            }
-            else
-            {
-                if (projectSelectionPanel != null)
-                {
-                    projectSelectionPanel.gameObject.SetActive(true);
-                    projectSelectionPanel.RefreshList();
-                }
             }
         }
 
@@ -449,86 +449,7 @@ namespace SVN.Core
 
         public async void RefreshStatus()
         {
-            if (isProcessing) return;
-
-            if (svnUI == null)
-            {
-                Debug.LogError("[SVN] SVNUI reference is missing in SVNManager!");
-                return;
-            }
-
-            string root = WorkingDir;
-
-            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
-            {
-                if (svnUI.LogText != null)
-                    svnUI.LogText.text = "<color=red>Error:</color> Valid working directory not found.";
-                return;
-            }
-
-            isProcessing = true;
-            if (svnUI.LogText != null) svnUI.LogText.text = "Refreshing status...";
-
-            try
-            {
-                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
-                CurrentStatusDict = statusDict;
-
-                bool hasConflicts = statusDict != null && statusDict.Values.Any(v => !string.IsNullOrEmpty(v.status) && v.status.Contains("C"));
-
-                if (panelHandler != null && hasConflicts)
-                {
-                    panelHandler.Button_OpenResolve();
-                }
-
-                var stats = new SvnStats();
-                var sb = new StringBuilder();
-
-                HashSet<string> relevantFolders = (statusDict != null) ? MapRelevantFolders(statusDict) : new HashSet<string>();
-
-                BuildTreeString(root, root, 0, statusDict, sb, stats, expandedPaths, new bool[128], false, relevantFolders);
-
-                if (svnUI.TreeDisplay != null)
-                {
-                    string finalTree = sb.ToString();
-                    svnUI.TreeDisplay.text = string.IsNullOrEmpty(finalTree) ? "<i>Working copy clean (no changes).</i>" : finalTree;
-                }
-
-                UpdateAllStatisticsUI(stats, false);
-
-                if (svnUI.LogText != null)
-                {
-                    string conflictAlert = hasConflicts ? " <color=red><b>(CONFLICTS DETECTED!)</b></color>" : "";
-                    svnUI.LogText.text = $"Last Refresh: {DateTime.Now:HH:mm:ss}\n" +
-                                         $"Modified: {stats.ModifiedCount} | Deleted/Missing: {stats.DeletedCount}{conflictAlert}";
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[SVN] Refresh Error: {ex}");
-                if (svnUI.LogText != null)
-                    svnUI.LogText.text = $"<color=red>Refresh Error:</color> {ex.Message}";
-            }
-            finally
-            {
-                isProcessing = false;
-            }
-        }
-
-        private HashSet<string> MapRelevantFolders(Dictionary<string, (string status, string size)> statusDict)
-        {
-            HashSet<string> folders = new HashSet<string>();
-            foreach (var path in statusDict.Keys)
-            {
-                string[] parts = path.Split('/');
-                string currentFolder = "";
-                for (int i = 0; i < parts.Length - 1; i++)
-                {
-                    currentFolder = string.IsNullOrEmpty(currentFolder) ? parts[i] : currentFolder + "/" + parts[i];
-                    folders.Add(currentFolder);
-                }
-            }
-            return folders;
+            SVNStatus.ShowOnlyModified();
         }
 
         public string ParseRevision(string input)

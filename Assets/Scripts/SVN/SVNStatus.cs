@@ -96,45 +96,40 @@ namespace SVN.Core
 
         public void CollapseAll()
         {
+            // 1. Czyœcimy wszystko oprócz roota
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
+
+            // 2. Czyœcimy tekst w UI natychmiast, ¿eby u¿ytkownik widzia³ reakcjê
+            if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "Collapsing...";
+            if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "Collapsing...";
+
+            // 3. Wywo³ujemy odœwie¿enie LOKALNE (bez AutoExpand), 
+            // dziêki czemu drzewo narysuje tylko g³ówny folder
             RefreshLocal();
         }
 
         public async void RefreshLocal()
         {
-            // 1. Check if busy
-            if (IsProcessing)
-            {
-                Debug.Log("[SVN] Refresh skipped: System is busy.");
-                return;
-            }
-
+            if (IsProcessing) return;
             IsProcessing = true;
-
-            // 2. Immediate UI Feedback (The "Blink")
-            string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            svnUI.LogText.text += $"[{timestamp}] <color=#0FF>Manual Refresh triggered...</color>\n";
-
-            // Temporarily change text so the user knows the app is working
-            svnUI.TreeDisplay.text = "<color=orange>Fetching local status...</color>";
 
             try
             {
-                // 3. Run the visual update
-                // Note: This uses the CURRENTly expanded paths. 
-                // If you want it to find NEW changes automatically, 
-                // call ExecuteRefreshWithAutoExpand() here instead!
+                string root = svnManager.WorkingDir;
+
+                // Pobieramy dane wizualne u¿ywaj¹c TYLKO aktualnych expandedPaths 
+                // (które po CollapseAll zawieraj¹ tylko "")
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(
-                    svnManager.WorkingDir,
+                    root,
                     svnManager.ExpandedPaths,
                     _isCurrentViewIgnored
                 );
 
-                // 4. Update Displays
+                // Aktualizacja UI
                 if (string.IsNullOrEmpty(result.tree))
                 {
-                    svnUI.TreeDisplay.text = "<i>No changes found in current view.</i>";
+                    svnUI.TreeDisplay.text = "<i>Working copy clean.</i>";
                 }
                 else
                 {
@@ -142,14 +137,13 @@ namespace SVN.Core
                 }
 
                 svnUI.CommitTreeDisplay.text = svnUI.TreeDisplay.text;
-                svnManager.UpdateAllStatisticsUI(result.stats, false);
 
-                svnUI.LogText.text += "<color=green>UI Updated.</color>\n";
+                // Aktualizujemy statystyki (licznik plików na dole)
+                svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Refresh Error:</color> {ex.Message}\n";
-                Debug.LogError($"[SVN] Refresh Error: {ex}");
+                Debug.LogError($"[SVN] Collapse/Refresh Error: {ex.Message}");
             }
             finally
             {
