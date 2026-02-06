@@ -70,9 +70,9 @@ public class ProjectSelectionPanel : MonoBehaviour
             ui.AddProjectRepoUrlInput.onEndEdit.AddListener(OnUrlInputEndEdit);
         }
     }
-    public void Button_BrowseDestFolder() => svnManager.SVNExternal.BrowseNewProjectFolder();
+    public void Button_BrowseDestFolder() => svnManager.SVNExternal.BrowseDestinationFolderPathAdd();
 
-    public void Button_BrowsePrivateKey() => svnManager.SVNExternal.BrowseNewProjectPrivateKey();
+    public void Button_BrowsePrivateKey() => svnManager.SVNExternal.BrowsePrivateKeyPathAdd();
 
     public void Button_CloseAddProjectPanel()
     {

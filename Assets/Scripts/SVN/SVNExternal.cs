@@ -12,7 +12,6 @@ namespace SVN.Core
         {
             try
             {
-                // Using verified path from the Manager
                 string root = svnManager.WorkingDir;
 
                 if (string.IsNullOrEmpty(root) || !System.IO.Directory.Exists(root))
@@ -21,8 +20,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Standard Windows Explorer call
-                // We use backslashes for Windows Explorer compatibility
                 System.Diagnostics.Process.Start("explorer.exe", root.Replace('/', '\\'));
 
                 svnUI.LogText.text += $"<color=green>Explorer:</color> Opened {root}\n";
@@ -54,11 +51,6 @@ namespace SVN.Core
             {
                 svnUI.LogText.text += $"Opening Diff for: {relativePath}...\n";
 
-                // Command: svn diff --diff-cmd [external_tool]
-                // However, it's easier to use the default 'TortoiseIDiff.exe' if available,
-                // or simply call 'svn diff' which outputs to console.
-
-                // Let's use the standard SVN command that works with the system's default diff tool:
                 await SvnRunner.RunAsync($"diff \"{relativePath}\" --external-diff-cmd TortoiseMerge", root);
             }
             catch (Exception ex)
@@ -67,7 +59,7 @@ namespace SVN.Core
             }
         }
 
-        public void BrowseLocalPath()
+        public void BrowseDestinationFolderPathLoad()
         {
             string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select SVN Working Directory", "", false);
 
@@ -84,39 +76,29 @@ namespace SVN.Core
 
                 _ = svnManager.SetWorkingDirectory(selectedPath);
 
-                Debug.Log($"Wybrano œcie¿kê SVN: {selectedPath}");
+                Debug.Log($"SVN path selected: {selectedPath}");
             }
             else
             {
-                Debug.Log("Anulowano wybór folderu.");
+                Debug.Log("Folder selection canceled.");
             }
         }
 
-        public void BrowsePrivateKeyPath()
+        public void BrowsePrivateKeyPathLoad()
         {
-            // 1. Define file filters
-            // Since keys often have no extension, we provide an "All Files" filter.
-            // Some systems still use .ppk or .key, so we include those for convenience.
             var extensions = new[] {
             new ExtensionFilter("All Files", "*"),
             new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh")
         };
 
-            // 2. Open File Dialog
-            // Parameters: Title, Starting Directory, Extension Filters, Multiselect
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select Private Key File", "", extensions, false);
 
-            // 3. Validation
             if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
             {
                 string selectedPath = paths[0].Replace('\\', '/');
 
-                // 4. Update Manager
-                // Adjust the field name 'PrivateKeyPath' to match your svnManager structure
                 svnManager.CurrentKey = selectedPath;
 
-                // 5. Update UI
-                // Adjust the field name 'PrivateKeyInput' to match your svnUI structure
                 if (svnUI.LoadPrivateKeyInput != null)
                 {
                     svnUI.LoadPrivateKeyInput.text = selectedPath;
@@ -130,7 +112,7 @@ namespace SVN.Core
             }
         }
 
-        public void BrowseNewProjectFolder()
+        public void BrowseDestinationFolderPathAdd()
         {
             string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select SVN Working Directory", "", false);
             if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
@@ -144,13 +126,53 @@ namespace SVN.Core
             }
         }
 
-        public void BrowseNewProjectPrivateKey()
+        public void BrowsePrivateKeyPathAdd()
         {
             var extensions = new[] { new ExtensionFilter("All Files", "*") };
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select Private Key", "", extensions, false);
             if (paths != null && paths.Length > 0)
             {
                 SVNUI.Instance.AddProjectKeyPathInput.text = paths[0].Replace('\\', '/');
+            }
+        }
+
+        public void BrowseDestinationFolderPathCheckout()
+        {
+            string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select Checkout Destination Directory", "", false);
+
+            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
+            {
+                string selectedPath = paths[0].Replace('\\', '/');
+
+                if (svnUI.CheckoutDestFolderInput != null)
+                {
+                    svnUI.CheckoutDestFolderInput.text = selectedPath;
+                }
+
+                Debug.Log($"[Checkout] Destination path set to: {selectedPath}");
+            }
+        }
+
+
+        public void BrowsePrivateKeyPathCheckout()
+        {
+           var extensions = new[] {
+                new ExtensionFilter("All Files", "*"),
+                new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh")
+            };
+
+            string[] paths = StandaloneFileBrowser.OpenFilePanel("Select SSH Private Key for Checkout", "", extensions, false);
+
+            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
+            {
+                string selectedPath = paths[0].Replace('\\', '/');
+
+                if (svnUI.CheckoutPrivateKeyInput != null)
+                {
+                    svnUI.CheckoutPrivateKeyInput.text = selectedPath;
+                }
+
+                Debug.Log($"[Checkout] SSH Key path set to: {selectedPath}");
             }
         }
 
