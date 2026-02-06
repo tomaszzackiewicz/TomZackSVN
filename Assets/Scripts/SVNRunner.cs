@@ -11,8 +11,7 @@ using UnityEngine;
 namespace SVN.Core
 {
     public static class SvnRunner
-    {
-        private static string sshPath = "ssh";                          
+    {                       
         public static string KeyPath
         {
             get
@@ -217,90 +216,12 @@ namespace SVN.Core
             catch { return false; }
         }
 
-        public static async Task<bool> CheckIfIgnoreIsSet(string workingDir)
-        {
-            try
-            {
-                string result = await RunAsync("propget svn:ignore .", workingDir);
-                return result.Contains("Intermediate");
-            }
-            catch { return false; }
-        }
-
-        public static bool CheckIfSshKeyExists()
-        {
-            if (string.IsNullOrEmpty(KeyPath)) return false;
-            return File.Exists(KeyPath);
-        }
-
-        public static bool CheckWritePermissions(string workingDir)
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(workingDir) || !Directory.Exists(workingDir)) return false;
-
-                string testPath = Path.Combine(workingDir, ".write_test_" + Path.GetRandomFileName());
-                File.WriteAllText(testPath, "temp");
-                File.Delete(testPath);
-                return true;
-            }
-            catch { return false; }
-        }
-
-        public static bool IsWorkingCopy(string workingDir)
-        {
-            return Directory.Exists(Path.Combine(workingDir, ".svn"));
-        }
-
-        public static async Task<string> CheckoutAsync(string url, string path)
-        {
-            string cmd = $"checkout \"{url}\" \"{path}\" --non-interactive";
-            return await RunAsync(cmd, "");
-        }
-
-        public static async Task<(string status, string[] files)> StatusAsync(string workingDir)
-        {
-            string output = await RunAsync("status", workingDir);
-            var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            return (output, lines);
-        }
-
         public static async Task<string> AddAsync(string workingDir, string[] files)
         {
             if (files == null || files.Length == 0) return "";
 
             string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
             return await RunAsync($"add {fileArgs} --force --parents", workingDir);
-        }
-
-        public static async Task<string> CommitAsync(string workingDir, string[] paths, string message)
-        {
-            string pathsArg;
-
-            // Check if we are committing the whole directory
-            if (paths != null && paths.Length > 0 && paths[0] == ".")
-            {
-                pathsArg = ".";
-            }
-            else if (paths != null && paths.Length > 0)
-            {
-                // Quote each individual file path
-                pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
-            }
-            else
-            {
-                // Default to current directory if no paths provided
-                pathsArg = ".";
-            }
-
-            // Wrap message in quotes to handle spaces in commit messages
-            string cmd = $"commit -m \"{message}\" {pathsArg}";
-            return await RunAsync(cmd, workingDir);
-        }
-
-        public static async Task<string> UpdateAsync(string workingDir)
-        {
-            return await RunAsync("update --accept postpone", workingDir);
         }
 
         public static async Task<string> LogAsync(string workingDir, int lastN = 10)
@@ -387,41 +308,6 @@ namespace SVN.Core
             return await RunAsync(cmd, workingDir);
         }
 
-        public static async Task<string> DeleteAsync(string workingDir, string[] paths)
-        {
-            if (paths == null || paths.Length == 0) return "No paths to delete.";
-
-            // Prepare paths in quotes
-            string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
-
-            // Use --force to delete files that are 'missing' (!) 
-            // or have local modifications.
-            string cmd = $"delete --force {pathsArg}";
-            return await RunAsync(cmd, workingDir);
-        }
-
-        public static async Task<string> StatusRemoteAsync(string workingDir)
-        {
-            // -u (or --show-updates) contacts the server
-            // Pass "." to check the entire project
-            string cmd = "status -u .";
-            return await RunAsync(cmd, workingDir);
-        }
-
-        public static async Task<string> IgnoreDefaultsAsync(string workingDir)
-        {
-            // List of common Unreal Engine folders to ignore
-            string ignoreList = "Binaries Intermediate Saved DerivedDataCache .vs Build *.sln *.suo *.obj";
-
-            // Use propset to assign the list to the svn:ignore property of the root folder (.)
-            // We must replace spaces with newlines for SVN
-            string formattedList = ignoreList.Replace(" ", "\n");
-
-            // Execute command (careful with quotes in parameters)
-            string cmd = $"propset svn:ignore \"{formattedList}\" .";
-            return await RunAsync(cmd, workingDir);
-        }
-
         public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
         {
             // --depth empty adds the folder itself without adding the files inside
@@ -436,14 +322,6 @@ namespace SVN.Core
             return await RunAsync(cmd, workingDir);
         }
 
-        public static async Task<string> CopyBranchAsync(string workingDir, string sourceUrl, string targetUrl, string message)
-        {
-            // svn copy URL1 URL2 -m "message"
-            // Quotes around message are crucial!
-            string args = $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"{message}\"";
-            return await RunAsync(args, workingDir);
-        }
-
         /// <summary>
         /// Switches the working directory to another branch.
         /// </summary>
@@ -451,17 +329,6 @@ namespace SVN.Core
         {
             // The switch command changes the working folder's association with a URL in the repository
             string cmd = $"switch \"{targetUrl}\" --accept postpone";
-            return await RunAsync(cmd, workingDir);
-        }
-
-        /// <summary>
-        /// Merges changes from the given URL into the current working directory.
-        /// </summary>
-        public static async Task<string> MergeAsync(string workingDir, string sourceUrl)
-        {
-            // --accept postpone allows the merge to complete even with conflicts, 
-            // so you can resolve them manually later.
-            string cmd = $"merge \"{sourceUrl}\" --accept postpone";
             return await RunAsync(cmd, workingDir);
         }
 
@@ -486,21 +353,17 @@ namespace SVN.Core
     bool showIgnored,
     HashSet<string> foldersWithRelevantContent)
         {
-            // 1. Standaryzacja ścieżek
             string normRootDir = rootDir.Replace('\\', '/').TrimEnd('/');
             string normCurrentDir = currentDir.Replace('\\', '/').TrimEnd('/');
 
-            // Obliczamy relatywną ścieżkę obecnego folderu (pusta dla Root)
             string currentRelDir = "";
             if (normCurrentDir.Length > normRootDir.Length)
             {
                 currentRelDir = normCurrentDir.Substring(normRootDir.Length).TrimStart('/').Replace('\\', '/');
             }
 
-            // 2. ZBIERANIE ELEMENTÓW (Łączymy Fizyczne i SVN w jedną listę)
             HashSet<string> combinedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // A. Dodaj elementy fizyczne (np. New Text Document (7).txt)
             if (Directory.Exists(normCurrentDir))
             {
                 try
@@ -514,16 +377,13 @@ namespace SVN.Core
                 catch { }
             }
 
-            // B. Dodaj "Duchy" (Pliki usunięte/nieobecne fizycznie)
             foreach (var kvp in statusDict)
             {
                 string svnPath = kvp.Key.Replace('\\', '/').Trim('/');
 
-                // Wyliczamy rodzica dla wpisu ze słownika
                 int lastSlash = svnPath.LastIndexOf('/');
                 string svnParent = (lastSlash == -1) ? "" : svnPath.Substring(0, lastSlash);
 
-                // Jeśli rodzic ze słownika to nasz obecny folder, dodaj go jako pełną ścieżkę
                 if (string.Equals(svnParent, currentRelDir, StringComparison.OrdinalIgnoreCase))
                 {
                     string fullPath = $"{normRootDir}/{svnPath}";
@@ -531,7 +391,6 @@ namespace SVN.Core
                 }
             }
 
-            // C. Dodaj wirtualne foldery (ścieżki do zmian)
             foreach (var fPath in foldersWithRelevantContent)
             {
                 string f = fPath.Replace('\\', '/').Trim('/');
@@ -545,7 +404,6 @@ namespace SVN.Core
                 }
             }
 
-            // 3. SORTOWANIE (Katalogi zawsze na górę)
             var allEntries = combinedEntries
                 .OrderBy(e => {
                     string rP = e.Length > normRootDir.Length ? e.Substring(normRootDir.Length).TrimStart('/') : "";
@@ -555,14 +413,12 @@ namespace SVN.Core
                 .ThenBy(e => e)
                 .ToArray();
 
-            // 4. PĘTLA RYSUJĄCA
             for (int i = 0; i < allEntries.Length; i++)
             {
                 string entry = allEntries[i];
                 string name = Path.GetFileName(entry);
                 if (string.IsNullOrEmpty(name) || name == ".svn" || name.EndsWith(".meta")) continue;
 
-                // BARDZO WAŻNE: Klucz relatywny musi być identyczny jak w logu [FINAL KEY]
                 string relPath = entry.Length > normRootDir.Length
                     ? entry.Substring(normRootDir.Length).TrimStart('/')
                     : "";
@@ -581,7 +437,6 @@ namespace SVN.Core
                                   (string.IsNullOrEmpty(Path.GetExtension(name)) && (status == "!" || status == "D"));
                 bool isLast = (i == allEntries.Length - 1);
 
-                // --- FILTROWANIE ---
                 if (!showIgnored)
                 {
                     if (status == "I") continue;
@@ -593,7 +448,6 @@ namespace SVN.Core
                     else if (string.IsNullOrEmpty(status)) continue;
                 }
 
-                // --- STATYSTYKI ---
                 if (!isDirectory)
                 {
                     if (status != "" && status != "I")
@@ -611,7 +465,6 @@ namespace SVN.Core
                     if (status == "!" || status == "D") stats.DeletedCount++;
                 }
 
-                // --- RYSOWANIE ---
                 StringBuilder indentStr = new StringBuilder();
                 for (int j = 0; j < indent - 1; j++)
                     indentStr.Append(parentIsLast[j] ? "    " : "│   ");
@@ -627,7 +480,6 @@ namespace SVN.Core
 
                 sb.AppendLine($"{indentStr}{statusIcon} {expandIcon}{typeTag} {displayName}{sizeStr}");
 
-                // --- REKURENCJA ---
                 if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath) || foldersWithRelevantContent.Contains(relPath)))
                 {
                     if (indent < parentIsLast.Length) parentIsLast[indent] = isLast;
@@ -721,15 +573,10 @@ namespace SVN.Core
                 string stat = rawCode.ToString().ToUpper();
                 string rawPath = line.Substring(8).Trim().Replace('\\', '/');
 
-                // --- AGRESYWNE CZYSZCZENIE ŚCIEŻKI ---
                 string cleanPath = rawPath;
 
-                // Jeśli ścieżka zawiera "trunk/", "branches/", itd. - usuwamy to.
-                // Szukamy gdzie zaczyna się faktyczna treść projektu (zazwyczaj Content lub Assets)
                 if (rawPath.Contains("/"))
                 {
-                    // Jeśli Twoje drzewo w Unity/Unreal zaczyna się od Content, 
-                    // a SVN zwraca trunk/Content, to tniemy wszystko przed Content.
                     int contentIndex = rawPath.IndexOf("Content/", StringComparison.OrdinalIgnoreCase);
                     if (contentIndex != -1)
                     {
@@ -737,7 +584,6 @@ namespace SVN.Core
                     }
                     else
                     {
-                        // Jeśli nie ma Content, tniemy po prostu pierwszy człon (np. "trunk/")
                         int firstSlash = rawPath.IndexOf('/');
                         cleanPath = rawPath.Substring(firstSlash + 1);
                     }
@@ -747,7 +593,6 @@ namespace SVN.Core
 
                 if (isRelevant)
                 {
-                    // Ten log MUSI pokazać: "Content/ScreenSelector1.uasset" (bez trunk/)
                     UnityEngine.Debug.Log($"<color=cyan>[FINAL KEY]: {cleanPath}</color>");
                     statusDict[cleanPath] = (stat, GetFileSizeSafe(Path.Combine(workingDir, cleanPath)));
                 }
@@ -757,7 +602,6 @@ namespace SVN.Core
 
         private static string GetFileSizeSafe(string fullPath)
         {
-            // Jeśli to katalog lub plik nie istnieje (bo został usunięty), nie rzucamy błędem
             if (Directory.Exists(fullPath) || !File.Exists(fullPath)) return "";
 
             try
@@ -767,21 +611,8 @@ namespace SVN.Core
             }
             catch
             {
-                return ""; // Zwracamy pusty string zamiast "err", żeby nie psuć widoku w UI
+                return "";
             }
-        }
-
-        public static async Task<string> AddWithMetasAsync(string workingDir, string[] files)
-        {
-            List<string> filesWithMetas = new List<string>();
-            foreach (var f in files)
-            {
-                filesWithMetas.Add(f);
-                string metaPath = f + ".meta";
-                if (File.Exists(Path.Combine(workingDir, metaPath)))
-                    filesWithMetas.Add(metaPath);
-            }
-            return await AddAsync(workingDir, filesWithMetas.ToArray());
         }
 
         public static async Task<string> GetRepoUrlAsync(string workingDir)
@@ -891,7 +722,6 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(path)) return "";
             string p = path.Replace('\\', '/').Trim('/');
 
-            // Usuwamy techniczne przedrostki SVN, jeśli istnieją
             if (p.StartsWith("trunk/", StringComparison.OrdinalIgnoreCase))
                 return p.Substring(6);
 
@@ -901,13 +731,11 @@ namespace SVN.Core
                 return (secondSlash != -1) ? p.Substring(secondSlash + 1) : p;
             }
 
-            // Jeśli ścieżka to po prostu "Build/Win64", zostanie zwrócona bez zmian
             return p;
         }
 
         public static async Task<Dictionary<string, (string status, string size)>> GetChangesDictionaryAsync(string workingDir)
         {
-            // Nie używamy --no-ignore, więc SVN sam odsieje śmieci
             string output = await RunAsync("status", workingDir);
             var statusDict = new Dictionary<string, (string status, string size)>();
 
@@ -921,11 +749,10 @@ namespace SVN.Core
                 char rawCode = line[0];
                 string stat = rawCode.ToString().ToUpper();
 
-                // Interesują nas tylko zmiany, a nie ignorowane
                 if ("MA?!DC".Contains(stat))
                 {
                     string rawPath = line.Substring(8).Trim();
-                    string cleanPath = CleanSvnPath(rawPath); // Ta sama bezpieczna metoda czyszcząca
+                    string cleanPath = CleanSvnPath(rawPath);
 
                     string fullPath = Path.Combine(workingDir, cleanPath);
                     statusDict[cleanPath] = (stat, GetFileSizeSafe(fullPath));
@@ -936,7 +763,6 @@ namespace SVN.Core
 
         public static async Task<Dictionary<string, (string status, string size)>> GetIgnoredOnlyAsync(string workingDir)
         {
-            // Musimy wymusić --no-ignore, żeby SVN w ogóle o nich wspomniał
             string output = await RunAsync("status --no-ignore", workingDir);
             var ignoredDict = new Dictionary<string, (string status, string size)>();
 
@@ -947,45 +773,15 @@ namespace SVN.Core
             {
                 if (line.Length < 8) continue;
 
-                if (line[0] == 'I') // Szukamy TYLKO statusu 'I'
+                if (line[0] == 'I')
                 {
                     string rawPath = line.Substring(8).Trim();
                     string cleanPath = CleanSvnPath(rawPath);
 
-                    // Dla ignorowanych często nie potrzebujemy dokładnego rozmiaru (oszczędność czasu)
-                    // ale jeśli chcesz, możesz użyć GetFileSizeSafe
                     ignoredDict[cleanPath] = ("I", "<IGNORED>");
                 }
             }
             return ignoredDict;
-        }
-
-        public static async Task<List<string>> GetIgnoreRulesAsync(string workingDir)
-        {
-            List<string> rules = new List<string>();
-            try
-            {
-                // -R (recursive) przeszuka wszystkie foldery i znajdzie ukryte reguły
-                string output = await RunAsync("propget svn:ignore -R .", workingDir);
-
-                var lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
-                {
-                    // SVN propget -R zwraca format: "sciezka - wzorzec"
-                    // Wyciągamy sam wzorzec (pattern)
-                    string pattern = line.Contains(" - ") ? line.Split(new[] { " - " }, StringSplitOptions.None)[1] : line;
-
-                    string trimmed = pattern.Trim();
-                    if (!string.IsNullOrEmpty(trimmed) && !rules.Contains(trimmed))
-                        rules.Add(trimmed);
-                }
-
-                // Dodaj standardowe Unrealowe wzorce na wypadek, gdyby SVN był "czysty"
-                string[] defaults = { "Binaries", "Intermediate", "Saved", "DerivedDataCache", ".vs", "*.sln" };
-                foreach (var d in defaults) if (!rules.Contains(d)) rules.Add(d);
-            }
-            catch { }
-            return rules;
         }
 
         public static async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir)

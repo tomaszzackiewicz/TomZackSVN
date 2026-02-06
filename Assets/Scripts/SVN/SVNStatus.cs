@@ -20,6 +20,12 @@ namespace SVN.Core
 
         public void ShowOnlyModified()
         {
+            svnManager.ExpandedPaths.Clear();
+            svnManager.ExpandedPaths.Add("");
+
+            if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "Refreshing...";
+            if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "Refreshing...";
+
             _isCurrentViewIgnored = false;
             ExecuteRefreshWithAutoExpand();
         }
@@ -36,17 +42,35 @@ namespace SVN.Core
             IsProcessing = true;
 
             string root = svnManager.WorkingDir;
-            svnUI.LogText.text += $"[{DateTime.Now:HH:mm:ss}] <color=#0FF>Refreshing...</color>\n";
+            string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
+
+            // Funkcja pomocnicza do pisania w obu logach jednoczeœnie
+            Action<string> LogBoth = (msg) => {
+                if (svnUI.LogText != null) svnUI.LogText.text += msg;
+                if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
+            };
+
+            // Czyœcimy poprzednie logi
+            if (svnUI.LogText != null) svnUI.LogText.text = $"{timestamp} <color=#0FF>Starting Refresh...</color>\n";
+            if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text = $"{timestamp} <color=#0FF>Starting Refresh...</color>\n";
 
             try
             {
+                // KROK 1: Status SVN
+                LogBoth("Checking SVN status...\n");
                 var statusDict = _isCurrentViewIgnored
                     ? await SvnRunner.GetIgnoredOnlyAsync(root)
                     : await SvnRunner.GetChangesDictionaryAsync(root);
 
-                string normalizedRoot = root.Trim().Replace("\\", "/");
-                if (!normalizedRoot.EndsWith("/")) normalizedRoot += "/";
+                if (statusDict == null)
+                {
+                    LogBoth("<color=red>Error: statusDict is null!</color>\n");
+                    return;
+                }
 
+                LogBoth($"Found {statusDict.Count} entries. Processing paths...\n");
+
+                // KROK 2: Przetwarzanie œcie¿ek
                 svnManager.ExpandedPaths.Clear();
                 svnManager.ExpandedPaths.Add("");
 
@@ -55,31 +79,42 @@ namespace SVN.Core
                     string path = item.Key;
                     string stat = item.Value.status;
                     bool isChange = !string.IsNullOrEmpty(stat) && (stat == "M" || stat == "A" || stat == "?" || stat == "C" || stat == "!" || stat == "D");
-
                     bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : isChange;
 
                     if (shouldExpand)
                         AddParentFoldersToExpanded(path);
-
-                   
                 }
 
+                // KROK 3: Raport rozmiaru
+                LogBoth("Calculating commit size...\n");
                 string report = await SvnRunner.GetCommitSizeReportAsync(root);
-                svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {report}</color>\n";
+                if (svnUI.CommitSizeText != null)
+                    svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {report}</color>\n";
 
+                // KROK 4: Generowanie drzewa
+                LogBoth("Building visual tree...\n");
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
 
-                svnUI.TreeDisplay.text = result.tree;
-                svnUI.CommitTreeDisplay.text = result.tree;
+                // KROK 5: Aktualizacja wyœwietlaczy drzewa
+                string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
+
+                if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
+                if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = treeResult;
 
                 svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
+
+                LogBoth("<color=green>Refresh Complete!</color>\n");
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Error:</color> {ex.Message}\n";
+                string errorMsg = $"<color=red>Exception:</color> {ex.Message}\n";
+                LogBoth(errorMsg);
                 Debug.LogError($"[SVN] Refresh Error: {ex}");
             }
-            finally { IsProcessing = false; }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
         private void AddParentFoldersToExpanded(string filePath)
@@ -96,16 +131,12 @@ namespace SVN.Core
 
         public void CollapseAll()
         {
-            // 1. Czyœcimy wszystko oprócz roota
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
 
-            // 2. Czyœcimy tekst w UI natychmiast, ¿eby u¿ytkownik widzia³ reakcjê
             if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "Collapsing...";
             if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "Collapsing...";
 
-            // 3. Wywo³ujemy odœwie¿enie LOKALNE (bez AutoExpand), 
-            // dziêki czemu drzewo narysuje tylko g³ówny folder
             RefreshLocal();
         }
 
@@ -114,35 +145,51 @@ namespace SVN.Core
             if (IsProcessing) return;
             IsProcessing = true;
 
+            string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
+
+            // Funkcja pomocnicza dla spójnoœci feedbacku
+            Action<string> LogBoth = (msg) => {
+                if (svnUI.LogText != null) svnUI.LogText.text += msg;
+                if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
+            };
+
             try
             {
                 string root = svnManager.WorkingDir;
 
-                // Pobieramy dane wizualne u¿ywaj¹c TYLKO aktualnych expandedPaths 
-                // (które po CollapseAll zawieraj¹ tylko "")
+                LogBoth($"{timestamp} <color=green>Local refresh started...</color>\n");
+
+                // Pobieramy dane wizualne (u¿ywaj¹c aktualnego stanu expandedPaths)
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(
                     root,
                     svnManager.ExpandedPaths,
                     _isCurrentViewIgnored
                 );
 
-                // Aktualizacja UI
+                // Aktualizacja UI G³ównego
                 if (string.IsNullOrEmpty(result.tree))
                 {
-                    svnUI.TreeDisplay.text = "<i>Working copy clean.</i>";
+                    string cleanMsg = "<i>Working copy clean.</i>";
+                    if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = cleanMsg;
+                    if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = cleanMsg;
+                    LogBoth("-> View is clean.\n");
                 }
                 else
                 {
-                    svnUI.TreeDisplay.text = result.tree;
+                    if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = result.tree;
+                    if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = result.tree;
+                    LogBoth($"-> View updated ({result.stats.FileCount} files shown).\n");
                 }
 
-                svnUI.CommitTreeDisplay.text = svnUI.TreeDisplay.text;
-
-                // Aktualizujemy statystyki (licznik plików na dole)
+                // Aktualizacja statystyk na dole ekranu
                 svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
+
+                LogBoth("<color=#55FF55>Done.</color>\n");
             }
             catch (Exception ex)
             {
+                string err = $"<color=red>[View Error]:</color> {ex.Message}\n";
+                LogBoth(err);
                 Debug.LogError($"[SVN] Collapse/Refresh Error: {ex.Message}");
             }
             finally
