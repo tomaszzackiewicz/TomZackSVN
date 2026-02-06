@@ -254,6 +254,12 @@ namespace SVN.Core
                 BroadcastWorkingDirChange(cleaned);
                 UpdateCurrentProjectData();
             });
+
+            svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(val =>
+            {
+                this.MergeToolPath = val.Trim();
+                UpdateCurrentProjectData();
+            });
         }
 
         private void UpdateCurrentProjectData()
@@ -265,6 +271,8 @@ namespace SVN.Core
             {
                 current.repoUrl = this.RepositoryUrl;
                 current.privateKeyPath = this.CurrentKey;
+                current.mergeToolPath = this.MergeToolPath;
+
                 ProjectSettings.SaveProjects(projects);
             }
         }
@@ -274,11 +282,13 @@ namespace SVN.Core
             this.WorkingDir = project.workingDir;
             this.RepositoryUrl = project.repoUrl;
             this.CurrentKey = project.privateKeyPath;
+            this.MergeToolPath = project.mergeToolPath;
             SvnRunner.KeyPath = this.CurrentKey;
 
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
             svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
             svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
+            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
 
             PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
             PlayerPrefs.Save();

@@ -125,7 +125,7 @@ namespace SVN.Core
             // 1. Pobierz œcie¿kê ostatniego projektu
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
             string globalMergeTool = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-
+            
             svnManager.MergeToolPath = globalMergeTool;
 
             // 2. ZnajdŸ dane projektu w JSON
@@ -157,19 +157,24 @@ namespace SVN.Core
         {
             if (svnUI == null) return;
 
-            // 1. Synchronizacja œcie¿ki edytora z PlayerPrefs, jeœli Manager jest pusty
-            if (string.IsNullOrEmpty(svnManager.MergeToolPath))
+            // POBIERZ ZAPIS (Ostateczne zabezpieczenie)
+            string savedPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+
+            if (!string.IsNullOrEmpty(savedPath))
             {
-                svnManager.MergeToolPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+                svnManager.MergeToolPath = savedPath; // Wymuœ wartoœæ w Managerze
+
+                if (svnUI.SettingsMergeToolPathInput != null)
+                {
+                    // Wpisz do UI, ale NIE wywo³uj ¿adnych eventów
+                    svnUI.SettingsMergeToolPathInput.SetTextWithoutNotify(savedPath);
+                }
             }
 
-            // 2. Wype³nianie pól UI
+            // Pozosta³e pola
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(svnManager.WorkingDir);
             svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(svnManager.RepositoryUrl);
             svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(svnManager.CurrentKey);
-
-            // To pole teraz zawsze weŸmie wartoœæ albo z Managera, albo z zapisu na dysku
-            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(svnManager.MergeToolPath);
         }
     }
 }

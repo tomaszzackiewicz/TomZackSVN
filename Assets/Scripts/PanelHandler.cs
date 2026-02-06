@@ -239,6 +239,7 @@ namespace SVN.Core
         public string repoUrl;
         public string workingDir;
         public string privateKeyPath;
+        public string mergeToolPath;
         public System.DateTime lastOpened;
     }
 
