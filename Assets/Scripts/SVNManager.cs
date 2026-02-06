@@ -449,6 +449,8 @@ namespace SVN.Core
 
         public async void RefreshStatus()
         {
+            if (string.IsNullOrEmpty(WorkingDir)) return;
+
             SVNStatus.ShowOnlyModified();
         }
 
@@ -464,115 +466,6 @@ namespace SVN.Core
         {
             var match = System.Text.RegularExpressions.Regex.Match(infoOutput, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
             return match.Success ? match.Groups[1].Value : "Unknown";
-        }
-
-        private void BuildTreeString(
-    string currentDir,
-    string rootDir,
-    int indent,
-    Dictionary<string, (string status, string size)> statusDict,
-    StringBuilder sb,
-    SvnStats stats,
-    HashSet<string> expandedPaths,
-    bool[] parentIsLast,
-    bool showIgnored,
-    HashSet<string> foldersWithRelevantContent)
-        {
-            string normCurrentDir = currentDir.Replace('\\', '/').TrimEnd('/');
-            string normRootDir = rootDir.Replace('\\', '/').TrimEnd('/');
-            string currentRelDir = normCurrentDir.Replace(normRootDir, "").TrimStart('/');
-
-            List<string> physicalEntries = new List<string>();
-            if (Directory.Exists(normCurrentDir))
-            {
-                try { physicalEntries.AddRange(Directory.GetFileSystemEntries(normCurrentDir)); }
-                catch { }
-            }
-
-            var missingInSvn = statusDict
-                .Where(kvp => kvp.Value.status == "!" || kvp.Value.status == "D")
-                .Where(kvp => {
-                    string svnPath = kvp.Key.Replace('\\', '/');
-                    int lastSlash = svnPath.LastIndexOf('/');
-                    string svnParent = lastSlash == -1 ? "" : svnPath.Substring(0, lastSlash);
-                    return string.Equals(svnParent, currentRelDir, StringComparison.OrdinalIgnoreCase);
-                })
-                .Select(kvp => Path.Combine(normRootDir, kvp.Key).Replace('\\', '/'))
-                .ToList();
-
-            var allEntries = physicalEntries
-                .Select(e => e.Replace('\\', '/'))
-                .Union(missingInSvn)
-                .Distinct()
-                .OrderBy(e => !Directory.Exists(e) && !statusDict.ContainsKey(e.Replace(normRootDir, "").TrimStart('/')))
-                .ThenBy(e => e)
-                .ToArray();
-
-            for (int i = 0; i < allEntries.Length; i++)
-            {
-                string entry = allEntries[i];
-                string name = Path.GetFileName(entry);
-                if (name == ".svn" || name.EndsWith(".meta")) continue;
-
-                string relPath = entry.Replace(normRootDir, "").TrimStart('/');
-
-                string status = "";
-                string sizeInfo = "";
-                if (statusDict.TryGetValue(relPath, out var statusData))
-                {
-                    status = statusData.status;
-                    sizeInfo = statusData.size;
-                }
-
-                bool isMissing = (status == "!");
-                bool isDeleted = (status == "D");
-                bool isDirectory = Directory.Exists(entry) || ((isMissing || isDeleted) && string.IsNullOrEmpty(Path.GetExtension(name)));
-
-                if (!showIgnored)
-                {
-                    if (status == "I") continue;
-                    if (string.IsNullOrEmpty(status) && !foldersWithRelevantContent.Contains(relPath)) continue;
-                }
-
-                if (isDirectory)
-                {
-                    stats.FolderCount++;
-                    if (isMissing || isDeleted) stats.DeletedCount++;
-                }
-                else
-                {
-                    stats.FileCount++;
-                    if (status == "M") stats.ModifiedCount++;
-                    else if (status == "A" || status == "?") stats.NewFilesCount++;
-                    else if (status == "C") stats.ConflictsCount++;
-                    else if (isMissing || isDeleted)
-                    {
-                        stats.DeletedCount++;
-                    }
-                }
-
-                bool isLast = (i == allEntries.Length - 1);
-                string indentStr = "";
-                for (int j = 0; j < indent - 1; j++)
-                    indentStr += parentIsLast[j] ? "    " : "│   ";
-
-                string prefix = (indent > 0) ? (isLast ? "└── " : "├── ") : "";
-                string expandIcon = isDirectory ? (expandedPaths.Contains(relPath) ? "[-] " : "[+] ") : "    ";
-                string statusIcon = SvnRunner.GetStatusIcon(string.IsNullOrEmpty(status) ? " " : status[0].ToString());
-
-                string colorTag = isDirectory ? "<color=#FFCA28>" : "<color=#4FC3F7>";
-                if (isMissing) name = $"<color=#FF4444>{name} (MISSING !)</color>";
-                else if (isDeleted) name = $"<color=#FF8888>{name} (DELETED D)</color>";
-                else name = $"{colorTag}{name}</color>";
-
-                sb.AppendLine($"{indentStr}{prefix}{statusIcon} {expandIcon}{name}");
-
-                if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath)))
-                {
-                    if (indent < parentIsLast.Length) parentIsLast[indent] = isLast;
-                    BuildTreeString(entry, rootDir, indent + 1, statusDict, sb, stats, expandedPaths, parentIsLast, showIgnored, foldersWithRelevantContent);
-                }
-            }
         }
 
         public Dictionary<string, (string status, string size)> CurrentStatusDict { get; private set; } = new Dictionary<string, (string status, string size)>();
@@ -656,5 +549,7 @@ namespace SVN.Core
                 //SVNStatus.ShowOnlyModified();
             }
         }
+
+        
     }
 }
