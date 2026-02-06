@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -14,7 +13,6 @@ namespace SVN.Core
         private bool _isCurrentViewIgnored = false;
 
         private List<string> _cachedIgnoreRules = new List<string>();
-        private bool _fileMissingOnLastLoad = false;
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
@@ -44,19 +42,16 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
 
-            // Funkcja pomocnicza do pisania w obu logach jednoczeœnie
             Action<string> LogBoth = (msg) => {
                 if (svnUI.LogText != null) svnUI.LogText.text += msg;
                 if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
             };
 
-            // Czyœcimy poprzednie logi
             if (svnUI.LogText != null) svnUI.LogText.text = $"{timestamp} <color=#0FF>Starting Refresh...</color>\n";
             if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text = $"{timestamp} <color=#0FF>Starting Refresh...</color>\n";
 
             try
             {
-                // KROK 1: Status SVN
                 LogBoth("Checking SVN status...\n");
                 var statusDict = _isCurrentViewIgnored
                     ? await SvnRunner.GetIgnoredOnlyAsync(root)
@@ -70,7 +65,6 @@ namespace SVN.Core
 
                 LogBoth($"Found {statusDict.Count} entries. Processing paths...\n");
 
-                // KROK 2: Przetwarzanie œcie¿ek
                 svnManager.ExpandedPaths.Clear();
                 svnManager.ExpandedPaths.Add("");
 
@@ -85,17 +79,14 @@ namespace SVN.Core
                         AddParentFoldersToExpanded(path);
                 }
 
-                // KROK 3: Raport rozmiaru
                 LogBoth("Calculating commit size...\n");
                 string report = await SvnRunner.GetCommitSizeReportAsync(root);
                 if (svnUI.CommitSizeText != null)
                     svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {report}</color>\n";
 
-                // KROK 4: Generowanie drzewa
                 LogBoth("Building visual tree...\n");
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
 
-                // KROK 5: Aktualizacja wyœwietlaczy drzewa
                 string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
 
                 if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
@@ -147,7 +138,6 @@ namespace SVN.Core
 
             string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
 
-            // Funkcja pomocnicza dla spójnoœci feedbacku
             Action<string> LogBoth = (msg) => {
                 if (svnUI.LogText != null) svnUI.LogText.text += msg;
                 if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
@@ -159,14 +149,12 @@ namespace SVN.Core
 
                 LogBoth($"{timestamp} <color=green>Local refresh started...</color>\n");
 
-                // Pobieramy dane wizualne (u¿ywaj¹c aktualnego stanu expandedPaths)
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(
                     root,
                     svnManager.ExpandedPaths,
                     _isCurrentViewIgnored
                 );
 
-                // Aktualizacja UI G³ównego
                 if (string.IsNullOrEmpty(result.tree))
                 {
                     string cleanMsg = "<i>Working copy clean.</i>";
@@ -181,7 +169,6 @@ namespace SVN.Core
                     LogBoth($"-> View updated ({result.stats.FileCount} files shown).\n");
                 }
 
-                // Aktualizacja statystyk na dole ekranu
                 svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
 
                 LogBoth("<color=#55FF55>Done.</color>\n");
@@ -233,7 +220,6 @@ namespace SVN.Core
 
             if (File.Exists(ignoreFilePath))
             {
-                _fileMissingOnLastLoad = false;
                 try
                 {
                     string[] lines = File.ReadAllLines(ignoreFilePath);
@@ -252,7 +238,6 @@ namespace SVN.Core
             }
             else
             {
-                _fileMissingOnLastLoad = true;
                 Debug.LogWarning($"[SVN] .svnignore file not found at: {workingDir}");
             }
         }

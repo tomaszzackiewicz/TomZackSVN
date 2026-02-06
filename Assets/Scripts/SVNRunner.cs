@@ -593,7 +593,7 @@ namespace SVN.Core
 
                 if (isRelevant)
                 {
-                    UnityEngine.Debug.Log($"<color=cyan>[FINAL KEY]: {cleanPath}</color>");
+                    //UnityEngine.Debug.Log($"<color=cyan>[FINAL KEY]: {cleanPath}</color>");
                     statusDict[cleanPath] = (stat, GetFileSizeSafe(Path.Combine(workingDir, cleanPath)));
                 }
             }
