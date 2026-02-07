@@ -47,7 +47,6 @@ namespace SVN.Core
 
                 if (cmd.Contains("update") || cmd.Contains("commit") || cmd.Contains("switch") || cmd.Contains("checkout"))
                 {
-                    svnManager.UpdateBranchInfo();
                     svnManager.RefreshStatus();
                 }
             }

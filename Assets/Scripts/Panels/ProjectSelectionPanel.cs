@@ -48,10 +48,15 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
     }
 
-    private void OnProjectSelected(SVNProject project)
+    private async void OnProjectSelected(SVNProject project)
     {
         svnManager.LoadProject(project);
+
         this.gameObject.SetActive(false);
+
+        svnManager.SVNStatus.ShowProjectInfo(project, project.workingDir);
+        PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
+        PlayerPrefs.Save();
     }
 
     public void Button_OpenAddProjectPanel()

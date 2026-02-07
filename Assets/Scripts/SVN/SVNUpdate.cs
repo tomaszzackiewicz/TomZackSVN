@@ -70,7 +70,6 @@ namespace SVN.Core
                     svnUI.LogText.text = summary;
                 }
 
-                svnManager.UpdateBranchInfo();
                 svnManager.RefreshStatus();
             }
             catch (Exception ex)

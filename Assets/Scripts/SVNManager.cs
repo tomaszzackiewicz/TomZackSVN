@@ -142,6 +142,7 @@ namespace SVN.Core
 
             if (lastProject != null)
             {
+                SVNStatus.ShowProjectInfo(lastProject, lastPath);
                 LoadProject(lastProject);
 
                 if (projectSelectionPanel != null) projectSelectionPanel.gameObject.SetActive(false);
@@ -164,6 +165,31 @@ namespace SVN.Core
             }
         }
 
+        public async Task<string> GetFolderSizeAsync(string path)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    DirectoryInfo dir = new DirectoryInfo(path);
+                    if (!dir.Exists) return "0 GB";
+
+                    // Pobieramy rozmiar wszystkich plików we wszystkich podfolderach
+                    long bytes = dir.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
+
+                    // Konwersja na GB (1024^3)
+                    double gigabytes = (double)bytes / (1024 * 1024 * 1024);
+
+                    return $"{gigabytes:F2} GB"; // Zwraca np. "1.45 GB"
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Size calculation error: {ex.Message}");
+                    return "Size unknown";
+                }
+            });
+        }
+
         public async Task SetWorkingDirectory(string path)
         {
             if (string.IsNullOrEmpty(path)) return;
@@ -174,7 +200,6 @@ namespace SVN.Core
             Debug.Log($"[SVN] Working Directory set to: {path}");
 
             await RefreshRepositoryInfo();
-            UpdateBranchInfo();
         }
 
         public async Task RefreshRepositoryInfo()
@@ -296,7 +321,6 @@ namespace SVN.Core
             if (Directory.Exists(WorkingDir))
             {
                 await RefreshRepositoryInfo();
-                UpdateBranchInfo();
                 RefreshStatus();
             }
         }
@@ -344,68 +368,6 @@ namespace SVN.Core
 
             if (svnUI.LoadRepoUrlInput != null)
                 svnUI.LoadRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
-        }
-
-        public async void UpdateBranchInfo()
-        {
-            string rootPath = WorkingDir;
-
-            if (string.IsNullOrEmpty(rootPath) || !System.IO.Directory.Exists(rootPath))
-            {
-                if (svnUI?.BranchInfoText != null)
-                    svnUI.BranchInfoText.text = "<color=grey>No active project</color>";
-                return;
-            }
-
-            try
-            {
-                string output = await SvnRunner.RunAsync("info --xml", rootPath);
-
-                if (string.IsNullOrEmpty(output)) return;
-
-                string fullUrl = "Unknown";
-                string relativeUrl = "Unknown";
-                string revision = "0";
-
-                System.Xml.XmlDocument doc = new System.Xml.XmlDocument();
-                doc.LoadXml(output);
-
-                System.Xml.XmlNode urlNode = doc.SelectSingleNode("//url");
-                System.Xml.XmlNode relativeUrlNode = doc.SelectSingleNode("//relative-url");
-                System.Xml.XmlNode entryNode = doc.SelectSingleNode("//entry");
-
-                if (urlNode != null) fullUrl = urlNode.InnerText;
-                if (relativeUrlNode != null) relativeUrl = relativeUrlNode.InnerText;
-                if (entryNode != null) revision = entryNode.Attributes["revision"]?.Value ?? "0";
-
-                this.RepositoryUrl = fullUrl.TrimEnd('/');
-
-                string branchDisplayName = relativeUrl.Replace("^/", "");
-
-                if (string.IsNullOrEmpty(branchDisplayName) || branchDisplayName == "/")
-                {
-                    branchDisplayName = "trunk (root)";
-                }
-                else if (branchDisplayName.Contains("/"))
-                {
-                    string[] parts = branchDisplayName.Split(new[] { '/' }, System.StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length > 0)
-                    {
-                        branchDisplayName = parts[parts.Length - 1];
-                    }
-                }
-
-                if (svnUI?.BranchInfoText != null)
-                {
-                    svnUI.BranchInfoText.text = $"<color=#00E5FF>Branch:</color> {branchDisplayName} | <color=#FFD700>Rev:</color> {revision}";
-                }
-            }
-            catch (System.Exception ex)
-            {
-                UnityEngine.Debug.LogWarning($"[UpdateBranchInfo] Error: {ex.Message}");
-                if (svnUI?.BranchInfoText != null)
-                    svnUI.BranchInfoText.text = "<color=red>SVN Info: Metadata Error</color>";
-            }
         }
 
         public async Task RunDiagnostics()
@@ -502,12 +464,12 @@ namespace SVN.Core
                 }
                 else
                 {
-                    svnUI.StatsText.text = $"<color=#FFD700><b>VIEW: WORKING COPY</b></color> | " +
+                    svnUI.StatsText.text = 
                                            $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | " +
                                            $"<color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | " +
                                            $"<color=#00FF00>Add (A): {stats.AddedCount}</color> | " +
                                            $"<color=#00E5FF>New (?): {stats.NewFilesCount}</color> | " +
-                                           $"<color=#FF4444>Deleted (D/!): {stats.DeletedCount}</color> | " + // Zmieniono etykietę
+                                           $"<color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | " + // Zmieniono etykietę
                                            $"<color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
                 }
             }
@@ -562,4 +524,21 @@ namespace SVN.Core
 
         
     }
+}
+
+[System.Serializable]
+public class SVNProject
+{
+    public string projectName;
+    public string repoUrl;
+    public string workingDir;
+    public string privateKeyPath;
+    public string mergeToolPath;
+    public System.DateTime lastOpened;
+}
+
+[System.Serializable]
+public class SVNProjectList
+{
+    public List<SVNProject> projects = new List<SVNProject>();
 }

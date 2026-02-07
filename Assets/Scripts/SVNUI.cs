@@ -35,7 +35,8 @@ namespace SVN.Core
         [SerializeField] private TMP_Dropdown tagsDropdown;
         [SerializeField] private TMP_Dropdown mergeBranchesDropdown;
         [Header("Status Info")]
-        [SerializeField] private TextMeshProUGUI branchInfoText;
+        [SerializeField] private TextMeshProUGUI fileStatusText;
+        [SerializeField] private TextMeshProUGUI statusInfoText;
         [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
         [Header("Ignored")]
@@ -81,7 +82,8 @@ namespace SVN.Core
         public TMP_Dropdown BranchesDropdown => branchesDropdown;
         public TMP_Dropdown TagsDropdown => tagsDropdown;
         public TMP_Dropdown MergeBranchesDropdown => mergeBranchesDropdown;
-        public TextMeshProUGUI BranchInfoText => branchInfoText;
+        public TextMeshProUGUI StatusInfoText => statusInfoText;
+        public TextMeshProUGUI FileStatusText => fileStatusText;
         public TextMeshProUGUI LocksText => locksText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
         public TextMeshProUGUI IgnoredText => ignoredText;

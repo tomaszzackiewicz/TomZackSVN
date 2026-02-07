@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -57,11 +57,24 @@ namespace SVN.Core
                     ? await SvnRunner.GetIgnoredOnlyAsync(root)
                     : await SvnRunner.GetChangesDictionaryAsync(root);
 
-                if (statusDict == null)
+                // --- POPRAWKA: Obsługa braku zmian ---
+                if (statusDict == null || statusDict.Count == 0)
                 {
-                    LogBoth("<color=red>Error: statusDict is null!</color>\n");
-                    return;
+                    string emptyMsg = _isCurrentViewIgnored
+                        ? "<i>No ignored files found.</i>"
+                        : "<i>No changes detected. (Everything up to date)</i>";
+
+                    if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = emptyMsg;
+                    if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = emptyMsg;
+                    if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Size: 0 KB";
+
+                    // Zerujemy statystyki (ikony/liczniki na dole)
+                    svnManager.UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
+
+                    LogBoth("<color=yellow>Nothing to display.</color>\n");
+                    return; // Kończymy wcześniej
                 }
+                // -------------------------------------
 
                 LogBoth($"Found {statusDict.Count} entries. Processing paths...\n");
 
@@ -87,6 +100,7 @@ namespace SVN.Core
                 LogBoth("Building visual tree...\n");
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
 
+                // Jeśli mimo wszystko tree przyszło puste z buildera:
                 string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
 
                 if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
@@ -369,6 +383,122 @@ namespace SVN.Core
             {
                 svnUI.IgnoredText.text = $"<color=#FFFF00>{message}</color>\n" + svnUI.IgnoredText.text;
             }
+        }
+
+        public async void ShowProjectInfo(SVNProject svnProject, string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            if (svnUI == null || svnUI.StatusInfoText == null) return;
+
+            // 1. Establish project name immediately
+            string projectName = (svnProject != null && !string.IsNullOrEmpty(svnProject.projectName))
+                ? svnProject.projectName
+                : System.IO.Path.GetFileName(path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+
+            // 2. Initial Loading Feedback
+            svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#AAAAAA>Initializing {projectName}...</color>";
+
+            string sizeText = "---";
+            string rawInfo = "";
+            int retryCount = 0;
+            int maxRetries = 5;
+
+            // 3. Intelligent retry loop to wait for SVN Manager / SSH Keys initialization
+            while (retryCount < maxRetries)
+            {
+                try
+                {
+                    var infoTask = SvnRunner.GetInfoAsync(path);
+                    var sizeTask = svnManager.GetFolderSizeAsync(path);
+
+                    await Task.WhenAll(infoTask, sizeTask);
+
+                    rawInfo = infoTask.Result;
+                    sizeText = sizeTask.Result;
+
+                    if (!string.IsNullOrEmpty(rawInfo) && rawInfo != "unknown")
+                        break;
+                }
+                catch (System.Exception ex)
+                {
+                    // Specifically handle the SSH key delay during startup
+                    if (ex.Message.Contains("SSH Key"))
+                    {
+                        retryCount++;
+                        svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#AAAAAA>Waiting for SSH keys... ({retryCount}/{maxRetries})</color>";
+                        await Task.Delay(500);
+                        continue;
+                    }
+
+                    UnityEngine.Debug.LogWarning($"[SVN] Fetch error: {ex.Message}");
+                    break;
+                }
+            }
+
+            // 4. Handle persistent failure
+            if (string.IsNullOrEmpty(rawInfo))
+            {
+                svnUI.StatusInfoText.text = $"<size=120%><color=#FF5555>●</color></size> <b>{projectName}</b> | <color=#FF8888>Connection Error (Check SSH/SVN Status)</color>";
+                return;
+            }
+
+            // 5. Parse Metadata
+            string revision = ExtractValue(rawInfo, "Revision:");
+            string author = ExtractValue(rawInfo, "Last Changed Author:");
+            string fullDate = ExtractValue(rawInfo, "Last Changed Date:");
+            string relUrl = ExtractValue(rawInfo, "Relative URL:");
+            string absUrl = ExtractValue(rawInfo, "URL:");
+
+            // 6. Branch and Server Logic
+            string branchName = "trunk";
+            string source = (relUrl != "unknown") ? relUrl : absUrl;
+            if (source != "unknown")
+            {
+                branchName = source.Replace("^/", "").Trim();
+                if (branchName.Contains("/"))
+                    branchName = System.IO.Path.GetFileName(branchName.TrimEnd('/'));
+
+                if (string.IsNullOrEmpty(branchName) || branchName == "/") branchName = "trunk";
+            }
+
+            string serverHost = "local";
+            if (absUrl != "unknown")
+            {
+                try { serverHost = new System.Uri(absUrl).Host; } catch { }
+            }
+
+            // 7. Data Formatting
+            if (revision == "unknown") revision = "0";
+            if (author == "unknown") author = "Initial";
+            string shortDate = (fullDate != "unknown") ? fullDate.Split('(')[0].Trim() : "no commits";
+
+            // 8. Final UI Output
+            string statusDot = "<size=120%><color=#55FF55>●</color></size>";
+            svnUI.StatusInfoText.text =
+                $"{statusDot} <b>{projectName}</b> <color=#E6E6E6>({sizeText})</color> | " +
+                $"<color=#00E5FF>Branch:</color> {branchName} | " +
+                $"<color=orange>Rev: {revision}</color> | " +
+                $"<color=#81BEF7>By: {author}</color> | " +
+                $"<color=#AAAAAA>{shortDate}</color> | " +
+                $"<color=#666666>Srv: {serverHost}</color>";
+        }
+
+        private string ExtractValue(string text, string key)
+        {
+            if (string.IsNullOrEmpty(text)) return "N/A";
+
+            using (var reader = new System.IO.StringReader(text))
+            {
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    if (line.StartsWith(key))
+                    {
+                        return line.Replace(key, "").Trim();
+                    }
+                }
+            }
+            return "unknown";
         }
     }
 }

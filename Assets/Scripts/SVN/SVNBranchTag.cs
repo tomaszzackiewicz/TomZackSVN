@@ -144,7 +144,6 @@ namespace SVN.Core
 
                 // Refresh UI
                 svnManager.RefreshStatus();
-                svnManager.UpdateBranchInfo();
             }
             catch (Exception ex)
             {
@@ -294,7 +293,6 @@ namespace SVN.Core
 
                 // Refresh the whole UI to reflect new file states
                 svnManager.RefreshStatus();
-                svnManager.UpdateBranchInfo(); // Update the "Current Branch" display
             }
             catch (Exception ex)
             {
@@ -498,9 +496,6 @@ namespace SVN.Core
             {
                 svnUI.LogText.text += $"<color=red>Switch Error:</color> {ex.Message}\n";
             }
-
-            // Update current branch info in the UI
-            svnManager.UpdateBranchInfo();
 
             //loadingOverlay?.SetActive(false);
             IsProcessing = false;
