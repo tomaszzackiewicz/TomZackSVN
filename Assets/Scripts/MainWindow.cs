@@ -30,13 +30,12 @@ namespace SVN.Core
 
         public void Button_Load() => svnManager.SVNLoad.LoadRepoPathAndRefresh();
         public void Button_Update() => svnManager.SVNUpdate.Update();
-        public void Button_Refresh() => svnManager.SVNStatus.RefreshLocal();
+        public void Button_Refresh() => svnManager.SVNStatus.ShowOnlyModified();
         public void Button_Clean() => svnManager.SVNClean.LightCleanup();
         public void Button_Vacuum() => svnManager.SVNClean.VacuumCleanup();
         public void Button_Log() => svnManager.SVNLog.ShowLog();
-        public void Button_ShowModified() => svnManager.SVNStatus.ShowOnlyModified();
+        //public void Button_ShowModified() => svnManager.SVNStatus.ShowOnlyModified();
         public void Button_ShowOnlyIgnored() => svnManager.SVNStatus.RefreshIgnoredPanel();
-        public void Button_CollapseAll() => svnManager.SVNStatus.CollapseAll();
         public void Button_Explore() => svnManager.SVNExternal.OpenInExplorer();
         public void Button_Lock() => svnManager.SVNLock.LockModified();
         public void Button_Unlock() => svnManager.SVNLock.UnlockAll();

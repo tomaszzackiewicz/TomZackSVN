@@ -25,16 +25,16 @@ namespace SVN.Core
             if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "Refreshing...";
 
             _isCurrentViewIgnored = false;
-            ExecuteRefreshWithAutoExpand();
+            _ = ExecuteRefreshWithAutoExpand();
         }
 
         public void ShowOnlyIgnored()
         {
             _isCurrentViewIgnored = true;
-            ExecuteRefreshWithAutoExpand();
+            _ = ExecuteRefreshWithAutoExpand();
         }
 
-        public async void ExecuteRefreshWithAutoExpand()
+        public async Task ExecuteRefreshWithAutoExpand()
         {
             if (IsProcessing) return;
             IsProcessing = true;
@@ -134,69 +134,12 @@ namespace SVN.Core
             }
         }
 
-        public void CollapseAll()
+        public void RefreshLocal()
         {
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
 
-            if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "Collapsing...";
-            if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "Collapsing...";
-
-            RefreshLocal();
-        }
-
-        public async void RefreshLocal()
-        {
-            if (IsProcessing) return;
-            IsProcessing = true;
-
-            string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
-
-            Action<string> LogBoth = (msg) => {
-                if (svnUI.LogText != null) svnUI.LogText.text += msg;
-                if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
-            };
-
-            try
-            {
-                string root = svnManager.WorkingDir;
-
-                LogBoth($"{timestamp} <color=green>Local refresh started...</color>\n");
-
-                var result = await SvnRunner.GetVisualTreeWithStatsAsync(
-                    root,
-                    svnManager.ExpandedPaths,
-                    _isCurrentViewIgnored
-                );
-
-                if (string.IsNullOrEmpty(result.tree))
-                {
-                    string cleanMsg = "<i>Working copy clean.</i>";
-                    if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = cleanMsg;
-                    if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = cleanMsg;
-                    LogBoth("-> View is clean.\n");
-                }
-                else
-                {
-                    if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = result.tree;
-                    if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = result.tree;
-                    LogBoth($"-> View updated ({result.stats.FileCount} files shown).\n");
-                }
-
-                svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
-
-                LogBoth("<color=#55FF55>Done.</color>\n");
-            }
-            catch (Exception ex)
-            {
-                string err = $"<color=red>[View Error]:</color> {ex.Message}\n";
-                LogBoth(err);
-                Debug.LogError($"[SVN] Collapse/Refresh Error: {ex.Message}");
-            }
-            finally
-            {
-                IsProcessing = false;
-            }
+            _ = ExecuteRefreshWithAutoExpand();
         }
 
         public void ClearUI()

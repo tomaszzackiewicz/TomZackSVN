@@ -419,11 +419,14 @@ namespace SVN.Core
             }
         }
 
-        public async void RefreshStatus()
+        public async Task RefreshStatus()
         {
             if (string.IsNullOrEmpty(WorkingDir)) return;
 
-            SVNStatus.ShowOnlyModified();
+            ExpandedPaths.Clear();
+            ExpandedPaths.Add("");
+
+            await SVNStatus.ExecuteRefreshWithAutoExpand();
         }
 
         public string ParseRevision(string input)

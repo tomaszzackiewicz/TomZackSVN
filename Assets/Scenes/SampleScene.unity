@@ -9839,6 +9839,10 @@ PrefabInstance:
       propertyPath: m_Name
       value: RefreshModifiedButton
       objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_IsActive
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
       value: Refresh Modified
@@ -9869,7 +9873,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchorMax.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchorMin.x
@@ -9877,7 +9881,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchorMin.y
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
@@ -9917,11 +9921,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 0
+      value: 50
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: 0
+      value: -25
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -14110,7 +14114,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 899.5895, y: 50}
+  m_SizeDelta: {x: 1026.706, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &631663702
 MonoBehaviour:
@@ -38250,7 +38254,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1924535380}
   m_Layer: 5
-  m_Name: GameObject (1)
+  m_Name: Spacer
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

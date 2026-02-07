@@ -69,8 +69,8 @@ namespace SVN.Core
                     summary += "-----------------------------------";
                     svnUI.LogText.text = summary;
                 }
-
-                svnManager.RefreshStatus();
+                IsProcessing = false;
+                await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
