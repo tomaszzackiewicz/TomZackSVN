@@ -89,7 +89,7 @@ namespace SVN.Core
 
                 RegisterProjectInList(normalizedPath, keyPath, svnManager.RepositoryUrl);
 
-                svnManager.RefreshStatus();
+                await svnManager.RefreshStatus();
 
                 svnUI.LogText.text += "<color=green>SUCCESS:</color> System synchronized.\n";
 

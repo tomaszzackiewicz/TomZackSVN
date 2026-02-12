@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
+using System.Collections.Generic;
 
 namespace SVN.Core
 {
@@ -9,120 +10,137 @@ namespace SVN.Core
     {
         public SVNMerge(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-
         public async void CompareWithTrunk()
         {
             if (IsProcessing) return;
-
             IsProcessing = true;
-            svnUI.LogText.text += "<b>Comparing current branch with Trunk...</b>\n";
+
+            svnUI.LogText.text += "<b><color=#4FC3F7>[Comparison]</color> Starting analysis against Trunk...</b>\n";
 
             try
             {
-                // 1. Get current URL and determine Trunk URL
-                string repoUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
-                repoUrl = repoUrl.TrimEnd('/');
+                string repoRoot = svnManager.GetRepoRoot();
+                if (string.IsNullOrEmpty(repoRoot)) throw new Exception("Repo Root not found. Please refresh status.");
 
-                if (repoUrl.EndsWith("/trunk"))
+                string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
+                string trunkUrl = $"{repoRoot.TrimEnd('/')}/trunk";
+
+                svnUI.LogText.text += $"<i>Target: {trunkUrl}</i>\n";
+
+                if (currentUrl.TrimEnd('/') == trunkUrl)
                 {
-                    svnUI.LogText.text += "<color=yellow>System:</color> You are already on Trunk. Nothing to compare.\n";
+                    svnUI.LogText.text += "<color=yellow>[Info]</color> You are already on Trunk. Comparison skipped.\n";
                     return;
                 }
 
-                // Determine Trunk URL safely
-                string baseUrl = repoUrl.Contains("/branches/")
-                    ? repoUrl.Substring(0, repoUrl.IndexOf("/branches/"))
-                    : repoUrl.Substring(0, repoUrl.LastIndexOf('/'));
+                svnUI.LogText.text += "<color=#444444>... Fetching eligible revisions from Trunk</color>\n";
+                string missingCmd = $"mergeinfo \"{trunkUrl}\" --show-revs eligible";
+                string missingInBranch = await SvnRunner.RunAsync(missingCmd, svnManager.WorkingDir);
 
-                string trunkUrl = $"{baseUrl}/trunk";
+                svnUI.LogText.text += "<color=#444444>... Analyzing local branch changes</color>\n";
+                string localCmd = $"mergeinfo . \"{trunkUrl}\" --show-revs eligible";
+                string branchOnlyChanges = await SvnRunner.RunAsync(localCmd, svnManager.WorkingDir);
 
-                // 2. Run Comparison
-                // We look for revisions that are in trunk but NOT in current branch
-                svnUI.LogText.text += "Checking for missing updates from Trunk...\n";
-                string missingInBranch = await SvnRunner.RunAsync($"log {trunkUrl} --incremental --limit 10", svnManager.WorkingDir);
-
-                // We look for revisions that are in branch but NOT in trunk
-                svnUI.LogText.text += "Checking for local branch changes to merge...\n";
-                string branchOnlyChanges = await SvnRunner.RunAsync($"log {repoUrl} --incremental --limit 10", svnManager.WorkingDir);
-
-                // 3. Simple report
                 int missingCount = CountRevisions(missingInBranch);
                 int localCount = CountRevisions(branchOnlyChanges);
 
                 svnUI.LogText.text += "--------------------------------------\n";
-                svnUI.LogText.text += $"Branch status vs Trunk:\n";
-                svnUI.LogText.text += $" - <color=#FFD700>Incoming changes (Trunk):</color> {missingCount} revision(s)\n";
-                svnUI.LogText.text += $" - <color=#00FF00>Outgoing changes (Branch):</color> {localCount} revision(s)\n";
+                svnUI.LogText.text += $"<b>Merge Status:</b>\n";
+                svnUI.LogText.text += $" • <color=#FFD700>Incoming (Trunk -> Branch):</color> {missingCount} new commit(s)\n";
+                svnUI.LogText.text += $" • <color=#00FF00>Outgoing (Branch -> Trunk):</color> {localCount} local commit(s)\n";
 
                 if (missingCount > 0)
-                    svnUI.LogText.text += "<color=orange>Tip: You should probably merge from Trunk to stay up to date.</color>\n";
+                    svnUI.LogText.text += "<color=orange>Recommendation: Sync your branch with Trunk before continuing.</color>\n";
                 else
-                    svnUI.LogText.text += "<color=green>Your branch is up to date with Trunk!</color>\n";
-
-                svnUI.LogText.text += "--------------------------------------\n";
+                    svnUI.LogText.text += "<color=green>Success: Your branch is fully synchronized with Trunk.</color>\n";
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Comparison Error:</color> {ex.Message}\n";
+                svnUI.LogText.text += $"<color=red>[Error]</color> Comparison failed: {ex.Message}\n";
             }
-            finally
-            {
-                IsProcessing = false;
-            }
+            finally { IsProcessing = false; }
         }
 
-        // Helper to count revisions in svn log output
-        private int CountRevisions(string logOutput)
-        {
-            if (string.IsNullOrWhiteSpace(logOutput)) return 0;
-            // SVN log revisions start with 'r' followed by numbers (e.g., r1234 | user | ...)
-            return logOutput.Split(new[] { "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries)
-                            .Count(line => line.StartsWith("r") && line.Contains(" | "));
-        }
-
-        /// <summary>
-        /// Executes the merge operation. 
-        /// </summary>
-        /// <param name="sourceUrl">The URL of the branch/trunk to merge from.</param>
-        /// <param name="isDryRun">If true, only simulates the merge without changing files.</param>
-        public async void ExecuteMerge(string sourceUrl, bool isDryRun)
+        public async void ExecuteMerge(string sourceInput, bool isDryRun)
         {
             if (IsProcessing) return;
+            if (string.IsNullOrWhiteSpace(sourceInput)) return;
 
-            if (string.IsNullOrWhiteSpace(sourceUrl))
-            {
-                svnUI.LogText.text += "<color=red>Error:</color> Please provide a valid Source URL.\n";
-                return;
-            }
-
-            string root = svnManager.WorkingDir;
             IsProcessing = true;
-
-            string modeText = isDryRun ? "<color=yellow>SIMULATING</color>" : "<color=orange>EXECUTING</color>";
-            svnUI.LogText.text = $"<b>{modeText} Merge from:</b> {sourceUrl}\n";
+            string sourceUrl = "";
 
             try
             {
-                // 1. Prepare arguments
-                // --non-interactive prevents SVN from hanging on prompts
-                string args = $"merge {sourceUrl}";
+                svnUI.LogText.text += "<b><color=#4FC3F7>[Merge]</color> Initializing process...</b>\n";
+
+                string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
+                svnUI.LogText.text += "<color=#444444>... Resolving repository paths</color>\n";
+
+                string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
+                currentUrl = currentUrl.TrimEnd('/');
+
+                if (sourceInput.Contains("://"))
+                {
+                    sourceUrl = sourceInput;
+                }
+                else if (sourceInput.ToLower() == "trunk")
+                {
+                    sourceUrl = $"{repoRoot}/trunk";
+                }
+                else
+                {
+                    sourceUrl = $"{repoRoot}/branches/{sourceInput}";
+                }
+
+                if (sourceUrl.TrimEnd('/') == currentUrl)
+                {
+                    svnUI.LogText.text += "<color=red>[Aborted]</color> Cannot merge a branch into itself.\n";
+                    return;
+                }
+
+                string targetName = currentUrl.EndsWith("/trunk") ? "<color=#FFD700>Trunk</color>" : $"branch <color=#4FC3F7>{currentUrl.Split('/').Last()}</color>";
+                string sourceName = sourceUrl.EndsWith("/trunk") ? "<color=#FFD700>Trunk</color>" : $"branch <color=#4FC3F7>{sourceUrl.Split('/').Last()}</color>";
+
+                string modeText = isDryRun ? "<color=yellow>[SIMULATION]</color>" : "<color=orange>[LIVE MERGE]</color>";
+                svnUI.LogText.text += $"{modeText} Source: {sourceName} —> Target: {targetName}\n";
+                svnUI.LogText.text += "<color=#444444>... Executing SVN command (please wait)</color>\n";
+
+                string args = $"merge \"{sourceUrl}\" --non-interactive --accept postpone --force";
                 if (isDryRun) args += " --dry-run";
 
-                // 2. Run Command
-                string output = await SvnRunner.RunAsync(args, root);
-
-                // 3. Process Output
+                string output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
                 ParseMergeOutput(output, isDryRun);
 
-                // 4. Refresh status only if files were actually changed
                 if (!isDryRun)
                 {
-                    svnManager.RefreshStatus();
+                    svnUI.LogText.text += "<color=#444444>... Refreshing local status</color>\n";
+                    await svnManager.RefreshStatus();
+                    svnUI.LogText.text += "<b><color=green>[Complete]</color> Changes merged locally. Verify and Commit to server.</b>\n";
                 }
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Merge Error:</color> {ex.Message}\n";
+                if (ex.Message.Contains("E200004") || ex.Message.Contains("ancestry"))
+                {
+                    svnUI.LogText.text += "<color=yellow>[Notice]</color> Ancestry check failed. Attempting force-merge (--ignore-ancestry)...\n";
+                    try
+                    {
+                        string forceArgs = $"merge \"{sourceUrl}\" . --ignore-ancestry --non-interactive --accept postpone";
+                        if (isDryRun) forceArgs += " --dry-run";
+
+                        string output = await SvnRunner.RunAsync(forceArgs, svnManager.WorkingDir);
+                        ParseMergeOutput(output, isDryRun);
+                        svnUI.LogText.text += "<b><color=green>[Complete]</color> Force-merge finished.</b>\n";
+                    }
+                    catch (Exception ex2)
+                    {
+                        svnUI.LogText.text += $"<color=red>[Critical Error]</color> Force-merge also failed: {ex2.Message}\n";
+                    }
+                }
+                else
+                {
+                    svnUI.LogText.text += $"<color=red>[Error]</color> Merge process interrupted: {ex.Message}\n";
+                }
             }
             finally
             {
@@ -132,50 +150,93 @@ namespace SVN.Core
 
         private void ParseMergeOutput(string output, bool isDryRun)
         {
-            if (string.IsNullOrWhiteSpace(output))
+            if (string.IsNullOrWhiteSpace(output) || output.ToLower().Contains("already up to date"))
             {
-                svnUI.LogText.text += "No changes to merge (already up to date).\n";
+                svnUI.LogText.text += "Result: <color=green>Everything is already up to date.</color>\n";
                 return;
             }
 
-            // Look for conflicts in the output lines
             string[] lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int conflicts = lines.Count(l => l.StartsWith("C  ") || l.Contains("conflicts"));
-            int updated = lines.Count(l => l.StartsWith("U  ") || l.StartsWith("A  ") || l.StartsWith("D  ") || l.StartsWith("G  "));
+            int conflicts = lines.Count(l => l.Length >= 1 && (l[0] == 'C' || l.StartsWith("   C")));
+            int updated = lines.Count(l => l.Length >= 1 && "UADG".Contains(l[0]));
 
             if (isDryRun)
             {
-                svnUI.LogText.text += $"<color=cyan><b>Simulation Result:</b></color> {updated} files would be updated, {conflicts} conflicts would occur.\n";
-                svnUI.LogText.text += "<size=80%>Full simulation log below:</size>\n" + output + "\n";
+                svnUI.LogText.text += $"<color=cyan>[Simulation Result]</color> Files to update: {updated}, Potential conflicts: {conflicts}\n";
             }
             else
             {
-                svnUI.LogText.text += $"<color=green>Merge finished.</color> Files affected: {updated}.\n";
+                svnUI.LogText.text += $"<color=green>[Merge Result]</color> Successfully processed {updated} items.\n";
                 if (conflicts > 0)
                 {
-                    svnUI.LogText.text += $"<color=red><b>CRITICAL: {conflicts} CONFLICTS DETECTED!</b></color>\n";
-                    svnUI.LogText.text += "Please resolve conflicts before committing.\n";
+                    svnUI.LogText.text += $"<color=red><b>[WARNING] {conflicts} CONFLICTS DETECTED!</b></color>\n";
+                    svnUI.LogText.text += "Please use External Merge Tool to resolve files marked with 'C'.\n";
                 }
-                svnUI.LogText.text += output + "\n";
+                svnUI.LogText.text += "<size=80%>" + output + "</size>\n";
             }
+        }
+
+        private int CountRevisions(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output)) return 0;
+            return output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                         .Count(line => !string.IsNullOrWhiteSpace(line));
+        }
+
+        public async Task RevertMerge()
+        {
+            if (IsProcessing) return;
+            IsProcessing = true;
+            try
+            {
+                svnUI.LogText.text += "<b><color=yellow>[Rollback]</color> Starting Revert process...</b>\n";
+                svnUI.LogText.text += "<color=#444444>... Cleaning up all local modifications</color>\n";
+
+                await SvnRunner.RunAsync("revert -R .", svnManager.WorkingDir);
+
+                svnUI.LogText.text += "<color=#444444>... Synchronizing status</color>\n";
+                await svnManager.RefreshStatus();
+
+                svnUI.LogText.text += "<color=green>[Success]</color> Local workspace is now clean. All merge changes discarded.\n";
+            }
+            catch (Exception ex)
+            {
+                svnUI.LogText.text += $"<color=red>[Error]</color> Revert failed: {ex.Message}\n";
+            }
+            finally { IsProcessing = false; }
         }
 
         public async Task<string[]> FetchAvailableBranches()
         {
             try
             {
-                string info = await SvnRunner.RunAsync("info --xml", svnManager.WorkingDir);
+                svnUI.LogText.text += "<color=#444444>... Scanning repository for branches</color>\n";
 
-                string rootUrl = svnUI.SettingsWorkingDirInput.text;
+                string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
+                if (string.IsNullOrEmpty(repoRoot))
+                {
+                    Debug.LogWarning("[SVN] Cannot fetch branches: Repo Root is empty.");
+                    return new string[0];
+                }
 
-                if (string.IsNullOrEmpty(rootUrl)) return new string[0];
+                // We fetch the folder list from the /branches directory
+                // We pass "branches" to GetRepoListAsync, which in your SVNRunner 
+                // should be able to build the full path.
+                var branches = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, "branches");
 
-                svnUI.LogText.text += "Fetching branch list from server...\n";
-                return await SvnRunner.ListBranchesAsync(rootUrl);
+                if (branches == null || branches.Length == 0)
+                {
+                    svnUI.LogText.text += "<color=yellow>[Info]</color> No branches found on server.\n";
+                    return new string[0];
+                }
+
+                svnUI.LogText.text += $"<color=green>[Success]</color> Found {branches.Length} branch(es) available for merge.\n";
+                return branches;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SVN Merge] Failed to fetch branches: {ex.Message}");
+                Debug.LogWarning($"[SVN Merge] FetchAvailableBranches failed: {ex.Message}");
+                svnUI.LogText.text += $"<color=red>[Error]</color> Could not retrieve branches list: {ex.Message}\n";
                 return new string[0];
             }
         }

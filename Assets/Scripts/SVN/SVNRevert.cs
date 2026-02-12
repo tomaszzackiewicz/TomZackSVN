@@ -46,7 +46,7 @@ namespace SVN.Core
                 svnUI.LogText.text += $"<color=green>Success!</color> Reverted <b>{filesToRevert.Length}</b> files.\n";
 
                 // 4. Trigger UI refresh to update the tree view and clear status markers
-                svnManager.RefreshStatus();
+                await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {

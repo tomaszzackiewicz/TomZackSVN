@@ -11,6 +11,7 @@ namespace SVN.Core
     public class SVNStatus : SVNBase
     {
         private bool _isCurrentViewIgnored = false;
+        private string _lastKnownProjectName = "";
 
         private List<string> _cachedIgnoreRules = new List<string>();
 
@@ -42,7 +43,8 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
 
-            Action<string> LogBoth = (msg) => {
+            Action<string> LogBoth = (msg) =>
+            {
                 if (svnUI.LogText != null) svnUI.LogText.text += msg;
                 if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
             };
@@ -139,6 +141,8 @@ namespace SVN.Core
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
 
+            ShowProjectInfo(null, svnManager.WorkingDir);
+
             _ = ExecuteRefreshWithAutoExpand();
         }
 
@@ -206,15 +210,14 @@ namespace SVN.Core
 
             StringBuilder sb = new StringBuilder();
 
-            // --- DIAGNOSTIC SECTION ---
-            sb.AppendLine("<color=#AAAAAA><b>System Info:</b></color>");
-            sb.AppendLine($"<color=#666666>Working Dir:</color> <color=#FFFFFF>{root}</color>");
-            sb.AppendLine($"<color=#666666>Config File:</color> <color=#FFFFFF>{ignoreFilePath}</color>");
+            // Zmiana kolorów na ciemniejsze (#444444 i #555555) dla lepszej widoczności
+            sb.AppendLine("<color=#444444><b>System Info:</b></color>");
+            sb.AppendLine($"<color=#555555>Working Dir:</color> <color=#FFFFFF>{root}</color>");
+            sb.AppendLine($"<color=#555555>Config File:</color> <color=#FFFFFF>{ignoreFilePath}</color>");
 
-            // Check if file actually exists at that path
             bool fileExists = File.Exists(ignoreFilePath);
             string fileStatus = fileExists ? "<color=green>FOUND</color>" : "<color=red>NOT FOUND</color>";
-            sb.AppendLine($"<color=#666666>File Status:</color> {fileStatus}");
+            sb.AppendLine($"<color=#555555>File Status:</color> {fileStatus}");
             sb.AppendLine("--------------------------------------------------\n");
 
             if (!fileExists)
@@ -224,7 +227,6 @@ namespace SVN.Core
                 sb.AppendLine("--------------------------------------------------\n");
             }
 
-            // --- FETCH RULES ---
             List<string> activeRules = await SvnRunner.GetIgnoreRulesFromSvnAsync(root);
 
             if (_cachedIgnoreRules != null)
@@ -235,7 +237,6 @@ namespace SVN.Core
                 }
             }
 
-            // --- ACTIVE RULES LIST ---
             sb.AppendLine("<color=#FFA500><b>Active Ignore Rules:</b></color>");
             if (activeRules.Count == 0)
             {
@@ -253,7 +254,6 @@ namespace SVN.Core
 
             sb.AppendLine("\n<color=#FF4444><b>Files currently ignored on disk:</b></color>");
 
-            // --- SCAN DISK (Same as before) ---
             int count = 0;
             if (activeRules.Count > 0 && Directory.Exists(root))
             {
@@ -272,7 +272,8 @@ namespace SVN.Core
 
                     if (isIgnored)
                     {
-                        sb.AppendLine($"<color=#666666>[I]</color> <color=#FFFFFF>{relPath}</color>");
+                        // Zmiana koloru znacznika [I]
+                        sb.AppendLine($"<color=#555555>[I]</color> <color=#FFFFFF>{relPath}</color>");
                         count++;
                         if (count > 200) { sb.AppendLine("<color=#FFFF00>... truncated</color>"); break; }
                     }
@@ -282,7 +283,6 @@ namespace SVN.Core
             if (count == 0 && activeRules.Count > 0)
                 sb.AppendLine("<color=green>No files match the active rules.</color>");
 
-            // --- UPDATE UI ---
             if (svnUI != null && svnUI.IgnoredText != null)
             {
                 svnUI.IgnoredText.text = sb.ToString();
@@ -333,97 +333,101 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(path)) return;
             if (svnUI == null || svnUI.StatusInfoText == null) return;
 
-            // 1. Establish project name immediately
-            string projectName = (svnProject != null && !string.IsNullOrEmpty(svnProject.projectName))
-                ? svnProject.projectName
-                : System.IO.Path.GetFileName(path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+            // 1. Priorytetyzacja nazwy: SVNProject > Bufor > Folder na dysku
+            if (svnProject != null && !string.IsNullOrEmpty(svnProject.projectName))
+            {
+                _lastKnownProjectName = svnProject.projectName;
+            }
 
-            // 2. Initial Loading Feedback
-            svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#AAAAAA>Initializing {projectName}...</color>";
+            string displayName = !string.IsNullOrEmpty(_lastKnownProjectName)
+                ? _lastKnownProjectName
+                : Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+            // Feedback wizualny (ciemniejszy szary)
+            svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Initializing {displayName}...</color>";
 
             string sizeText = "---";
             string rawInfo = "";
             int retryCount = 0;
             int maxRetries = 5;
 
-            // 3. Intelligent retry loop to wait for SVN Manager / SSH Keys initialization
             while (retryCount < maxRetries)
             {
                 try
                 {
                     var infoTask = SvnRunner.GetInfoAsync(path);
                     var sizeTask = svnManager.GetFolderSizeAsync(path);
-
                     await Task.WhenAll(infoTask, sizeTask);
 
                     rawInfo = infoTask.Result;
                     sizeText = sizeTask.Result;
 
-                    if (!string.IsNullOrEmpty(rawInfo) && rawInfo != "unknown")
-                        break;
+                    if (!string.IsNullOrEmpty(rawInfo) && rawInfo != "unknown") break;
                 }
-                catch (System.Exception ex)
+                catch (Exception ex)
                 {
-                    // Specifically handle the SSH key delay during startup
                     if (ex.Message.Contains("SSH Key"))
                     {
                         retryCount++;
-                        svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#AAAAAA>Waiting for SSH keys... ({retryCount}/{maxRetries})</color>";
+                        svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Waiting for SSH keys... ({retryCount}/{maxRetries})</color>";
                         await Task.Delay(500);
                         continue;
                     }
-
-                    UnityEngine.Debug.LogWarning($"[SVN] Fetch error: {ex.Message}");
                     break;
                 }
             }
 
-            // 4. Handle persistent failure
             if (string.IsNullOrEmpty(rawInfo))
             {
-                svnUI.StatusInfoText.text = $"<size=120%><color=#FF5555>●</color></size> <b>{projectName}</b> | <color=#FF8888>Connection Error (Check SSH/SVN Status)</color>";
+                svnUI.StatusInfoText.text = $"<size=120%><color=#FF5555>●</color></size> <b>{displayName}</b> | <color=#FF8888>Connection Error</color>";
                 return;
             }
 
-            // 5. Parse Metadata
+            // Ekstrakcja danych
             string revision = ExtractValue(rawInfo, "Revision:");
             string author = ExtractValue(rawInfo, "Last Changed Author:");
             string fullDate = ExtractValue(rawInfo, "Last Changed Date:");
             string relUrl = ExtractValue(rawInfo, "Relative URL:");
             string absUrl = ExtractValue(rawInfo, "URL:");
+            string repoRootUrl = ExtractValue(rawInfo, "Repository Root:");
 
-            // 6. Branch and Server Logic
+            // 2. Jeśli nazwa to nadal nazwa folderu, spróbuj wyciągnąć nazwę z Root URL repozytorium
+            if (string.IsNullOrEmpty(_lastKnownProjectName) || _lastKnownProjectName == displayName)
+            {
+                if (repoRootUrl != "unknown")
+                {
+                    _lastKnownProjectName = repoRootUrl.Split('/').Last(s => !string.IsNullOrEmpty(s));
+                    displayName = _lastKnownProjectName;
+                }
+            }
+
+            // Obsługa brancha
             string branchName = "trunk";
             string source = (relUrl != "unknown") ? relUrl : absUrl;
             if (source != "unknown")
             {
                 branchName = source.Replace("^/", "").Trim();
                 if (branchName.Contains("/"))
-                    branchName = System.IO.Path.GetFileName(branchName.TrimEnd('/'));
-
+                    branchName = Path.GetFileName(branchName.TrimEnd('/'));
                 if (string.IsNullOrEmpty(branchName) || branchName == "/") branchName = "trunk";
             }
 
             string serverHost = "local";
             if (absUrl != "unknown")
             {
-                try { serverHost = new System.Uri(absUrl).Host; } catch { }
+                try { serverHost = new Uri(absUrl).Host; } catch { }
             }
 
-            // 7. Data Formatting
-            if (revision == "unknown") revision = "0";
-            if (author == "unknown") author = "Initial";
             string shortDate = (fullDate != "unknown") ? fullDate.Split('(')[0].Trim() : "no commits";
 
-            // 8. Final UI Output
-            string statusDot = "<size=120%><color=#55FF55>●</color></size>";
+            // 3. Finalny UI Output z ulepszonymi kolorami (szary zastąpiony #555555 i #444444)
             svnUI.StatusInfoText.text =
-                $"{statusDot} <b>{projectName}</b> <color=#E6E6E6>({sizeText})</color> | " +
-                $"<color=#00E5FF>Branch:</color> {branchName} | " +
-                $"<color=orange>Rev: {revision}</color> | " +
-                $"<color=#81BEF7>By: {author}</color> | " +
-                $"<color=#AAAAAA>{shortDate}</color> | " +
-                $"<color=#666666>Srv: {serverHost}</color>";
+        $"<size=120%><color=#55FF55>●</color></size> <b>{displayName}</b> <color=#E6E6E6>({sizeText})</color> | " +
+        $"<color=#00E5FF>Branch:</color> {branchName} | " +
+        $"<color=orange>Rev: {revision}</color> | " +
+        $"<color=#81BEF7>By: {author}</color> | " +
+        $"<color=#AAAAAA>{shortDate}</color> | " +
+        $"<color=#888888>Srv: {serverHost}</color>";
         }
 
         private string ExtractValue(string text, string key)

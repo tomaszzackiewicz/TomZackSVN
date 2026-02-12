@@ -118,7 +118,7 @@ namespace SVN.Core
                 // Odœwie¿enie danych Managera
                 svnManager.WorkingDir = path;
                 await svnManager.RefreshRepositoryInfo();
-                svnManager.RefreshStatus();
+                await svnManager.RefreshStatus();
 
                 // Automatyczne zamkniêcie panelu po sukcesie
                 if (svnManager.PanelHandler != null)

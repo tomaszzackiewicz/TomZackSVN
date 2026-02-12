@@ -321,7 +321,7 @@ namespace SVN.Core
             if (Directory.Exists(WorkingDir))
             {
                 await RefreshRepositoryInfo();
-                RefreshStatus();
+                await RefreshStatus();
             }
         }
 
@@ -467,7 +467,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    svnUI.StatsText.text = 
+                    svnUI.StatsText.text =
                                            $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | " +
                                            $"<color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | " +
                                            $"<color=#00FF00>Add (A): {stats.AddedCount}</color> | " +
@@ -506,16 +506,27 @@ namespace SVN.Core
 
         public string GetRepoRoot()
         {
-            if (string.IsNullOrEmpty(RepositoryUrl)) return "";
-            if (RepositoryUrl.EndsWith("/trunk"))
-                return RepositoryUrl.Replace("/trunk", "");
+            // Pobieramy aktualny URL (ten który widzieliśmy w logu jako matrioszkę)
+            string url = RepositoryUrl;
+            if (string.IsNullOrEmpty(url)) return "";
 
-            if (RepositoryUrl.Contains("/branches/"))
-                return RepositoryUrl.Substring(0, RepositoryUrl.IndexOf("/branches/"));
+            url = url.TrimEnd('/');
 
-            return RepositoryUrl;
+            // Szukamy punktów podziału
+            string[] markers = { "/trunk", "/branches", "/tags" };
+            foreach (var marker in markers)
+            {
+                if (url.Contains(marker))
+                {
+                    // Wycinamy wszystko od markera w prawo
+                    // Przykład: .../Test/tags/Tag1 -> .../Test
+                    return url.Substring(0, url.IndexOf(marker));
+                }
+            }
+
+            // Jeśli nie znaleziono markerów, zwróć obecny URL
+            return url;
         }
-        
 
         private void OnApplicationFocus(bool focus)
         {
@@ -525,7 +536,7 @@ namespace SVN.Core
             }
         }
 
-        
+
     }
 }
 

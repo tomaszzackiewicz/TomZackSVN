@@ -121,7 +121,7 @@ namespace SVN.Core
                     await SvnRunner.RunAsync($"resolved {pathsJoined}", root);
 
                     LogBoth("<color=green><b>Success!</b></color> Metadata cleaned. You can now commit.\n");
-                    svnManager.RefreshStatus();
+                    await svnManager.RefreshStatus();
                 }
                 else
                 {
@@ -153,7 +153,7 @@ namespace SVN.Core
                     LogBoth($"Resolving {paths.Length} items using <color=orange>{strategy}</color>...\n");
                     await SvnRunner.ResolveAsync(root, paths, useMine);
                     LogBoth("<color=green>Resolved!</color> Refreshing status...\n");
-                    svnManager.RefreshStatus();
+                    await svnManager.RefreshStatus();
                 }
                 else LogBoth("<color=yellow>No conflicts found.</color>\n");
             }

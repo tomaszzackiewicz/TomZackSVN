@@ -29,7 +29,7 @@ namespace SVN.Core
                 await AddFilesLogic();
 
                 svnUI.LogText.text += "<color=green><b>[Scan Complete]</b> All items are now under version control.</color>\n";
-                svnManager.RefreshStatus();
+                await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {

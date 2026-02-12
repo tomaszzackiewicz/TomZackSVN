@@ -11,7 +11,7 @@ using UnityEngine;
 namespace SVN.Core
 {
     public static class SvnRunner
-    {                       
+    {
         public static string KeyPath
         {
             get
@@ -154,7 +154,8 @@ namespace SVN.Core
             using var process = new Process { StartInfo = psi };
             var outputBuilder = new StringBuilder();
 
-            process.OutputDataReceived += (s, e) => {
+            process.OutputDataReceived += (s, e) =>
+            {
                 if (e.Data != null)
                 {
                     outputBuilder.AppendLine(e.Data);
@@ -327,9 +328,77 @@ namespace SVN.Core
         /// </summary>
         public static async Task<string> SwitchAsync(string workingDir, string targetUrl)
         {
-            // The switch command changes the working folder's association with a URL in the repository
-            string cmd = $"switch \"{targetUrl}\" --accept postpone";
-            return await RunAsync(cmd, workingDir);
+            // Pobieramy ścieżkę do klucza, która jest ustawiana przez SVNManager (SvnRunner.KeyPath)
+            string currentKey = KeyPath;
+
+            // Budujemy bazę parametrów SSH
+            string sshArgs = "-o BatchMode=yes -o StrictHostKeyChecking=no";
+
+            // Jeśli klucz jest podany w aplikacji, nakazujemy SSH z niego skorzystać
+            if (!string.IsNullOrEmpty(currentKey))
+            {
+                sshArgs = $"-i \"{currentKey}\" {sshArgs}";
+            }
+
+            // Składamy pełną komendę z tunelem SSH
+            string command = $"--config-option config:tunnels:ssh=\"ssh {sshArgs}\" " +
+                             $"switch \"{targetUrl}\" \"{workingDir}\" " +
+                             $"--ignore-ancestry --accept theirs-full --non-interactive";
+
+            UnityEngine.Debug.Log($"[SVN] Executing Switch with SSH Tunnel: {sshArgs}");
+
+            return await ExecuteAsync(command, workingDir);
+        }
+
+        private static async Task<string> ExecuteAsync(string command, string workingDir)
+        {
+            var tcs = new TaskCompletionSource<string>();
+
+            try
+            {
+                System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "svn",
+                    Arguments = command,
+                    WorkingDirectory = workingDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = System.Text.Encoding.UTF8
+                };
+
+                using (var process = new System.Diagnostics.Process { StartInfo = psi })
+                {
+                    StringBuilder output = new StringBuilder();
+                    StringBuilder error = new StringBuilder();
+
+                    process.OutputDataReceived += (s, e) => { if (e.Data != null) output.AppendLine(e.Data); };
+                    process.ErrorDataReceived += (s, e) => { if (e.Data != null) error.AppendLine(e.Data); };
+
+                    process.Start();
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+
+                    // Czekamy na zakończenie procesu bez blokowania wątku UI
+                    await Task.Run(() => process.WaitForExit());
+
+                    if (process.ExitCode == 0)
+                    {
+                        return output.ToString().Trim();
+                    }
+                    else
+                    {
+                        string errResult = error.ToString().Trim();
+                        // Zwracamy błąd jako string, aby SwitchAsync mógł go obsłużyć
+                        return $"Error (Code {process.ExitCode}): {errResult}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"Exception: {ex.Message}";
+            }
         }
 
         /// <summary>
@@ -405,7 +474,8 @@ namespace SVN.Core
             }
 
             var allEntries = combinedEntries
-                .OrderBy(e => {
+                .OrderBy(e =>
+                {
                     string rP = e.Length > normRootDir.Length ? e.Substring(normRootDir.Length).TrimStart('/') : "";
                     bool isDir = Directory.Exists(e) || foldersWithRelevantContent.Contains(rP) || string.IsNullOrEmpty(Path.GetExtension(e));
                     return !isDir;
@@ -633,20 +703,39 @@ namespace SVN.Core
 
         public static async Task<string[]> GetRepoListAsync(string workingDir, string subFolder)
         {
-            // 1. Get base repository URL
-            string repoUrl = await GetRepoUrlAsync(workingDir);
+            string targetUrl = "";
 
-            // 2. Trim the end (e.g., /trunk) to reach the root
-            // If repoUrl is "https://svn.com/repo/trunk", baseUrl will be "https://svn.com/repo"
-            string baseUrl = repoUrl.Substring(0, repoUrl.LastIndexOf('/'));
+            // 1. Jeśli subFolder jest już pełnym adresem URL lub zaczyna się od ^, używamy go bezpośrednio
+            if (subFolder.Contains("://") || subFolder.StartsWith("^"))
+            {
+                targetUrl = subFolder;
+            }
+            else
+            {
+                // 2. Pobierz aktualny URL (np. svn://.../repos/Test/trunk)
+                string repoUrl = await GetRepoUrlAsync(workingDir);
+                repoUrl = repoUrl.TrimEnd('/');
 
-            // 3. Build full address to the subfolder (branches or tags)
-            string targetUrl = $"{baseUrl}/{subFolder}";
+                // 3. Deklarujemy projectRoot tutaj, aby była widoczna w tym bloku
+                string projectRoot = repoUrl;
 
-            // 4. Call svn ls command
+                if (repoUrl.Contains("/trunk"))
+                    projectRoot = repoUrl.Substring(0, repoUrl.IndexOf("/trunk"));
+                else if (repoUrl.Contains("/branches/"))
+                    projectRoot = repoUrl.Substring(0, repoUrl.IndexOf("/branches/"));
+                else if (repoUrl.Contains("/tags/"))
+                    projectRoot = repoUrl.Substring(0, repoUrl.IndexOf("/tags/"));
+                else if (repoUrl.Contains("/"))
+                    projectRoot = repoUrl.Substring(0, repoUrl.LastIndexOf('/'));
+
+                // 4. Budujemy docelowy adres
+                targetUrl = $"{projectRoot}/{subFolder}";
+            }
+
+            // 5. Wykonaj listowanie
+            // Używamy "ls" zamiast "list", dodajemy cudzysłów dla bezpieczeństwa ścieżek
             string output = await RunAsync($"ls \"{targetUrl}\"", workingDir);
 
-            // 5. Clean result: split into lines, remove empty entries and trailing slashes (/)
             return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                          .Select(s => s.TrimEnd('/'))
                          .ToArray();

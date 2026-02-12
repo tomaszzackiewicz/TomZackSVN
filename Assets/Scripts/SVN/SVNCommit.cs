@@ -87,7 +87,7 @@ namespace SVN.Core
                     await SvnRunner.RunAsync("update --depth empty", root);
 
                     svnManager.SVNStatus.ClearUI();
-                    svnManager.RefreshStatus();
+                    await svnManager.RefreshStatus();
 
                     svnUI.CommitConsoleContent.text = $"<color=green><b>SUCCESS!</b></color> Revision: {revision}";
                     if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
@@ -106,7 +106,7 @@ namespace SVN.Core
             finally
             {
                 IsProcessing = false;
-                svnManager.RefreshStatus();
+                await svnManager.RefreshStatus();
                 HideProgressBarAfterDelay(2.0f);
             }
         }
@@ -228,7 +228,7 @@ namespace SVN.Core
             {
                 IsProcessing = false;
 
-                svnManager.RefreshStatus();
+                await svnManager.RefreshStatus();
             }
         }
     }

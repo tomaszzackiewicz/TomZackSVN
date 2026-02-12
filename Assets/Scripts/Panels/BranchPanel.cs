@@ -10,11 +10,14 @@ public class BranchPanel : MonoBehaviour
     private SVNUI svnUI;
     private SVNManager svnManager;
 
-    private void Start()
+    void OnEnable()
     {
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
+
+        svnManager.SVNBranchTag.RefreshUnifiedList();
     }
+
 
     public void Button_Create() => svnManager.SVNBranchTag.CreateRemoteCopy();
     public void Button_SwitchBranch() => svnManager.SVNBranchTag.SwitchToSelectedBranch();
