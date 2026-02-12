@@ -34,7 +34,7 @@ namespace SVN.Core
         public void Button_Clean() => svnManager.SVNClean.LightCleanup();
         public void Button_Vacuum() => svnManager.SVNClean.VacuumCleanup();
         public void Button_Log() => svnManager.SVNLog.ShowLog();
-        //public void Button_ShowModified() => svnManager.SVNStatus.ShowOnlyModified();
+        public void Button_RevertAllMissing() => svnManager.SVNCommit.ExecuteRevertAllMissing();
         public void Button_ShowOnlyIgnored() => svnManager.SVNStatus.RefreshIgnoredPanel();
         public void Button_Explore() => svnManager.SVNExternal.OpenInExplorer();
         public void Button_Lock() => svnManager.SVNLock.LockModified();

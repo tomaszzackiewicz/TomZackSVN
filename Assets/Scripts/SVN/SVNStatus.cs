@@ -44,6 +44,7 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
 
+            // Pomocnicza akcja do logowania w dwóch konsolach jednocześnie
             Action<string> LogBoth = (msg) =>
             {
                 if (svnUI.LogText != null) svnUI.LogText.text += msg;
@@ -56,11 +57,17 @@ namespace SVN.Core
             try
             {
                 LogBoth("Checking SVN status...\n");
+
+                // 1. POBRANIE DANYCH Z SVN
                 var statusDict = _isCurrentViewIgnored
                     ? await SvnRunner.GetIgnoredOnlyAsync(root)
                     : await SvnRunner.GetChangesDictionaryAsync(root);
 
-                // --- POPRAWKA: Obsługa braku zmian ---
+                // 2. KLUCZOWY MOMENT: Przekazanie danych do słownika w SVNManager
+                // Bez tego SVNManager.CurrentStatusDict zawsze będzie pusty!
+                svnManager.UpdateFilesStatus(statusDict);
+
+                // 3. OBSŁUGA BRAKU ZMIAN
                 if (statusDict == null || statusDict.Count == 0)
                 {
                     string emptyMsg = _isCurrentViewIgnored
@@ -71,44 +78,50 @@ namespace SVN.Core
                     if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = emptyMsg;
                     if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Size: 0 KB";
 
-                    // Zerujemy statystyki (ikony/liczniki na dole)
                     svnManager.UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
-
                     LogBoth("<color=yellow>Nothing to display.</color>\n");
-                    return; // Kończymy wcześniej
+                    return;
                 }
-                // -------------------------------------
 
                 LogBoth($"Found {statusDict.Count} entries. Processing paths...\n");
 
+                // 4. AUTO-EXPAND (Rozwijanie folderów, w których są zmiany/konflikty)
                 svnManager.ExpandedPaths.Clear();
-                svnManager.ExpandedPaths.Add("");
+                svnManager.ExpandedPaths.Add(""); // Root zawsze rozwinięty
 
                 foreach (var item in statusDict)
                 {
                     string path = item.Key;
                     string stat = item.Value.status;
-                    bool isChange = !string.IsNullOrEmpty(stat) && (stat == "M" || stat == "A" || stat == "?" || stat == "C" || stat == "!" || stat == "D");
+
+                    // Sprawdzamy, czy to istotna zmiana (w tym 'C' dla konfliktu)
+                    bool isChange = !string.IsNullOrEmpty(stat) && "MA?!DC".Contains(stat);
                     bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : isChange;
 
                     if (shouldExpand)
+                    {
                         AddParentFoldersToExpanded(path);
+                    }
                 }
 
+                // 5. OBLICZANIE ROZMIARU COMMITU
                 LogBoth("Calculating commit size...\n");
                 string report = await SvnRunner.GetCommitSizeReportAsync(root);
                 if (svnUI.CommitSizeText != null)
+                {
                     svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {report}</color>\n";
+                }
 
+                // 6. BUDOWANIE DRZEWA WIZUALNEGO (UI)
                 LogBoth("Building visual tree...\n");
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
 
-                // Jeśli mimo wszystko tree przyszło puste z buildera:
                 string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
 
                 if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
                 if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = treeResult;
 
+                // 7. AKTUALIZACJA STATYSTYK (Ikony na dole interfejsu)
                 svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
 
                 LogBoth("<color=green>Refresh Complete!</color>\n");

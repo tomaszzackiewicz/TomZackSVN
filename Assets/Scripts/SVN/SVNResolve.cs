@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
@@ -19,7 +20,8 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            Action<string> LogBoth = (msg) => {
+            Action<string> LogBoth = (msg) =>
+            {
                 if (svnUI.LogText != null) svnUI.LogText.text += msg;
                 if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
             };
@@ -104,32 +106,80 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(root)) return;
 
             IsProcessing = true;
-            LogBoth("Checking for conflicts to mark as resolved...\n");
+            LogBoth("Starting safe resolve check...\n");
 
             try
             {
+                // 1. Pobierz pliki ze statusem 'C' (Conflict)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
                 var conflictedPaths = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("C"))
                     .Select(x => x.Key).ToArray();
 
-                if (conflictedPaths.Length > 0)
-                {
-                    LogBoth($"Marking {conflictedPaths.Length} items as resolved...\n");
-
-                    string pathsJoined = "\"" + string.Join("\" \"", conflictedPaths) + "\"";
-                    await SvnRunner.RunAsync($"resolved {pathsJoined}", root);
-
-                    LogBoth("<color=green><b>Success!</b></color> Metadata cleaned. You can now commit.\n");
-                    await svnManager.RefreshStatus();
-                }
-                else
+                if (conflictedPaths.Length == 0)
                 {
                     LogBoth("<color=yellow>No conflicts found to resolve.</color>\n");
+                    return;
+                }
+
+                // 2. Walidacja zawartości plików
+                List<string> readyToResolve = new List<string>();
+                List<string> failedValidation = new List<string>();
+
+                foreach (var relativePath in conflictedPaths)
+                {
+                    string fullPath = Path.Combine(root, relativePath);
+                    if (File.Exists(fullPath))
+                    {
+                        string content = await File.ReadAllTextAsync(fullPath);
+
+                        // Sprawdzamy czy plik zawiera znaczniki SVN
+                        if (content.Contains("<<<<<<< .mine") ||
+                            content.Contains(">>>>>>> .r") ||
+                            content.Contains("======="))
+                        {
+                            failedValidation.Add(relativePath);
+                        }
+                        else
+                        {
+                            readyToResolve.Add(relativePath);
+                        }
+                    }
+                }
+
+                // 3. Obsługa wyników walidacji
+                if (failedValidation.Count > 0)
+                {
+                    LogBoth("<color=red><b>ABORTED:</b></color> The following files still contain conflict markers:\n");
+                    foreach (var f in failedValidation) LogBoth($" - <color=orange>{f}</color>\n");
+                    LogBoth("<color=yellow>Please edit them, remove <<<<<<, =======, >>>>>>> markers, save and try again.</color>\n");
+
+                    // Jeśli żaden plik nie przeszedł walidacji, kończymy
+                    if (readyToResolve.Count == 0) return;
+                }
+
+                // 4. Wykonanie 'resolve' tylko na czystych plikach
+                if (readyToResolve.Count > 0)
+                {
+                    LogBoth($"Marking {readyToResolve.Count} validated items as resolved...\n");
+
+                    // Używamy bezpieczniejszej komendy 'resolve --accept working'
+                    string pathsJoined = "\"" + string.Join("\" \"", readyToResolve) + "\"";
+                    await SvnRunner.RunAsync($"resolve --accept working {pathsJoined}", root);
+
+                    LogBoth("<color=green><b>Success!</b></color> Validated files are now clean and ready to commit.\n");
+                    await svnManager.RefreshStatus();
+                    svnManager.PanelHandler.Button_CloseResolve();
                 }
             }
-            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}\n"); }
-            finally { IsProcessing = false; }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=red>Error during safe resolve:</color> {ex.Message}\n");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
         public async void Button_ResolveTheirs() => await RunResolveStrategy(false);
@@ -154,6 +204,7 @@ namespace SVN.Core
                     await SvnRunner.ResolveAsync(root, paths, useMine);
                     LogBoth("<color=green>Resolved!</color> Refreshing status...\n");
                     await svnManager.RefreshStatus();
+                    svnManager.PanelHandler.Button_CloseResolve();
                 }
                 else LogBoth("<color=yellow>No conflicts found.</color>\n");
             }

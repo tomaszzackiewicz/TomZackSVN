@@ -26,17 +26,122 @@ namespace SVN.Core
         }
         private static string _keyPath = "";
 
+        // public static async Task<string> RunAsync(string args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
+        // {
+        //     // 1. Prepare SSH Key path
+        //     string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
+
+        //     if (string.IsNullOrEmpty(safeKeyPath))
+        //     {
+        //         throw new Exception("Error: SSH Key path is empty!");
+        //     }
+
+        //     // 2. Process Configuration
+        //     var psi = new ProcessStartInfo
+        //     {
+        //         FileName = "svn",
+        //         Arguments = args,
+        //         WorkingDirectory = workingDir,
+        //         RedirectStandardOutput = true,
+        //         RedirectStandardError = true,
+        //         UseShellExecute = false,
+        //         CreateNoWindow = true,
+        //         StandardOutputEncoding = Encoding.UTF8,
+        //         StandardErrorEncoding = Encoding.UTF8
+        //     };
+
+        //     // Setting up SSH tunnel environment variable
+        //     psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+
+        //     using var process = new Process { StartInfo = psi };
+        //     var outputBuilder = new StringBuilder();
+        //     var errorBuilder = new StringBuilder();
+
+        //     // 3. Output Handling
+        //     DataReceivedEventHandler outHandler = (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
+        //     DataReceivedEventHandler errHandler = (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
+
+        //     process.OutputDataReceived += outHandler;
+        //     process.ErrorDataReceived += errHandler;
+
+        //     // 4. Cancellation Registration
+        //     using var registration = token.Register(() =>
+        //     {
+        //         try
+        //         {
+        //             if (!process.HasExited) process.Kill();
+        //         }
+        //         catch { /* Process might have already exited */ }
+        //     });
+
+        //     try
+        //     {
+        //         process.Start();
+        //         process.BeginOutputReadLine();
+        //         process.BeginErrorReadLine();
+
+        //         // 5. Wait for Exit with Token and Timeout control
+        //         DateTime startTime = DateTime.Now;
+        //         while (!process.HasExited)
+        //         {
+        //             if (token.IsCancellationRequested)
+        //             {
+        //                 try { process.Kill(); } catch { }
+        //                 throw new OperationCanceledException("SVN operation cancelled by user.");
+        //             }
+
+        //             if ((DateTime.Now - startTime).TotalSeconds > 45)
+        //             {
+        //                 try { process.Kill(); } catch { }
+        //                 throw new Exception("SVN Timeout: Operation exceeded 45 seconds.");
+        //             }
+
+        //             await Task.Delay(100);
+        //         }
+
+        //         // 6. Result Analysis
+        //         if (process.ExitCode != 0)
+        //         {
+        //             string err = errorBuilder.ToString();
+
+        //             // --- SMART RETRY LOGIC (Database Locks) ---
+        //             if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
+        //             {
+        //                 UnityEngine.Debug.LogWarning("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
+
+        //                 await RunAsync("cleanup", workingDir, false, token);
+
+        //                 UnityEngine.Debug.Log("[SvnRunner] Cleanup finished. Retrying original command...");
+        //                 return await RunAsync(args, workingDir, false, token);
+        //             }
+
+        //             if (!string.IsNullOrEmpty(err))
+        //                 throw new Exception($"SVN Error (Code {process.ExitCode}): {err}");
+        //         }
+
+        //         return outputBuilder.ToString();
+        //     }
+        //     catch (OperationCanceledException)
+        //     {
+        //         throw;
+        //     }
+        //     finally
+        //     {
+        //         process.OutputDataReceived -= outHandler;
+        //         process.ErrorDataReceived -= errHandler;
+        //     }
+        // }
+
         public static async Task<string> RunAsync(string args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
         {
-            // 1. Prepare SSH Key path
-            string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
-
-            if (string.IsNullOrEmpty(safeKeyPath))
+            // 1. Przygotowanie ścieżki klucza - bez wyrzucania błędu, jeśli jest pusty
+            string safeKeyPath = "";
+            if (!string.IsNullOrEmpty(KeyPath))
             {
-                throw new Exception("Error: SSH Key path is empty!");
+                safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
             }
 
-            // 2. Process Configuration
+            // 2. Konfiguracja procesu
             var psi = new ProcessStartInfo
             {
                 FileName = "svn",
@@ -50,28 +155,28 @@ namespace SVN.Core
                 StandardErrorEncoding = Encoding.UTF8
             };
 
-            // Setting up SSH tunnel environment variable
-            psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+            // Ustawienie zmiennej środowiskowej TYLKO jeśli klucz istnieje
+            // To zapobiega błędom "empty path", pozwalając na domyślne zachowanie SSH
+            if (!string.IsNullOrEmpty(safeKeyPath))
+            {
+                psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+            }
 
             using var process = new Process { StartInfo = psi };
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
 
-            // 3. Output Handling
+            // 3. Obsługa strumieni danych
             DataReceivedEventHandler outHandler = (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
             DataReceivedEventHandler errHandler = (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
 
             process.OutputDataReceived += outHandler;
             process.ErrorDataReceived += errHandler;
 
-            // 4. Cancellation Registration
+            // 4. Rejestracja przerwania (Cancellation)
             using var registration = token.Register(() =>
             {
-                try
-                {
-                    if (!process.HasExited) process.Kill();
-                }
-                catch { /* Process might have already exited */ }
+                try { if (!process.HasExited) process.Kill(); } catch { }
             });
 
             try
@@ -80,7 +185,7 @@ namespace SVN.Core
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                // 5. Wait for Exit with Token and Timeout control
+                // 5. Oczekiwanie na zakończenie z kontrolą czasu (Timeout)
                 DateTime startTime = DateTime.Now;
                 while (!process.HasExited)
                 {
@@ -99,19 +204,16 @@ namespace SVN.Core
                     await Task.Delay(100);
                 }
 
-                // 6. Result Analysis
+                // 6. Analiza wyników
                 if (process.ExitCode != 0)
                 {
                     string err = errorBuilder.ToString();
 
-                    // --- SMART RETRY LOGIC (Database Locks) ---
+                    // Automatyczny Retry w przypadku blokady bazy danych SVN
                     if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
                     {
                         UnityEngine.Debug.LogWarning("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
-
                         await RunAsync("cleanup", workingDir, false, token);
-
-                        UnityEngine.Debug.Log("[SvnRunner] Cleanup finished. Retrying original command...");
                         return await RunAsync(args, workingDir, false, token);
                     }
 
@@ -120,10 +222,6 @@ namespace SVN.Core
                 }
 
                 return outputBuilder.ToString();
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
             }
             finally
             {
@@ -629,44 +727,50 @@ namespace SVN.Core
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(string workingDir, bool includeIgnored = true)
         {
+            // Wywołujemy status. Ważne: SVN zwraca ścieżki relatywne do workingDir
             string output = await RunAsync("status --no-ignore", workingDir);
             var statusDict = new Dictionary<string, (string status, string size)>();
 
             if (string.IsNullOrEmpty(output)) return statusDict;
 
             string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
             foreach (var line in lines)
             {
-                if (line.Length < 8) continue;
+                // SVN Status zawsze ma co najmniej 8 znaków przed ścieżką
+                if (line.Length < 9) continue;
 
-                char rawCode = line[0];
-                string stat = rawCode.ToString().ToUpper();
+                // 1. Pobieramy kod statusu (pierwsza kolumna to treść, druga to właściwości)
+                char contentStatus = line[0];
+                char propStatus = line[1]; // Ważne dla konfliktów właściwości
+
+                string stat = contentStatus.ToString().ToUpper();
+
+                // Jeśli pierwsza kolumna jest pusta, ale druga ma 'C' (konflikt właściwości/drzewa)
+                if (stat == " " && propStatus == 'C') stat = "C";
+
+                // 2. Pobieramy ścieżkę (zaczyna się od 8 indeksu)
                 string rawPath = line.Substring(8).Trim().Replace('\\', '/');
 
+                // 3. UPROSZCZENIE: Zachowaj ścieżkę taką, jaką daje SVN (relatywną)
+                // Nie wycinaj "Content/" ani slashy, chyba że Twój UI tego absolutnie wymaga.
                 string cleanPath = rawPath;
 
-                if (rawPath.Contains("/"))
-                {
-                    int contentIndex = rawPath.IndexOf("Content/", StringComparison.OrdinalIgnoreCase);
-                    if (contentIndex != -1)
-                    {
-                        cleanPath = rawPath.Substring(contentIndex);
-                    }
-                    else
-                    {
-                        int firstSlash = rawPath.IndexOf('/');
-                        cleanPath = rawPath.Substring(firstSlash + 1);
-                    }
-                }
-
+                // 4. Sprawdzenie istotności
                 bool isRelevant = "MA?!DC".Contains(stat) || (includeIgnored && stat == "I");
 
                 if (isRelevant)
                 {
-                    //UnityEngine.Debug.Log($"<color=cyan>[FINAL KEY]: {cleanPath}</color>");
-                    statusDict[cleanPath] = (stat, GetFileSizeSafe(Path.Combine(workingDir, cleanPath)));
+                    // Łączymy workingDir z rawPath tylko do odczytu rozmiaru pliku
+                    string fullPathForSize = Path.Combine(workingDir, rawPath);
+                    string size = GetFileSizeSafe(fullPathForSize);
+
+                    // Zapisujemy pod pełną relatywną ścieżką
+                    statusDict[cleanPath] = (stat, size);
                 }
             }
+
+            UnityEngine.Debug.Log($"[SVN] Parser finished. Dictionary count: {statusDict.Count}");
             return statusDict;
         }
 

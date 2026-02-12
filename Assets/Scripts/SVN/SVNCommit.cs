@@ -168,6 +168,82 @@ namespace SVN.Core
             svnUI.CommitConsoleContent.text = sb.ToString();
         }
 
+        public async void ExecuteRevertAllMissing()
+        {
+            // Wywołujemy asynchroniczną metodę i czekamy na jej zakończenie
+            await RevertAllMissing();
+
+            // Opcjonalnie: Dodatkowy komunikat po zakończeniu całości
+            if (svnUI.CommitConsoleContent != null)
+            {
+                svnUI.CommitConsoleContent.text += "\n<color=cyan><b>[System]</b> Repair process finished.</color>";
+            }
+        }
+
+        /// <summary>
+        /// Restores files marked as missing (!) and reverts local changes.
+        /// </summary>
+        private async System.Threading.Tasks.Task RevertAllMissing()
+        {
+            if (IsProcessing) return;
+            IsProcessing = true;
+
+            string root = svnManager.WorkingDir;
+            svnUI.CommitConsoleContent.text = "<b>[Revert]</b> Starting recovery of missing files...\n";
+
+            try
+            {
+                // 1. Pobieramy surowy status, aby znaleźć pliki z '!'
+                string rawStatus = await SvnRunner.RunAsync("status", root);
+                List<string> filesToRevert = new List<string>();
+
+                using (var reader = new System.IO.StringReader(rawStatus))
+                {
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        // Szukamy linii zaczynających się od '!' (Missing)
+                        if (line.StartsWith("!"))
+                        {
+                            string path = line.Substring(1).Trim();
+                            filesToRevert.Add(path);
+                        }
+                    }
+                }
+
+                if (filesToRevert.Count == 0)
+                {
+                    svnUI.CommitConsoleContent.text += "<color=green>No missing files found.</color>\n";
+                    return;
+                }
+
+                svnUI.CommitConsoleContent.text += $"Found {filesToRevert.Count} missing files. Restoring...\n";
+
+                // 2. Revertujemy brakujące pliki w paczkach (żeby nie przepełnić CLI)
+                // SVN revert przywróci je fizycznie na dysk z lokalnej bazy .svn
+                int batchSize = 20;
+                for (int i = 0; i < filesToRevert.Count; i += batchSize)
+                {
+                    var batch = filesToRevert.Skip(i).Take(batchSize).Select(p => $"\"{p}\"");
+                    string pathsArg = string.Join(" ", batch);
+                    await SvnRunner.RunAsync($"revert {pathsArg}", root);
+
+                    svnUI.CommitConsoleContent.text += $"Restored {Math.Min(i + batchSize, filesToRevert.Count)}/{filesToRevert.Count}...\n";
+                }
+
+                svnUI.CommitConsoleContent.text += "<color=green><b>Success:</b> All missing files restored.</color>\n";
+            }
+            catch (System.Exception ex)
+            {
+                svnUI.CommitConsoleContent.text += $"<color=red>Revert Error:</color> {ex.Message}\n";
+            }
+            finally
+            {
+                IsProcessing = false;
+                await svnManager.RefreshStatus();
+            }
+        }
+
         public async void ExecuteCommit()
         {
             if (svnUI.CommitMessageInput == null || _items == null) return;
@@ -233,7 +309,7 @@ namespace SVN.Core
         }
     }
 
-        public class CommitItemData
+    public class CommitItemData
     {
         public string Path;
         public string Status;

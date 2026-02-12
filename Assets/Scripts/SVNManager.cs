@@ -421,12 +421,66 @@ namespace SVN.Core
 
         public async Task RefreshStatus()
         {
-            if (string.IsNullOrEmpty(WorkingDir)) return;
+            if (string.IsNullOrEmpty(WorkingDir))
+            {
+                Debug.LogError("[SVN] RefreshStatus aborted: WorkingDir is null or empty!");
+                return;
+            }
 
-            ExpandedPaths.Clear();
-            ExpandedPaths.Add("");
+            Debug.Log("[SVN] 1. Starting Refresh...");
 
-            await SVNStatus.ExecuteRefreshWithAutoExpand();
+            try
+            {
+                // Sprawdzamy, czy to wywołanie w ogóle przechodzi dalej
+                await SVNStatus.ExecuteRefreshWithAutoExpand();
+                Debug.Log("[SVN] 2. ExecuteRefresh finished.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[SVN] CRITICAL: ExecuteRefresh crashed with: {e.Message}");
+                return;
+            }
+
+            if (CurrentStatusDict == null)
+            {
+                Debug.LogError("[SVN] 3. CurrentStatusDict is NULL!");
+                return;
+            }
+
+            Debug.Log($"[SVN] 4. Dictionary count: {CurrentStatusDict.Count}");
+
+            // Logujemy wszystkie statusy, żeby zobaczyć co parser "wypluł"
+            foreach (var item in CurrentStatusDict)
+            {
+                Debug.Log($"[SVN] File: {item.Key} Status: [{item.Value.status}]");
+            }
+
+            var conflictedFiles = CurrentStatusDict.Where(x => x.Value.status.Contains("C")).ToList();
+
+            if (conflictedFiles.Count > 0)
+            {
+                Debug.Log($"<color=orange>[SVN] 5. Found {conflictedFiles.Count} conflicts. Triggering UI...</color>");
+                OnConflictDetected();
+            }
+            else
+            {
+                Debug.Log("[SVN] 5. No conflicts found in dictionary.");
+            }
+        }
+
+        private void OnConflictDetected()
+        {
+            Debug.Log("<color=red>[SVN] Conflicts detected! Switching to Resolve Panel.</color>");
+
+            if (panelHandler != null)
+            {
+                panelHandler.Button_OpenResolve();
+
+                if (svnUI != null && svnUI.LogText != null)
+                {
+                    svnUI.LogText.text += "<color=red><b>[!] Conflict detected.</b> Redirecting to Resolve Tool...</color>\n";
+                }
+            }
         }
 
         public string ParseRevision(string input)
@@ -528,15 +582,13 @@ namespace SVN.Core
             return url;
         }
 
-        private void OnApplicationFocus(bool focus)
+        private async void OnApplicationFocus(bool focus)
         {
-            if (focus && !string.IsNullOrEmpty(workingDir))
+            if (focus && !string.IsNullOrEmpty(workingDir) && !isProcessing)
             {
-                //SVNStatus.ShowOnlyModified();
+                await RefreshStatus();
             }
         }
-
-
     }
 }
 

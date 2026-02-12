@@ -73,7 +73,7 @@ namespace SVN.Core
             svnUI.LogText.text += $"<color=green>Saved:</color> Merge Tool updated.\n";
         }
 
-        // Ta metoda jest wywo³ywana, gdy rêcznie zmieniamy œcie¿kê w ustawieniach
+        // Ta metoda jest wywoï¿½ywana, gdy rï¿½cznie zmieniamy ï¿½cieï¿½kï¿½ w ustawieniach
         public async void SaveWorkingDir()
         {
             if (IsProcessing) return;
@@ -84,13 +84,13 @@ namespace SVN.Core
                 IsProcessing = true;
                 try
                 {
-                    // 1. Sprawdzamy, czy ten folder jest ju¿ projektem, czy nowym
+                    // 1. Sprawdzamy, czy ten folder jest juï¿½ projektem, czy nowym
                     List<SVNProject> projects = ProjectSettings.LoadProjects();
                     var existing = projects.Find(p => p.workingDir == newPath);
 
                     if (existing == null)
                     {
-                        // Jeœli zmieniliœmy na folder, którego nie ma na liœcie - dodaj go
+                        // Jeï¿½li zmieniliï¿½my na folder, ktï¿½rego nie ma na liï¿½cie - dodaj go
                         var newProj = new SVNProject
                         {
                             projectName = Path.GetFileName(newPath),
@@ -116,64 +116,125 @@ namespace SVN.Core
             }
         }
 
-        // Metoda wczytuj¹ca ustawienia przy starcie aplikacji
+        // Metoda wczytujï¿½ca ustawienia przy starcie aplikacji
         public async void LoadSettings()
         {
+            if (svnManager == null) return;
+
             svnManager.IsProcessing = true;
+            svnUI.LogText.text += "<b>[Settings]</b> Loading environment...\n";
 
-            // 1. Pobierz œcie¿kê ostatniego projektu
-            string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
-            string globalMergeTool = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-            
-            svnManager.MergeToolPath = globalMergeTool;
-
-            // 2. ZnajdŸ dane projektu w JSON
-            var projects = ProjectSettings.LoadProjects();
-            var currentProj = projects.Find(p => p.workingDir == lastPath);
-
-            if (currentProj != null)
+            try
             {
-                svnManager.WorkingDir = currentProj.workingDir;
-                svnManager.RepositoryUrl = currentProj.repoUrl;
-                svnManager.CurrentKey = currentProj.privateKeyPath;
-                SvnRunner.KeyPath = currentProj.privateKeyPath;
+                // 1. Pobierz Å›cieÅ¼ki globalne (Merge Tool)
+                string globalMergeTool = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+                svnManager.MergeToolPath = globalMergeTool;
 
-                // Aktualizuj UI
-                UpdateUIFromManager();
+                // 2. Pobierz Å›cieÅ¼kÄ™ ostatnio otwartego projektu
+                string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
 
-                // Odœwie¿ SVN
-                if (Directory.Exists(currentProj.workingDir))
+                if (string.IsNullOrEmpty(lastPath))
                 {
-                    await svnManager.SetWorkingDirectory(currentProj.workingDir);
-                    await svnManager.RefreshStatus();
+                    svnUI.LogText.text += "<color=orange>Note:</color> No last project found. Please load or checkout a repository.\n";
+                    svnManager.IsProcessing = false;
+                    return;
+                }
+
+                // 3. ZnajdÅº dane konkretnego projektu w bazie JSON
+                var projects = ProjectSettings.LoadProjects();
+                var currentProj = projects.Find(p => p.workingDir == lastPath);
+
+                if (currentProj != null)
+                {
+                    // Podstawowe dane projektu
+                    svnManager.WorkingDir = currentProj.workingDir;
+                    svnManager.RepositoryUrl = currentProj.repoUrl;
+
+                    // --- LOGIKA KLUCZA SSH ---
+                    // Najpierw sprawdÅº klucz przypisany do projektu
+                    string keyToUse = currentProj.privateKeyPath;
+
+                    // JeÅ›li projekt nie ma klucza, pobierz ostatnio uÅ¼ywany klucz globalny
+                    if (string.IsNullOrEmpty(keyToUse))
+                    {
+                        keyToUse = PlayerPrefs.GetString(SVNManager.KEY_SSH_PATH, "");
+                        if (!string.IsNullOrEmpty(keyToUse))
+                        {
+                            svnUI.LogText.text += "<color=#888888>Project has no specific key. Using global SSH key.</color>\n";
+                        }
+                    }
+
+                    // Aplikuj klucz do systemu
+                    svnManager.CurrentKey = keyToUse;
+                    SvnRunner.KeyPath = keyToUse;
+
+                    // 4. Aktualizuj pola w UI (uÅ¼ywajÄ…c metody z hierarchiÄ… sprawdzania)
+                    UpdateUIFromManager();
+
+                    // 5. Inicjalizacja repozytorium w Managerze
+                    if (Directory.Exists(currentProj.workingDir))
+                    {
+                        await svnManager.SetWorkingDirectory(currentProj.workingDir);
+                        await svnManager.RefreshStatus();
+                        svnUI.LogText.text += $"<color=green>Loaded:</color> {currentProj.projectName}\n";
+                    }
+                    else
+                    {
+                        svnUI.LogText.text += $"<color=red>Warning:</color> Working directory not found at {currentProj.workingDir}\n";
+                    }
+                }
+                else
+                {
+                    svnUI.LogText.text += "<color=orange>Note:</color> Last project not found in Selection List. It might have been deleted.\n";
                 }
             }
-
-            svnManager.IsProcessing = false;
+            catch (Exception ex)
+            {
+                svnUI.LogText.text += $"<color=red>Load Error:</color> {ex.Message}\n";
+                Debug.LogError($"[SVNSettings] LoadSettings failed: {ex}");
+            }
+            finally
+            {
+                svnManager.IsProcessing = false;
+            }
         }
 
         public void UpdateUIFromManager()
         {
             if (svnUI == null) return;
 
-            // POBIERZ ZAPIS (Ostateczne zabezpieczenie)
-            string savedPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-
-            if (!string.IsNullOrEmpty(savedPath))
+            // 1. ObsÅ‚uga Merge Tool (Globalny)
+            string savedMergePath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+            if (!string.IsNullOrEmpty(savedMergePath))
             {
-                svnManager.MergeToolPath = savedPath; // Wymuœ wartoœæ w Managerze
-
-                if (svnUI.SettingsMergeToolPathInput != null)
-                {
-                    // Wpisz do UI, ale NIE wywo³uj ¿adnych eventów
-                    svnUI.SettingsMergeToolPathInput.SetTextWithoutNotify(savedPath);
-                }
+                svnManager.MergeToolPath = savedMergePath;
+                svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(savedMergePath);
             }
 
-            // Pozosta³e pola
+            // 2. ObsÅ‚uga Klucza SSH (Hierarchia: Manager -> Runner -> PlayerPrefs)
+            string effectiveKey = svnManager.CurrentKey;
+
+            if (string.IsNullOrEmpty(effectiveKey))
+                effectiveKey = SvnRunner.KeyPath;
+
+            if (string.IsNullOrEmpty(effectiveKey))
+                effectiveKey = PlayerPrefs.GetString(SVNManager.KEY_SSH_PATH, "");
+
+            // JeÅ›li znaleÅºliÅ›my jakikolwiek klucz, upewnij siÄ™, Å¼e Runner i UI o nim wiedzÄ…
+            if (!string.IsNullOrEmpty(effectiveKey))
+            {
+                svnManager.CurrentKey = effectiveKey;
+                SvnRunner.KeyPath = effectiveKey;
+                svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(effectiveKey);
+            }
+            else
+            {
+                svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify("");
+            }
+
+            // 3. PozostaÅ‚e pola (Working Dir i Repo URL)
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(svnManager.WorkingDir);
             svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(svnManager.RepositoryUrl);
-            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(svnManager.CurrentKey);
         }
     }
 }

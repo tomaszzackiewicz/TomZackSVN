@@ -25,8 +25,17 @@ public class ProjectSelectionPanel : MonoBehaviour
         RefreshList();
     }
 
+    // Odśwież listę za każdym razem, gdy panel jest aktywowany
+    private void OnEnable()
+    {
+        RefreshList();
+    }
+
     public void RefreshList()
     {
+        // Sprawdzenie na wypadek, gdyby Instance nie był jeszcze gotowy
+        if (svnUI == null) svnUI = SVNUI.Instance;
+
         projects = ProjectSettings.LoadProjects();
 
         foreach (Transform child in container)
@@ -50,13 +59,34 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private async void OnProjectSelected(SVNProject project)
     {
+        // 1. Przekazujemy pełny obiekt projektu do Managera
+        // Manager pobierze z niego WorkingDir, RepoURL i PrivateKeyPath
         svnManager.LoadProject(project);
 
+        // 2. Synchronizacja klucza dla Runnera (aby operacje SVN działały od razu)
+        if (!string.IsNullOrEmpty(project.privateKeyPath))
+        {
+            SvnRunner.KeyPath = project.privateKeyPath;
+        }
+
+        // 3. Zamknięcie panelu wyboru
         this.gameObject.SetActive(false);
 
+        // 4. WYMUSZENIE ODŚWIEŻENIA UI W SETTINGS
+        // To jest najważniejszy krok – bez tego InputFieldy w zakładce Settings
+        // będą pokazywać dane starego projektu, dopóki ich ręcznie nie odświeżysz.
+        if (svnManager.SVNSettings != null)
+        {
+            svnManager.SVNSettings.UpdateUIFromManager();
+        }
+
+        // 5. Logika wyświetlania info i zapisu ostatniej ścieżki
         svnManager.SVNStatus.ShowProjectInfo(project, project.workingDir);
         PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
         PlayerPrefs.Save();
+
+        // 6. Odświeżenie repozytorium
+        await svnManager.RefreshStatus();
     }
 
     public void Button_OpenAddProjectPanel()
@@ -75,8 +105,8 @@ public class ProjectSelectionPanel : MonoBehaviour
             ui.AddProjectRepoUrlInput.onEndEdit.AddListener(OnUrlInputEndEdit);
         }
     }
-    public void Button_BrowseDestFolder() => svnManager.SVNExternal.BrowseDestinationFolderPathAdd();
 
+    public void Button_BrowseDestFolder() => svnManager.SVNExternal.BrowseDestinationFolderPathAdd();
     public void Button_BrowsePrivateKey() => svnManager.SVNExternal.BrowsePrivateKeyPathAdd();
 
     public void Button_CloseAddProjectPanel()
@@ -106,10 +136,8 @@ public class ProjectSelectionPanel : MonoBehaviour
         AddNewProject(name, url, path, key);
     }
 
-    // Add this method to handle the event
     public void OnUrlInputEndEdit(string url)
     {
-        // Only auto-fill if the name field is currently empty
         if (string.IsNullOrWhiteSpace(svnUI.AddProjectNameInput.text) && !string.IsNullOrWhiteSpace(url))
         {
             svnUI.AddProjectNameInput.text = GetProjectNameFromUrl(url);
@@ -120,25 +148,18 @@ public class ProjectSelectionPanel : MonoBehaviour
     {
         try
         {
-            // 1. Clean up the URL
             string cleanedUrl = url.Trim().TrimEnd('/', '\\');
-
-            // 2. Split by slashes to look at segments
             string[] segments = cleanedUrl.Split(new char[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
 
             if (segments.Length > 0)
             {
-                // 3. Get the last segment
                 string lastSegment = segments[segments.Length - 1];
-
-                // 4. If the last segment is a standard SVN folder, take the one before it
                 List<string> svnKeywords = new List<string> { "trunk", "branches", "tags" };
                 if (svnKeywords.Contains(lastSegment.ToLower()) && segments.Length > 1)
                 {
                     lastSegment = segments[segments.Length - 2];
                 }
 
-                // 5. Remove common extensions
                 if (lastSegment.EndsWith(".git")) lastSegment = lastSegment.Substring(0, lastSegment.Length - 4);
                 if (lastSegment.EndsWith(".svn")) lastSegment = lastSegment.Substring(0, lastSegment.Length - 4);
 
@@ -149,23 +170,36 @@ public class ProjectSelectionPanel : MonoBehaviour
         {
             Debug.LogWarning($"[SVN] URL Parse failed: {e.Message}");
         }
-
-        return "";
+        return "New Project";
     }
 
     private void AddNewProject(string name, string url, string path, string key)
     {
+        // Normalizacja ścieżki
+        string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
+
         var newProj = new SVNProject
         {
             projectName = name,
             repoUrl = url,
-            workingDir = path,
+            workingDir = normalizedPath,
             privateKeyPath = key,
             lastOpened = DateTime.Now
         };
 
         List<SVNProject> currentList = ProjectSettings.LoadProjects();
-        currentList.Add(newProj);
+
+        // Unikanie duplikatów po ścieżce roboczej
+        int existingIndex = currentList.FindIndex(p => p.workingDir == normalizedPath);
+        if (existingIndex != -1)
+        {
+            currentList[existingIndex] = newProj;
+        }
+        else
+        {
+            currentList.Add(newProj);
+        }
+
         ProjectSettings.SaveProjects(currentList);
 
         RefreshList();
