@@ -12,6 +12,7 @@ namespace SVN.Core
     {
         private bool _isCurrentViewIgnored = false;
         private string _lastKnownProjectName = "";
+        private string _svnVersionCached = "";
 
         private List<string> _cachedIgnoreRules = new List<string>();
 
@@ -419,15 +420,34 @@ namespace SVN.Core
             }
 
             string shortDate = (fullDate != "unknown") ? fullDate.Split('(')[0].Trim() : "no commits";
+            string appVersion = Application.version;
+            if (string.IsNullOrEmpty(_svnVersionCached)) await EnsureVersionCached();
 
-            // 3. Finalny UI Output z ulepszonymi kolorami (szary zastąpiony #555555 i #444444)
             svnUI.StatusInfoText.text =
         $"<size=120%><color=#55FF55>●</color></size> <b>{displayName}</b> <color=#E6E6E6>({sizeText})</color> | " +
         $"<color=#00E5FF>Branch:</color> {branchName} | " +
         $"<color=orange>Rev: {revision}</color> | " +
         $"<color=#81BEF7>By: {author}</color> | " +
         $"<color=#AAAAAA>{shortDate}</color> | " +
-        $"<color=#888888>Srv: {serverHost}</color>";
+        $"<color=#888888>Srv: {serverHost}</color> | " +
+        $"<color=#666666>App: {appVersion}</color> | " +
+        $"<color=#666666>SVN:{_svnVersionCached}</color>";
+        }
+
+        private async Task EnsureVersionCached()
+        {
+            if (string.IsNullOrEmpty(_svnVersionCached))
+            {
+                try
+                {
+                    _svnVersionCached = await SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir);
+                    _svnVersionCached = _svnVersionCached.Trim();
+                }
+                catch
+                {
+                    _svnVersionCached = "?.?.?";
+                }
+            }
         }
 
         private string ExtractValue(string text, string key)

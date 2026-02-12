@@ -1,6 +1,7 @@
 using SVN.Core;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using UnityEngine;
 
 public class MergePanel : MonoBehaviour
@@ -60,5 +61,10 @@ public class MergePanel : MonoBehaviour
         string selectedName = svnUI.MergeBranchesDropdown.options[index].text;
 
         svnUI.MergeSourceInput.text = selectedName;
+    }
+
+    public async Task Button_RevertMerge()
+    {
+        await svnManager.SVNMerge.RevertMerge();
     }
 }
