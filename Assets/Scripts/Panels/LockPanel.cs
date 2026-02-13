@@ -16,14 +16,18 @@ public class LockPanel : MonoBehaviour
         // Jeśli masz Singletony, to pobieramy je tutaj
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
+
+
     }
 
-    // Metoda wywoływana np. przez przycisk "Otwórz Panel Blokad"
+    void OnEnable()
+    {
+
+    }
+
     public void OpenAndRefresh()
     {
-        //panelRoot.SetActive(true);
-        // Wywołujemy logikę z klasy SVNLock, przekazując jej ten panel jako kontekst
-        //svnManager.SVNLock.RefreshStealPanel(this);
+        svnManager.SVNLock.OpenStealPanel();
     }
 
     //public void Close() => svnManager.SVNLock.StealLockSelected();

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml;
 using UnityEngine;
 
 namespace SVN.Core
@@ -60,11 +61,13 @@ namespace SVN.Core
         public PanelHandler PanelHandler => panelHandler;
         public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
 
+        private string currentUserName = "Unknown";
+
         public string CurrentUserName
         {
             get
             {
-                return Environment.UserName;
+                return currentUserName;
             }
         }
 
@@ -164,6 +167,64 @@ namespace SVN.Core
             if (loadingOverlay != null)
             {
                 loadingOverlay.SetActive(isLoading);
+            }
+        }
+
+        public async Task<string> AutoDetectSvnUser()
+        {
+            currentUserName = "Detecting...";
+            if (string.IsNullOrEmpty(WorkingDir)) return "Unknown";
+
+            try
+            {
+                // 1. Pobieramy INFO w formacie XML - to jest najbardziej stabilne źródło
+                string xmlOutput = await SvnRunner.RunAsync("info --xml", WorkingDir);
+                if (!string.IsNullOrEmpty(xmlOutput))
+                {
+                    XmlDocument doc = new XmlDocument();
+                    doc.LoadXml(xmlOutput);
+
+                    // Szukamy loginu w pełnym URL repozytorium
+                    // Przykładowy URL: svn+ssh://tomasz@192.168.1.1/repo
+                    XmlNode urlNode = doc.SelectSingleNode("//url");
+                    if (urlNode != null)
+                    {
+                        string fullUrl = urlNode.InnerText;
+                        // Regex szukający tekstu między "://" a "@"
+                        var match = System.Text.RegularExpressions.Regex.Match(fullUrl, @"://([^@/]+)@");
+                        if (match.Success)
+                        {
+                            currentUserName = match.Groups[1].Value.Trim();
+                            return currentUserName;
+                        }
+                    }
+                }
+
+                // 2. Jeśli URL nie ma loginu (np. czyste HTTPS), sprawdzamy 'svn auth' 
+                // ale parsujemy go linia po linii dla pewności
+                string authOutput = await SvnRunner.RunAsync("auth", WorkingDir);
+                string[] lines = authOutput.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                foreach (var line in lines)
+                {
+                    if (line.Trim().StartsWith("Username:"))
+                    {
+                        currentUserName = line.Replace("Username:", "").Trim();
+                        return currentUserName;
+                    }
+                }
+
+                // 3. OSTATNIA DESKA RATUNKU: Jeśli SVN nie zwraca nic, 
+                // pytamy system operacyjny o nazwę ZALOGOWANEGO użytkownika,
+                // bo w 99% przypadków login SVN = login systemowy (Active Directory/LDAP)
+                currentUserName = Environment.UserName.ToLower();
+                Debug.LogWarning($"[SVN] URL/Auth detection failed. Falling back to OS User: {currentUserName}");
+                return currentUserName;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[SVN] Critical detection error: {ex.Message}");
+                currentUserName = "ERROR";
+                return currentUserName;
             }
         }
 
@@ -322,6 +383,12 @@ namespace SVN.Core
 
             if (Directory.Exists(WorkingDir))
             {
+                // 1. Najpierw wykrywamy kim jesteśmy w SVN
+                await AutoDetectSvnUser();
+
+                SVNStatus.ShowProjectInfo(project, WorkingDir);
+
+                // 2. Potem reszta odświeżania
                 await RefreshRepositoryInfo();
                 await RefreshStatus();
             }

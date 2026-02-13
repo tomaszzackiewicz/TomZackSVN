@@ -25,30 +25,68 @@ namespace SVN.Core
 
             try
             {
+                // 1. Pobieramy status lokalny (zmodyfikowane pliki)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
-
-                // We only lock "M" status. 
-                // "A" (Added) files cannot be locked until they exist on the server.
-                var filesToLock = statusDict
+                var modifiedFiles = statusDict
                     .Where(x => x.Value.status == "M")
                     .Select(x => x.Key)
+                    .ToList();
+
+                if (modifiedFiles.Count == 0)
+                {
+                    svnUI.LogText.text += "<color=yellow>No modified files (M) found to lock.</color>\n";
+                    return;
+                }
+
+                // 2. Pobieramy aktualne blokady z serwera
+                var currentServerLocks = await GetDetailedLocks(root);
+
+                // Tworzymy zestaw (HashSet) wszystkich ścieżek, które JUŻ mają locka na serwerze
+                // (niezależnie od tego, czy to Ty, czy ktoś inny)
+                var alreadyLockedPaths = new HashSet<string>(
+                    currentServerLocks.Select(l => l.Path.Replace("\\", "/").ToLower())
+                );
+
+                // 3. Filtrujemy listę: bierzemy tylko te pliki "M", których NIE MA na liście blokad serwera
+                var filesToLock = modifiedFiles
+                    .Where(f =>
+                    {
+                        string normalizedPath = f.Replace("\\", "/").ToLower();
+                        // Sprawdzamy, czy którykolwiek zablokowany plik na serwerze pasuje do naszego pliku
+                        return !alreadyLockedPaths.Any(lp => normalizedPath.EndsWith(lp));
+                    })
+                    .Select(f => $"\"{f}\"")
                     .ToArray();
+
+                int alreadyLockedByMeOrOthers = modifiedFiles.Count - filesToLock.Length;
 
                 if (filesToLock.Length > 0)
                 {
-                    svnUI.LogText.text += $"Locking {filesToLock.Length} files on server...\n";
-                    await SvnRunner.LockAsync(root, filesToLock);
+                    svnUI.LogText.text += $"Locking {filesToLock.Length} new files (Skipped {alreadyLockedByMeOrOthers} already locked)...\n";
+
+                    string allPathsJoined = string.Join(" ", filesToLock);
+                    await SvnRunner.RunAsync($"lock {allPathsJoined}", root);
+
                     svnUI.LogText.text += "<color=green>Locking completed successfully.</color>\n";
-                    await svnManager.RefreshStatus();
                 }
                 else
                 {
-                    svnUI.LogText.text += "<color=yellow>No modified files (M) found to lock.</color>\n";
+                    svnUI.LogText.text += "<color=yellow>All modified files are already locked by you or others.</color>\n";
                 }
+
+                await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Lock Error:</color> {ex.Message}\n";
+                // Ignorujemy błąd, jeśli SVN mimo wszystko wypluje ostrzeżenie o istniejącym locku
+                if (ex.Message.Contains("W160035"))
+                {
+                    svnUI.LogText.text += "<color=green>Files were already locked.</color>\n";
+                }
+                else
+                {
+                    svnUI.LogText.text += $"<color=red>Lock Error:</color> {ex.Message}\n";
+                }
             }
             finally { IsProcessing = false; }
         }
@@ -194,6 +232,108 @@ namespace SVN.Core
             svnUI.LogText.text += "<color=orange><b>[System]</b> Cleaning local database locks...</color>\n";
             await SvnRunner.RunAsync("cleanup --remove-locks", root);
             svnUI.LogText.text += "Local locks removed.\n";
+        }
+
+        public async void OpenStealPanel()
+        {
+            if (IsProcessing) return;
+            IsProcessing = true;
+
+            // 1. Czyścimy listę w UI
+            foreach (Transform child in svnUI.LocksContainer)
+            {
+                GameObject.Destroy(child.gameObject);
+            }
+
+            try
+            {
+                // 2. Pobieramy dane z serwera
+                var allLocks = await GetDetailedLocks(svnManager.WorkingDir);
+
+                // --- DIAGNOSTYKA: Sprawdź to w konsoli Unity! ---
+                string myName = svnManager.CurrentUserName ?? "NULL";
+                foreach (var l in allLocks)
+                {
+                    Debug.Log($"[SVN Check] Server Owner: '{l.Owner}' | My Name: '{myName}'");
+                }
+                // -----------------------------------------------
+
+                // 3. FILTRACJA (Pancerna: usuwa spacje i ignoruje wielkość liter)
+                string myCleanName = myName.Trim().ToLower();
+
+                var othersLocks = allLocks.Where(l =>
+                {
+                    if (string.IsNullOrEmpty(l.Owner)) return false;
+
+                    // Czyścimy nazwę właściciela z serwera do porównania
+                    string ownerClean = l.Owner.Trim().ToLower();
+
+                    // Zwracamy TRUE tylko jeśli to NIE jesteś Ty
+                    return ownerClean != myCleanName;
+                }).ToList();
+
+                if (othersLocks.Count == 0)
+                {
+                    svnUI.LogText.text = "<b>[Steal Panel]</b> No locks found from other users.\n";
+                    return;
+                }
+
+                // 4. Budowanie listy
+                foreach (var lockItem in othersLocks)
+                {
+                    GameObject go = GameObject.Instantiate(svnUI.LockEntryPrefab, svnUI.LocksContainer);
+                    LockUIItem uiScript = go.GetComponent<LockUIItem>();
+
+                    uiScript.Setup(
+                        lockItem.Path,
+                        lockItem.Owner,
+                        lockItem.CreationDate,
+                        lockItem.Comment,
+                        false,
+                        () => ExecuteSteal(lockItem)
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Steal Panel Error: {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
+
+        private async void ExecuteSteal(SVNLockDetails lockDetails)
+        {
+            if (IsProcessing || lockDetails == null) return;
+            IsProcessing = true;
+
+            try
+            {
+                // 1. Wykonujemy kradzież na serwerze
+                string command = $"lock --force -m \"Forced takeover by {svnManager.CurrentUserName}\" \"{lockDetails.FullPath}\"";
+                await SvnRunner.RunAsync(command, svnManager.WorkingDir);
+
+                svnUI.LogText.text += $"<color=orange>SUCCESS:</color> You took over {lockDetails.Path}\n";
+
+                // 2. Czekamy chwilę, aby serwer SVN zaktualizował rekordy przed ponownym zapytaniem
+                await System.Threading.Tasks.Task.Delay(500);
+
+                // 3. Odświeżamy lokalny status SVN
+                await svnManager.RefreshStatus();
+
+                // 4. Ważne: Zdejmujemy flagę przed odświeżeniem panelu
+                IsProcessing = false;
+
+                // 5. Odświeżamy widok - skradziony plik powinien zniknąć
+                OpenStealPanel();
+            }
+            catch (Exception ex)
+            {
+                svnUI.LogText.text += $"<color=red>Steal Failed:</color> {ex.Message}\n";
+                IsProcessing = false;
+            }
         }
     }
 }
