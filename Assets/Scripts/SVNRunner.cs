@@ -374,11 +374,12 @@ namespace SVN.Core
         {
             if (paths == null || paths.Length == 0) return "No files to lock.";
 
-            // Join paths in quotes, separated by spaces
+            // Use -m or --message instead of --comment
+            // We put the message first, then the paths
             string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
 
-            // --comment "..." is optional, but worth adding
-            string cmd = $"lock {pathsArg} --comment \"Locked by Unity SVN Tool\"";
+            // Changing --comment to -m (or --message)
+            string cmd = $"lock -m \"Locked by Unity SVN Tool\" {pathsArg}";
 
             return await RunAsync(cmd, workingDir);
         }

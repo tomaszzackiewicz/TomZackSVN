@@ -60,7 +60,13 @@ namespace SVN.Core
         [Header("Terminal")]
         [SerializeField] private TMP_InputField terminalInputField;
         [SerializeField] private ScrollRect logScrollRect;
-
+        [Header("Shelves")]
+        [SerializeField] private TMP_InputField shelfNameInput;
+        [SerializeField] private ScrollRect shelfListContainer;
+        [SerializeField] private GameObject shelfItemPrefab;
+        [Header("Locks")]
+        [SerializeField] private Transform locksContainer;
+        [SerializeField] private GameObject lockEntryPrefab;
 
         public TextMeshProUGUI LogText => logText;
         public TMP_InputField LogCountInputField => logCountInputField;
@@ -111,6 +117,11 @@ namespace SVN.Core
         public TMP_InputField SettingsMergeToolPathInput => settingsMergeToolPathInput;
         public TMP_InputField TerminalInputField => terminalInputField;
         public ScrollRect LogScrollRect => logScrollRect;
+        public TMP_InputField ShelfNameInput => shelfNameInput;
+        public ScrollRect ShelfListContainer => shelfListContainer;
+        public GameObject ShelfItemPrefab => shelfItemPrefab;
+        public Transform LocksContainer => locksContainer;
+        public GameObject LockEntryPrefab => lockEntryPrefab;
 
         private void Awake()
         {
@@ -121,7 +132,7 @@ namespace SVN.Core
             Instance = this;
         }
 
-        
+
 
     }
 }

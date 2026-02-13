@@ -15,6 +15,8 @@ namespace SVN.Core
         [SerializeField] private GameObject loadPanel = null;
         [SerializeField] private GameObject projectSelectionPanel = null;
         [SerializeField] private GameObject ignoredPanel = null;
+        [SerializeField] private GameObject shelvePanel = null;
+        [SerializeField] private GameObject stealPanel = null;
 
         private SVNUI svnUI;
         private SVNManager svnManager;
@@ -39,6 +41,8 @@ namespace SVN.Core
             Button_CloseLoad();
             Button_CloseProjectSelection();
             Button_CloseIgnored();
+            Button_CloseShelve();
+            Button_CloseSteal();
         }
 
         public void Button_OpenHelp()
@@ -226,11 +230,47 @@ namespace SVN.Core
             }
         }
 
+        public void Button_OpenShelve()
+        {
+            ResetAllPanels();
+
+            if (shelvePanel != null)
+            {
+                shelvePanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseShelve()
+        {
+            if (shelvePanel != null)
+            {
+                shelvePanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenSteal()
+        {
+            ResetAllPanels();
+
+            if (stealPanel != null)
+            {
+                stealPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseSteal()
+        {
+            if (stealPanel != null)
+            {
+                stealPanel.SetActive(false);
+            }
+        }
+
         public void Button_Exit()
         {
             Application.Quit();
         }
     }
 
-    
+
 }

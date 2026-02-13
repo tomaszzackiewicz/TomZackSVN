@@ -21,8 +21,8 @@ namespace SVN.Core
         [SerializeField] private SVNUI svnUI = null;
         [SerializeField] private GameObject loadingOverlay = null;
         [SerializeField] private PanelHandler panelHandler = null;
-        [SerializeField] private GameObject mainUIPanel; // Przeciągnij tutaj swój główny panel UI w Inspektorze
-        [SerializeField] private ProjectSelectionPanel projectSelectionPanel; // Przeciągnij tutaj skrypt panelu wyboru
+        [SerializeField] private GameObject mainUIPanel;
+        [SerializeField] private ProjectSelectionPanel projectSelectionPanel;
 
         private (string status, string[] files) currentStatus;
 
@@ -52,6 +52,7 @@ namespace SVN.Core
         public SVNClean SVNClean { get; private set; }
         public SVNLog SVNLog { get; private set; }
         public SVNLock SVNLock { get; private set; }
+        public SVNShelve SVNShelve { get; private set; }
 
         public string RepositoryUrl { get; set; } = string.Empty;
 
@@ -128,6 +129,7 @@ namespace SVN.Core
             SVNClean = new SVNClean(svnUI, this);
             SVNLog = new SVNLog(svnUI, this);
             SVNLock = new SVNLock(svnUI, this);
+            SVNShelve = new SVNShelve(svnUI, this);
         }
 
         private async void Start()

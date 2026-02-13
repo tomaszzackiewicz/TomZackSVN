@@ -11,82 +11,87 @@ namespace SVN.Core
     {
         public SVNLock(SVNUI svnUI, SVNManager svnManager) : base(svnUI, svnManager) { }
 
+        // --- COMPILER FIX SECTION (Method Aliases) ---
+        public void LockAllModified() => LockModified();
+        public void RefreshStealPanel(LockPanel panel) => ShowAllLocks();
+
+        // --- LOCK LOGIC ---
         public async void LockModified()
         {
             if (IsProcessing) return;
-
             string root = svnManager.WorkingDir;
             IsProcessing = true;
-            svnUI.LogText.text = "Searching for modified files to lock...\n";
+            svnUI.LogText.text = "<b>[Lock]</b> Scanning for modified files (M)...\n";
 
             try
             {
-                // 1. Get status to find files to lock
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
+                // We only lock "M" status. 
+                // "A" (Added) files cannot be locked until they exist on the server.
                 var filesToLock = statusDict
-                    .Where(x => x.Value.status == "M" || x.Value.status == "A")
+                    .Where(x => x.Value.status == "M")
                     .Select(x => x.Key)
                     .ToArray();
 
                 if (filesToLock.Length > 0)
                 {
                     svnUI.LogText.text += $"Locking {filesToLock.Length} files on server...\n";
-                    string output = await SvnRunner.LockAsync(root, filesToLock);
-                    svnUI.LogText.text += $"<color=green>Success!</color>\n{output}\n";
-
-                    // 2. TRIGGER REFRESH via Manager
-                    // Manager knows which module handles the tree (SVNStatus)
+                    await SvnRunner.LockAsync(root, filesToLock);
+                    svnUI.LogText.text += "<color=green>Locking completed successfully.</color>\n";
                     await svnManager.RefreshStatus();
                 }
                 else
                 {
-                    svnUI.LogText.text += "<color=yellow>No files found to lock.</color>\n";
+                    svnUI.LogText.text += "<color=yellow>No modified files (M) found to lock.</color>\n";
                 }
             }
             catch (Exception ex)
             {
                 svnUI.LogText.text += $"<color=red>Lock Error:</color> {ex.Message}\n";
             }
-            finally
-            {
-                IsProcessing = false;
-            }
+            finally { IsProcessing = false; }
         }
 
         public async void UnlockAll()
         {
             if (IsProcessing) return;
-
             string root = svnManager.WorkingDir;
             IsProcessing = true;
-            svnUI.LogText.text = "Releasing your locks (status K)...\n";
+            svnUI.LogText.text = "<b>[Unlock]</b> Forcing server to release locks...\n";
 
             try
             {
-                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+                var allLocks = await GetDetailedLocks(root);
 
-                var filesToUnlock = statusDict
-                    .Where(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("K"))
-                    .Select(x => x.Key)
-                    .ToArray();
+                var myLocksPaths = allLocks
+                    .Where(l => l.Owner.Trim().Equals(svnManager.CurrentUserName.Trim(), StringComparison.OrdinalIgnoreCase))
+                    .Select(l => $"\"{l.FullPath}\"") // Dodajemy cudzysłów na wypadek spacji w nazwie
+                    .ToList();
 
-                if (filesToUnlock.Length > 0)
+                if (myLocksPaths.Count > 0)
                 {
-                    await SvnRunner.UnlockAsync(root, filesToUnlock);
-                    svnUI.LogText.text += $"<color=green>Locks released.</color>\n";
+                    // Łączymy wszystkie ścieżki w jeden ciąg znaków oddzielony spacjami
+                    string allPathsJoined = string.Join(" ", myLocksPaths);
 
-                    // Trigger Refresh
+                    // Wysyłamy jedną komendę: unlock --force plik1 plik2 plik3
+                    // Używamy RunAsync tak, jak prawdopodobnie masz go zdefiniowanego: 
+                    // (komenda z argumentami, katalog roboczy)
+                    await SvnRunner.RunAsync($"unlock --force {allPathsJoined}", root);
+
+                    svnUI.LogText.text += "<color=green>Locks released successfully.</color>\n";
+
                     await svnManager.RefreshStatus();
+                    ShowAllLocks();
                 }
                 else
                 {
-                    svnUI.LogText.text += "You have no locked files.\n";
+                    svnUI.LogText.text += "You do not own any locked files.\n";
                 }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Unlock Error:</color> {ex.Message}\n";
+                svnUI.LogText.text += $"<color=red>Error:</color> {ex.Message}\n";
             }
             finally
             {
@@ -94,98 +99,90 @@ namespace SVN.Core
             }
         }
 
+        // --- DISPLAY LOGIC ---
         public async void ShowAllLocks()
         {
             if (IsProcessing) return;
             IsProcessing = true;
-
-            svnUI.LocksText.text = "<b><color=orange>Scanning Repository for Locks...</color></b>\n";
+            svnUI.LocksText.text = "<b><color=orange>Fetching Repository Status...</color></b>\n";
 
             try
             {
                 var locks = await GetDetailedLocks(svnManager.WorkingDir);
+                svnUI.LocksText.text = "<b>Active Repository Locks:</b>\n----------------------------------\n";
 
-                svnUI.LocksText.text = "<b><color=white>Active Repository Locks:</color></b>\n";
-                svnUI.LocksText.text += "----------------------------------\n";
-
-                if (locks == null || locks.Count == 0)
+                if (locks.Count == 0)
                 {
-                    svnUI.LocksText.text += "<color=yellow>No active locks found in the repository.</color>\n";
-                    svnUI.LocksText.text += "<size=80%>(Files are free to be locked and edited)</size>\n";
+                    svnUI.LocksText.text += "<color=yellow>No active locks found on server.</color>\n";
                 }
                 else
                 {
                     foreach (var lockItem in locks)
                     {
-                        bool isMe = lockItem.Owner.Equals(svnManager.CurrentUserName, StringComparison.OrdinalIgnoreCase);
+                        // Loguj w konsoli, żebyś widział co kod porównuje
+                        Debug.Log($"[SVN DEBUG] Server Owner: '{lockItem.Owner}' | Local User: '{svnManager.CurrentUserName}'");
+
+                        bool isMe = !string.IsNullOrEmpty(svnManager.CurrentUserName) &&
+                                    lockItem.Owner.Trim().Equals(svnManager.CurrentUserName.Trim(), StringComparison.OrdinalIgnoreCase);
+
                         string color = isMe ? "#00FF00" : "#FF4444";
-                        string prefix = isMe ? "[MY LOCK]" : "[LOCKED]";
+                        string prefix = isMe ? "[MINE]" : "[LOCKED]";
 
                         svnUI.LocksText.text += $"<color={color}><b>{prefix}</b></color> {lockItem.Path}\n";
-                        svnUI.LocksText.text += $"   Owner: <color=yellow>{lockItem.Owner}</color>\n";
-
+                        svnUI.LocksText.text += $"   User: <color=yellow>{lockItem.Owner}</color>\n";
                         if (!string.IsNullOrEmpty(lockItem.Comment))
                             svnUI.LocksText.text += $"   Comment: <i>\"{lockItem.Comment}\"</i>\n";
-
                         svnUI.LocksText.text += "----------------------------------\n";
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                svnUI.LocksText.text += $"<color=red>Error while fetching locks:</color>\n{ex.Message}\n";
-                Debug.LogError($"[SVN Lock] {ex}");
-            }
-            finally
-            {
-                IsProcessing = false;
-
-                if (svnUI.LogScrollRect != null)
-                {
-                    Canvas.ForceUpdateCanvases();
-                    svnUI.LogScrollRect.verticalNormalizedPosition = 1f;
-                }
-            }
+            catch (Exception ex) { svnUI.LocksText.text += $"Error: {ex.Message}\n"; }
+            finally { IsProcessing = false; }
         }
 
         public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath)
         {
             List<SVNLockDetails> locks = new List<SVNLockDetails>();
 
-            // Command: svn info --xml -R (Recursive info in XML format)
-            // We filter for paths that actually contain a <lock> tag
-            string args = "info --xml -R";
+            // Dodajemy --no-ignore, aby wykluczyć błędy widoczności
+            string xmlOutput = await SvnRunner.RunAsync("status --xml -u --no-ignore", rootPath);
+
+            if (string.IsNullOrEmpty(xmlOutput)) return locks;
 
             try
             {
-                string xmlOutput = await SvnRunner.RunAsync(args, rootPath);
                 XmlDocument doc = new XmlDocument();
                 doc.LoadXml(xmlOutput);
 
-                XmlNodeList entryNodes = doc.SelectNodes("//entry");
+                // KLUCZ: Szukamy locków TYLKO w sekcji repos-status (to co na serwerze)
+                // Jeśli szukaliśmy "//lock", mogliśmy łapać stare dane z lokalnego cache'u
+                XmlNodeList lockNodes = doc.SelectNodes("//repos-status/lock");
 
-                foreach (XmlNode entry in entryNodes)
+                foreach (XmlNode lockNode in lockNodes)
                 {
-                    XmlNode lockNode = entry.SelectSingleNode("lock");
-                    if (lockNode != null)
+                    // Przechodzimy w górę do węzła 'entry', aby pobrać ścieżkę
+                    XmlNode entryNode = lockNode.ParentNode.ParentNode;
+                    if (entryNode == null) continue;
+
+                    string svnPath = entryNode.Attributes["path"]?.Value ?? "";
+
+                    // Sprawdzamy, czy ten plik faktycznie jest zablokowany (czy ma właściciela)
+                    string owner = lockNode.SelectSingleNode("owner")?.InnerText;
+                    if (string.IsNullOrEmpty(owner)) continue;
+
+                    locks.Add(new SVNLockDetails
                     {
-                        SVNLockDetails details = new SVNLockDetails();
-                        details.Path = entry.Attributes["path"].Value;
-                        details.Owner = lockNode.SelectSingleNode("owner")?.InnerText ?? "Unknown";
-                        details.CreationDate = lockNode.SelectSingleNode("created")?.InnerText ?? "";
-                        details.Comment = lockNode.SelectSingleNode("comment")?.InnerText ?? "No comment";
-
-                        // Logic: If the owner isn't the current system user, it's 'others'
-                        // You can compare this with a 'CurrentUserName' variable if you have one
-                        details.IsLockedByOthers = true;
-
-                        locks.Add(details);
-                    }
+                        Path = svnPath.Replace(rootPath, "").TrimStart('\\', '/'),
+                        FullPath = svnPath,
+                        Owner = owner,
+                        Comment = lockNode.SelectSingleNode("comment")?.InnerText ?? "",
+                        CreationDate = lockNode.SelectSingleNode("created")?.InnerText ?? ""
+                    });
                 }
             }
             catch (System.Exception ex)
             {
-                Debug.LogError("Failed to parse SVN Locks: " + ex.Message);
+                Debug.LogError("SVN XML Parse Error: " + ex.Message);
             }
 
             return locks;
@@ -194,8 +191,8 @@ namespace SVN.Core
         public async void BreakAllLocks()
         {
             string root = svnManager.WorkingDir;
-            svnUI.LogText.text += "<color=orange>Emergency: Breaking local locks...</color>\n";
-            string output = await SvnRunner.RunAsync("cleanup --remove-locks", root);
+            svnUI.LogText.text += "<color=orange><b>[System]</b> Cleaning local database locks...</color>\n";
+            await SvnRunner.RunAsync("cleanup --remove-locks", root);
             svnUI.LogText.text += "Local locks removed.\n";
         }
     }

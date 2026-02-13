@@ -21,30 +21,30 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            // 1. POBRANIE DANYCH Z UI (Z poprawioną hierarchią ważności)
+            // 1. GET DATA FROM UI (With corrected priority hierarchy)
             string url = svnUI.CheckoutRepoUrlInput.text.Trim();
             string path = svnUI.CheckoutDestFolderInput.text.Trim();
 
-            // Logika wyboru klucza:
+            // Key selection logic:
             string keyPath = "";
 
-            // A. Czy podano klucz bezpośrednio w panelu Checkout?
+            // A. Was the key provided directly in the Checkout panel?
             if (!string.IsNullOrWhiteSpace(svnUI.CheckoutPrivateKeyInput?.text))
             {
                 keyPath = svnUI.CheckoutPrivateKeyInput.text.Trim();
             }
-            // B. Czy jest coś w panelu Settings? (Dostęp przez UI)
+            // B. Is there a key in the Settings panel? (Accessed via UI)
             else if (svnUI.SettingsSshKeyPathInput != null && !string.IsNullOrWhiteSpace(svnUI.SettingsSshKeyPathInput.text))
             {
                 keyPath = svnUI.SettingsSshKeyPathInput.text.Trim();
             }
-            // C. Ostateczny fallback do Managera/Runnera
+            // C. Final fallback to Manager/Runner
             else
             {
                 keyPath = SvnRunner.KeyPath;
             }
 
-            // Walidacja końcowa
+            // Final validation
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(path))
             {
                 svnUI.LogText.text += "<color=red>Error:</color> Provide both URL and Destination Path.\n";
@@ -57,7 +57,7 @@ namespace SVN.Core
                 return;
             }
 
-            // 2. PRZYGOTOWANIE STANU
+            // 2. STATE PREPARATION
             IsProcessing = true;
             _checkoutCTS = new CancellationTokenSource();
 
@@ -67,18 +67,17 @@ namespace SVN.Core
                 svnUI.OperationProgressBar.value = 0f;
             }
 
-            // 3. MONITOROWANIE LOGÓW (Task.Run...)
-            // [Tutaj pozostaje Twoja sekcja monitorowania bez zmian]
+            // 3. LOG MONITORING (Task.Run...)
             bool isMonitoring = true;
-            _ = Task.Run(async () => { /* ... twoja pętla monitorująca ... */ });
+            _ = Task.Run(async () => { /* ... monitoring loop ... */ });
 
-            // 4. WYKONANIE PROCESU SVN
+            // 4. EXECUTE SVN PROCESS
             try
             {
-                // Formatowanie ścieżki klucza pod SSH (eskapiowanie cudzysłowów dla Windows)
+                // Format key path for SSH (escaping quotes for Windows)
                 string absoluteKey = Path.GetFullPath(keyPath).Replace("\\", "/");
 
-                // Budujemy komendę SSH tak, aby obsłużyła spacje w ścieżkach
+                // Build SSH command to handle spaces in paths
                 string sshArgs = $"ssh -i \\\"{absoluteKey}\\\" -o StrictHostKeyChecking=no -o BatchMode=yes";
                 string sshConfig = $"--config-option config:tunnels:ssh=\"{sshArgs}\"";
 
@@ -91,7 +90,7 @@ namespace SVN.Core
 
                 await SvnRunner.RunAsync(cmd, "", true, _checkoutCTS.Token);
 
-                // SUKCES
+                // SUCCESS
                 svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed.\n";
                 if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = "<color=green>Checkout Finished!</color>";
 

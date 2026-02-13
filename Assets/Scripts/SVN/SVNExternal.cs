@@ -156,7 +156,7 @@ namespace SVN.Core
 
         public void BrowsePrivateKeyPathCheckout()
         {
-           var extensions = new[] {
+            var extensions = new[] {
                 new ExtensionFilter("All Files", "*"),
                 new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh")
             };
@@ -183,5 +183,4 @@ namespace SVN.Core
             System.Diagnostics.Process.Start("TortoiseProc.exe", args);
         }
     }
-
 }

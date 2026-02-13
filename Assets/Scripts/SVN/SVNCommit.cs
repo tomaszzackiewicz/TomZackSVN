@@ -56,15 +56,18 @@ namespace SVN.Core
                 svnUI.CommitConsoleContent.text += "<b>[2/4]</b> Removing missing files (Fixing '!')...\n";
                 string rawStatus = await SvnRunner.RunAsync("status", root);
 
-                using (var reader = new System.IO.StringReader(rawStatus))
+                if (!string.IsNullOrEmpty(rawStatus))
                 {
-                    string line;
-                    while ((line = reader.ReadLine()) != null)
+                    using (var reader = new System.IO.StringReader(rawStatus))
                     {
-                        if (line.StartsWith("!"))
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
                         {
-                            string pathInSvn = line.Substring(1).Trim();
-                            try { await SvnRunner.RunAsync($"delete --force \"{pathInSvn}\"", root); } catch { }
+                            if (line.StartsWith("!"))
+                            {
+                                string pathInSvn = line.Substring(1).Trim();
+                                try { await SvnRunner.RunAsync($"delete --force \"{pathInSvn}\"", root); } catch { }
+                            }
                         }
                     }
                 }
@@ -79,22 +82,29 @@ namespace SVN.Core
                 svnUI.CommitConsoleContent.text += "<b>[4/4]</b> Sending to server...\n";
                 string commitResult = await SvnRunner.RunAsync($"commit -m \"{message}\" --non-interactive .", root);
 
-                if (commitResult.Contains("Committed revision"))
+                bool isSuccess = commitResult.Contains("Committed revision") ||
+                                 commitResult.Contains("Transmitting file data") ||
+                                 !string.IsNullOrWhiteSpace(svnManager.ParseRevision(commitResult));
+
+                if (isSuccess)
                 {
                     if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 1.0f;
 
                     string revision = svnManager.ParseRevision(commitResult);
-                    await SvnRunner.RunAsync("update --depth empty", root);
 
                     svnManager.SVNStatus.ClearUI();
                     await svnManager.RefreshStatus();
 
-                    svnUI.CommitConsoleContent.text = $"<color=green><b>SUCCESS!</b></color> Revision: {revision}";
+                    svnUI.CommitConsoleContent.text = $"<color=green><b>SUCCESS!</b></color>\nRevision: {revision}";
                     if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
                 }
                 else
                 {
-                    svnUI.CommitConsoleContent.text += "<color=yellow>Info:</color> The server did not accept the changes. Check Console.";
+                    if (string.IsNullOrWhiteSpace(commitResult))
+                        svnUI.CommitConsoleContent.text += "<color=yellow>Info:</color> Nothing to commit (Working copy up to date).";
+                    else
+                        svnUI.CommitConsoleContent.text += "<color=yellow>Info:</color> Unexpected server response. Check console.";
+
                     if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0f;
                 }
             }
@@ -170,10 +180,8 @@ namespace SVN.Core
 
         public async void ExecuteRevertAllMissing()
         {
-            // Wywołujemy asynchroniczną metodę i czekamy na jej zakończenie
             await RevertAllMissing();
 
-            // Opcjonalnie: Dodatkowy komunikat po zakończeniu całości
             if (svnUI.CommitConsoleContent != null)
             {
                 svnUI.CommitConsoleContent.text += "\n<color=cyan><b>[System]</b> Repair process finished.</color>";
@@ -193,7 +201,6 @@ namespace SVN.Core
 
             try
             {
-                // 1. Pobieramy surowy status, aby znaleźć pliki z '!'
                 string rawStatus = await SvnRunner.RunAsync("status", root);
                 List<string> filesToRevert = new List<string>();
 
@@ -202,7 +209,6 @@ namespace SVN.Core
                     string line;
                     while ((line = reader.ReadLine()) != null)
                     {
-                        // Szukamy linii zaczynających się od '!' (Missing)
                         if (line.StartsWith("!"))
                         {
                             string path = line.Substring(1).Trim();
@@ -219,8 +225,6 @@ namespace SVN.Core
 
                 svnUI.CommitConsoleContent.text += $"Found {filesToRevert.Count} missing files. Restoring...\n";
 
-                // 2. Revertujemy brakujące pliki w paczkach (żeby nie przepełnić CLI)
-                // SVN revert przywróci je fizycznie na dysk z lokalnej bazy .svn
                 int batchSize = 20;
                 for (int i = 0; i < filesToRevert.Count; i += batchSize)
                 {

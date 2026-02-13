@@ -44,30 +44,37 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
 
-            // Pomocnicza akcja do logowania w dwóch konsolach jednocześnie
-            Action<string> LogBoth = (msg) =>
+            // Helper Action: Logs to main console always, but only APPENDS to Commit console
+            // This prevents overwriting the "SUCCESS" message from the CommitAll method.
+            Action<string, bool> LogSmart = (msg, isHeader) =>
             {
-                if (svnUI.LogText != null) svnUI.LogText.text += msg;
-                if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
+                if (svnUI.LogText != null)
+                {
+                    if (isHeader) svnUI.LogText.text = msg; // Clear main log for new operation
+                    else svnUI.LogText.text += msg;
+                }
+
+                if (svnUI.CommitConsoleContent != null)
+                {
+                    // NEVER overwrite the commit console here, only add new info lines
+                    svnUI.CommitConsoleContent.text += msg;
+                }
             };
 
-            if (svnUI.LogText != null) svnUI.LogText.text = $"{timestamp} <color=#0FF>Starting Refresh...</color>\n";
-            if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text = $"{timestamp} <color=#0FF>Starting Refresh...</color>\n";
+            // We use 'false' for the header check in CommitConsole to preserve existing text
+            LogSmart($"{timestamp} <color=#0FF>Refreshing status...</color>\n", true);
 
             try
             {
-                LogBoth("Checking SVN status...\n");
-
-                // 1. POBRANIE DANYCH Z SVN
+                // 1. FETCH DATA FROM SVN
                 var statusDict = _isCurrentViewIgnored
                     ? await SvnRunner.GetIgnoredOnlyAsync(root)
                     : await SvnRunner.GetChangesDictionaryAsync(root);
 
-                // 2. KLUCZOWY MOMENT: Przekazanie danych do słownika w SVNManager
-                // Bez tego SVNManager.CurrentStatusDict zawsze będzie pusty!
+                // 2. UPDATE MANAGER DICTIONARY
                 svnManager.UpdateFilesStatus(statusDict);
 
-                // 3. OBSŁUGA BRAKU ZMIAN
+                // 3. HANDLE EMPTY STATUS
                 if (statusDict == null || statusDict.Count == 0)
                 {
                     string emptyMsg = _isCurrentViewIgnored
@@ -79,23 +86,25 @@ namespace SVN.Core
                     if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Size: 0 KB";
 
                     svnManager.UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
-                    LogBoth("<color=yellow>Nothing to display.</color>\n");
+
+                    // Log informative message without overwriting the previous success log
+                    LogSmart("<color=green>Workspace is clean.</color>\n", false);
                     return;
                 }
 
-                LogBoth($"Found {statusDict.Count} entries. Processing paths...\n");
+                LogSmart($"Found {statusDict.Count} entries. Processing...\n", false);
 
-                // 4. AUTO-EXPAND (Rozwijanie folderów, w których są zmiany/konflikty)
+                // 4. AUTO-EXPAND LOGIC
                 svnManager.ExpandedPaths.Clear();
-                svnManager.ExpandedPaths.Add(""); // Root zawsze rozwinięty
+                svnManager.ExpandedPaths.Add(""); // Root always expanded
 
                 foreach (var item in statusDict)
                 {
                     string path = item.Key;
                     string stat = item.Value.status;
 
-                    // Sprawdzamy, czy to istotna zmiana (w tym 'C' dla konfliktu)
-                    bool isChange = !string.IsNullOrEmpty(stat) && "MA?!DC".Contains(stat);
+                    // M:Modified, A:Added, ?:Unversioned, !:Missing, D:Deleted, C:Conflicted, R:Replaced, ~:Obstructed
+                    bool isChange = !string.IsNullOrEmpty(stat) && "MA?!DCR~".Contains(stat);
                     bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : isChange;
 
                     if (shouldExpand)
@@ -104,33 +113,30 @@ namespace SVN.Core
                     }
                 }
 
-                // 5. OBLICZANIE ROZMIARU COMMITU
-                LogBoth("Calculating commit size...\n");
+                // 5. COMMIT SIZE CALCULATION
                 string report = await SvnRunner.GetCommitSizeReportAsync(root);
                 if (svnUI.CommitSizeText != null)
                 {
-                    svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes to Commit: {report}</color>\n";
+                    svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes: {report}</color>\n";
                 }
 
-                // 6. BUDOWANIE DRZEWA WIZUALNEGO (UI)
-                LogBoth("Building visual tree...\n");
+                // 6. VISUAL TREE GENERATION
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
-
                 string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
 
                 if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
                 if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = treeResult;
 
-                // 7. AKTUALIZACJA STATYSTYK (Ikony na dole interfejsu)
+                // 7. STATISTICS UPDATE
                 svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
 
-                LogBoth("<color=green>Refresh Complete!</color>\n");
+                LogSmart("<color=green>Refresh finished.</color>\n", false);
             }
             catch (Exception ex)
             {
-                string errorMsg = $"<color=red>Exception:</color> {ex.Message}\n";
-                LogBoth(errorMsg);
-                Debug.LogError($"[SVN] Refresh Error: {ex}");
+                string errorMsg = $"<color=red>Refresh Error:</color> {ex.Message}\n";
+                LogSmart(errorMsg, false);
+                Debug.LogError($"[SVN] {ex}");
             }
             finally
             {

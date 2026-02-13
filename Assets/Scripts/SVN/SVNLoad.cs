@@ -17,7 +17,6 @@ namespace SVN.Core
             string path = svnUI.LoadDestFolderInput.text.Trim();
             string manualUrl = svnUI.LoadRepoUrlInput != null ? svnUI.LoadRepoUrlInput.text.Trim() : "";
 
-            // POPRAWKA LOGIKI KLUCZA: Sprawdzamy UI, potem Settings, potem Runner
             string keyPath = "";
             if (svnUI.LoadPrivateKeyInput != null && !string.IsNullOrWhiteSpace(svnUI.LoadPrivateKeyInput.text))
             {
@@ -41,7 +40,7 @@ namespace SVN.Core
 
             IsProcessing = true;
 
-            // WAŻNE: Synchronizacja klucza z Runnerem, żeby RunAsync nie rzucił wyjątku
+            // IMPORTANT: Synchronize key with Runner to prevent RunAsync from throwing an exception
             SvnRunner.KeyPath = keyPath;
 
             svnUI.LogText.text += $"<b>Processing path:</b> <color=cyan>{path}</color>\n";
@@ -53,7 +52,7 @@ namespace SVN.Core
                 svnManager.WorkingDir = normalizedPath;
                 svnUI.LoadDestFolderInput.text = normalizedPath;
 
-                // 4. SSH KEY SYNC (Zapis do managera)
+                // 4. SSH KEY SYNC (Save to manager)
                 if (!string.IsNullOrEmpty(keyPath))
                 {
                     svnManager.CurrentKey = keyPath;
@@ -79,7 +78,7 @@ namespace SVN.Core
 
                         svnUI.LogText.text += "<color=yellow>Starting Checkout...</color>\n";
 
-                        // Tu Runner użyje SvnRunner.KeyPath, który ustawiliśmy wyżej
+                        // Runner will use SvnRunner.KeyPath set above
                         await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath);
 
                         svnUI.LogText.text += "<color=green>Checkout completed!</color>\n";
@@ -99,10 +98,10 @@ namespace SVN.Core
                 if (svnUI.LoadRepoUrlInput != null)
                     svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
 
-                // 6. REJESTRACJA (Twoja funkcja tworząca buttony w scrollu)
+                // 6. REGISTRATION (Function creating buttons in the scroll view)
                 RegisterProjectInList(normalizedPath, keyPath, svnManager.RepositoryUrl);
 
-                // DODATEK: Wymuszenie odświeżenia Scroll Recta, żeby button się pojawił
+                // ADDITION: Force refresh of Scroll Rect to display the new button
                 var selectionPanel = UnityEngine.Object.FindAnyObjectByType<ProjectSelectionPanel>();
                 if (selectionPanel != null) selectionPanel.RefreshList();
 
@@ -166,59 +165,5 @@ namespace SVN.Core
             if (svnUI.LoadDestFolderInput != null) svnUI.LoadDestFolderInput.text = svnManager.WorkingDir;
             if (svnUI.LoadPrivateKeyInput != null) svnUI.LoadPrivateKeyInput.text = svnManager.CurrentKey;
         }
-
-        // private void RegisterProjectInList(string path, string key, string url)
-        // {
-        //     var newProj = new SVNProject
-        //     {
-        //         projectName = System.IO.Path.GetFileName(path.TrimEnd('/')),
-        //         repoUrl = url,
-        //         workingDir = path,
-        //         privateKeyPath = key,
-        //         lastOpened = DateTime.Now
-        //     };
-
-        //     var projects = ProjectSettings.LoadProjects();
-
-        //     int existingIndex = projects.FindIndex(p => p.workingDir == path);
-
-        //     if (existingIndex != -1)
-        //     {
-        //         projects[existingIndex].repoUrl = url;
-        //         projects[existingIndex].privateKeyPath = key;
-        //         projects[existingIndex].lastOpened = DateTime.Now;
-        //         svnUI.LogText.text += "<color=#888888>Existing project entry updated in list.</color>\n";
-        //     }
-        //     else
-        //     {
-        //         projects.Add(newProj);
-        //         svnUI.LogText.text += $"<color=green>New project '{newProj.projectName}' added to Selection List.</color>\n";
-        //     }
-
-        //     ProjectSettings.SaveProjects(projects);
-
-        //     PlayerPrefs.SetString("SVN_LastOpenedProjectPath", path);
-        //     PlayerPrefs.Save();
-        // }
-
-        // public void UpdateUIFromManager()
-        // {
-        //     // Optional: If your Add Repo panel has URL or Key fields, fill them too
-        //     if (svnUI.LoadRepoUrlInput != null)
-        //     {
-        //         svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
-        //     }
-
-        //     // Fill the Local Path input with the current WorkingDir
-        //     if (svnUI.LoadDestFolderInput != null)
-        //     {
-        //         svnUI.LoadDestFolderInput.text = svnManager.WorkingDir;
-        //     }
-
-        //     if (svnUI.LoadPrivateKeyInput != null)
-        //     {
-        //         svnUI.LoadPrivateKeyInput.text = svnManager.CurrentKey;
-        //     }
-        // }
     }
 }

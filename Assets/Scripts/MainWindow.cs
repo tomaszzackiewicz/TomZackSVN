@@ -32,6 +32,7 @@ namespace SVN.Core
         public void Button_Update() => svnManager.SVNUpdate.Update();
         public void Button_Refresh() => svnManager.SVNStatus.ShowOnlyModified();
         public void Button_Clean() => svnManager.SVNClean.LightCleanup();
+        public void Button_DiscardUntracked() => svnManager.SVNClean.DiscardUnversioned();
         public void Button_Vacuum() => svnManager.SVNClean.VacuumCleanup();
         public void Button_Log() => svnManager.SVNLog.ShowLog();
         public void Button_RevertAllMissing() => svnManager.SVNCommit.ExecuteRevertAllMissing();
@@ -42,6 +43,7 @@ namespace SVN.Core
         public void Button_ShowToCommit() => svnManager.SVNCommit.ShowWhatWillBeCommitted();
         public void Button_ShowLocks() => svnManager.SVNLock.ShowAllLocks();
         public void Button_BreakLocks() => svnManager.SVNLock.BreakAllLocks();
+        //public void Button_StealLocks() => svnManager.SVNLock.StealLockSelected();
         public void Button_TerminalSubmit() => OnTerminalSubmit();
 
         public void Button_ClearTerminalLog()

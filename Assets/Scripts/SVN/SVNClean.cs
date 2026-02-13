@@ -81,6 +81,34 @@ namespace SVN.Core
             }
         }
 
+        public async void DiscardUnversioned()
+        {
+            if (IsProcessing) return;
+
+            string targetPath = GetTargetPath();
+            if (string.IsNullOrEmpty(targetPath)) return;
+
+            IsProcessing = true;
+            svnUI.LogText.text = "<b>Cleaning up unversioned files [?]...</b>\n";
+
+            try
+            {
+                string output = await SvnRunner.RunAsync("cleanup . --remove-unversioned", targetPath);
+
+                svnUI.LogText.text += "<color=green>Unversioned files removed successfully!</color>\n";
+
+                await svnManager.RefreshStatus();
+            }
+            catch (Exception ex)
+            {
+                svnUI.LogText.text += $"<color=red>Cleanup Failed:</color> {ex.Message}\n";
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
+
         private string GetTargetPath()
         {
             string path = svnManager.WorkingDir;
