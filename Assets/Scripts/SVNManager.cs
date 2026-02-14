@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -23,10 +24,6 @@ namespace SVN.Core
         [SerializeField] private GameObject mainUIPanel;
         [SerializeField] private ProjectSelectionPanel projectSelectionPanel;
 
-        public PanelHandler PanelHandler => panelHandler;
-        public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
-        public GameObject MainUIPanel => mainUIPanel;
-
         private string currentUserName = "Unknown";
         private string workingDir = string.Empty;
         private string currentKey = string.Empty;
@@ -36,31 +33,15 @@ namespace SVN.Core
         public HashSet<string> ExpandedPaths { get; set; } = new HashSet<string>();
         public Dictionary<string, (string status, string size)> CurrentStatusDict { get; set; } = new Dictionary<string, (string status, string size)>();
         public string RepositoryUrl { get; set; } = string.Empty;
-
-        public SVNStatus SVNStatus { get; private set; }
-        public SVNCommit SVNCommit { get; private set; }
-        public SVNAdd SVNAdd { get; private set; }
-        public SVNMissing SVNMissing { get; private set; }
-        public SVNUpdate SVNUpdate { get; private set; }
-        public SVNBranchTag SVNBranchTag { get; private set; }
-        public SVNExternal SVNExternal { get; private set; }
-        public SVNCheckout SVNCheckout { get; private set; }
-        public SVNLoad SVNLoad { get; private set; }
-        public SVNMerge SVNMerge { get; private set; }
-        public SVNSettings SVNSettings { get; private set; }
-        public SVNResolve SVNResolve { get; private set; }
-        public SVNRevert SVNRevert { get; private set; }
-        public SVNTerminal SVNTerminal { get; private set; }
-        public SVNClean SVNClean { get; private set; }
-        public SVNLog SVNLog { get; private set; }
-        public SVNLock SVNLock { get; private set; }
-        public SVNShelve SVNShelve { get; private set; }
-
+        public PanelHandler PanelHandler => panelHandler;
+        public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
+        public GameObject MainUIPanel => mainUIPanel;
         public string CurrentUserName => currentUserName;
         public bool IsProcessing { get => isProcessing; set => isProcessing = value; }
         public string WorkingDir { get => workingDir; set => workingDir = value; }
         public string CurrentKey { get => currentKey; set => currentKey = value; }
         public string MergeToolPath { get => mergeToolPath; set => mergeToolPath = value; }
+        private readonly Dictionary<Type, SVNBase> _modules = new Dictionary<Type, SVNBase>();
 
         private void Awake()
         {
@@ -70,29 +51,38 @@ namespace SVN.Core
                 return;
             }
             Instance = this;
-            InitializeModules();
+
+            InitializeAllModules();
         }
 
-        private void InitializeModules()
+        private void InitializeAllModules()
         {
-            SVNStatus = new SVNStatus(svnUI, this);
-            SVNCommit = new SVNCommit(svnUI, this);
-            SVNAdd = new SVNAdd(svnUI, this);
-            SVNMissing = new SVNMissing(svnUI, this);
-            SVNUpdate = new SVNUpdate(svnUI, this);
-            SVNBranchTag = new SVNBranchTag(svnUI, this);
-            SVNExternal = new SVNExternal(svnUI, this);
-            SVNCheckout = new SVNCheckout(svnUI, this);
-            SVNLoad = new SVNLoad(svnUI, this);
-            SVNMerge = new SVNMerge(svnUI, this);
-            SVNSettings = new SVNSettings(svnUI, this);
-            SVNResolve = new SVNResolve(svnUI, this);
-            SVNRevert = new SVNRevert(svnUI, this);
-            SVNTerminal = new SVNTerminal(svnUI, this);
-            SVNClean = new SVNClean(svnUI, this);
-            SVNLog = new SVNLog(svnUI, this);
-            SVNLock = new SVNLock(svnUI, this);
-            SVNShelve = new SVNShelve(svnUI, this);
+            var moduleTypes = Assembly.GetExecutingAssembly().GetTypes()
+                .Where(t => t.IsSubclassOf(typeof(SVNBase)) && !t.IsAbstract);
+
+            foreach (var type in moduleTypes)
+            {
+                try
+                {
+                    var module = (SVNBase)Activator.CreateInstance(type, svnUI, this);
+                    _modules[type] = module;
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[SVN] Failed to initialize module {type.Name}: {e.Message}");
+                }
+            }
+
+            Debug.Log($"[SVN] Successfully initialized {_modules.Count} modules.");
+        }
+
+        public T GetModule<T>() where T : SVNBase
+        {
+            if (_modules.TryGetValue(typeof(T), out var module))
+            {
+                return (T)module;
+            }
+            return null;
         }
 
         public string GetRepoRoot() => SVNAssetLocator.GetRepoRoot(RepositoryUrl);
@@ -167,7 +157,7 @@ namespace SVN.Core
         private async void InitializeActiveProject(SVNProject project)
         {
             await AutoDetectSvnUser();
-            SVNStatus.ShowProjectInfo(project, WorkingDir);
+            GetModule<SVNStatus>().ShowProjectInfo(project, WorkingDir);
             await RefreshRepositoryInfo();
             await RefreshStatus();
         }
@@ -186,7 +176,7 @@ namespace SVN.Core
 
             try
             {
-                await SVNStatus.ExecuteRefreshWithAutoExpand();
+                await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand();
                 LogToUI("[SVN] Status refresh finished.", "green");
 
                 var conflicted = CurrentStatusDict.Values.Count(v => v.status.Contains("C"));

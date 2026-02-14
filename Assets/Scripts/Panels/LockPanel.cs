@@ -50,7 +50,7 @@ public class LockPanel : MonoBehaviour
         {
             LogToPanel("<color=#FFD700>[Process]</color> Querying SVN server (this may take a moment)...");
 
-            var allLocks = await svnManager.SVNLock.GetDetailedLocks(svnManager.WorkingDir);
+            var allLocks = await svnManager.GetModule<SVNLock>().GetDetailedLocks(svnManager.WorkingDir);
 
             LogToPanel($"<color=white>[Info]</color> Received {allLocks.Count} total locks from server.");
 

@@ -16,11 +16,11 @@ public class SettingsPanel : MonoBehaviour
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
 
-        svnManager.SVNSettings.UpdateUIFromManager();
+        svnManager.GetModule<SVNSettings>().UpdateUIFromManager();
     }
 
-    public void Button_SaveWorkingDir() => svnManager.SVNSettings.SaveWorkingDir();
-    public void Button_SaveRepoUrl() => svnManager.SVNSettings.SaveRepoUrl();
-    public void Button_SaveSSHKeyPath() => svnManager.SVNSettings.SaveSSHKeyPath();
-    public void Button_SaveMergeEditorPath() => svnManager.SVNSettings.SaveMergeEditorPath();
+    public void Button_SaveWorkingDir() => svnManager.GetModule<SVNSettings>().SaveWorkingDir();
+    public void Button_SaveRepoUrl() => svnManager.GetModule<SVNSettings>().SaveRepoUrl();
+    public void Button_SaveSSHKeyPath() => svnManager.GetModule<SVNSettings>().SaveSSHKeyPath();
+    public void Button_SaveMergeEditorPath() => svnManager.GetModule<SVNSettings>().SaveMergeEditorPath();
 }

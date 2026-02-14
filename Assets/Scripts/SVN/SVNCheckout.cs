@@ -128,7 +128,7 @@ namespace SVN.Core
                 _checkoutCTS?.Dispose();
                 _checkoutCTS = null;
 
-                svnManager.SVNStatus.RefreshLocal();
+                svnManager.GetModule<SVNStatus>().RefreshLocal();
             }
         }
 

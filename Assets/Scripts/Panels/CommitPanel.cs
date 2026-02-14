@@ -19,9 +19,9 @@ public class CommitPanel : MonoBehaviour
         svnManager = SVNManager.Instance;
     }
 
-    public async void Button_ShowModified() => svnManager.SVNStatus.ShowOnlyModified();
-    public void Button_Revert() => svnManager.SVNRevert.RevertAll();
-    public void Button_Commit() => svnManager.SVNCommit.CommitAll();
-    public void Button_Add() => svnManager.SVNAdd.AddAll();
-    public void Button_FixMissing() => svnManager.SVNMissing.FixMissingFiles();
+    public async void Button_ShowModified() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();
+    public void Button_Revert() => svnManager.GetModule<SVNRevert>().RevertAll();
+    public void Button_Commit() => svnManager.GetModule<SVNCommit>().CommitAll();
+    public void Button_Add() => svnManager.GetModule<SVNAdd>().AddAll();
+    public void Button_FixMissing() => svnManager.GetModule<SVNMissing>().FixMissingFiles();
 }

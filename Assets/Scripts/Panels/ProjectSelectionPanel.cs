@@ -66,12 +66,12 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         this.gameObject.SetActive(false);
 
-        if (svnManager.SVNSettings != null)
+        if (svnManager.GetModule<SVNSettings>() != null)
         {
-            svnManager.SVNSettings.UpdateUIFromManager();
+            svnManager.GetModule<SVNSettings>().UpdateUIFromManager();
         }
 
-        svnManager.SVNStatus.ShowProjectInfo(project, project.workingDir);
+        svnManager.GetModule<SVNStatus>().ShowProjectInfo(project, project.workingDir);
         PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
         PlayerPrefs.Save();
 
@@ -95,8 +95,8 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
     }
 
-    public void Button_BrowseDestFolder() => svnManager.SVNExternal.BrowseDestinationFolderPathAdd();
-    public void Button_BrowsePrivateKey() => svnManager.SVNExternal.BrowsePrivateKeyPathAdd();
+    public void Button_BrowseDestFolder() => svnManager.GetModule<SVNExternal>().BrowseDestinationFolderPathAdd();
+    public void Button_BrowsePrivateKey() => svnManager.GetModule<SVNExternal>().BrowsePrivateKeyPathAdd();
 
     public void Button_CloseAddProjectPanel()
     {

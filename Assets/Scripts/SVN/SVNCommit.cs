@@ -85,7 +85,7 @@ namespace SVN.Core
 
                     string revision = svnManager.ParseRevision(commitResult);
 
-                    svnManager.SVNStatus.ClearUI();
+                    svnManager.GetModule<SVNStatus>().ClearUI();
                     await svnManager.RefreshStatus();
 
                     svnUI.CommitConsoleContent.text = $"<color=green><b>SUCCESS!</b></color>\nRevision: {revision}";

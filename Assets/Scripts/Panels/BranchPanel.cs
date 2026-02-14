@@ -15,14 +15,14 @@ public class BranchPanel : MonoBehaviour
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
 
-        svnManager.SVNBranchTag.RefreshUnifiedList();
+        svnManager.GetModule<SVNBranchTag>().RefreshUnifiedList();
     }
 
 
-    public void Button_Create() => svnManager.SVNBranchTag.CreateRemoteCopy();
-    public void Button_SwitchBranch() => svnManager.SVNBranchTag.SwitchToSelectedBranch();
-    public void Button_SwitchTag() => svnManager.SVNBranchTag.SwitchToSelectedTag();
-    public void Button_DeleteBranch() => svnManager.SVNBranchTag.DeleteSelectedBranch();
-    public void Button_DeleteTag() => svnManager.SVNBranchTag.DeleteSelectedTag();
+    public void Button_Create() => svnManager.GetModule<SVNBranchTag>().CreateRemoteCopy();
+    public void Button_SwitchBranch() => svnManager.GetModule<SVNBranchTag>().SwitchToSelectedBranch();
+    public void Button_SwitchTag() => svnManager.GetModule<SVNBranchTag>().SwitchToSelectedTag();
+    public void Button_DeleteBranch() => svnManager.GetModule<SVNBranchTag>().DeleteSelectedBranch();
+    public void Button_DeleteTag() => svnManager.GetModule<SVNBranchTag>().DeleteSelectedTag();
 
 }

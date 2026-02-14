@@ -24,30 +24,30 @@ namespace SVN.Core
         {
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
-                svnManager.SVNTerminal.ExecuteTerminalCommand();
+                svnManager.GetModule<SVNTerminal>().ExecuteTerminalCommand();
             }
         }
 
-        public void Button_Load() => svnManager.SVNLoad.LoadRepoPathAndRefresh();
-        public void Button_Update() => svnManager.SVNUpdate.Update();
-        public void Button_Refresh() => svnManager.SVNStatus.ShowOnlyModified();
-        public void Button_Clean() => svnManager.SVNClean.LightCleanup();
-        public void Button_DiscardUntracked() => svnManager.SVNClean.DiscardUnversioned();
-        public void Button_Vacuum() => svnManager.SVNClean.VacuumCleanup();
-        public void Button_Log() => svnManager.SVNLog.ShowLog();
-        public void Button_RevertAllMissing() => svnManager.SVNCommit.ExecuteRevertAllMissing();
-        public void Button_ShowOnlyIgnored() => svnManager.SVNStatus.RefreshIgnoredPanel();
-        public void Button_Explore() => svnManager.SVNExternal.OpenInExplorer();
-        public void Button_Lock() => svnManager.SVNLock.LockModified();
-        public void Button_Unlock() => svnManager.SVNLock.UnlockAll();
-        public void Button_ShowToCommit() => svnManager.SVNCommit.ShowWhatWillBeCommitted();
-        public void Button_ShowLocks() => svnManager.SVNLock.ShowAllLocks();
-        public void Button_BreakLocks() => svnManager.SVNLock.BreakAllLocks();
+        public void Button_Load() => svnManager.GetModule<SVNLoad>().LoadRepoPathAndRefresh();
+        public void Button_Update() => svnManager.GetModule<SVNUpdate>().Update();
+        public void Button_Refresh() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();
+        public void Button_Clean() => svnManager.GetModule<SVNClean>().LightCleanup();
+        public void Button_DiscardUntracked() => svnManager.GetModule<SVNClean>().DiscardUnversioned();
+        public void Button_Vacuum() => svnManager.GetModule<SVNClean>().VacuumCleanup();
+        public void Button_Log() => svnManager.GetModule<SVNLog>().ShowLog();
+        public void Button_RevertAllMissing() => svnManager.GetModule<SVNCommit>().ExecuteRevertAllMissing();
+        public void Button_ShowOnlyIgnored() => svnManager.GetModule<SVNStatus>().RefreshIgnoredPanel();
+        public void Button_Explore() => svnManager.GetModule<SVNExternal>().OpenInExplorer();
+        public void Button_Lock() => svnManager.GetModule<SVNLock>().LockModified();
+        public void Button_Unlock() => svnManager.GetModule<SVNLock>().UnlockAll();
+        public void Button_ShowToCommit() => svnManager.GetModule<SVNCommit>().ShowWhatWillBeCommitted();
+        public void Button_ShowLocks() => svnManager.GetModule<SVNLock>().ShowAllLocks();
+        public void Button_BreakLocks() => svnManager.GetModule<SVNLock>().BreakAllLocks();
         public void Button_TerminalSubmit() => OnTerminalSubmit();
 
         public void Button_ClearTerminalLog()
         {
-            svnManager.SVNTerminal.ClearLog();
+            svnManager.GetModule<SVNTerminal>().ClearLog();
             svnUI.TerminalInputField.ActivateInputField();
         }
 

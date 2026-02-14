@@ -17,8 +17,8 @@ public class CheckoutPanel : MonoBehaviour
         svnManager = SVNManager.Instance;
     }
 
-    public void Button_BrowseDestFolder() => svnManager.SVNExternal.BrowseDestinationFolderPathCheckout();
-    public void Button_BrowsePrivateKey() => svnManager.SVNExternal.BrowsePrivateKeyPathCheckout();
-    public void Button_Checkout() => svnManager.SVNCheckout.Checkout();
-    public void Button_Cancel() => svnManager.SVNCheckout.CancelCheckout();
+    public void Button_BrowseDestFolder() => svnManager.GetModule<SVNExternal>().BrowseDestinationFolderPathCheckout();
+    public void Button_BrowsePrivateKey() => svnManager.GetModule<SVNExternal>().BrowsePrivateKeyPathCheckout();
+    public void Button_Checkout() => svnManager.GetModule<SVNCheckout>().Checkout();
+    public void Button_Cancel() => svnManager.GetModule<SVNCheckout>().CancelCheckout();
 }

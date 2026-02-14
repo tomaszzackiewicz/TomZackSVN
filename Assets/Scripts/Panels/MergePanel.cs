@@ -23,23 +23,23 @@ public class MergePanel : MonoBehaviour
         svnUI.MergeBranchesDropdown.onValueChanged.AddListener(Dropdown_OnBranchSelected);
     }
 
-    public void Button_Compare() => svnManager.SVNMerge.CompareWithTrunk();
+    public void Button_Compare() => svnManager.GetModule<SVNMerge>().CompareWithTrunk();
 
     public void Button_DryRunMerge()
     {
         string source = svnUI.MergeSourceInput.text;
-        svnManager.SVNMerge.ExecuteMerge(source, true);
+        svnManager.GetModule<SVNMerge>().ExecuteMerge(source, true);
     }
 
     public void Button_ConfirmMerge()
     {
         string source = svnUI.MergeSourceInput.text;
-        svnManager.SVNMerge.ExecuteMerge(source, false);
+        svnManager.GetModule<SVNMerge>().ExecuteMerge(source, false);
     }
 
     public async void Button_RefreshBranchDropdown()
     {
-        string[] branches = await svnManager.SVNMerge.FetchAvailableBranches();
+        string[] branches = await svnManager.GetModule<SVNMerge>().FetchAvailableBranches();
 
         svnUI.MergeBranchesDropdown.ClearOptions();
 
@@ -65,6 +65,6 @@ public class MergePanel : MonoBehaviour
 
     public async Task Button_RevertMerge()
     {
-        await svnManager.SVNMerge.RevertMerge();
+        await svnManager.GetModule<SVNMerge>().RevertMerge();
     }
 }

@@ -142,7 +142,7 @@ namespace SVN.Core
                 {
                     svnUI.LogText.text += $"<b><color=green>[Switch Complete]</color> Working copy is now on {targetName}.</b>\n";
 
-                    svnManager.SVNStatus.ShowProjectInfo(null, svnManager.WorkingDir);
+                    svnManager.GetModule<SVNStatus>().ShowProjectInfo(null, svnManager.WorkingDir);
                     await svnManager.RefreshStatus();
                 }
                 else

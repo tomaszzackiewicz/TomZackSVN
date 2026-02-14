@@ -16,11 +16,11 @@ public class ResolvePanel : MonoBehaviour
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
 
-        svnManager.SVNLoad.UpdateUIFromManager();
+        svnManager.GetModule<SVNLoad>().UpdateUIFromManager();
     }
 
-    public void Button_OpenInEditor() => svnManager.SVNResolve.Button_OpenInEditor();
-    public void Button_MarkAsResolved() => svnManager.SVNResolve.Button_MarkAsResolved();
-    public void Button_ResolveTheirs() => svnManager.SVNResolve.Button_ResolveTheirs();
-    public void Button_ResolveMine() => svnManager.SVNResolve.Button_ResolveMine();
+    public void Button_OpenInEditor() => svnManager.GetModule<SVNResolve>().Button_OpenInEditor();
+    public void Button_MarkAsResolved() => svnManager.GetModule<SVNResolve>().Button_MarkAsResolved();
+    public void Button_ResolveTheirs() => svnManager.GetModule<SVNResolve>().Button_ResolveTheirs();
+    public void Button_ResolveMine() => svnManager.GetModule<SVNResolve>().Button_ResolveMine();
 }

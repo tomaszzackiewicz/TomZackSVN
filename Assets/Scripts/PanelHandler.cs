@@ -144,7 +144,7 @@ namespace SVN.Core
                 commitPanel.SetActive(true);
             }
 
-            svnManager.SVNStatus.ShowOnlyModified();
+            svnManager.GetModule<SVNStatus>().ShowOnlyModified();
         }
 
         public void Button_CloseCommit()
