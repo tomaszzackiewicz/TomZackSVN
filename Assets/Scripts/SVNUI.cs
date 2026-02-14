@@ -66,7 +66,7 @@ namespace SVN.Core
         [SerializeField] private GameObject shelfItemPrefab;
         [Header("Locks")]
         [SerializeField] private Transform locksContainer;
-        [SerializeField] private GameObject lockEntryPrefab;
+        [SerializeField] private TextMeshProUGUI stealLocksConsole;
 
         public TextMeshProUGUI LogText => logText;
         public TMP_InputField LogCountInputField => logCountInputField;
@@ -121,7 +121,7 @@ namespace SVN.Core
         public ScrollRect ShelfListContainer => shelfListContainer;
         public GameObject ShelfItemPrefab => shelfItemPrefab;
         public Transform LocksContainer => locksContainer;
-        public GameObject LockEntryPrefab => lockEntryPrefab;
+        public TextMeshProUGUI StealLocksConsole => stealLocksConsole;
 
         private void Awake()
         {
