@@ -13,7 +13,6 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            // 1. DATA RETRIEVAL
             string path = svnUI.LoadDestFolderInput.text.Trim();
             string manualUrl = svnUI.LoadRepoUrlInput != null ? svnUI.LoadRepoUrlInput.text.Trim() : "";
 
@@ -31,7 +30,6 @@ namespace SVN.Core
                 keyPath = SvnRunner.KeyPath;
             }
 
-            // 2. PRE-VALIDATION
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
             {
                 svnUI.LogText.text += "<color=red>Error:</color> Invalid destination path!\n";
@@ -40,25 +38,21 @@ namespace SVN.Core
 
             IsProcessing = true;
 
-            // IMPORTANT: Synchronize key with Runner to prevent RunAsync from throwing an exception
             SvnRunner.KeyPath = keyPath;
 
-            svnUI.LogText.text += $"<b>Processing path:</b> <color=cyan>{path}</color>\n";
+            svnUI.LogText.text += $"<b>Processing path:</b> <color=green>{path}</color>\n";
 
             try
             {
-                // 3. PATH NORMALIZATION
                 string normalizedPath = path.Replace("\\", "/");
                 svnManager.WorkingDir = normalizedPath;
                 svnUI.LoadDestFolderInput.text = normalizedPath;
 
-                // 4. SSH KEY SYNC (Save to manager)
                 if (!string.IsNullOrEmpty(keyPath))
                 {
                     svnManager.CurrentKey = keyPath;
                 }
 
-                // 5. METADATA & PROTECTION CHECK
                 bool hasSvnFolder = Directory.Exists(Path.Combine(normalizedPath, ".svn"));
 
                 if (hasSvnFolder)
@@ -78,7 +72,6 @@ namespace SVN.Core
 
                         svnUI.LogText.text += "<color=yellow>Starting Checkout...</color>\n";
 
-                        // Runner will use SvnRunner.KeyPath set above
                         await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath);
 
                         svnUI.LogText.text += "<color=green>Checkout completed!</color>\n";
@@ -98,10 +91,8 @@ namespace SVN.Core
                 if (svnUI.LoadRepoUrlInput != null)
                     svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
 
-                // 6. REGISTRATION (Function creating buttons in the scroll view)
                 RegisterProjectInList(normalizedPath, keyPath, svnManager.RepositoryUrl);
 
-                // ADDITION: Force refresh of Scroll Rect to display the new button
                 var selectionPanel = UnityEngine.Object.FindAnyObjectByType<ProjectSelectionPanel>();
                 if (selectionPanel != null) selectionPanel.RefreshList();
 

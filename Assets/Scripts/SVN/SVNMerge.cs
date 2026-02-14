@@ -162,7 +162,7 @@ namespace SVN.Core
 
             if (isDryRun)
             {
-                svnUI.LogText.text += $"<color=cyan>[Simulation Result]</color> Files to update: {updated}, Potential conflicts: {conflicts}\n";
+                svnUI.LogText.text += $"<color=green>[Simulation Result]</color> Files to update: {updated}, Potential conflicts: {conflicts}\n";
             }
             else
             {

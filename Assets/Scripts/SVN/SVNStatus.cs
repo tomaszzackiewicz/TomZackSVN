@@ -342,12 +342,20 @@ namespace SVN.Core
             string sizeText = "---";
             string rawInfo = "";
             int retryCount = 0;
-            int maxRetries = 5;
+            int maxRetries = 8;
 
             while (retryCount < maxRetries)
             {
                 try
                 {
+                    if (!Directory.Exists(Path.Combine(path, ".svn")))
+                    {
+                        retryCount++;
+                        svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Waiting for .svn metadata... ({retryCount}/{maxRetries})</color>";
+                        await Task.Delay(1000);
+                        continue;
+                    }
+
                     var infoTask = SvnRunner.GetInfoAsync(path);
                     var sizeTask = svnManager.GetFolderSizeAsync(path);
                     await Task.WhenAll(infoTask, sizeTask);
@@ -357,22 +365,16 @@ namespace SVN.Core
 
                     if (!string.IsNullOrEmpty(rawInfo) && rawInfo != "unknown") break;
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    if (ex.Message.Contains("SSH Key"))
-                    {
-                        retryCount++;
-                        svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Waiting for SSH keys... ({retryCount}/{maxRetries})</color>";
-                        await Task.Delay(500);
-                        continue;
-                    }
-                    break;
+                    retryCount++;
+                    await Task.Delay(1000);
                 }
             }
 
-            if (string.IsNullOrEmpty(rawInfo))
+            if (string.IsNullOrEmpty(rawInfo) || rawInfo == "unknown")
             {
-                svnUI.StatusInfoText.text = $"<size=120%><color=#FF5555>●</color></size> <b>{displayName}</b> | <color=#FF8888>Connection Error</color>";
+                svnUI.StatusInfoText.text = $"<size=120%><color=#FF5555>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>";
                 return;
             }
 
@@ -415,15 +417,15 @@ namespace SVN.Core
             string currentUser = svnManager.CurrentUserName ?? "Unknown";
 
             svnUI.StatusInfoText.text =
-                $"<size=120%><color=#55FF55>●</color></size> <b>{displayName}</b> <color=#E6E6E6>({sizeText})</color> | " +
-                $"<color=#00E5FF>User:</color> <color=#FFFFFF>{currentUser}</color> | " +
-                $"<color=#00E5FF>Branch:</color> {branchName} | " +
-                $"<color=orange>Rev: {revision}</color> | " +
-                $"<color=#81BEF7>By: {author}</color> | " +
-                $"<color=#AAAAAA>{shortDate}</color> | " +
-                $"<color=#888888>Srv: {serverHost}</color> | " +
-                $"<color=#666666>App: {appVersion}</color> | " +
-                $"<color=#666666>SVN:{_svnVersionCached}</color>";
+                $"<size=120%><color=#55FF55>●</color></size> <color=orange> <b>{displayName}</b> ({sizeText})</color> | " +
+                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{currentUser}</color> | " +
+                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{branchName}</color> | " +
+                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revision}</color> | " +
+                $"<color=#00E5FF>By:</color> <color=#E6E6E6>{author}</color> | " +
+                $"<color=#E6E6E6> {shortDate}</color> | " +
+                $"<color=#E6E6E6>Srv: {serverHost}</color> | " +
+                $"<color=#E6E6E6>App: {appVersion}</color> | " +
+                $"<color=#E6E6E6>SVN: {_svnVersionCached}</color>";
         }
 
         private async Task EnsureVersionCached()

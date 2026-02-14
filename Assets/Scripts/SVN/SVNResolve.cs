@@ -77,7 +77,7 @@ namespace SVN.Core
                 if (!string.IsNullOrEmpty(conflictEntry.Key))
                 {
                     string fullFilePath = Path.Combine(root, conflictEntry.Key);
-                    LogBoth($"Opening editor: <color=cyan>{Path.GetFileName(fullFilePath)}</color>\n");
+                    LogBoth($"Opening editor: <color=green>{Path.GetFileName(fullFilePath)}</color>\n");
 
                     System.Diagnostics.Process.Start(editorPath, $"\"{fullFilePath}\"");
 

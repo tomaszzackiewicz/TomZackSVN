@@ -158,11 +158,22 @@ namespace SVN.Core
         public async Task<string> AutoDetectSvnUser()
         {
             currentUserName = "Detecting...";
-            if (string.IsNullOrEmpty(WorkingDir)) return "Unknown";
+
+            if (string.IsNullOrEmpty(WorkingDir))
+            {
+                currentUserName = "Unknown";
+                return currentUserName;
+            }
+
+            if (!Directory.Exists(Path.Combine(WorkingDir, ".svn")))
+            {
+                currentUserName = Environment.UserName.ToLower();
+                return currentUserName;
+            }
 
             try
             {
-                string xmlOutput = await SvnRunner.RunAsync("info --xml", WorkingDir);
+                string xmlOutput = await SvnRunner.RunAsync("info --xml", WorkingDir, false);
                 if (!string.IsNullOrEmpty(xmlOutput))
                 {
                     XmlDocument doc = new XmlDocument();
@@ -181,7 +192,7 @@ namespace SVN.Core
                     }
                 }
 
-                string authOutput = await SvnRunner.RunAsync("auth", WorkingDir);
+                string authOutput = await SvnRunner.RunAsync("auth", WorkingDir, false);
                 string[] lines = authOutput.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
                 foreach (var line in lines)
                 {
@@ -193,13 +204,11 @@ namespace SVN.Core
                 }
 
                 currentUserName = Environment.UserName.ToLower();
-                Debug.LogWarning($"[SVN] URL/Auth detection failed. Falling back to OS User: {currentUserName}");
                 return currentUserName;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SVN] Critical detection error: {ex.Message}");
-                currentUserName = "ERROR";
+                currentUserName = Environment.UserName.ToLower();
                 return currentUserName;
             }
         }
@@ -373,8 +382,6 @@ namespace SVN.Core
 
             if (svnUI.LoadDestFolderInput != null)
                 svnUI.LoadDestFolderInput.SetTextWithoutNotify(this.WorkingDir);
-
-            Debug.Log($"[SVN] WorkingDir broadcasted: {this.WorkingDir}");
         }
 
         public void BroadcastSshKeyChange(string newKeyPath)
@@ -424,7 +431,7 @@ namespace SVN.Core
             }
 
             svnUI.LogText.text = "<b>[SYSTEM DIAGNOSTICS]</b>\n";
-            svnUI.LogText.text += $"Working Dir: <color=#AAAAAA>{WorkingDir}</color>\n";
+            svnUI.LogText.text += $"Working Dir: <color=#444444>{WorkingDir}</color>\n";
 
             try
             {
@@ -546,7 +553,7 @@ namespace SVN.Core
             {
                 if (isIgnoredView)
                 {
-                    svnUI.StatsText.text = $"<color=#AAAAAA><b>VIEW: IGNORED</b></color> | " +
+                    svnUI.StatsText.text = $"<color=#444444><b>VIEW: IGNORED</b></color> | " +
                                            $"Folders: {stats.IgnoredFolderCount} | " +
                                            $"Files: {stats.IgnoredFileCount} | " +
                                            $"Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>";

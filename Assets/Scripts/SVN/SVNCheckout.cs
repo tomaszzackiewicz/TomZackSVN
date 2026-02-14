@@ -23,7 +23,6 @@ namespace SVN.Core
 
             string url = svnUI.CheckoutRepoUrlInput.text.Trim();
             string path = svnUI.CheckoutDestFolderInput.text.Trim();
-
             string keyPath = "";
 
             if (!string.IsNullOrWhiteSpace(svnUI.CheckoutPrivateKeyInput?.text))
@@ -41,13 +40,17 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(path))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> Provide both URL and Destination Path.\n";
+                string errorMsg = "<color=red>Error:</color> Provide both URL and Destination Path.";
+                svnUI.LogText.text += errorMsg + "\n";
+                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = errorMsg;
                 return;
             }
 
             if (string.IsNullOrEmpty(keyPath))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> SSH Key path is empty! Provide it in Checkout or Settings.\n";
+                string errorMsg = "<color=red>Error:</color> SSH Key path is empty!";
+                svnUI.LogText.text += errorMsg + "\n";
+                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = errorMsg;
                 return;
             }
 
@@ -59,34 +62,46 @@ namespace SVN.Core
                 svnUI.OperationProgressBar.gameObject.SetActive(true);
                 svnUI.OperationProgressBar.value = 0f;
             }
-
-            bool isMonitoring = true;
-            _ = Task.Run(async () => { });
-
             try
             {
                 string absoluteKey = Path.GetFullPath(keyPath).Replace("\\", "/");
-
                 string sshArgs = $"ssh -i \\\"{absoluteKey}\\\" -o StrictHostKeyChecking=no -o BatchMode=yes";
                 string sshConfig = $"--config-option config:tunnels:ssh=\"{sshArgs}\"";
-
                 string cmd = $"checkout \"{url}\" \"{path}\" {sshConfig} --non-interactive --force";
 
                 if (!Directory.Exists(path)) Directory.CreateDirectory(path);
 
-                svnUI.LogText.text += $"<b>Starting Checkout...</b>\nPath: <color=cyan>{path}</color>\n";
-                svnUI.LogText.text += $"Using Key: <color=grey>{absoluteKey}</color>\n";
+                svnUI.LogText.text += $"<b>Starting Checkout...</b>\nPath: <color=green>{path}</color>\n";
 
-                await SvnRunner.RunAsync(cmd, "", true, _checkoutCTS.Token);
+                await SvnRunner.RunLiveAsync(cmd, "", (line) =>
+                {
+                    _mainThreadContext.Post(_ =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(line) && line.Length > 4)
+                        {
+                            if (svnUI.CheckoutStatusInfoText != null)
+                            {
+                                svnUI.CheckoutStatusInfoText.text = $"<color=yellow>Processing:</color> {line.Trim()}";
+                            }
+                        }
+                    }, null);
+                }, _checkoutCTS.Token);
 
-                svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed.\n";
-                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = "<color=green>Checkout Finished!</color>";
+                if (svnUI.CheckoutStatusInfoText != null)
+                    svnUI.CheckoutStatusInfoText.text = "<color=yellow>Finalizing & Verifying...</color>";
+
+                await Task.Delay(1500);
 
                 RegisterNewProjectAfterCheckout(path, url, keyPath);
 
                 svnManager.WorkingDir = path;
+
                 await svnManager.RefreshRepositoryInfo();
+                await Task.Delay(1500);
                 await svnManager.RefreshStatus();
+
+                svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed and project initialized.\n";
+                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = "<color=green>Checkout Finished!</color>";
 
                 if (svnManager.PanelHandler != null)
                 {
@@ -94,17 +109,26 @@ namespace SVN.Core
                     svnManager.PanelHandler.Button_CloseCheckout();
                 }
             }
+            catch (OperationCanceledException)
+            {
+                string cancelMsg = "<color=yellow>Checkout cancelled by user.</color>";
+                svnUI.LogText.text += cancelMsg + "\n";
+                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = cancelMsg;
+            }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Checkout Error:</color> {ex.Message}\n";
-                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = "<color=red>Failed!</color>";
+                string errorMsg = $"<color=red>Checkout Error:</color> {ex.Message}";
+                svnUI.LogText.text += errorMsg + "\n";
+                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = errorMsg;
             }
             finally
             {
-                isMonitoring = false;
                 IsProcessing = false;
+                if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.gameObject.SetActive(false);
                 _checkoutCTS?.Dispose();
                 _checkoutCTS = null;
+
+                svnManager.SVNStatus.RefreshLocal();
             }
         }
 
@@ -112,7 +136,6 @@ namespace SVN.Core
         {
             if (_checkoutCTS != null)
             {
-                svnUI.LogText.text += "<color=yellow>Cancelling operation...</color>\n";
                 _checkoutCTS.Cancel();
             }
         }

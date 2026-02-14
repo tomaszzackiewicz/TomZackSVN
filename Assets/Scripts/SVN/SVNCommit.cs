@@ -177,7 +177,7 @@ namespace SVN.Core
 
             if (svnUI.CommitConsoleContent != null)
             {
-                svnUI.CommitConsoleContent.text += "\n<color=cyan><b>[System]</b> Repair process finished.</color>";
+                svnUI.CommitConsoleContent.text += "\n<color=green><b>[System]</b> Repair process finished.</color>";
             }
         }
 
