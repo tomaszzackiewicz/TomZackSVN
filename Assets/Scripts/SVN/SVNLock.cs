@@ -208,7 +208,5 @@ namespace SVN.Core
             await SvnRunner.RunAsync("cleanup --remove-locks", root);
             svnUI.LogText.text += "Local locks removed.\n";
         }
-
-        
     }
 }

@@ -22,9 +22,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Analyzes changes, adds unversioned files, and performs the commit.
-        /// </summary>
         public async void CommitAll()
         {
             if (IsProcessing) return;
@@ -47,12 +44,10 @@ namespace SVN.Core
 
             try
             {
-                // STEP 1: Cleanup
                 svnUI.CommitConsoleContent.text = "<b>[1/4]</b> Cleaning up database...\n";
                 await SvnRunner.RunAsync("cleanup", root);
                 if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.25f;
 
-                // STEP 2: Handle Missing Files (!)
                 svnUI.CommitConsoleContent.text += "<b>[2/4]</b> Removing missing files (Fixing '!')...\n";
                 string rawStatus = await SvnRunner.RunAsync("status", root);
 
@@ -73,12 +68,10 @@ namespace SVN.Core
                 }
                 if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.50f;
 
-                // STEP 3: Add New Files (?)
                 svnUI.CommitConsoleContent.text += "<b>[3/4]</b> Adding new files...\n";
                 await SvnRunner.RunAsync("add . --force --parents", root);
                 if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.75f;
 
-                // STEP 4: Commit
                 svnUI.CommitConsoleContent.text += "<b>[4/4]</b> Sending to server...\n";
                 string commitResult = await SvnRunner.RunAsync($"commit -m \"{message}\" --non-interactive .", root);
 
@@ -188,9 +181,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Restores files marked as missing (!) and reverts local changes.
-        /// </summary>
         private async System.Threading.Tasks.Task RevertAllMissing()
         {
             if (IsProcessing) return;
@@ -307,7 +297,6 @@ namespace SVN.Core
             finally
             {
                 IsProcessing = false;
-
                 await svnManager.RefreshStatus();
             }
         }

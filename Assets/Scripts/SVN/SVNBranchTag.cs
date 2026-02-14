@@ -28,13 +28,8 @@ namespace SVN.Core
             {
                 svnUI.LogText.text += $"<b><color=#4FC3F7>[Remote Copy]</color> Initializing creation of {subFolder}...</b>\n";
 
-                // REPO ROOT: Ensuring path like .../repos/Test
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
-
-                // SOURCE: Always /trunk to avoid nested folders
                 string sourceUrl = $"{repoRoot}/trunk";
-
-                // TARGET: Always /branches/name or /tags/name
                 string targetUrl = $"{repoRoot}/{subFolder}/{name}";
 
                 svnUI.LogText.text += $"<color=#444444>... Source: {sourceUrl}</color>\n";
@@ -45,7 +40,6 @@ namespace SVN.Core
 
                 svnUI.LogText.text += $"<b><color=green>[Success]</color> Remote {subFolder} '{name}' created successfully!</b>\n";
 
-                // Trigger list refresh
                 RefreshUnifiedList();
             }
             catch (Exception ex)
@@ -65,21 +59,16 @@ namespace SVN.Core
 
             try
             {
-                // 1. Get clean Root (e.g., svn+ssh://.../repos/Test)
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
-
-                // 2. Build full URLs for listing folders
                 string branchesUrl = $"{repoRoot}/branches";
                 string tagsUrl = $"{repoRoot}/tags";
 
                 svnUI.LogText.text += "<color=#444444>... Fetching folder entries from repository root</color>\n";
                 Debug.Log($"[SVN] Fetching from: {branchesUrl}");
 
-                // 3. Invoke listing (Passing full URL as subFolder)
                 var branches = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, branchesUrl);
                 var tags = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, tagsUrl);
 
-                // 4. Update UI
                 UpdateDropdown(svnUI.BranchesDropdown, branches, "No branches", true);
                 UpdateDropdown(svnUI.TagsDropdown, tags, "No tags", false);
 
@@ -100,7 +89,6 @@ namespace SVN.Core
             if (currentUrl.Contains("/branches/")) return currentUrl.Substring(0, currentUrl.IndexOf("/branches/"));
             if (currentUrl.Contains("/tags/")) return currentUrl.Substring(0, currentUrl.IndexOf("/tags/"));
 
-            // Fallback: simply cut the last segment
             return currentUrl.Substring(0, currentUrl.LastIndexOf('/'));
         }
 
@@ -140,7 +128,6 @@ namespace SVN.Core
                 string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
                 string repoRoot = svnManager.GetRepoRoot();
 
-                // Build URL: if trunk then root/trunk, else root/folder/name
                 string targetUrl = (targetName.ToLower() == "trunk")
                     ? $"{repoRoot}/trunk"
                     : $"{repoRoot}/{subFolder}/{targetName}";
@@ -154,7 +141,6 @@ namespace SVN.Core
                 {
                     svnUI.LogText.text += $"<b><color=green>[Switch Complete]</color> Working copy is now on {targetName}.</b>\n";
 
-                    // Refresh project info to show new branch name in UI
                     svnManager.SVNStatus.ShowProjectInfo(null, svnManager.WorkingDir);
                     await svnManager.RefreshStatus();
                 }
@@ -203,7 +189,6 @@ namespace SVN.Core
             string selectedBranch = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text;
             if (IsPlaceholder(selectedBranch)) return;
 
-            // CRITICAL SAFETY: Prevent trunk deletion
             if (selectedBranch.ToLower().Contains("trunk"))
             {
                 svnUI.LogText.text += "<color=red><b>SECURITY DENIED:</b> The Trunk branch cannot be deleted via this interface!</color>\n";
@@ -238,7 +223,6 @@ namespace SVN.Core
                 string rootWithProject = currentUrl.Split(new[] { projectName }, StringSplitOptions.None)[0] + projectName;
                 string targetUrl = $"{rootWithProject}/{subFolder}/{targetName}";
 
-                // Safety check: Cannot delete what we are currently using
                 if (currentUrl.TrimEnd('/') == targetUrl.TrimEnd('/'))
                 {
                     svnUI.LogText.text += "<color=red><b>ABORTED:</b> Cannot delete the active branch/tag you are currently working on!</color>\n";

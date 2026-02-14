@@ -33,8 +33,6 @@ namespace SVN.Core
 
             try
             {
-                Debug.Log($"[SVN] Starting update for: {targetPath}");
-
                 string output = await SvnRunner.RunLiveAsync(
                     "update --accept postpone",
                     targetPath,

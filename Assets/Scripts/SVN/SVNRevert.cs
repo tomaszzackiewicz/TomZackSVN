@@ -7,6 +7,7 @@ namespace SVN.Core
     public class SVNRevert : SVNBase
     {
         public SVNRevert(SVNUI ui, SVNManager manager) : base(ui, manager) { }
+
         public async void RevertAll()
         {
             if (IsProcessing) return;
@@ -23,10 +24,8 @@ namespace SVN.Core
 
             try
             {
-                // 1. Get status to find files that can be reverted (Modified, Added, Deleted, etc.)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
-                // 2. Filter files with revertable statuses
                 var filesToRevert = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && "MADRC".Contains(x.Value.status))
                     .Select(x => x.Key)
@@ -40,12 +39,10 @@ namespace SVN.Core
 
                 svnUI.LogText.text += $"Reverting {filesToRevert.Length} files to their original state...\n";
 
-                // 3. Execute the Revert command via SvnRunner
                 await SvnRunner.RevertAsync(root, filesToRevert);
 
                 svnUI.LogText.text += $"<color=green>Success!</color> Reverted <b>{filesToRevert.Length}</b> files.\n";
 
-                // 4. Trigger UI refresh to update the tree view and clear status markers
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)

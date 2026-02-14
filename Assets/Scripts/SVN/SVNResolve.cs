@@ -110,7 +110,6 @@ namespace SVN.Core
 
             try
             {
-                // 1. Pobierz pliki ze statusem 'C' (Conflict)
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
                 var conflictedPaths = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("C"))
@@ -122,7 +121,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // 2. Walidacja zawartości plików
                 List<string> readyToResolve = new List<string>();
                 List<string> failedValidation = new List<string>();
 
@@ -133,7 +131,6 @@ namespace SVN.Core
                     {
                         string content = await File.ReadAllTextAsync(fullPath);
 
-                        // Sprawdzamy czy plik zawiera znaczniki SVN
                         if (content.Contains("<<<<<<< .mine") ||
                             content.Contains(">>>>>>> .r") ||
                             content.Contains("======="))
@@ -147,23 +144,19 @@ namespace SVN.Core
                     }
                 }
 
-                // 3. Obsługa wyników walidacji
                 if (failedValidation.Count > 0)
                 {
                     LogBoth("<color=red><b>ABORTED:</b></color> The following files still contain conflict markers:\n");
                     foreach (var f in failedValidation) LogBoth($" - <color=orange>{f}</color>\n");
                     LogBoth("<color=yellow>Please edit them, remove <<<<<<, =======, >>>>>>> markers, save and try again.</color>\n");
 
-                    // Jeśli żaden plik nie przeszedł walidacji, kończymy
                     if (readyToResolve.Count == 0) return;
                 }
 
-                // 4. Wykonanie 'resolve' tylko na czystych plikach
                 if (readyToResolve.Count > 0)
                 {
                     LogBoth($"Marking {readyToResolve.Count} validated items as resolved...\n");
 
-                    // Używamy bezpieczniejszej komendy 'resolve --accept working'
                     string pathsJoined = "\"" + string.Join("\" \"", readyToResolve) + "\"";
                     await SvnRunner.RunAsync($"resolve --accept working {pathsJoined}", root);
 

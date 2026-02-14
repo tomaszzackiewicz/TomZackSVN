@@ -19,13 +19,10 @@ namespace SVN.Core
             {
                 svnUI.LogText.text = "<b>[Full Scan]</b> Starting project synchronization...\n";
 
-                // 1. Folders first
                 await AddFoldersLogic();
 
-                // Small delay to let SVN index folders before files
                 await Task.Delay(300);
 
-                // 2. Files next
                 await AddFilesLogic();
 
                 svnUI.LogText.text += "<color=green><b>[Scan Complete]</b> All items are now under version control.</color>\n";

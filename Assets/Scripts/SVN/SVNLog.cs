@@ -1,5 +1,5 @@
 using System;
-using System.Threading.Tasks; // Dodane dla Task.Yield
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace SVN.Core

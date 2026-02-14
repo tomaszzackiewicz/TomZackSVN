@@ -95,7 +95,6 @@ namespace SVN.Core
             if (historyIndex >= 0 && historyIndex < commandHistory.Count)
             {
                 svnUI.TerminalInputField.text = commandHistory[historyIndex];
-                
                 svnUI.TerminalInputField.caretPosition = svnUI.TerminalInputField.text.Length;
             }
         }

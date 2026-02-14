@@ -13,7 +13,6 @@ namespace SVN.Core
         private bool _isCurrentViewIgnored = false;
         private string _lastKnownProjectName = "";
         private string _svnVersionCached = "";
-
         private List<string> _cachedIgnoreRules = new List<string>();
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager) { }
@@ -44,37 +43,30 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
 
-            // Helper Action: Logs to main console always, but only APPENDS to Commit console
-            // This prevents overwriting the "SUCCESS" message from the CommitAll method.
             Action<string, bool> LogSmart = (msg, isHeader) =>
             {
                 if (svnUI.LogText != null)
                 {
-                    if (isHeader) svnUI.LogText.text = msg; // Clear main log for new operation
+                    if (isHeader) svnUI.LogText.text = msg;
                     else svnUI.LogText.text += msg;
                 }
 
                 if (svnUI.CommitConsoleContent != null)
                 {
-                    // NEVER overwrite the commit console here, only add new info lines
                     svnUI.CommitConsoleContent.text += msg;
                 }
             };
 
-            // We use 'false' for the header check in CommitConsole to preserve existing text
             LogSmart($"{timestamp} <color=#0FF>Refreshing status...</color>\n", true);
 
             try
             {
-                // 1. FETCH DATA FROM SVN
                 var statusDict = _isCurrentViewIgnored
                     ? await SvnRunner.GetIgnoredOnlyAsync(root)
                     : await SvnRunner.GetChangesDictionaryAsync(root);
 
-                // 2. UPDATE MANAGER DICTIONARY
                 svnManager.UpdateFilesStatus(statusDict);
 
-                // 3. HANDLE EMPTY STATUS
                 if (statusDict == null || statusDict.Count == 0)
                 {
                     string emptyMsg = _isCurrentViewIgnored
@@ -86,24 +78,19 @@ namespace SVN.Core
                     if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Size: 0 KB";
 
                     svnManager.UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
-
-                    // Log informative message without overwriting the previous success log
                     LogSmart("<color=green>Workspace is clean.</color>\n", false);
                     return;
                 }
 
                 LogSmart($"Found {statusDict.Count} entries. Processing...\n", false);
 
-                // 4. AUTO-EXPAND LOGIC
                 svnManager.ExpandedPaths.Clear();
-                svnManager.ExpandedPaths.Add(""); // Root always expanded
+                svnManager.ExpandedPaths.Add("");
 
                 foreach (var item in statusDict)
                 {
                     string path = item.Key;
                     string stat = item.Value.status;
-
-                    // M:Modified, A:Added, ?:Unversioned, !:Missing, D:Deleted, C:Conflicted, R:Replaced, ~:Obstructed
                     bool isChange = !string.IsNullOrEmpty(stat) && "MA?!DCR~".Contains(stat);
                     bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : isChange;
 
@@ -113,23 +100,19 @@ namespace SVN.Core
                     }
                 }
 
-                // 5. COMMIT SIZE CALCULATION
                 string report = await SvnRunner.GetCommitSizeReportAsync(root);
                 if (svnUI.CommitSizeText != null)
                 {
                     svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes: {report}</color>\n";
                 }
 
-                // 6. VISUAL TREE GENERATION
                 var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
                 string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
 
                 if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
                 if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = treeResult;
 
-                // 7. STATISTICS UPDATE
                 svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
-
                 LogSmart("<color=green>Refresh finished.</color>\n", false);
             }
             catch (Exception ex)
@@ -160,9 +143,7 @@ namespace SVN.Core
         {
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
-
             ShowProjectInfo(null, svnManager.WorkingDir);
-
             _ = ExecuteRefreshWithAutoExpand();
         }
 
@@ -171,7 +152,6 @@ namespace SVN.Core
             if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "<i>No changes found.</i>";
             if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "";
             if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "<color=yellow>Total Size: 0 B</color>";
-
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
         }
@@ -192,7 +172,6 @@ namespace SVN.Core
                 Debug.LogError("[SVN] Cannot reload: WorkingDir is null or empty.");
             }
         }
-
 
         public void LoadIgnoreRulesFromFile(string workingDir)
         {
@@ -227,10 +206,8 @@ namespace SVN.Core
         {
             string root = svnManager.WorkingDir;
             string ignoreFilePath = Path.Combine(root, ".svnignore");
-
             StringBuilder sb = new StringBuilder();
 
-            // Zmiana kolorów na ciemniejsze (#444444 i #555555) dla lepszej widoczności
             sb.AppendLine("<color=#444444><b>System Info:</b></color>");
             sb.AppendLine($"<color=#555555>Working Dir:</color> <color=#FFFFFF>{root}</color>");
             sb.AppendLine($"<color=#555555>Config File:</color> <color=#FFFFFF>{ignoreFilePath}</color>");
@@ -292,7 +269,6 @@ namespace SVN.Core
 
                     if (isIgnored)
                     {
-                        // Zmiana koloru znacznika [I]
                         sb.AppendLine($"<color=#555555>[I]</color> <color=#FFFFFF>{relPath}</color>");
                         count++;
                         if (count > 200) { sb.AppendLine("<color=#FFFF00>... truncated</color>"); break; }
@@ -341,7 +317,6 @@ namespace SVN.Core
 
         private void UpdateStatusInUI(string message)
         {
-            // Check if IgnoredPanelDisplay exists in SVNUI
             if (svnUI != null && svnUI.IgnoredText != null)
             {
                 svnUI.IgnoredText.text = $"<color=#FFFF00>{message}</color>\n" + svnUI.IgnoredText.text;
@@ -353,7 +328,6 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(path)) return;
             if (svnUI == null || svnUI.StatusInfoText == null) return;
 
-            // 1. Priorytetyzacja nazwy: SVNProject > Bufor > Folder na dysku
             if (svnProject != null && !string.IsNullOrEmpty(svnProject.projectName))
             {
                 _lastKnownProjectName = svnProject.projectName;
@@ -363,7 +337,6 @@ namespace SVN.Core
                 ? _lastKnownProjectName
                 : Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
-            // Feedback wizualny (ciemniejszy szary)
             svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Initializing {displayName}...</color>";
 
             string sizeText = "---";
@@ -403,7 +376,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Ekstrakcja danych
             string revision = ExtractValue(rawInfo, "Revision:");
             string author = ExtractValue(rawInfo, "Last Changed Author:");
             string fullDate = ExtractValue(rawInfo, "Last Changed Date:");
@@ -411,7 +383,6 @@ namespace SVN.Core
             string absUrl = ExtractValue(rawInfo, "URL:");
             string repoRootUrl = ExtractValue(rawInfo, "Repository Root:");
 
-            // 2. Jeśli nazwa to nadal nazwa folderu, spróbuj wyciągnąć nazwę z Root URL repozytorium
             if (string.IsNullOrEmpty(_lastKnownProjectName) || _lastKnownProjectName == displayName)
             {
                 if (repoRootUrl != "unknown")
@@ -421,7 +392,6 @@ namespace SVN.Core
                 }
             }
 
-            // Obsługa brancha
             string branchName = "trunk";
             string source = (relUrl != "unknown") ? relUrl : absUrl;
             if (source != "unknown")
@@ -446,7 +416,7 @@ namespace SVN.Core
 
             svnUI.StatusInfoText.text =
                 $"<size=120%><color=#55FF55>●</color></size> <b>{displayName}</b> <color=#E6E6E6>({sizeText})</color> | " +
-                $"<color=#00E5FF>User:</color> <color=#FFFFFF>{currentUser}</color> | " + // <-- DODANO TUTAJ
+                $"<color=#00E5FF>User:</color> <color=#FFFFFF>{currentUser}</color> | " +
                 $"<color=#00E5FF>Branch:</color> {branchName} | " +
                 $"<color=orange>Rev: {revision}</color> | " +
                 $"<color=#81BEF7>By: {author}</color> | " +

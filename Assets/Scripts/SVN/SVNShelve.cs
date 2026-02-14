@@ -55,7 +55,6 @@ namespace SVN.Core
             try
             {
                 await SvnRunner.RunAsync($"shelf-save {shelfName}", svnManager.WorkingDir);
-
                 await SvnRunner.RunAsync("revert -R .", svnManager.WorkingDir);
 
                 svnUI.LogText.text += $"<color=green>[Stash]</color> Success: {shelfName}\n";

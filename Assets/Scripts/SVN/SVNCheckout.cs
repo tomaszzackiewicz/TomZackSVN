@@ -21,30 +21,24 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            // 1. GET DATA FROM UI (With corrected priority hierarchy)
             string url = svnUI.CheckoutRepoUrlInput.text.Trim();
             string path = svnUI.CheckoutDestFolderInput.text.Trim();
 
-            // Key selection logic:
             string keyPath = "";
 
-            // A. Was the key provided directly in the Checkout panel?
             if (!string.IsNullOrWhiteSpace(svnUI.CheckoutPrivateKeyInput?.text))
             {
                 keyPath = svnUI.CheckoutPrivateKeyInput.text.Trim();
             }
-            // B. Is there a key in the Settings panel? (Accessed via UI)
             else if (svnUI.SettingsSshKeyPathInput != null && !string.IsNullOrWhiteSpace(svnUI.SettingsSshKeyPathInput.text))
             {
                 keyPath = svnUI.SettingsSshKeyPathInput.text.Trim();
             }
-            // C. Final fallback to Manager/Runner
             else
             {
                 keyPath = SvnRunner.KeyPath;
             }
 
-            // Final validation
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(path))
             {
                 svnUI.LogText.text += "<color=red>Error:</color> Provide both URL and Destination Path.\n";
@@ -57,7 +51,6 @@ namespace SVN.Core
                 return;
             }
 
-            // 2. STATE PREPARATION
             IsProcessing = true;
             _checkoutCTS = new CancellationTokenSource();
 
@@ -67,17 +60,13 @@ namespace SVN.Core
                 svnUI.OperationProgressBar.value = 0f;
             }
 
-            // 3. LOG MONITORING (Task.Run...)
             bool isMonitoring = true;
-            _ = Task.Run(async () => { /* ... monitoring loop ... */ });
+            _ = Task.Run(async () => { });
 
-            // 4. EXECUTE SVN PROCESS
             try
             {
-                // Format key path for SSH (escaping quotes for Windows)
                 string absoluteKey = Path.GetFullPath(keyPath).Replace("\\", "/");
 
-                // Build SSH command to handle spaces in paths
                 string sshArgs = $"ssh -i \\\"{absoluteKey}\\\" -o StrictHostKeyChecking=no -o BatchMode=yes";
                 string sshConfig = $"--config-option config:tunnels:ssh=\"{sshArgs}\"";
 
@@ -90,7 +79,6 @@ namespace SVN.Core
 
                 await SvnRunner.RunAsync(cmd, "", true, _checkoutCTS.Token);
 
-                // SUCCESS
                 svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed.\n";
                 if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = "<color=green>Checkout Finished!</color>";
 

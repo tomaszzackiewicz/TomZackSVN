@@ -219,9 +219,6 @@ namespace SVN.Core
                     return new string[0];
                 }
 
-                // We fetch the folder list from the /branches directory
-                // We pass "branches" to GetRepoListAsync, which in your SVNRunner 
-                // should be able to build the full path.
                 var branches = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, "branches");
 
                 if (branches == null || branches.Length == 0)
