@@ -3,6 +3,7 @@ using UnityEngine;
 using System.Linq;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace SVN.Core
 {
@@ -36,7 +37,7 @@ namespace SVN.Core
                 svnUI.LogText.text += $"<color=#444444>... Target: {targetUrl}</color>\n";
                 svnUI.LogText.text += "<color=#444444>... Performing remote SVN Copy operation (please wait)</color>\n";
 
-                await SvnRunner.CopyAsync(svnManager.WorkingDir, sourceUrl, targetUrl, $"Created {subFolder}/{name}");
+                await CopyAsync(svnManager.WorkingDir, sourceUrl, targetUrl, $"Created {subFolder}/{name}");
 
                 svnUI.LogText.text += $"<b><color=green>[Success]</color> Remote {subFolder} '{name}' created successfully!</b>\n";
 
@@ -135,7 +136,7 @@ namespace SVN.Core
                 svnUI.LogText.text += $"<color=#444444>... Destination URL: {targetUrl}</color>\n";
                 svnUI.LogText.text += "<color=#444444>... Updating local working copy files (please wait)</color>\n";
 
-                string result = await SvnRunner.SwitchAsync(svnManager.WorkingDir, targetUrl);
+                string result = await SwitchAsync(svnManager.WorkingDir, targetUrl);
 
                 if (!result.ToLower().Contains("error") && !result.ToLower().Contains("failed"))
                 {
@@ -232,7 +233,7 @@ namespace SVN.Core
                 svnUI.LogText.text += $"<color=#444444>... Removing remote path: {targetUrl}</color>\n";
 
                 string msg = $"Deleted {subFolder}: {targetName} via Unity SVN Tool";
-                await SvnRunner.DeleteRemotePathAsync(svnManager.WorkingDir, targetUrl, msg);
+                await DeleteRemotePathAsync(svnManager.WorkingDir, targetUrl, msg);
 
                 svnUI.LogText.text += $"<b><color=green>[Success]</color> Remote {subFolder} '{targetName}' has been removed.</b>\n";
                 RefreshUnifiedList();
@@ -278,6 +279,37 @@ namespace SVN.Core
 
             dropdown.AddOptions(options);
             dropdown.RefreshShownValue();
+        }
+
+        public static async Task<string> SwitchAsync(string workingDir, string targetUrl, CancellationToken token = default)
+        {
+            string currentKey = SvnRunner.KeyPath;
+            string sshArgs = "-o BatchMode=yes -o StrictHostKeyChecking=no";
+
+            if (!string.IsNullOrEmpty(currentKey))
+            {
+                sshArgs = $"-i \"{currentKey}\" {sshArgs}";
+            }
+
+            // Używamy formatu --config-option dla tunelu SSH
+            string command = $"--config-option config:tunnels:ssh=\"ssh {sshArgs}\" " +
+                             $"switch \"{targetUrl}\" \"{workingDir}\" " +
+                             $"--ignore-ancestry --accept theirs-full --non-interactive";
+
+            UnityEngine.Debug.Log($"[SvnCommands] Executing Switch to: {targetUrl}");
+            return await SvnRunner.RunAsync(command, workingDir, true, token);
+        }
+
+        public static async Task<string> CopyAsync(string workingDir, string sourceUrl, string destUrl, string message)
+        {
+            string cmd = $"copy \"{sourceUrl}\" \"{destUrl}\" -m \"{message}\"";
+            return await SvnRunner.RunAsync(cmd, workingDir);
+        }
+
+        public static async Task<string> DeleteRemotePathAsync(string workingDir, string remoteUrl, string message)
+        {
+            string args = $"rm \"{remoteUrl}\" -m \"{message}\"";
+            return await SvnRunner.RunAsync(args, workingDir);
         }
     }
 }

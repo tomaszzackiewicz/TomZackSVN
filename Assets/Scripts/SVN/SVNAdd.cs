@@ -100,7 +100,7 @@ namespace SVN.Core
 
             if (filesToAdd.Count > 0)
             {
-                await SvnRunner.AddAsync(root, filesToAdd.ToArray());
+                await AddAsync(root, filesToAdd.ToArray());
                 svnUI.LogText.text += $"<color=green>Successfully added {filesToAdd.Count} files.</color>\n";
             }
             else
@@ -125,6 +125,14 @@ namespace SVN.Core
             {
                 return 0;
             }
+        }
+
+        public static async Task<string> AddAsync(string workingDir, string[] files)
+        {
+            if (files == null || files.Length == 0) return "";
+
+            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
+            return await SvnRunner.RunAsync($"add {fileArgs} --force --parents", workingDir);
         }
     }
 }

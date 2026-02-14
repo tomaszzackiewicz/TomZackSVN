@@ -200,95 +200,14 @@ namespace SVN.Core
             catch { return false; }
         }
 
-        public static async Task<string> AddAsync(string workingDir, string[] files)
-        {
-            if (files == null || files.Length == 0) return "";
-
-            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
-            return await RunAsync($"add {fileArgs} --force --parents", workingDir);
-        }
-
         public static async Task<string> LogAsync(string workingDir, int lastN = 10)
         {
             return await RunAsync($"log -l {lastN}", workingDir);
         }
-
-        public static async Task<string> CleanupAsync(string workingDir)
-        {
-            try
-            {
-                return await RunAsync("cleanup", workingDir);
-            }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogWarning($"[SvnRunner] Standard cleanup failed, trying extended version: {ex.Message}");
-
-                return await RunAsync("cleanup --include-externals", workingDir);
-            }
-        }
-
-        public static async Task<string> VacuumCleanupAsync(string workingDir)
-        {
-            try
-            {
-                return await RunAsync("cleanup --vacuum-pristines --include-externals", workingDir);
-            }
-            catch
-            {
-                return await RunAsync("cleanup", workingDir);
-            }
-        }
-
-        public static async Task<string> RevertAsync(string workingDir, string[] files)
-        {
-            if (files == null || files.Length == 0) return "No files to revert.";
-
-            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
-
-            return await RunAsync($"revert -R {fileArgs}", workingDir);
-        }
-
-        public static async Task<string> ResolveAsync(string workingDir, string[] paths, bool useMine)
-        {
-            if (paths == null || paths.Length == 0) return "No paths to resolve.";
-
-            string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
-            string strategy = useMine ? "mine-full" : "theirs-full";
-
-            string cmd = $"resolve --accept {strategy} {pathsArg}";
-            return await RunAsync(cmd, workingDir);
-        }
-
         public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
         {
             string cmd = $"add \"{path}\" --depth empty";
             return await RunAsync(cmd, workingDir);
-        }
-
-        public static async Task<string> CopyAsync(string workingDir, string sourceUrl, string destUrl, string message)
-        {
-            string cmd = $"copy \"{sourceUrl}\" \"{destUrl}\" -m \"{message}\"";
-            return await RunAsync(cmd, workingDir);
-        }
-
-        public static async Task<string> SwitchAsync(string workingDir, string targetUrl)
-        {
-            string currentKey = KeyPath;
-
-            string sshArgs = "-o BatchMode=yes -o StrictHostKeyChecking=no";
-
-            if (!string.IsNullOrEmpty(currentKey))
-            {
-                sshArgs = $"-i \"{currentKey}\" {sshArgs}";
-            }
-
-            string command = $"--config-option config:tunnels:ssh=\"ssh {sshArgs}\" " +
-                             $"switch \"{targetUrl}\" \"{workingDir}\" " +
-                             $"--ignore-ancestry --accept theirs-full --non-interactive";
-
-            UnityEngine.Debug.Log($"[SVN] Executing Switch with SSH Tunnel: {sshArgs}");
-
-            return await ExecuteAsync(command, workingDir);
         }
 
         private static async Task<string> ExecuteAsync(string command, string workingDir)
@@ -653,12 +572,6 @@ namespace SVN.Core
             return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                          .Select(s => s.TrimEnd('/'))
                          .ToArray();
-        }
-
-        public static async Task<string> DeleteRemotePathAsync(string workingDir, string remoteUrl, string message)
-        {
-            string args = $"rm \"{remoteUrl}\" -m \"{message}\"";
-            return await RunAsync(args, workingDir);
         }
 
         public static async Task<SvnStats> GetStatsAsync(string workingDir)

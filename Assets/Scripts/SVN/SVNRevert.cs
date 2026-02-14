@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace SVN.Core
@@ -39,7 +40,7 @@ namespace SVN.Core
 
                 svnUI.LogText.text += $"Reverting {filesToRevert.Length} files to their original state...\n";
 
-                await SvnRunner.RevertAsync(root, filesToRevert);
+                await RevertAsync(root, filesToRevert);
 
                 svnUI.LogText.text += $"<color=green>Success!</color> Reverted <b>{filesToRevert.Length}</b> files.\n";
 
@@ -53,6 +54,14 @@ namespace SVN.Core
             {
                 IsProcessing = false;
             }
+        }
+
+        public static async Task<string> RevertAsync(string workingDir, string[] files)
+        {
+            if (files == null || files.Length == 0) return "No files to revert.";
+
+            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
+            return await SvnRunner.RunAsync($"revert -R {fileArgs}", workingDir);
         }
     }
 }

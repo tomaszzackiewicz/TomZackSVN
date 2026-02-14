@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace SVN.Core
@@ -194,7 +195,7 @@ namespace SVN.Core
                 if (paths.Length > 0)
                 {
                     LogBoth($"Resolving {paths.Length} items using <color=orange>{strategy}</color>...\n");
-                    await SvnRunner.ResolveAsync(root, paths, useMine);
+                    await ResolveAsync(root, paths, useMine);
                     LogBoth("<color=green>Resolved!</color> Refreshing status...\n");
                     await svnManager.RefreshStatus();
                     svnManager.PanelHandler.Button_CloseResolve();
@@ -203,6 +204,16 @@ namespace SVN.Core
             }
             catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}\n"); }
             finally { IsProcessing = false; }
+        }
+
+        public static async Task<string> ResolveAsync(string workingDir, string[] paths, bool useMine)
+        {
+            if (paths == null || paths.Length == 0) return "No paths to resolve.";
+
+            string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
+            string strategy = useMine ? "mine-full" : "theirs-full";
+
+            return await SvnRunner.RunAsync($"resolve --accept {strategy} {pathsArg}", workingDir);
         }
     }
 }

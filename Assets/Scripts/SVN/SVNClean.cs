@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace SVN.Core
@@ -24,7 +25,7 @@ namespace SVN.Core
             try
             {
                 // Execute standard cleanup command
-                string output = await SvnRunner.CleanupAsync(targetPath);
+                string output = await CleanupAsync(targetPath);
 
                 svnUI.LogText.text += "<color=green>Cleanup Successful!</color>\n";
                 if (!string.IsNullOrWhiteSpace(output)) svnUI.LogText.text += output + "\n";
@@ -57,7 +58,7 @@ namespace SVN.Core
             try
             {
                 // Execute vacuum cleanup (removes unused pristine copies)
-                string output = await SvnRunner.VacuumCleanupAsync(targetPath);
+                string output = await VacuumCleanupAsync(targetPath);
 
                 svnUI.LogText.text += "<color=green>Vacuum Cleanup Successful!</color>\n";
                 if (!string.IsNullOrWhiteSpace(output)) svnUI.LogText.text += output + "\n";
@@ -119,6 +120,31 @@ namespace SVN.Core
             }
 
             return path;
+        }
+
+        public static async Task<string> CleanupAsync(string workingDir)
+        {
+            try
+            {
+                return await SvnRunner.RunAsync("cleanup", workingDir);
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[SvnCommands] Standard cleanup failed, trying extended: {ex.Message}");
+                return await SvnRunner.RunAsync("cleanup --include-externals", workingDir);
+            }
+        }
+
+        public static async Task<string> VacuumCleanupAsync(string workingDir)
+        {
+            try
+            {
+                return await SvnRunner.RunAsync("cleanup --vacuum-pristines --include-externals", workingDir);
+            }
+            catch
+            {
+                return await SvnRunner.RunAsync("cleanup", workingDir);
+            }
         }
     }
 }
