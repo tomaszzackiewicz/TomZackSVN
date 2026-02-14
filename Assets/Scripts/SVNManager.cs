@@ -31,6 +31,7 @@ namespace SVN.Core
         private string currentKey = string.Empty;
         private string mergeToolPath = string.Empty;
         private bool isProcessing = false;
+        public Dictionary<string, (string status, string size)> CurrentStatusDict { get; set; } = new Dictionary<string, (string status, string size)>();
 
         public SVNStatus SVNStatus { get; private set; }
         public SVNCommit SVNCommit { get; private set; }
@@ -431,22 +432,6 @@ namespace SVN.Core
             return match.Success ? match.Groups[1].Value : null;
         }
 
-        public Dictionary<string, (string status, string size)> CurrentStatusDict { get; set; } = new Dictionary<string, (string status, string size)>();
-
-        public static async Task<bool> CheckIfSvnInstalled()
-        {
-            try
-            {
-                string tempDir = Path.GetTempPath();
-                string result = await SvnRunner.RunAsync("--version", tempDir);
-                return result.Contains("svn, version");
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         public string GetRepoRoot()
         {
             string url = RepositoryUrl;
@@ -470,7 +455,14 @@ namespace SVN.Core
         {
             if (focus && !string.IsNullOrEmpty(workingDir) && !isProcessing)
             {
-                await RefreshStatus();
+                try
+                {
+                    await RefreshStatus();
+                }
+                catch (Exception e)
+                {
+                    svnUI.LogText.text = $"Focus refresh failed: {e.Message}";
+                }
             }
         }
     }
