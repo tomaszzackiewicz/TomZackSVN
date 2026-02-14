@@ -31,7 +31,7 @@ namespace SVN.Core
 
             try
             {
-                string output = await SvnRunner.LogAsync(root, count);
+                string output = await LogAsync(root, count);
 
                 if (string.IsNullOrWhiteSpace(output))
                 {
@@ -55,6 +55,11 @@ namespace SVN.Core
             {
                 IsProcessing = false;
             }
+        }
+
+        public static async Task<string> LogAsync(string workingDir, int lastN = 10)
+        {
+            return await SvnRunner.RunAsync($"log -l {lastN}", workingDir);
         }
 
         private async void LogToUI(string message)

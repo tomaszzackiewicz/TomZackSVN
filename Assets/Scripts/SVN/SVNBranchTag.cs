@@ -160,7 +160,7 @@ namespace SVN.Core
         private async System.Threading.Tasks.Task<bool> CanPerformSwitch()
         {
             svnUI.LogText.text += "<color=#444444>... Checking working copy safety</color>\n";
-            var stats = await SvnRunner.GetStatsAsync(svnManager.WorkingDir);
+            var stats = await GetStatsAsync(svnManager.WorkingDir);
 
             if (stats.ConflictsCount > 0)
             {
@@ -174,6 +174,31 @@ namespace SVN.Core
             }
 
             return true;
+        }
+
+        public static async Task<SvnStats> GetStatsAsync(string workingDir)
+        {
+            string output = await SvnRunner.RunAsync("status", workingDir);
+
+            SvnStats stats = new SvnStats();
+            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (string line in lines)
+            {
+                if (line.Length < 8) continue;
+                char statusChar = line[0];
+
+                switch (statusChar)
+                {
+                    case 'M': stats.ModifiedCount++; break;
+                    case 'A': stats.AddedCount++; break;
+                    case 'D': stats.DeletedCount++; break;
+                    case 'C': stats.ConflictsCount++; break;
+                    case '?': stats.NewFilesCount++; break;
+                    case 'I': stats.IgnoredCount++; break;
+                }
+            }
+            return stats;
         }
 
         private bool IsPlaceholder(string text)

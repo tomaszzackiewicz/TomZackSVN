@@ -67,7 +67,7 @@ namespace SVN.Core
                 foreach (var folderPath in foldersToAdd)
                 {
                     svnUI.LogText.text += $"Adding folder: {folderPath}\n";
-                    await SvnRunner.AddFolderOnlyAsync(root, folderPath);
+                    await AddFolderOnlyAsync(root, folderPath);
                 }
                 svnUI.LogText.text += $"<color=green>Added {foldersToAdd.Length} folders.</color>\n";
             }
@@ -75,6 +75,12 @@ namespace SVN.Core
             {
                 svnUI.LogText.text += "No new folders found.\n";
             }
+        }
+
+        public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
+        {
+            string cmd = $"add \"{path}\" --depth empty";
+            return await SvnRunner.RunAsync(cmd, workingDir);
         }
 
         private async Task AddFilesLogic()

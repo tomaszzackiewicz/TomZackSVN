@@ -52,7 +52,7 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(revision) || revision == "Unknown")
                 {
                     string infoOutput = await SvnRunner.GetInfoAsync(targetPath);
-                    revision = svnManager.ParseRevisionFromInfo(infoOutput);
+                    revision = ParseRevisionFromInfo(infoOutput);
                 }
 
                 if (svnUI.LogText != null)
@@ -81,6 +81,12 @@ namespace SVN.Core
                 IsProcessing = false;
                 _hasNewLine = false;
             }
+        }
+
+        public string ParseRevisionFromInfo(string infoOutput)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(infoOutput, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
+            return match.Success ? match.Groups[1].Value : "Unknown";
         }
 
         private async Task UpdateUILive()

@@ -167,104 +167,12 @@ namespace SVN.Core
             return outputBuilder.ToString();
         }
 
-        public static async Task<bool> CheckIfSvnInstalled()
-        {
-            try
-            {
-                string tempDir = Path.GetTempPath();
-                string result = await RunAsync("--version", tempDir);
-                return result.Contains("svn, version");
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        public static async Task<bool> CheckIfSshInstalled()
-        {
-            try
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "ssh",
-                    Arguments = "-V",
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using var p = System.Diagnostics.Process.Start(psi);
-                string output = await p.StandardError.ReadToEndAsync();
-                return output.ToLower().Contains("openssh");
-            }
-            catch { return false; }
-        }
-
-        public static async Task<string> LogAsync(string workingDir, int lastN = 10)
-        {
-            return await RunAsync($"log -l {lastN}", workingDir);
-        }
-        public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
-        {
-            string cmd = $"add \"{path}\" --depth empty";
-            return await RunAsync(cmd, workingDir);
-        }
-
-        private static async Task<string> ExecuteAsync(string command, string workingDir)
-        {
-            var tcs = new TaskCompletionSource<string>();
-
-            try
-            {
-                System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "svn",
-                    Arguments = command,
-                    WorkingDirectory = workingDir,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = System.Text.Encoding.UTF8
-                };
-
-                using (var process = new System.Diagnostics.Process { StartInfo = psi })
-                {
-                    StringBuilder output = new StringBuilder();
-                    StringBuilder error = new StringBuilder();
-
-                    process.OutputDataReceived += (s, e) => { if (e.Data != null) output.AppendLine(e.Data); };
-                    process.ErrorDataReceived += (s, e) => { if (e.Data != null) error.AppendLine(e.Data); };
-
-                    process.Start();
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-
-                    await Task.Run(() => process.WaitForExit());
-
-                    if (process.ExitCode == 0)
-                    {
-                        return output.ToString().Trim();
-                    }
-                    else
-                    {
-                        string errResult = error.ToString().Trim();
-                        return $"Error (Code {process.ExitCode}): {errResult}";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                return $"Exception: {ex.Message}";
-            }
-        }
-
         public static async Task<string> GetInfoAsync(string workingDir)
         {
             return await RunAsync("info", workingDir);
         }
 
-        private static void BuildTreeString(
+        public static void BuildTreeString(
     string currentDir,
     string rootDir,
     int indent,
@@ -412,48 +320,6 @@ namespace SVN.Core
             }
         }
 
-        public static async Task<(string tree, SvnStats stats)> GetVisualTreeWithStatsAsync(string workingDir, HashSet<string> expandedPaths, bool showIgnored = false)
-        {
-            Dictionary<string, (string status, string size)> statusDict = await GetFullStatusDictionaryAsync(workingDir, true);
-
-            var sb = new StringBuilder();
-            var stats = new SvnStats();
-
-            if (!Directory.Exists(workingDir)) return ("Path error.", stats);
-
-            HashSet<string> foldersWithRelevantContent = new HashSet<string>();
-
-            foreach (var item in statusDict)
-            {
-                string stat = item.Value.status;
-                bool isInteresting = false;
-
-                if (showIgnored)
-                {
-                    isInteresting = (stat == "I");
-                }
-                else
-                {
-                    isInteresting = !string.IsNullOrEmpty(stat) && stat != "I";
-                }
-
-                if (isInteresting)
-                {
-                    string[] parts = item.Key.Split('/');
-                    string currentFolder = "";
-                    for (int i = 0; i < parts.Length - 1; i++)
-                    {
-                        currentFolder = string.IsNullOrEmpty(currentFolder) ? parts[i] : $"{currentFolder}/{parts[i]}";
-                        foldersWithRelevantContent.Add(currentFolder);
-                    }
-                }
-            }
-
-            BuildTreeString(workingDir, workingDir, 0, statusDict, sb, stats, expandedPaths, new bool[128], showIgnored, foldersWithRelevantContent);
-
-            return (sb.ToString(), stats);
-        }
-
         public static string GetStatusIcon(string status) => status switch
         {
             "M" => "<color=#FFD700><b>[M]</b></color>",
@@ -511,7 +377,7 @@ namespace SVN.Core
             return statusDict;
         }
 
-        private static string GetFileSizeSafe(string fullPath)
+        public static string GetFileSizeSafe(string fullPath)
         {
             if (Directory.Exists(fullPath) || !File.Exists(fullPath)) return "";
 
@@ -574,32 +440,7 @@ namespace SVN.Core
                          .ToArray();
         }
 
-        public static async Task<SvnStats> GetStatsAsync(string workingDir)
-        {
-            string output = await RunAsync("status", workingDir);
-
-            SvnStats stats = new SvnStats();
-            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (string line in lines)
-            {
-                if (line.Length < 8) continue;
-                char statusChar = line[0];
-
-                switch (statusChar)
-                {
-                    case 'M': stats.ModifiedCount++; break;
-                    case 'A': stats.AddedCount++; break;
-                    case 'D': stats.DeletedCount++; break;
-                    case 'C': stats.ConflictsCount++; break;
-                    case '?': stats.NewFilesCount++; break;
-                    case 'I': stats.IgnoredCount++; break;
-                }
-            }
-            return stats;
-        }
-
-        private static string CleanSvnPath(string path)
+        public static string CleanSvnPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return "";
             string p = path.Replace('\\', '/').Trim('/');
@@ -614,107 +455,6 @@ namespace SVN.Core
             }
 
             return p;
-        }
-
-        public static async Task<Dictionary<string, (string status, string size)>> GetChangesDictionaryAsync(string workingDir)
-        {
-            string output = await RunAsync("status", workingDir);
-            var statusDict = new Dictionary<string, (string status, string size)>();
-
-            if (string.IsNullOrEmpty(output)) return statusDict;
-
-            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
-            {
-                if (line.Length < 8) continue;
-
-                char rawCode = line[0];
-                string stat = rawCode.ToString().ToUpper();
-
-                if ("MA?!DC".Contains(stat))
-                {
-                    string rawPath = line.Substring(8).Trim();
-                    string cleanPath = CleanSvnPath(rawPath);
-
-                    string fullPath = Path.Combine(workingDir, cleanPath);
-                    statusDict[cleanPath] = (stat, GetFileSizeSafe(fullPath));
-                }
-            }
-            return statusDict;
-        }
-
-        public static async Task<Dictionary<string, (string status, string size)>> GetIgnoredOnlyAsync(string workingDir)
-        {
-            string output = await RunAsync("status --no-ignore", workingDir);
-            var ignoredDict = new Dictionary<string, (string status, string size)>();
-
-            if (string.IsNullOrEmpty(output)) return ignoredDict;
-
-            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
-            {
-                if (line.Length < 8) continue;
-
-                if (line[0] == 'I')
-                {
-                    string rawPath = line.Substring(8).Trim();
-                    string cleanPath = CleanSvnPath(rawPath);
-
-                    ignoredDict[cleanPath] = ("I", "<IGNORED>");
-                }
-            }
-            return ignoredDict;
-        }
-
-        public static async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir)
-        {
-            List<string> rules = new List<string>();
-            try
-            {
-                string globalOutput = await RunAsync("propget svn:global-ignores -R .", workingDir);
-                string standardOutput = await RunAsync("propget svn:ignore -R .", workingDir);
-
-                string combinedOutput = globalOutput + "\n" + standardOutput;
-
-                if (string.IsNullOrEmpty(combinedOutput) || combinedOutput.Contains("ERROR"))
-                    return rules;
-
-                string[] lines = combinedOutput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var line in lines)
-                {
-                    string pattern = line;
-                    if (line.Contains(" - "))
-                    {
-                        var parts = line.Split(new[] { " - " }, StringSplitOptions.None);
-                        pattern = parts.Length > 1 ? parts[1] : parts[0];
-                    }
-
-                    string trimmed = pattern.Trim();
-                    if (!string.IsNullOrEmpty(trimmed) && !trimmed.Contains(" ") && !rules.Contains(trimmed))
-                    {
-                        rules.Add(trimmed);
-                    }
-                }
-            }
-            catch (Exception e) { UnityEngine.Debug.LogError(e.Message); }
-            return rules;
-        }
-
-        public static async Task<bool> SetSvnGlobalIgnorePropertyAsync(string workingDir, string rulesRawText)
-        {
-            string tempFilePath = Path.Combine(workingDir, "temp_global_ignore.txt");
-            File.WriteAllText(tempFilePath, rulesRawText.Replace("\r\n", "\n"));
-
-            string result = await RunAsync($"propset svn:global-ignores -F \"{tempFilePath}\" .", workingDir);
-
-            if (File.Exists(tempFilePath)) File.Delete(tempFilePath);
-
-            if (result.StartsWith("ERROR"))
-            {
-                UnityEngine.Debug.LogError(result);
-                return false;
-            }
-            return true;
         }
 
         public static async Task<string> GetCommitSizeReportAsync(string workingDir)

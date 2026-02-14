@@ -62,10 +62,10 @@ namespace SVN.Core
             try
             {
                 var statusDict = _isCurrentViewIgnored
-                    ? await SvnRunner.GetIgnoredOnlyAsync(root)
-                    : await SvnRunner.GetChangesDictionaryAsync(root);
+                    ? await GetIgnoredOnlyAsync(root)
+                    : await GetChangesDictionaryAsync(root);
 
-                svnManager.UpdateFilesStatus(statusDict);
+                UpdateFilesStatus(statusDict);
 
                 if (statusDict == null || statusDict.Count == 0)
                 {
@@ -77,7 +77,7 @@ namespace SVN.Core
                     if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = emptyMsg;
                     if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Size: 0 KB";
 
-                    svnManager.UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
+                    UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
                     LogSmart("<color=green>Workspace is clean.</color>\n", false);
                     return;
                 }
@@ -106,13 +106,13 @@ namespace SVN.Core
                     svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes: {report}</color>\n";
                 }
 
-                var result = await SvnRunner.GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
+                var result = await GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
                 string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
 
                 if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
                 if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = treeResult;
 
-                svnManager.UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
+                UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
                 LogSmart("<color=green>Refresh finished.</color>\n", false);
             }
             catch (Exception ex)
@@ -125,6 +125,115 @@ namespace SVN.Core
             {
                 IsProcessing = false;
             }
+        }
+
+        public void UpdateFilesStatus(Dictionary<string, (string status, string size)> newStatus)
+        {
+            if (newStatus == null) return;
+
+            svnManager.CurrentStatusDict = newStatus;
+        }
+
+        public void UpdateAllStatisticsUI(SvnStats stats, bool isIgnoredView)
+        {
+            if (svnUI == null) return;
+
+            if (svnUI.StatsText != null)
+            {
+                if (isIgnoredView)
+                {
+                    svnUI.StatsText.text = $"<color=#444444><b>VIEW: IGNORED</b></color> | " +
+                                           $"Folders: {stats.IgnoredFolderCount} | " +
+                                           $"Files: {stats.IgnoredFileCount} | " +
+                                           $"Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>";
+                }
+                else
+                {
+                    svnUI.StatsText.text =
+                                           $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | " +
+                                           $"<color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | " +
+                                           $"<color=#00FF00>Add (A): {stats.AddedCount}</color> | " +
+                                           $"<color=#00E5FF>New (?): {stats.NewFilesCount}</color> | " +
+                                           $"<color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | " + // Zmieniono etykietę
+                                           $"<color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
+                }
+            }
+
+            if (svnUI.CommitStatsText != null)
+            {
+                if (isIgnoredView)
+                {
+                    svnUI.CommitStatsText.text = "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>";
+                }
+                else
+                {
+                    int totalToCommit = stats.ModifiedCount + stats.AddedCount + stats.NewFilesCount + stats.DeletedCount;
+
+                    string conflictPart = "";
+                    if (stats.ConflictsCount > 0)
+                    {
+                        conflictPart = $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>";
+                    }
+
+                    svnUI.CommitStatsText.text = $"<b>Pending Changes:</b> " +
+                        $"<color=#FFD700>M: {stats.ModifiedCount}</color> | " +
+                        $"<color=#00FF00>A: {stats.AddedCount}</color> | " +
+                        $"<color=#00E5FF>?: {stats.NewFilesCount}</color> | " +
+                        $"<color=#FF4444>D/!: {stats.DeletedCount}</color> | " +
+                        $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>" +
+                        conflictPart;
+                }
+            }
+        }
+
+        public static async Task<Dictionary<string, (string status, string size)>> GetChangesDictionaryAsync(string workingDir)
+        {
+            string output = await SvnRunner.RunAsync("status", workingDir);
+            var statusDict = new Dictionary<string, (string status, string size)>();
+
+            if (string.IsNullOrEmpty(output)) return statusDict;
+
+            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                if (line.Length < 8) continue;
+
+                char rawCode = line[0];
+                string stat = rawCode.ToString().ToUpper();
+
+                if ("MA?!DC".Contains(stat))
+                {
+                    string rawPath = line.Substring(8).Trim();
+                    string cleanPath = SvnRunner.CleanSvnPath(rawPath);
+
+                    string fullPath = Path.Combine(workingDir, cleanPath);
+                    statusDict[cleanPath] = (stat, SvnRunner.GetFileSizeSafe(fullPath));
+                }
+            }
+            return statusDict;
+        }
+
+        public static async Task<Dictionary<string, (string status, string size)>> GetIgnoredOnlyAsync(string workingDir)
+        {
+            string output = await SvnRunner.RunAsync("status --no-ignore", workingDir);
+            var ignoredDict = new Dictionary<string, (string status, string size)>();
+
+            if (string.IsNullOrEmpty(output)) return ignoredDict;
+
+            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                if (line.Length < 8) continue;
+
+                if (line[0] == 'I')
+                {
+                    string rawPath = line.Substring(8).Trim();
+                    string cleanPath = SvnRunner.CleanSvnPath(rawPath);
+
+                    ignoredDict[cleanPath] = ("I", "<IGNORED>");
+                }
+            }
+            return ignoredDict;
         }
 
         private void AddParentFoldersToExpanded(string filePath)
@@ -224,7 +333,7 @@ namespace SVN.Core
                 sb.AppendLine("--------------------------------------------------\n");
             }
 
-            List<string> activeRules = await SvnRunner.GetIgnoreRulesFromSvnAsync(root);
+            List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root);
 
             if (_cachedIgnoreRules != null)
             {
@@ -285,6 +394,40 @@ namespace SVN.Core
             }
         }
 
+        public static async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir)
+        {
+            List<string> rules = new List<string>();
+            try
+            {
+                string globalOutput = await SvnRunner.RunAsync("propget svn:global-ignores -R .", workingDir);
+                string standardOutput = await SvnRunner.RunAsync("propget svn:ignore -R .", workingDir);
+
+                string combinedOutput = globalOutput + "\n" + standardOutput;
+
+                if (string.IsNullOrEmpty(combinedOutput) || combinedOutput.Contains("ERROR"))
+                    return rules;
+
+                string[] lines = combinedOutput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
+                {
+                    string pattern = line;
+                    if (line.Contains(" - "))
+                    {
+                        var parts = line.Split(new[] { " - " }, StringSplitOptions.None);
+                        pattern = parts.Length > 1 ? parts[1] : parts[0];
+                    }
+
+                    string trimmed = pattern.Trim();
+                    if (!string.IsNullOrEmpty(trimmed) && !trimmed.Contains(" ") && !rules.Contains(trimmed))
+                    {
+                        rules.Add(trimmed);
+                    }
+                }
+            }
+            catch (Exception e) { UnityEngine.Debug.LogError(e.Message); }
+            return rules;
+        }
+
         private bool IsMatch(string text, string pattern)
         {
             if (string.IsNullOrEmpty(pattern)) return false;
@@ -306,13 +449,30 @@ namespace SVN.Core
             }
 
             string rules = File.ReadAllText(ignoreFilePath);
-            bool success = await SvnRunner.SetSvnGlobalIgnorePropertyAsync(root, rules);
+            bool success = await SetSvnGlobalIgnorePropertyAsync(root, rules);
 
             if (success)
             {
                 UpdateStatusInUI("SUCCESS: Global ignores set. Commit the root folder.");
                 _ = RefreshIgnoredPanelAsync();
             }
+        }
+
+        public static async Task<bool> SetSvnGlobalIgnorePropertyAsync(string workingDir, string rulesRawText)
+        {
+            string tempFilePath = Path.Combine(workingDir, "temp_global_ignore.txt");
+            File.WriteAllText(tempFilePath, rulesRawText.Replace("\r\n", "\n"));
+
+            string result = await SvnRunner.RunAsync($"propset svn:global-ignores -F \"{tempFilePath}\" .", workingDir);
+
+            if (File.Exists(tempFilePath)) File.Delete(tempFilePath);
+
+            if (result.StartsWith("ERROR"))
+            {
+                UnityEngine.Debug.LogError(result);
+                return false;
+            }
+            return true;
         }
 
         private void UpdateStatusInUI(string message)
@@ -357,7 +517,7 @@ namespace SVN.Core
                     }
 
                     var infoTask = SvnRunner.GetInfoAsync(path);
-                    var sizeTask = svnManager.GetFolderSizeAsync(path);
+                    var sizeTask = GetFolderSizeAsync(path);
                     await Task.WhenAll(infoTask, sizeTask);
 
                     rawInfo = infoTask.Result;
@@ -428,6 +588,28 @@ namespace SVN.Core
                 $"<color=#E6E6E6>SVN: {_svnVersionCached}</color>";
         }
 
+        public async Task<string> GetFolderSizeAsync(string path)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    DirectoryInfo dir = new DirectoryInfo(path);
+                    if (!dir.Exists) return "0 GB";
+
+                    long bytes = dir.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
+                    double gigabytes = (double)bytes / (1024 * 1024 * 1024);
+
+                    return $"{gigabytes:F2} GB";
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Size calculation error: {ex.Message}");
+                    return "Size unknown";
+                }
+            });
+        }
+
         private async Task EnsureVersionCached()
         {
             if (string.IsNullOrEmpty(_svnVersionCached))
@@ -460,6 +642,48 @@ namespace SVN.Core
                 }
             }
             return "unknown";
+        }
+
+        public static async Task<(string tree, SvnStats stats)> GetVisualTreeWithStatsAsync(string workingDir, HashSet<string> expandedPaths, bool showIgnored = false)
+        {
+            Dictionary<string, (string status, string size)> statusDict = await SvnRunner.GetFullStatusDictionaryAsync(workingDir, true);
+
+            var sb = new StringBuilder();
+            var stats = new SvnStats();
+
+            if (!Directory.Exists(workingDir)) return ("Path error.", stats);
+
+            HashSet<string> foldersWithRelevantContent = new HashSet<string>();
+
+            foreach (var item in statusDict)
+            {
+                string stat = item.Value.status;
+                bool isInteresting = false;
+
+                if (showIgnored)
+                {
+                    isInteresting = (stat == "I");
+                }
+                else
+                {
+                    isInteresting = !string.IsNullOrEmpty(stat) && stat != "I";
+                }
+
+                if (isInteresting)
+                {
+                    string[] parts = item.Key.Split('/');
+                    string currentFolder = "";
+                    for (int i = 0; i < parts.Length - 1; i++)
+                    {
+                        currentFolder = string.IsNullOrEmpty(currentFolder) ? parts[i] : $"{currentFolder}/{parts[i]}";
+                        foldersWithRelevantContent.Add(currentFolder);
+                    }
+                }
+            }
+
+            SvnRunner.BuildTreeString(workingDir, workingDir, 0, statusDict, sb, stats, expandedPaths, new bool[128], showIgnored, foldersWithRelevantContent);
+
+            return (sb.ToString(), stats);
         }
     }
 }

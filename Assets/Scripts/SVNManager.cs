@@ -213,28 +213,6 @@ namespace SVN.Core
             }
         }
 
-        public async Task<string> GetFolderSizeAsync(string path)
-        {
-            return await Task.Run(() =>
-            {
-                try
-                {
-                    DirectoryInfo dir = new DirectoryInfo(path);
-                    if (!dir.Exists) return "0 GB";
-
-                    long bytes = dir.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
-                    double gigabytes = (double)bytes / (1024 * 1024 * 1024);
-
-                    return $"{gigabytes:F2} GB";
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"Size calculation error: {ex.Message}");
-                    return "Size unknown";
-                }
-            });
-        }
-
         public async Task SetWorkingDirectory(string path)
         {
             if (string.IsNullOrEmpty(path)) return;
@@ -269,34 +247,6 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 Debug.LogWarning("[SVN] Could not fetch URL from disk: " + ex.Message);
-            }
-        }
-
-        public void MigrateOldSettingsToJSON()
-        {
-            if (PlayerPrefs.HasKey(KEY_WORKING_DIR))
-            {
-                string oldDir = PlayerPrefs.GetString(KEY_WORKING_DIR);
-
-                List<SVNProject> projects = ProjectSettings.LoadProjects();
-                if (projects.Exists(p => p.workingDir == oldDir)) return;
-
-                string oldUrl = PlayerPrefs.GetString(KEY_REPO_URL, "");
-                string oldKey = PlayerPrefs.GetString(KEY_SSH_PATH, "");
-
-                SVNProject legacyProject = new SVNProject
-                {
-                    projectName = "Imported Project",
-                    workingDir = oldDir,
-                    repoUrl = oldUrl,
-                    privateKeyPath = oldKey,
-                    lastOpened = System.DateTime.Now
-                };
-
-                projects.Add(legacyProject);
-                ProjectSettings.SaveProjects(projects);
-
-                Debug.Log("[SVN] Successfully migrated old settings to JSON.");
             }
         }
 
@@ -413,55 +363,6 @@ namespace SVN.Core
                 svnUI.LoadRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
         }
 
-        public async Task RunDiagnostics()
-        {
-            if (svnUI == null || svnUI.LogText == null)
-            {
-                Debug.LogError("[SVN Manager] SVNUI or LogText reference is missing. Diagnostics cannot be displayed.");
-                return;
-            }
-
-            if (!string.IsNullOrEmpty(CurrentKey))
-            {
-                SvnRunner.KeyPath = CurrentKey;
-            }
-            else
-            {
-                Debug.LogWarning("[SVN Manager] No SSH Key path found in Manager. SSH operations may fail.");
-            }
-
-            svnUI.LogText.text = "<b>[SYSTEM DIAGNOSTICS]</b>\n";
-            svnUI.LogText.text += $"Working Dir: <color=#444444>{WorkingDir}</color>\n";
-
-            try
-            {
-                bool svnOk = await SvnRunner.CheckIfSvnInstalled();
-                svnUI.LogText.text += svnOk
-                    ? "<color=green>SVN CLI:</color> Found\n"
-                    : "<color=red>SVN CLI:</color> Missing (Add to PATH!)\n";
-
-                bool sshOk = await SvnRunner.CheckIfSshInstalled();
-                svnUI.LogText.text += sshOk
-                    ? "<color=green>OpenSSH:</color> Found\n"
-                    : "<color=red>OpenSSH:</color> Missing!\n";
-
-                if (!string.IsNullOrEmpty(CurrentKey))
-                {
-                    bool keyExists = System.IO.File.Exists(CurrentKey);
-                    svnUI.LogText.text += keyExists
-                        ? "<color=green>SSH Key:</color> File verified\n"
-                        : "<color=orange>SSH Key:</color> Path set but file not found!\n";
-                }
-
-                svnUI.LogText.text += "-----------------------------------\n";
-            }
-            catch (System.Exception ex)
-            {
-                svnUI.LogText.text += $"<color=red>Diagnostics Error:</color> {ex.Message}\n";
-                Debug.LogError($"[SVN] Diagnostics failed: {ex}");
-            }
-        }
-
         public async Task RefreshStatus()
         {
             if (string.IsNullOrEmpty(WorkingDir))
@@ -530,70 +431,19 @@ namespace SVN.Core
             return match.Success ? match.Groups[1].Value : null;
         }
 
-        public string ParseRevisionFromInfo(string infoOutput)
+        public Dictionary<string, (string status, string size)> CurrentStatusDict { get; set; } = new Dictionary<string, (string status, string size)>();
+
+        public static async Task<bool> CheckIfSvnInstalled()
         {
-            var match = System.Text.RegularExpressions.Regex.Match(infoOutput, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
-            return match.Success ? match.Groups[1].Value : "Unknown";
-        }
-
-        public Dictionary<string, (string status, string size)> CurrentStatusDict { get; private set; } = new Dictionary<string, (string status, string size)>();
-
-        public void UpdateFilesStatus(Dictionary<string, (string status, string size)> newStatus)
-        {
-            if (newStatus == null) return;
-
-            CurrentStatusDict = newStatus;
-        }
-
-        public void UpdateAllStatisticsUI(SvnStats stats, bool isIgnoredView)
-        {
-            if (svnUI == null) return;
-
-            if (svnUI.StatsText != null)
+            try
             {
-                if (isIgnoredView)
-                {
-                    svnUI.StatsText.text = $"<color=#444444><b>VIEW: IGNORED</b></color> | " +
-                                           $"Folders: {stats.IgnoredFolderCount} | " +
-                                           $"Files: {stats.IgnoredFileCount} | " +
-                                           $"Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>";
-                }
-                else
-                {
-                    svnUI.StatsText.text =
-                                           $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | " +
-                                           $"<color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | " +
-                                           $"<color=#00FF00>Add (A): {stats.AddedCount}</color> | " +
-                                           $"<color=#00E5FF>New (?): {stats.NewFilesCount}</color> | " +
-                                           $"<color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | " + // Zmieniono etykietę
-                                           $"<color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
-                }
+                string tempDir = Path.GetTempPath();
+                string result = await SvnRunner.RunAsync("--version", tempDir);
+                return result.Contains("svn, version");
             }
-
-            if (svnUI.CommitStatsText != null)
+            catch
             {
-                if (isIgnoredView)
-                {
-                    svnUI.CommitStatsText.text = "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>";
-                }
-                else
-                {
-                    int totalToCommit = stats.ModifiedCount + stats.AddedCount + stats.NewFilesCount + stats.DeletedCount;
-
-                    string conflictPart = "";
-                    if (stats.ConflictsCount > 0)
-                    {
-                        conflictPart = $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>";
-                    }
-
-                    svnUI.CommitStatsText.text = $"<b>Pending Changes:</b> " +
-                        $"<color=#FFD700>M: {stats.ModifiedCount}</color> | " +
-                        $"<color=#00FF00>A: {stats.AddedCount}</color> | " +
-                        $"<color=#00E5FF>?: {stats.NewFilesCount}</color> | " +
-                        $"<color=#FF4444>D/!: {stats.DeletedCount}</color> | " +
-                        $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>" +
-                        conflictPart;
-                }
+                return false;
             }
         }
 
