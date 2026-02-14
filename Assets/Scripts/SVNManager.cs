@@ -1,11 +1,8 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
-using System.Xml;
 using UnityEngine;
 
 namespace SVN.Core
@@ -19,19 +16,26 @@ namespace SVN.Core
         public const string KEY_MERGE_TOOL = "SVN_Persisted_MergeTool";
         public const string KEY_REPO_URL = "SVN_Persisted_RepositoryURL";
 
+        [Header("UI References")]
         [SerializeField] private SVNUI svnUI = null;
         [SerializeField] private GameObject loadingOverlay = null;
         [SerializeField] private PanelHandler panelHandler = null;
         [SerializeField] private GameObject mainUIPanel;
         [SerializeField] private ProjectSelectionPanel projectSelectionPanel;
 
+        public PanelHandler PanelHandler => panelHandler;
+        public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
+        public GameObject MainUIPanel => mainUIPanel;
+
         private string currentUserName = "Unknown";
-        public HashSet<string> expandedPaths = new HashSet<string>();
         private string workingDir = string.Empty;
         private string currentKey = string.Empty;
         private string mergeToolPath = string.Empty;
         private bool isProcessing = false;
+
+        public HashSet<string> ExpandedPaths { get; set; } = new HashSet<string>();
         public Dictionary<string, (string status, string size)> CurrentStatusDict { get; set; } = new Dictionary<string, (string status, string size)>();
+        public string RepositoryUrl { get; set; } = string.Empty;
 
         public SVNStatus SVNStatus { get; private set; }
         public SVNCommit SVNCommit { get; private set; }
@@ -52,63 +56,25 @@ namespace SVN.Core
         public SVNLock SVNLock { get; private set; }
         public SVNShelve SVNShelve { get; private set; }
 
-        public string RepositoryUrl { get; set; } = string.Empty;
-        public GameObject MainUIPanel => mainUIPanel;
-        public PanelHandler PanelHandler => panelHandler;
-        public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
-
-        public string CurrentUserName
-        {
-            get
-            {
-                return currentUserName;
-            }
-        }
-
-        public bool IsProcessing
-        {
-            get => isProcessing;
-            set => isProcessing = value;
-        }
-
-        public string WorkingDir
-        {
-            get => workingDir;
-            set
-            {
-                workingDir = value;
-            }
-        }
-
-        public string CurrentKey
-        {
-            get => currentKey;
-            set => currentKey = value;
-        }
-
-        public string MergeToolPath
-        {
-            get => mergeToolPath;
-            set => mergeToolPath = value;
-        }
-
-        public HashSet<string> ExpandedPaths
-        {
-            get => expandedPaths;
-            set => expandedPaths = value;
-        }
+        public string CurrentUserName => currentUserName;
+        public bool IsProcessing { get => isProcessing; set => isProcessing = value; }
+        public string WorkingDir { get => workingDir; set => workingDir = value; }
+        public string CurrentKey { get => currentKey; set => currentKey = value; }
+        public string MergeToolPath { get => mergeToolPath; set => mergeToolPath = value; }
 
         private void Awake()
         {
             if (Instance != null && Instance != this)
             {
-                gameObject.hideFlags = HideFlags.HideAndDontSave;
-                this.enabled = false;
                 DestroyImmediate(gameObject);
                 return;
             }
             Instance = this;
+            InitializeModules();
+        }
 
+        private void InitializeModules()
+        {
             SVNStatus = new SVNStatus(svnUI, this);
             SVNCommit = new SVNCommit(svnUI, this);
             SVNAdd = new SVNAdd(svnUI, this);
@@ -129,326 +95,171 @@ namespace SVN.Core
             SVNShelve = new SVNShelve(svnUI, this);
         }
 
+        public string GetRepoRoot() => SVNAssetLocator.GetRepoRoot(RepositoryUrl);
+        public string ParseRevision(string input) => SVNAssetLocator.ParseRevision(input);
+
+        public async Task SetWorkingDirectory(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            WorkingDir = SVNAssetLocator.NormalizePath(path);
+            Debug.Log($"[SVN] Working Directory set to: {WorkingDir}");
+            await RefreshRepositoryInfo();
+        }
+
         private async void Start()
         {
             if (svnUI == null) return;
-
             SetupInputListeners();
 
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
-            var allProjects = ProjectSettings.LoadProjects();
-            var lastProject = allProjects.Find(p => p.workingDir == lastPath);
+            var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
 
             if (lastProject != null)
             {
-                SVNStatus.ShowProjectInfo(lastProject, lastPath);
                 LoadProject(lastProject);
-
-                if (projectSelectionPanel != null) projectSelectionPanel.gameObject.SetActive(false);
+                projectSelectionPanel?.gameObject.SetActive(false);
             }
             else
             {
-                if (projectSelectionPanel != null)
-                {
-                    projectSelectionPanel.gameObject.SetActive(true);
-                    projectSelectionPanel.RefreshList();
-                }
+                projectSelectionPanel?.gameObject.SetActive(true);
+                projectSelectionPanel?.RefreshList();
             }
         }
 
         public async Task<string> AutoDetectSvnUser()
         {
             currentUserName = "Detecting...";
+            if (string.IsNullOrEmpty(WorkingDir)) return currentUserName = "Unknown";
 
-            if (string.IsNullOrEmpty(WorkingDir))
-            {
-                currentUserName = "Unknown";
-                return currentUserName;
-            }
-
-            if (!Directory.Exists(Path.Combine(WorkingDir, ".svn")))
-            {
-                currentUserName = Environment.UserName.ToLower();
-                return currentUserName;
-            }
+            if (!SVNAssetLocator.IsWorkingCopy(WorkingDir))
+                return currentUserName = Environment.UserName.ToLower();
 
             try
             {
                 string xmlOutput = await SvnRunner.RunAsync("info --xml", WorkingDir, false);
-                if (!string.IsNullOrEmpty(xmlOutput))
-                {
-                    XmlDocument doc = new XmlDocument();
-                    doc.LoadXml(xmlOutput);
-
-                    XmlNode urlNode = doc.SelectSingleNode("//url");
-                    if (urlNode != null)
-                    {
-                        string fullUrl = urlNode.InnerText;
-                        var match = System.Text.RegularExpressions.Regex.Match(fullUrl, @"://([^@/]+)@");
-                        if (match.Success)
-                        {
-                            currentUserName = match.Groups[1].Value.Trim();
-                            return currentUserName;
-                        }
-                    }
-                }
+                string detected = SVNAssetLocator.ExtractUserFromUrl(xmlOutput);
+                if (!string.IsNullOrEmpty(detected)) return currentUserName = detected;
 
                 string authOutput = await SvnRunner.RunAsync("auth", WorkingDir, false);
-                string[] lines = authOutput.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-                foreach (var line in lines)
-                {
-                    if (line.Trim().StartsWith("Username:"))
-                    {
-                        currentUserName = line.Replace("Username:", "").Trim();
-                        return currentUserName;
-                    }
-                }
+                var userLine = authOutput.Split('\n').FirstOrDefault(l => l.Trim().StartsWith("Username:"));
+                if (userLine != null) return currentUserName = userLine.Replace("Username:", "").Trim();
+            }
+            catch { }
 
-                currentUserName = Environment.UserName.ToLower();
-                return currentUserName;
-            }
-            catch (Exception ex)
-            {
-                currentUserName = Environment.UserName.ToLower();
-                return currentUserName;
-            }
+            return currentUserName = Environment.UserName.ToLower();
         }
 
-        public async Task SetWorkingDirectory(string path)
+        public void LoadProject(SVNProject project)
         {
-            if (string.IsNullOrEmpty(path)) return;
+            WorkingDir = SVNAssetLocator.NormalizePath(project.workingDir);
+            RepositoryUrl = project.repoUrl;
+            CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
+            MergeToolPath = SVNAssetLocator.NormalizePath(project.mergeToolPath);
+            SvnRunner.KeyPath = CurrentKey;
 
-            workingDir = path;
-            WorkingDir = path;
+            SyncUIToCurrentState();
+            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
+            PlayerPrefs.Save();
 
-            Debug.Log($"[SVN] Working Directory set to: {path}");
+            if (Directory.Exists(WorkingDir)) InitializeActiveProject(project);
+        }
 
+        private async void InitializeActiveProject(SVNProject project)
+        {
+            await AutoDetectSvnUser();
+            SVNStatus.ShowProjectInfo(project, WorkingDir);
             await RefreshRepositoryInfo();
+            await RefreshStatus();
+        }
+
+        private void SyncUIToCurrentState()
+        {
+            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
+            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
+            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
+            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
+        }
+
+        public async Task RefreshStatus()
+        {
+            if (string.IsNullOrEmpty(WorkingDir) || isProcessing) return;
+
+            try
+            {
+                await SVNStatus.ExecuteRefreshWithAutoExpand();
+                LogToUI("[SVN] Status refresh finished.", "green");
+
+                var conflicted = CurrentStatusDict.Values.Count(v => v.status.Contains("C"));
+                if (conflicted > 0)
+                {
+                    LogToUI($"[SVN] Found {conflicted} conflicts!", "orange");
+                    panelHandler?.Button_OpenResolve();
+                }
+            }
+            catch (Exception e) { LogToUI($"[SVN] Error: {e.Message}", "red"); }
+        }
+
+        private void LogToUI(string message, string color)
+        {
+            if (svnUI?.LogText != null)
+                svnUI.LogText.text += $"<color={color}>{message}</color>\n";
+        }
+
+        public void BroadcastWorkingDirChange(string path)
+        {
+            WorkingDir = SVNAssetLocator.NormalizePath(path);
+            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
+            svnUI.CheckoutDestFolderInput?.SetTextWithoutNotify(WorkingDir);
+            svnUI.LoadDestFolderInput?.SetTextWithoutNotify(WorkingDir);
+        }
+
+        public void BroadcastSshKeyChange(string newKeyPath)
+        {
+            CurrentKey = SVNAssetLocator.NormalizePath(newKeyPath);
+            SvnRunner.KeyPath = CurrentKey;
+            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
+            svnUI.CheckoutPrivateKeyInput?.SetTextWithoutNotify(CurrentKey);
+            svnUI.LoadPrivateKeyInput?.SetTextWithoutNotify(CurrentKey);
+        }
+
+        public void BroadcastUrlChange(string newUrl)
+        {
+            RepositoryUrl = newUrl.Trim();
+            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
+            svnUI.CheckoutRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
+            svnUI.LoadRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
         }
 
         public async Task RefreshRepositoryInfo()
         {
-            if (string.IsNullOrEmpty(WorkingDir) || !Directory.Exists(WorkingDir)) return;
-
-            try
+            if (!SVNAssetLocator.IsWorkingCopy(WorkingDir)) return;
+            string url = await SvnRunner.GetRepoUrlAsync(WorkingDir);
+            if (!string.IsNullOrEmpty(url))
             {
-                string url = await SvnRunner.GetRepoUrlAsync(WorkingDir);
-
-                if (!string.IsNullOrWhiteSpace(url) && !url.Contains("not a working copy"))
-                {
-                    this.RepositoryUrl = url.Trim();
-                    Debug.Log($"[SVN] URL metadata synced: {RepositoryUrl}");
-
-                    if (svnUI != null && svnUI.SettingsRepoUrlInput != null)
-                    {
-                        svnUI.SettingsRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning("[SVN] Could not fetch URL from disk: " + ex.Message);
+                RepositoryUrl = url.Trim();
+                svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
             }
         }
 
         private void SetupInputListeners()
         {
-            svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(val =>
-            {
-                string cleaned = val.Trim();
-                BroadcastUrlChange(cleaned);
-                UpdateCurrentProjectData();
-            });
-
-            svnUI.SettingsSshKeyPathInput?.onValueChanged.AddListener(val =>
-            {
-                string cleaned = val.Trim();
-                BroadcastSshKeyChange(cleaned);
-                UpdateCurrentProjectData();
-            });
-
-            svnUI.SettingsWorkingDirInput?.onValueChanged.AddListener(val =>
-            {
-                string cleaned = val.Trim();
-                BroadcastWorkingDirChange(cleaned);
-                UpdateCurrentProjectData();
-            });
-
-            svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(val =>
-            {
-                this.MergeToolPath = val.Trim();
-                UpdateCurrentProjectData();
-            });
+            svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(v => { BroadcastUrlChange(v); UpdateCurrentProjectData(); });
+            svnUI.SettingsSshKeyPathInput?.onValueChanged.AddListener(v => { BroadcastSshKeyChange(v); UpdateCurrentProjectData(); });
+            svnUI.SettingsWorkingDirInput?.onValueChanged.AddListener(v => { BroadcastWorkingDirChange(v); UpdateCurrentProjectData(); });
+            svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(v => { MergeToolPath = v.Trim(); UpdateCurrentProjectData(); });
         }
 
         private void UpdateCurrentProjectData()
         {
-            List<SVNProject> projects = ProjectSettings.LoadProjects();
-            var current = projects.Find(p => p.workingDir == this.WorkingDir);
-
+            var projects = ProjectSettings.LoadProjects();
+            var current = projects.Find(p => p.workingDir == WorkingDir);
             if (current != null)
             {
-                current.repoUrl = this.RepositoryUrl;
-                current.privateKeyPath = this.CurrentKey;
-                current.mergeToolPath = this.MergeToolPath;
-
+                current.repoUrl = RepositoryUrl;
+                current.privateKeyPath = CurrentKey;
+                current.mergeToolPath = MergeToolPath;
                 ProjectSettings.SaveProjects(projects);
             }
-        }
-
-        public async void LoadProject(SVNProject project)
-        {
-            this.WorkingDir = project.workingDir;
-            this.RepositoryUrl = project.repoUrl;
-            this.CurrentKey = project.privateKeyPath;
-            this.MergeToolPath = project.mergeToolPath;
-            SvnRunner.KeyPath = this.CurrentKey;
-
-            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
-            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
-            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
-            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
-
-            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
-            PlayerPrefs.Save();
-
-            if (Directory.Exists(WorkingDir))
-            {
-                await AutoDetectSvnUser();
-                SVNStatus.ShowProjectInfo(project, WorkingDir);
-                await RefreshRepositoryInfo();
-                await RefreshStatus();
-            }
-        }
-
-        public void BroadcastWorkingDirChange(string newPath)
-        {
-            this.WorkingDir = newPath.Replace("\\", "/");
-
-            if (svnUI.SettingsWorkingDirInput != null)
-                svnUI.SettingsWorkingDirInput.SetTextWithoutNotify(this.WorkingDir);
-
-            if (svnUI.CheckoutDestFolderInput != null)
-                svnUI.CheckoutDestFolderInput.SetTextWithoutNotify(this.WorkingDir);
-
-            if (svnUI.LoadDestFolderInput != null)
-                svnUI.LoadDestFolderInput.SetTextWithoutNotify(this.WorkingDir);
-        }
-
-        public void BroadcastSshKeyChange(string newKeyPath)
-        {
-            this.CurrentKey = newKeyPath.Replace("\\", "/");
-            SvnRunner.KeyPath = this.CurrentKey;
-
-            if (svnUI.SettingsSshKeyPathInput != null)
-                svnUI.SettingsSshKeyPathInput.SetTextWithoutNotify(this.CurrentKey);
-
-            if (svnUI.CheckoutPrivateKeyInput != null)
-                svnUI.CheckoutPrivateKeyInput.SetTextWithoutNotify(this.CurrentKey);
-
-            if (svnUI.LoadPrivateKeyInput != null)
-                svnUI.LoadPrivateKeyInput.SetTextWithoutNotify(this.CurrentKey);
-        }
-
-        public void BroadcastUrlChange(string newUrl)
-        {
-            this.RepositoryUrl = newUrl.Trim();
-
-            if (svnUI.SettingsRepoUrlInput != null)
-                svnUI.SettingsRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
-
-            if (svnUI.CheckoutRepoUrlInput != null)
-                svnUI.CheckoutRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
-
-            if (svnUI.LoadRepoUrlInput != null)
-                svnUI.LoadRepoUrlInput.SetTextWithoutNotify(this.RepositoryUrl);
-        }
-
-        public async Task RefreshStatus()
-        {
-            if (string.IsNullOrEmpty(WorkingDir))
-            {
-                if (svnUI?.LogText != null)
-                    svnUI.LogText.text += "<color=red>[SVN] Refresh aborted: WorkingDir is null or empty!</color>\n";
-                return;
-            }
-
-            try
-            {
-                await SVNStatus.ExecuteRefreshWithAutoExpand();
-                if (svnUI?.LogText != null)
-                    svnUI.LogText.text += "<color=green>[SVN] Status refresh finished.</color>\n";
-            }
-            catch (Exception e)
-            {
-                if (svnUI?.LogText != null)
-                    svnUI.LogText.text += $"<color=red>[SVN] CRITICAL: ExecuteRefresh error: {e.Message}</color>\n";
-                return;
-            }
-
-            if (CurrentStatusDict == null)
-            {
-                if (svnUI?.LogText != null)
-                    svnUI.LogText.text += "<color=red>[SVN] Error: CurrentStatusDict is null!</color>\n";
-                return;
-            }
-
-            var conflictedFiles = CurrentStatusDict.Where(x => x.Value.status.Contains("C")).ToList();
-
-            if (conflictedFiles.Count > 0)
-            {
-                if (svnUI?.LogText != null)
-                    svnUI.LogText.text += $"<color=orange>[SVN] Found {conflictedFiles.Count} conflicts. Switching to Resolve Panel...</color>\n";
-
-                OnConflictDetected();
-            }
-            else
-            {
-                if (svnUI?.LogText != null)
-                    svnUI.LogText.text += "<color=green>[SVN] No conflicts found.</color>\n";
-            }
-        }
-
-        private void OnConflictDetected()
-        {
-            Debug.Log("<color=red>[SVN] Conflicts detected! Switching to Resolve Panel.</color>");
-
-            if (panelHandler != null)
-            {
-                panelHandler.Button_OpenResolve();
-
-                if (svnUI != null && svnUI.LogText != null)
-                {
-                    svnUI.LogText.text += "<color=red><b>[!] Conflict detected.</b> Redirecting to Resolve Tool...</color>\n";
-                }
-            }
-        }
-
-        public string ParseRevision(string input)
-        {
-            System.Text.RegularExpressions.Match match =
-                System.Text.RegularExpressions.Regex.Match(input, @"revision\s+(\d+)");
-
-            return match.Success ? match.Groups[1].Value : null;
-        }
-
-        public string GetRepoRoot()
-        {
-            string url = RepositoryUrl;
-            if (string.IsNullOrEmpty(url)) return "";
-
-            url = url.TrimEnd('/');
-
-            string[] markers = { "/trunk", "/branches", "/tags" };
-            foreach (var marker in markers)
-            {
-                if (url.Contains(marker))
-                {
-                    return url.Substring(0, url.IndexOf(marker));
-                }
-            }
-
-            return url;
         }
 
         private async void OnApplicationFocus(bool focus)
@@ -461,26 +272,26 @@ namespace SVN.Core
                 }
                 catch (Exception e)
                 {
-                    svnUI.LogText.text = $"Focus refresh failed: {e.Message}";
+                    Debug.LogError($"Focus refresh failed: {e.Message}");
                 }
             }
         }
     }
-}
 
-[System.Serializable]
-public class SVNProject
-{
-    public string projectName;
-    public string repoUrl;
-    public string workingDir;
-    public string privateKeyPath;
-    public string mergeToolPath;
-    public System.DateTime lastOpened;
-}
+    [Serializable]
+    public class SVNProject
+    {
+        public string projectName;
+        public string repoUrl;
+        public string workingDir;
+        public string privateKeyPath;
+        public string mergeToolPath;
+        public DateTime lastOpened;
+    }
 
-[System.Serializable]
-public class SVNProjectList
-{
-    public List<SVNProject> projects = new List<SVNProject>();
+    [Serializable]
+    public class SVNProjectList
+    {
+        public List<SVNProject> projects = new List<SVNProject>();
+    }
 }
