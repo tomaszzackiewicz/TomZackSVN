@@ -19,11 +19,6 @@ public class IgnoredPanel : MonoBehaviour
         svnManager.SVNStatus.RefreshIgnoredPanel();
     }
 
-    private void Start()
-    {
-       
-    }
-
     public void Button_RefreshRules() => svnManager.SVNStatus.RefreshIgnoredPanel();
     public void Button_ReloadIgnoreRules() => svnManager.SVNStatus.ReloadIgnoreRules();
     public void Button_PushLocalRulesToSvn() => svnManager.SVNStatus.PushLocalRulesToSvn();

@@ -24,7 +24,6 @@ public class LockPanel : MonoBehaviour
 
     private void OnEnable()
     {
-        // Standard safety check
         if (!Application.isPlaying) return;
 
         RefreshAndShow();
@@ -32,7 +31,6 @@ public class LockPanel : MonoBehaviour
 
     private void OnDisable()
     {
-        // Clear items when panel is closed to free memory
         ClearContainer();
     }
 
@@ -44,7 +42,6 @@ public class LockPanel : MonoBehaviour
 
         isProcessing = true;
 
-        // Feedback: Start procesu
         LogToPanel("<color=orange>[System]</color> Preparing to fetch lock data...");
 
         ClearContainer();
@@ -55,7 +52,6 @@ public class LockPanel : MonoBehaviour
 
             var allLocks = await svnManager.SVNLock.GetDetailedLocks(svnManager.WorkingDir);
 
-            // Feedback: Dane dotarły
             LogToPanel($"<color=white>[Info]</color> Received {allLocks.Count} total locks from server.");
 
             string currentUserName = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();

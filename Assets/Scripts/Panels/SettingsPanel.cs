@@ -19,13 +19,6 @@ public class SettingsPanel : MonoBehaviour
         svnManager.SVNSettings.UpdateUIFromManager();
     }
 
-    private void Start()
-    {
-       
-
-        //svnManager.SVNSettings.UpdateUIFromManager();
-    }
-
     public void Button_SaveWorkingDir() => svnManager.SVNSettings.SaveWorkingDir();
     public void Button_SaveRepoUrl() => svnManager.SVNSettings.SaveRepoUrl();
     public void Button_SaveSSHKeyPath() => svnManager.SVNSettings.SaveSSHKeyPath();

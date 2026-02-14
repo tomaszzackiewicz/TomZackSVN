@@ -25,7 +25,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         RefreshList();
     }
 
-    // Odśwież listę za każdym razem, gdy panel jest aktywowany
     private void OnEnable()
     {
         RefreshList();
@@ -33,7 +32,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     public void RefreshList()
     {
-        // Sprawdzenie na wypadek, gdyby Instance nie był jeszcze gotowy
         if (svnUI == null) svnUI = SVNUI.Instance;
 
         projects = ProjectSettings.LoadProjects();
@@ -59,33 +57,24 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private async void OnProjectSelected(SVNProject project)
     {
-        // 1. Przekazujemy pełny obiekt projektu do Managera
-        // Manager pobierze z niego WorkingDir, RepoURL i PrivateKeyPath
         svnManager.LoadProject(project);
 
-        // 2. Synchronizacja klucza dla Runnera (aby operacje SVN działały od razu)
         if (!string.IsNullOrEmpty(project.privateKeyPath))
         {
             SvnRunner.KeyPath = project.privateKeyPath;
         }
 
-        // 3. Zamknięcie panelu wyboru
         this.gameObject.SetActive(false);
 
-        // 4. WYMUSZENIE ODŚWIEŻENIA UI W SETTINGS
-        // To jest najważniejszy krok – bez tego InputFieldy w zakładce Settings
-        // będą pokazywać dane starego projektu, dopóki ich ręcznie nie odświeżysz.
         if (svnManager.SVNSettings != null)
         {
             svnManager.SVNSettings.UpdateUIFromManager();
         }
 
-        // 5. Logika wyświetlania info i zapisu ostatniej ścieżki
         svnManager.SVNStatus.ShowProjectInfo(project, project.workingDir);
         PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
         PlayerPrefs.Save();
 
-        // 6. Odświeżenie repozytorium
         await svnManager.RefreshStatus();
     }
 
@@ -175,7 +164,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private void AddNewProject(string name, string url, string path, string key)
     {
-        // Normalizacja ścieżki
         string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
 
         var newProj = new SVNProject
@@ -189,7 +177,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         List<SVNProject> currentList = ProjectSettings.LoadProjects();
 
-        // Unikanie duplikatów po ścieżce roboczej
         int existingIndex = currentList.FindIndex(p => p.workingDir == normalizedPath);
         if (existingIndex != -1)
         {
