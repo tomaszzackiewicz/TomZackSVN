@@ -43,7 +43,6 @@ namespace SVN.Core
         public void Button_ShowToCommit() => svnManager.SVNCommit.ShowWhatWillBeCommitted();
         public void Button_ShowLocks() => svnManager.SVNLock.ShowAllLocks();
         public void Button_BreakLocks() => svnManager.SVNLock.BreakAllLocks();
-        //public void Button_StealLocks() => svnManager.SVNLock.StealLockSelected();
         public void Button_TerminalSubmit() => OnTerminalSubmit();
 
         public void Button_ClearTerminalLog()
@@ -59,12 +58,5 @@ namespace SVN.Core
                 svnUI.LocksText.text = string.Empty;
             }
         }
-
-        //public void OnClick_SwitchProject()
-        //{
-        //    svnManager.MainUIPanel.SetActive(true);
-        //    svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
-        //    svnManager.ProjectSelectionPanel.RefreshList();
-        //}
     }
 }

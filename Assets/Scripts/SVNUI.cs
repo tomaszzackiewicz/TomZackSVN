@@ -131,8 +131,5 @@ namespace SVN.Core
             }
             Instance = this;
         }
-
-
-
     }
 }

@@ -25,7 +25,6 @@ namespace SVN.Core
         public static void DeleteProject(string workingDir)
         {
             List<SVNProject> projects = LoadProjects();
-            // Usuwamy projekt, który ma tak¹ sam¹ œcie¿kê
             projects.RemoveAll(p => p.workingDir == workingDir);
             SaveProjects(projects);
         }

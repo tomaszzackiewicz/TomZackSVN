@@ -197,7 +197,6 @@ namespace SVN.Core
 
             if (projectSelectionPanel != null)
             {
-                //svnManager.MainUIPanel.SetActive(true);
                 svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
                 svnManager.ProjectSelectionPanel.RefreshList();
                 projectSelectionPanel.SetActive(true);
@@ -271,6 +270,4 @@ namespace SVN.Core
             Application.Quit();
         }
     }
-
-
 }

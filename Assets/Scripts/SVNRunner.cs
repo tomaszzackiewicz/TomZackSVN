@@ -26,122 +26,14 @@ namespace SVN.Core
         }
         private static string _keyPath = "";
 
-        // public static async Task<string> RunAsync(string args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
-        // {
-        //     // 1. Prepare SSH Key path
-        //     string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
-
-        //     if (string.IsNullOrEmpty(safeKeyPath))
-        //     {
-        //         throw new Exception("Error: SSH Key path is empty!");
-        //     }
-
-        //     // 2. Process Configuration
-        //     var psi = new ProcessStartInfo
-        //     {
-        //         FileName = "svn",
-        //         Arguments = args,
-        //         WorkingDirectory = workingDir,
-        //         RedirectStandardOutput = true,
-        //         RedirectStandardError = true,
-        //         UseShellExecute = false,
-        //         CreateNoWindow = true,
-        //         StandardOutputEncoding = Encoding.UTF8,
-        //         StandardErrorEncoding = Encoding.UTF8
-        //     };
-
-        //     // Setting up SSH tunnel environment variable
-        //     psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
-
-        //     using var process = new Process { StartInfo = psi };
-        //     var outputBuilder = new StringBuilder();
-        //     var errorBuilder = new StringBuilder();
-
-        //     // 3. Output Handling
-        //     DataReceivedEventHandler outHandler = (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
-        //     DataReceivedEventHandler errHandler = (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
-
-        //     process.OutputDataReceived += outHandler;
-        //     process.ErrorDataReceived += errHandler;
-
-        //     // 4. Cancellation Registration
-        //     using var registration = token.Register(() =>
-        //     {
-        //         try
-        //         {
-        //             if (!process.HasExited) process.Kill();
-        //         }
-        //         catch { /* Process might have already exited */ }
-        //     });
-
-        //     try
-        //     {
-        //         process.Start();
-        //         process.BeginOutputReadLine();
-        //         process.BeginErrorReadLine();
-
-        //         // 5. Wait for Exit with Token and Timeout control
-        //         DateTime startTime = DateTime.Now;
-        //         while (!process.HasExited)
-        //         {
-        //             if (token.IsCancellationRequested)
-        //             {
-        //                 try { process.Kill(); } catch { }
-        //                 throw new OperationCanceledException("SVN operation cancelled by user.");
-        //             }
-
-        //             if ((DateTime.Now - startTime).TotalSeconds > 45)
-        //             {
-        //                 try { process.Kill(); } catch { }
-        //                 throw new Exception("SVN Timeout: Operation exceeded 45 seconds.");
-        //             }
-
-        //             await Task.Delay(100);
-        //         }
-
-        //         // 6. Result Analysis
-        //         if (process.ExitCode != 0)
-        //         {
-        //             string err = errorBuilder.ToString();
-
-        //             // --- SMART RETRY LOGIC (Database Locks) ---
-        //             if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
-        //             {
-        //                 UnityEngine.Debug.LogWarning("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
-
-        //                 await RunAsync("cleanup", workingDir, false, token);
-
-        //                 UnityEngine.Debug.Log("[SvnRunner] Cleanup finished. Retrying original command...");
-        //                 return await RunAsync(args, workingDir, false, token);
-        //             }
-
-        //             if (!string.IsNullOrEmpty(err))
-        //                 throw new Exception($"SVN Error (Code {process.ExitCode}): {err}");
-        //         }
-
-        //         return outputBuilder.ToString();
-        //     }
-        //     catch (OperationCanceledException)
-        //     {
-        //         throw;
-        //     }
-        //     finally
-        //     {
-        //         process.OutputDataReceived -= outHandler;
-        //         process.ErrorDataReceived -= errHandler;
-        //     }
-        // }
-
         public static async Task<string> RunAsync(string args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
         {
-            // 1. Przygotowanie ścieżki klucza - bez wyrzucania błędu, jeśli jest pusty
             string safeKeyPath = "";
             if (!string.IsNullOrEmpty(KeyPath))
             {
                 safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
             }
 
-            // 2. Konfiguracja procesu
             var psi = new ProcessStartInfo
             {
                 FileName = "svn",
@@ -155,8 +47,6 @@ namespace SVN.Core
                 StandardErrorEncoding = Encoding.UTF8
             };
 
-            // Ustawienie zmiennej środowiskowej TYLKO jeśli klucz istnieje
-            // To zapobiega błędom "empty path", pozwalając na domyślne zachowanie SSH
             if (!string.IsNullOrEmpty(safeKeyPath))
             {
                 psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
@@ -166,14 +56,12 @@ namespace SVN.Core
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
 
-            // 3. Obsługa strumieni danych
             DataReceivedEventHandler outHandler = (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
             DataReceivedEventHandler errHandler = (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
 
             process.OutputDataReceived += outHandler;
             process.ErrorDataReceived += errHandler;
 
-            // 4. Rejestracja przerwania (Cancellation)
             using var registration = token.Register(() =>
             {
                 try { if (!process.HasExited) process.Kill(); } catch { }
@@ -185,7 +73,6 @@ namespace SVN.Core
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                // 5. Oczekiwanie na zakończenie z kontrolą czasu (Timeout)
                 DateTime startTime = DateTime.Now;
                 while (!process.HasExited)
                 {
@@ -204,12 +91,10 @@ namespace SVN.Core
                     await Task.Delay(100);
                 }
 
-                // 6. Analiza wyników
                 if (process.ExitCode != 0)
                 {
                     string err = errorBuilder.ToString();
 
-                    // Automatyczny Retry w przypadku blokady bazy danych SVN
                     if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
                     {
                         UnityEngine.Debug.LogWarning("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
@@ -346,54 +231,21 @@ namespace SVN.Core
         {
             try
             {
-                // Added --include-externals for a full cleanup of projects with external libraries
                 return await RunAsync("cleanup --vacuum-pristines --include-externals", workingDir);
             }
             catch
             {
-                // Standard fallback if the above flags are not supported
                 return await RunAsync("cleanup", workingDir);
             }
         }
 
-        /// <summary>
-        /// Reverts local changes in selected files.
-        /// </summary>
         public static async Task<string> RevertAsync(string workingDir, string[] files)
         {
             if (files == null || files.Length == 0) return "No files to revert.";
 
-            // Add quotes for path safety
             string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
 
-            // -R stands for recursive (useful when reverting a folder)
             return await RunAsync($"revert -R {fileArgs}", workingDir);
-        }
-
-        public static async Task<string> LockAsync(string workingDir, string[] paths)
-        {
-            if (paths == null || paths.Length == 0) return "No files to lock.";
-
-            // Use -m or --message instead of --comment
-            // We put the message first, then the paths
-            string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
-
-            // Changing --comment to -m (or --message)
-            string cmd = $"lock -m \"Locked by Unity SVN Tool\" {pathsArg}";
-
-            return await RunAsync(cmd, workingDir);
-        }
-
-        public static async Task<string> UnlockAsync(string workingDir, string[] paths)
-        {
-            if (paths == null || paths.Length == 0) return "No files to unlock.";
-
-            // Prepare paths in quotes
-            string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
-
-            // Execute unlock command
-            string cmd = $"unlock {pathsArg}";
-            return await RunAsync(cmd, workingDir);
         }
 
         public static async Task<string> ResolveAsync(string workingDir, string[] paths, bool useMine)
@@ -403,43 +255,33 @@ namespace SVN.Core
             string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
             string strategy = useMine ? "mine-full" : "theirs-full";
 
-            // svn resolve --accept mine-full file1 file2...
             string cmd = $"resolve --accept {strategy} {pathsArg}";
             return await RunAsync(cmd, workingDir);
         }
 
         public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
         {
-            // --depth empty adds the folder itself without adding the files inside
             string cmd = $"add \"{path}\" --depth empty";
             return await RunAsync(cmd, workingDir);
         }
 
         public static async Task<string> CopyAsync(string workingDir, string sourceUrl, string destUrl, string message)
         {
-            // SVN copy requires a message because it creates a new revision on the server
             string cmd = $"copy \"{sourceUrl}\" \"{destUrl}\" -m \"{message}\"";
             return await RunAsync(cmd, workingDir);
         }
 
-        /// <summary>
-        /// Switches the working directory to another branch.
-        /// </summary>
         public static async Task<string> SwitchAsync(string workingDir, string targetUrl)
         {
-            // Pobieramy ścieżkę do klucza, która jest ustawiana przez SVNManager (SvnRunner.KeyPath)
             string currentKey = KeyPath;
 
-            // Budujemy bazę parametrów SSH
             string sshArgs = "-o BatchMode=yes -o StrictHostKeyChecking=no";
 
-            // Jeśli klucz jest podany w aplikacji, nakazujemy SSH z niego skorzystać
             if (!string.IsNullOrEmpty(currentKey))
             {
                 sshArgs = $"-i \"{currentKey}\" {sshArgs}";
             }
 
-            // Składamy pełną komendę z tunelem SSH
             string command = $"--config-option config:tunnels:ssh=\"ssh {sshArgs}\" " +
                              $"switch \"{targetUrl}\" \"{workingDir}\" " +
                              $"--ignore-ancestry --accept theirs-full --non-interactive";
@@ -479,7 +321,6 @@ namespace SVN.Core
                     process.BeginOutputReadLine();
                     process.BeginErrorReadLine();
 
-                    // Czekamy na zakończenie procesu bez blokowania wątku UI
                     await Task.Run(() => process.WaitForExit());
 
                     if (process.ExitCode == 0)
@@ -489,7 +330,6 @@ namespace SVN.Core
                     else
                     {
                         string errResult = error.ToString().Trim();
-                        // Zwracamy błąd jako string, aby SwitchAsync mógł go obsłużyć
                         return $"Error (Code {process.ExitCode}): {errResult}";
                     }
                 }
@@ -500,12 +340,8 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Retrieves information about the current working copy (URL, Revision, etc.).
-        /// </summary>
         public static async Task<string> GetInfoAsync(string workingDir)
         {
-            // Command: svn info
             return await RunAsync("info", workingDir);
         }
 
@@ -657,10 +493,8 @@ namespace SVN.Core
             }
         }
 
-        // --- IMPROVED TREE START METHOD ---
         public static async Task<(string tree, SvnStats stats)> GetVisualTreeWithStatsAsync(string workingDir, HashSet<string> expandedPaths, bool showIgnored = false)
         {
-            // 1. FETCH STATUSES: Force fetching everything (including '?' and 'I' files)
             Dictionary<string, (string status, string size)> statusDict = await GetFullStatusDictionaryAsync(workingDir, true);
 
             var sb = new StringBuilder();
@@ -668,7 +502,6 @@ namespace SVN.Core
 
             if (!Directory.Exists(workingDir)) return ("Path error.", stats);
 
-            // 2. IDENTIFY RELEVANT PATHS
             HashSet<string> foldersWithRelevantContent = new HashSet<string>();
 
             foreach (var item in statusDict)
@@ -682,14 +515,11 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // Changes view: Must show M (Modified), A (Added), ? (New), ! (Missing)
-                    // Basically everything that has a status but is not ignored ("I")
                     isInteresting = !string.IsNullOrEmpty(stat) && stat != "I";
                 }
 
                 if (isInteresting)
                 {
-                    // Add parent folders to the "to show" list
                     string[] parts = item.Key.Split('/');
                     string currentFolder = "";
                     for (int i = 0; i < parts.Length - 1; i++)
@@ -700,8 +530,6 @@ namespace SVN.Core
                 }
             }
 
-            // 3. BUILD TREE
-            // Pass foldersWithRelevantContent so recursion knows which folders to expand
             BuildTreeString(workingDir, workingDir, 0, statusDict, sb, stats, expandedPaths, new bool[128], showIgnored, foldersWithRelevantContent);
 
             return (sb.ToString(), stats);
@@ -728,7 +556,6 @@ namespace SVN.Core
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(string workingDir, bool includeIgnored = true)
         {
-            // Wywołujemy status. Ważne: SVN zwraca ścieżki relatywne do workingDir
             string output = await RunAsync("status --no-ignore", workingDir);
             var statusDict = new Dictionary<string, (string status, string size)>();
 
@@ -738,35 +565,25 @@ namespace SVN.Core
 
             foreach (var line in lines)
             {
-                // SVN Status zawsze ma co najmniej 8 znaków przed ścieżką
                 if (line.Length < 9) continue;
 
-                // 1. Pobieramy kod statusu (pierwsza kolumna to treść, druga to właściwości)
                 char contentStatus = line[0];
-                char propStatus = line[1]; // Ważne dla konfliktów właściwości
+                char propStatus = line[1];
 
                 string stat = contentStatus.ToString().ToUpper();
 
-                // Jeśli pierwsza kolumna jest pusta, ale druga ma 'C' (konflikt właściwości/drzewa)
                 if (stat == " " && propStatus == 'C') stat = "C";
 
-                // 2. Pobieramy ścieżkę (zaczyna się od 8 indeksu)
                 string rawPath = line.Substring(8).Trim().Replace('\\', '/');
-
-                // 3. UPROSZCZENIE: Zachowaj ścieżkę taką, jaką daje SVN (relatywną)
-                // Nie wycinaj "Content/" ani slashy, chyba że Twój UI tego absolutnie wymaga.
                 string cleanPath = rawPath;
 
-                // 4. Sprawdzenie istotności
                 bool isRelevant = "MA?!DC".Contains(stat) || (includeIgnored && stat == "I");
 
                 if (isRelevant)
                 {
-                    // Łączymy workingDir z rawPath tylko do odczytu rozmiaru pliku
                     string fullPathForSize = Path.Combine(workingDir, rawPath);
                     string size = GetFileSizeSafe(fullPathForSize);
 
-                    // Zapisujemy pod pełną relatywną ścieżką
                     statusDict[cleanPath] = (stat, size);
                 }
             }
@@ -792,10 +609,8 @@ namespace SVN.Core
 
         public static async Task<string> GetRepoUrlAsync(string workingDir)
         {
-            // 'info' command returns repository details
             string output = await RunAsync("info --xml", workingDir);
 
-            // Simple XML parsing to extract <url> tag
             if (output.Contains("<url>"))
             {
                 int start = output.IndexOf("<url>") + 5;
@@ -810,18 +625,15 @@ namespace SVN.Core
         {
             string targetUrl = "";
 
-            // 1. Jeśli subFolder jest już pełnym adresem URL lub zaczyna się od ^, używamy go bezpośrednio
             if (subFolder.Contains("://") || subFolder.StartsWith("^"))
             {
                 targetUrl = subFolder;
             }
             else
             {
-                // 2. Pobierz aktualny URL (np. svn://.../repos/Test/trunk)
                 string repoUrl = await GetRepoUrlAsync(workingDir);
                 repoUrl = repoUrl.TrimEnd('/');
 
-                // 3. Deklarujemy projectRoot tutaj, aby była widoczna w tym bloku
                 string projectRoot = repoUrl;
 
                 if (repoUrl.Contains("/trunk"))
@@ -833,12 +645,9 @@ namespace SVN.Core
                 else if (repoUrl.Contains("/"))
                     projectRoot = repoUrl.Substring(0, repoUrl.LastIndexOf('/'));
 
-                // 4. Budujemy docelowy adres
                 targetUrl = $"{projectRoot}/{subFolder}";
             }
 
-            // 5. Wykonaj listowanie
-            // Używamy "ls" zamiast "list", dodajemy cudzysłów dla bezpieczeństwa ścieżek
             string output = await RunAsync($"ls \"{targetUrl}\"", workingDir);
 
             return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
@@ -848,31 +657,12 @@ namespace SVN.Core
 
         public static async Task<string> DeleteRemotePathAsync(string workingDir, string remoteUrl, string message)
         {
-            // Command: svn rm "URL" -m "message"
             string args = $"rm \"{remoteUrl}\" -m \"{message}\"";
-
-            // Run process and return output
             return await RunAsync(args, workingDir);
-        }
-
-        public static async Task<string[]> ListBranchesAsync(string repositoryRootUrl)
-        {
-            // Clean URL and target the branches folder
-            string branchesUrl = repositoryRootUrl.TrimEnd('/') + "/branches";
-
-            // Command: svn list [URL]
-            string output = await RunAsync($"list {branchesUrl}", "");
-
-            if (string.IsNullOrEmpty(output)) return new string[0];
-
-            return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                         .Select(s => s.TrimEnd('/')) // Remove slashes from folder names
-                         .ToArray();
         }
 
         public static async Task<SvnStats> GetStatsAsync(string workingDir)
         {
-            // Execute svn status command
             string output = await RunAsync("status", workingDir);
 
             SvnStats stats = new SvnStats();
@@ -894,21 +684,6 @@ namespace SVN.Core
                 }
             }
             return stats;
-        }
-
-        public static async Task<bool> RemotePathExistsAsync(string workingDir, string url)
-        {
-            try
-            {
-                // 'svn info' returns 0 (success) if path exists, non-zero if not.
-                await RunAsync($"info {url}", workingDir);
-                return true;
-            }
-            catch
-            {
-                // If the command fails, it usually means the path doesn't exist.
-                return false;
-            }
         }
 
         private static string CleanSvnPath(string path)
@@ -983,9 +758,7 @@ namespace SVN.Core
             List<string> rules = new List<string>();
             try
             {
-                // 1. Try to get GLOBAL ignores
                 string globalOutput = await RunAsync("propget svn:global-ignores -R .", workingDir);
-                // 2. Try to get STANDARD ignores
                 string standardOutput = await RunAsync("propget svn:ignore -R .", workingDir);
 
                 string combinedOutput = globalOutput + "\n" + standardOutput;
@@ -1004,7 +777,6 @@ namespace SVN.Core
                     }
 
                     string trimmed = pattern.Trim();
-                    // Filter out SVN error messages that might slip in
                     if (!string.IsNullOrEmpty(trimmed) && !trimmed.Contains(" ") && !rules.Contains(trimmed))
                     {
                         rules.Add(trimmed);
@@ -1044,12 +816,10 @@ namespace SVN.Core
             foreach (var item in statusDict)
             {
                 string status = item.Value.status;
-                // Only count Added (A), Modified (M), or Unversioned (?) files
                 if (!"MA?".Contains(status)) continue;
 
                 string relPath = item.Key.Replace("\\", "/").TrimStart('/');
 
-                // Attempt 1: Standard path (Root + Key)
                 string standardPath = $"{normRoot}/{relPath}";
 
                 if (File.Exists(standardPath))
@@ -1059,14 +829,12 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // LAST RESORT: Search for the file by name within the entire workingDir
-                    // This fixes path discrepancies like "Content/" vs "ProjectName/Content/"
+
                     string fileName = Path.GetFileName(relPath);
                     string[] foundFiles = Directory.GetFiles(normRoot, fileName, SearchOption.AllDirectories);
 
                     if (foundFiles.Length > 0)
                     {
-                        // Take the first matching file found
                         totalBytes += new FileInfo(foundFiles[0]).Length;
                         filesToCommit++;
                     }
@@ -1077,7 +845,6 @@ namespace SVN.Core
                 }
             }
 
-            // Returns a formatted report string
             return $"Files: {filesToCommit}, Size: {FormatBytes(totalBytes)}";
         }
     }

@@ -25,15 +25,11 @@ namespace SVN.Core
         [SerializeField] private GameObject mainUIPanel;
         [SerializeField] private ProjectSelectionPanel projectSelectionPanel;
 
-        private (string status, string[] files) currentStatus;
-
-        [Header("State")]
+        private string currentUserName = "Unknown";
         public HashSet<string> expandedPaths = new HashSet<string>();
-
         private string workingDir = string.Empty;
         private string currentKey = string.Empty;
         private string mergeToolPath = string.Empty;
-
         private bool isProcessing = false;
 
         public SVNStatus SVNStatus { get; private set; }
@@ -56,12 +52,9 @@ namespace SVN.Core
         public SVNShelve SVNShelve { get; private set; }
 
         public string RepositoryUrl { get; set; } = string.Empty;
-
         public GameObject MainUIPanel => mainUIPanel;
         public PanelHandler PanelHandler => panelHandler;
         public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
-
-        private string currentUserName = "Unknown";
 
         public string CurrentUserName
         {
@@ -162,14 +155,6 @@ namespace SVN.Core
             }
         }
 
-        private void SetLoading(bool isLoading)
-        {
-            if (loadingOverlay != null)
-            {
-                loadingOverlay.SetActive(isLoading);
-            }
-        }
-
         public async Task<string> AutoDetectSvnUser()
         {
             currentUserName = "Detecting...";
@@ -177,20 +162,16 @@ namespace SVN.Core
 
             try
             {
-                // 1. Pobieramy INFO w formacie XML - to jest najbardziej stabilne źródło
                 string xmlOutput = await SvnRunner.RunAsync("info --xml", WorkingDir);
                 if (!string.IsNullOrEmpty(xmlOutput))
                 {
                     XmlDocument doc = new XmlDocument();
                     doc.LoadXml(xmlOutput);
 
-                    // Szukamy loginu w pełnym URL repozytorium
-                    // Przykładowy URL: svn+ssh://tomasz@192.168.1.1/repo
                     XmlNode urlNode = doc.SelectSingleNode("//url");
                     if (urlNode != null)
                     {
                         string fullUrl = urlNode.InnerText;
-                        // Regex szukający tekstu między "://" a "@"
                         var match = System.Text.RegularExpressions.Regex.Match(fullUrl, @"://([^@/]+)@");
                         if (match.Success)
                         {
@@ -200,8 +181,6 @@ namespace SVN.Core
                     }
                 }
 
-                // 2. Jeśli URL nie ma loginu (np. czyste HTTPS), sprawdzamy 'svn auth' 
-                // ale parsujemy go linia po linii dla pewności
                 string authOutput = await SvnRunner.RunAsync("auth", WorkingDir);
                 string[] lines = authOutput.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
                 foreach (var line in lines)
@@ -213,9 +192,6 @@ namespace SVN.Core
                     }
                 }
 
-                // 3. OSTATNIA DESKA RATUNKU: Jeśli SVN nie zwraca nic, 
-                // pytamy system operacyjny o nazwę ZALOGOWANEGO użytkownika,
-                // bo w 99% przypadków login SVN = login systemowy (Active Directory/LDAP)
                 currentUserName = Environment.UserName.ToLower();
                 Debug.LogWarning($"[SVN] URL/Auth detection failed. Falling back to OS User: {currentUserName}");
                 return currentUserName;
@@ -237,13 +213,10 @@ namespace SVN.Core
                     DirectoryInfo dir = new DirectoryInfo(path);
                     if (!dir.Exists) return "0 GB";
 
-                    // Pobieramy rozmiar wszystkich plików we wszystkich podfolderach
                     long bytes = dir.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
-
-                    // Konwersja na GB (1024^3)
                     double gigabytes = (double)bytes / (1024 * 1024 * 1024);
 
-                    return $"{gigabytes:F2} GB"; // Zwraca np. "1.45 GB"
+                    return $"{gigabytes:F2} GB";
                 }
                 catch (Exception ex)
                 {
@@ -292,12 +265,10 @@ namespace SVN.Core
 
         public void MigrateOldSettingsToJSON()
         {
-            // Sprawdzamy, czy w ogóle mamy stare dane w PlayerPrefs
             if (PlayerPrefs.HasKey(KEY_WORKING_DIR))
             {
                 string oldDir = PlayerPrefs.GetString(KEY_WORKING_DIR);
 
-                // Jeśli plik JSON już istnieje i ma ten projekt, nie migrujemy ponownie
                 List<SVNProject> projects = ProjectSettings.LoadProjects();
                 if (projects.Exists(p => p.workingDir == oldDir)) return;
 
@@ -383,12 +354,8 @@ namespace SVN.Core
 
             if (Directory.Exists(WorkingDir))
             {
-                // 1. Najpierw wykrywamy kim jesteśmy w SVN
                 await AutoDetectSvnUser();
-
                 SVNStatus.ShowProjectInfo(project, WorkingDir);
-
-                // 2. Potem reszta odświeżania
                 await RefreshRepositoryInfo();
                 await RefreshStatus();
             }
@@ -492,48 +459,44 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(WorkingDir))
             {
-                Debug.LogError("[SVN] RefreshStatus aborted: WorkingDir is null or empty!");
+                if (svnUI?.LogText != null)
+                    svnUI.LogText.text += "<color=red>[SVN] Refresh aborted: WorkingDir is null or empty!</color>\n";
                 return;
             }
 
-            Debug.Log("[SVN] 1. Starting Refresh...");
-
             try
             {
-                // Sprawdzamy, czy to wywołanie w ogóle przechodzi dalej
                 await SVNStatus.ExecuteRefreshWithAutoExpand();
-                Debug.Log("[SVN] 2. ExecuteRefresh finished.");
+                if (svnUI?.LogText != null)
+                    svnUI.LogText.text += "<color=green>[SVN] Status refresh finished.</color>\n";
             }
             catch (Exception e)
             {
-                Debug.LogError($"[SVN] CRITICAL: ExecuteRefresh crashed with: {e.Message}");
+                if (svnUI?.LogText != null)
+                    svnUI.LogText.text += $"<color=red>[SVN] CRITICAL: ExecuteRefresh error: {e.Message}</color>\n";
                 return;
             }
 
             if (CurrentStatusDict == null)
             {
-                Debug.LogError("[SVN] 3. CurrentStatusDict is NULL!");
+                if (svnUI?.LogText != null)
+                    svnUI.LogText.text += "<color=red>[SVN] Error: CurrentStatusDict is null!</color>\n";
                 return;
-            }
-
-            Debug.Log($"[SVN] 4. Dictionary count: {CurrentStatusDict.Count}");
-
-            // Logujemy wszystkie statusy, żeby zobaczyć co parser "wypluł"
-            foreach (var item in CurrentStatusDict)
-            {
-                Debug.Log($"[SVN] File: {item.Key} Status: [{item.Value.status}]");
             }
 
             var conflictedFiles = CurrentStatusDict.Where(x => x.Value.status.Contains("C")).ToList();
 
             if (conflictedFiles.Count > 0)
             {
-                Debug.Log($"<color=orange>[SVN] 5. Found {conflictedFiles.Count} conflicts. Triggering UI...</color>");
+                if (svnUI?.LogText != null)
+                    svnUI.LogText.text += $"<color=orange>[SVN] Found {conflictedFiles.Count} conflicts. Switching to Resolve Panel...</color>\n";
+
                 OnConflictDetected();
             }
             else
             {
-                Debug.Log("[SVN] 5. No conflicts found in dictionary.");
+                if (svnUI?.LogText != null)
+                    svnUI.LogText.text += "<color=green>[SVN] No conflicts found.</color>\n";
             }
         }
 
@@ -629,25 +592,20 @@ namespace SVN.Core
 
         public string GetRepoRoot()
         {
-            // Pobieramy aktualny URL (ten który widzieliśmy w logu jako matrioszkę)
             string url = RepositoryUrl;
             if (string.IsNullOrEmpty(url)) return "";
 
             url = url.TrimEnd('/');
 
-            // Szukamy punktów podziału
             string[] markers = { "/trunk", "/branches", "/tags" };
             foreach (var marker in markers)
             {
                 if (url.Contains(marker))
                 {
-                    // Wycinamy wszystko od markera w prawo
-                    // Przykład: .../Test/tags/Tag1 -> .../Test
                     return url.Substring(0, url.IndexOf(marker));
                 }
             }
 
-            // Jeśli nie znaleziono markerów, zwróć obecny URL
             return url;
         }
 
