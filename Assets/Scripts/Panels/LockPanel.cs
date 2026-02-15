@@ -137,10 +137,7 @@ public class LockPanel : MonoBehaviour
     {
         if (svnUI.StealLocksConsole == null || !Application.isPlaying) return;
 
-        string timestamp = $"<color=#666666>[{DateTime.Now:HH:mm:ss}]</color>";
-        svnUI.StealLocksConsole.text += $"{timestamp} {message}\n";
-
-        svnUI.StealLocksConsole.ForceMeshUpdate();
+        SVNLogBridge.UpdateUIField(svnUI.StealLocksConsole, message, "STEAL_LOCKS", append: true);
 
         ScrollRect scroll = svnUI.StealLocksConsole.GetComponentInParent<ScrollRect>();
         if (scroll != null)

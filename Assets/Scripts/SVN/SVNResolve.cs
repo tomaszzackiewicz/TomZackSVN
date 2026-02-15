@@ -13,19 +13,16 @@ namespace SVN.Core
 
         private void LogBoth(string msg)
         {
-            if (svnUI.LogText != null) svnUI.LogText.text += msg;
-            if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
+            // Logging to main log window
+            SVNLogBridge.LogLine(msg);
+
+            // Logging to commit console field specifically
+            SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, msg, logLabel: "RESOLVE", append: true);
         }
 
         public async void Button_OpenInEditor()
         {
             if (IsProcessing) return;
-
-            Action<string> LogBoth = (msg) =>
-            {
-                if (svnUI.LogText != null) svnUI.LogText.text += msg;
-                if (svnUI.CommitConsoleContent != null) svnUI.CommitConsoleContent.text += msg;
-            };
 
             string editorPath = svnManager.MergeToolPath;
 
@@ -42,33 +39,33 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(editorPath))
             {
-                LogBoth("<color=red>Error:</color> Merge tool path is not set! Go to Settings and Save it.\n");
+                LogBoth("<color=red>Error:</color> Merge tool path is not set! Go to Settings and Save it.");
                 return;
             }
 
             if (!File.Exists(editorPath))
             {
-                LogBoth($"<color=red>Error:</color> Editor executable not found at: <color=yellow>{editorPath}</color>\n");
+                LogBoth($"<color=red>Error:</color> Editor executable not found at: <color=yellow>{editorPath}</color>");
                 return;
             }
 
             string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
             {
-                LogBoth("<color=red>Error:</color> Invalid Working Directory!\n");
+                LogBoth("<color=red>Error:</color> Invalid Working Directory!");
                 return;
             }
 
             try
             {
                 IsProcessing = true;
-                LogBoth($"[{DateTime.Now:HH:mm:ss}] Searching for conflicted files (C)...\n");
+                LogBoth("Searching for conflicted files (C)...");
 
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
                 if (statusDict == null)
                 {
-                    LogBoth("<color=red>Error:</color> Failed to get SVN status.\n");
+                    LogBoth("<color=red>Error:</color> Failed to get SVN status.");
                     return;
                 }
 
@@ -78,20 +75,20 @@ namespace SVN.Core
                 if (!string.IsNullOrEmpty(conflictEntry.Key))
                 {
                     string fullFilePath = Path.Combine(root, conflictEntry.Key);
-                    LogBoth($"Opening editor: <color=green>{Path.GetFileName(fullFilePath)}</color>\n");
+                    LogBoth($"Opening editor: <color=green>{Path.GetFileName(fullFilePath)}</color>");
 
                     System.Diagnostics.Process.Start(editorPath, $"\"{fullFilePath}\"");
 
-                    LogBoth("<color=yellow>Hint:</color> Resolve conflicts, save the file, and click 'Mark as Resolved'.\n");
+                    LogBoth("<color=yellow>Hint:</color> Resolve conflicts, save the file, and click 'Mark as Resolved'.");
                 }
                 else
                 {
-                    LogBoth("<color=yellow>No files in conflict state (C) found.</color>\n");
+                    LogBoth("<color=yellow>No files in conflict state (C) found.</color>");
                 }
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Exception:</color> {ex.Message}\n");
+                LogBoth($"<color=red>Exception:</color> {ex.Message}");
                 Debug.LogError($"[SVN Resolve] {ex}");
             }
             finally
@@ -107,7 +104,7 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(root)) return;
 
             IsProcessing = true;
-            LogBoth("Starting safe resolve check...\n");
+            LogBoth("Starting safe resolve check...");
 
             try
             {
@@ -118,7 +115,7 @@ namespace SVN.Core
 
                 if (conflictedPaths.Length == 0)
                 {
-                    LogBoth("<color=yellow>No conflicts found to resolve.</color>\n");
+                    LogBoth("<color=yellow>No conflicts found to resolve.</color>");
                     return;
                 }
 
@@ -147,28 +144,28 @@ namespace SVN.Core
 
                 if (failedValidation.Count > 0)
                 {
-                    LogBoth("<color=red><b>ABORTED:</b></color> The following files still contain conflict markers:\n");
-                    foreach (var f in failedValidation) LogBoth($" - <color=orange>{f}</color>\n");
-                    LogBoth("<color=yellow>Please edit them, remove <<<<<<, =======, >>>>>>> markers, save and try again.</color>\n");
+                    LogBoth("<color=red><b>ABORTED:</b></color> The following files still contain conflict markers:");
+                    foreach (var f in failedValidation) LogBoth($" - <color=orange>{f}</color>");
+                    LogBoth("<color=yellow>Please edit them, remove <<<<<<, =======, >>>>>>> markers, save and try again.</color>");
 
                     if (readyToResolve.Count == 0) return;
                 }
 
                 if (readyToResolve.Count > 0)
                 {
-                    LogBoth($"Marking {readyToResolve.Count} validated items as resolved...\n");
+                    LogBoth($"Marking {readyToResolve.Count} validated items as resolved...");
 
                     string pathsJoined = "\"" + string.Join("\" \"", readyToResolve) + "\"";
                     await SvnRunner.RunAsync($"resolve --accept working {pathsJoined}", root);
 
-                    LogBoth("<color=green><b>Success!</b></color> Validated files are now clean and ready to commit.\n");
+                    LogBoth("<color=green><b>Success!</b></color> Validated files are now clean and ready to commit.");
                     await svnManager.RefreshStatus();
                     svnManager.PanelHandler.Button_CloseResolve();
                 }
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Error during safe resolve:</color> {ex.Message}\n");
+                LogBoth($"<color=red>Error during safe resolve:</color> {ex.Message}");
             }
             finally
             {
@@ -194,15 +191,15 @@ namespace SVN.Core
 
                 if (paths.Length > 0)
                 {
-                    LogBoth($"Resolving {paths.Length} items using <color=orange>{strategy}</color>...\n");
+                    LogBoth($"Resolving {paths.Length} items using <color=orange>{strategy}</color>...");
                     await ResolveAsync(root, paths, useMine);
-                    LogBoth("<color=green>Resolved!</color> Refreshing status...\n");
+                    LogBoth("<color=green>Resolved!</color> Refreshing status...");
                     await svnManager.RefreshStatus();
                     svnManager.PanelHandler.Button_CloseResolve();
                 }
-                else LogBoth("<color=yellow>No conflicts found.</color>\n");
+                else LogBoth("<color=yellow>No conflicts found.</color>");
             }
-            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}\n"); }
+            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}"); }
             finally { IsProcessing = false; }
         }
 

@@ -15,7 +15,7 @@ namespace SVN.Core
             if (IsProcessing) return;
             IsProcessing = true;
 
-            svnUI.LogText.text += "<b><color=#4FC3F7>[Comparison]</color> Starting analysis against Trunk...</b>\n";
+            SVNLogBridge.LogLine("<b><color=#4FC3F7>[Comparison]</color> Starting analysis against Trunk...</b>", append: false);
 
             try
             {
@@ -25,38 +25,38 @@ namespace SVN.Core
                 string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
                 string trunkUrl = $"{repoRoot.TrimEnd('/')}/trunk";
 
-                svnUI.LogText.text += $"<i>Target: {trunkUrl}</i>\n";
+                SVNLogBridge.LogLine($"<i>Target: {trunkUrl}</i>");
 
                 if (currentUrl.TrimEnd('/') == trunkUrl)
                 {
-                    svnUI.LogText.text += "<color=yellow>[Info]</color> You are already on Trunk. Comparison skipped.\n";
+                    SVNLogBridge.LogLine("<color=yellow>[Info]</color> You are already on Trunk. Comparison skipped.");
                     return;
                 }
 
-                svnUI.LogText.text += "<color=#444444>... Fetching eligible revisions from Trunk</color>\n";
+                SVNLogBridge.LogLine("<color=#444444>... Fetching eligible revisions from Trunk</color>");
                 string missingCmd = $"mergeinfo \"{trunkUrl}\" --show-revs eligible";
                 string missingInBranch = await SvnRunner.RunAsync(missingCmd, svnManager.WorkingDir);
 
-                svnUI.LogText.text += "<color=#444444>... Analyzing local branch changes</color>\n";
+                SVNLogBridge.LogLine("<color=#444444>... Analyzing local branch changes</color>");
                 string localCmd = $"mergeinfo . \"{trunkUrl}\" --show-revs eligible";
                 string branchOnlyChanges = await SvnRunner.RunAsync(localCmd, svnManager.WorkingDir);
 
                 int missingCount = CountRevisions(missingInBranch);
                 int localCount = CountRevisions(branchOnlyChanges);
 
-                svnUI.LogText.text += "--------------------------------------\n";
-                svnUI.LogText.text += $"<b>Merge Status:</b>\n";
-                svnUI.LogText.text += $" • <color=#FFD700>Incoming (Trunk -> Branch):</color> {missingCount} new commit(s)\n";
-                svnUI.LogText.text += $" • <color=#00FF00>Outgoing (Branch -> Trunk):</color> {localCount} local commit(s)\n";
+                SVNLogBridge.LogLine("--------------------------------------");
+                SVNLogBridge.LogLine("<b>Merge Status:</b>");
+                SVNLogBridge.LogLine($" • <color=#FFD700>Incoming (Trunk -> Branch):</color> {missingCount} new commit(s)");
+                SVNLogBridge.LogLine($" • <color=#00FF00>Outgoing (Branch -> Trunk):</color> {localCount} local commit(s)");
 
                 if (missingCount > 0)
-                    svnUI.LogText.text += "<color=orange>Recommendation: Sync your branch with Trunk before continuing.</color>\n";
+                    SVNLogBridge.LogLine("<color=orange>Recommendation: Sync your branch with Trunk before continuing.</color>");
                 else
-                    svnUI.LogText.text += "<color=green>Success: Your branch is fully synchronized with Trunk.</color>\n";
+                    SVNLogBridge.LogLine("<color=green>Success: Your branch is fully synchronized with Trunk.</color>");
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>[Error]</color> Comparison failed: {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>[Error]</color> Comparison failed: {ex.Message}");
             }
             finally { IsProcessing = false; }
         }
@@ -71,10 +71,10 @@ namespace SVN.Core
 
             try
             {
-                svnUI.LogText.text += "<b><color=#4FC3F7>[Merge]</color> Initializing process...</b>\n";
+                SVNLogBridge.LogLine("<b><color=#4FC3F7>[Merge]</color> Initializing process...</b>", append: false);
 
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
-                svnUI.LogText.text += "<color=#444444>... Resolving repository paths</color>\n";
+                SVNLogBridge.LogLine("<color=#444444>... Resolving repository paths</color>");
 
                 string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
                 currentUrl = currentUrl.TrimEnd('/');
@@ -94,7 +94,7 @@ namespace SVN.Core
 
                 if (sourceUrl.TrimEnd('/') == currentUrl)
                 {
-                    svnUI.LogText.text += "<color=red>[Aborted]</color> Cannot merge a branch into itself.\n";
+                    SVNLogBridge.LogLine("<color=red>[Aborted]</color> Cannot merge a branch into itself.");
                     return;
                 }
 
@@ -102,8 +102,8 @@ namespace SVN.Core
                 string sourceName = sourceUrl.EndsWith("/trunk") ? "<color=#FFD700>Trunk</color>" : $"branch <color=#4FC3F7>{sourceUrl.Split('/').Last()}</color>";
 
                 string modeText = isDryRun ? "<color=yellow>[SIMULATION]</color>" : "<color=orange>[LIVE MERGE]</color>";
-                svnUI.LogText.text += $"{modeText} Source: {sourceName} —> Target: {targetName}\n";
-                svnUI.LogText.text += "<color=#444444>... Executing SVN command (please wait)</color>\n";
+                SVNLogBridge.LogLine($"{modeText} Source: {sourceName} —> Target: {targetName}");
+                SVNLogBridge.LogLine("<color=#444444>... Executing SVN command (please wait)</color>");
 
                 string args = $"merge \"{sourceUrl}\" --non-interactive --accept postpone --force";
                 if (isDryRun) args += " --dry-run";
@@ -113,16 +113,16 @@ namespace SVN.Core
 
                 if (!isDryRun)
                 {
-                    svnUI.LogText.text += "<color=#444444>... Refreshing local status</color>\n";
+                    SVNLogBridge.LogLine("<color=#444444>... Refreshing local status</color>");
                     await svnManager.RefreshStatus();
-                    svnUI.LogText.text += "<b><color=green>[Complete]</color> Changes merged locally. Verify and Commit to server.</b>\n";
+                    SVNLogBridge.LogLine("<b><color=green>[Complete]</color> Changes merged locally. Verify and Commit to server.</b>");
                 }
             }
             catch (Exception ex)
             {
                 if (ex.Message.Contains("E200004") || ex.Message.Contains("ancestry"))
                 {
-                    svnUI.LogText.text += "<color=yellow>[Notice]</color> Ancestry check failed. Attempting force-merge (--ignore-ancestry)...\n";
+                    SVNLogBridge.LogLine("<color=yellow>[Notice]</color> Ancestry check failed. Attempting force-merge (--ignore-ancestry)...");
                     try
                     {
                         string forceArgs = $"merge \"{sourceUrl}\" . --ignore-ancestry --non-interactive --accept postpone";
@@ -130,16 +130,16 @@ namespace SVN.Core
 
                         string output = await SvnRunner.RunAsync(forceArgs, svnManager.WorkingDir);
                         ParseMergeOutput(output, isDryRun);
-                        svnUI.LogText.text += "<b><color=green>[Complete]</color> Force-merge finished.</b>\n";
+                        SVNLogBridge.LogLine("<b><color=green>[Complete]</color> Force-merge finished.</b>");
                     }
                     catch (Exception ex2)
                     {
-                        svnUI.LogText.text += $"<color=red>[Critical Error]</color> Force-merge also failed: {ex2.Message}\n";
+                        SVNLogBridge.LogLine($"<color=red>[Critical Error]</color> Force-merge also failed: {ex2.Message}");
                     }
                 }
                 else
                 {
-                    svnUI.LogText.text += $"<color=red>[Error]</color> Merge process interrupted: {ex.Message}\n";
+                    SVNLogBridge.LogLine($"<color=red>[Error]</color> Merge process interrupted: {ex.Message}");
                 }
             }
             finally
@@ -152,7 +152,7 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(output) || output.ToLower().Contains("already up to date"))
             {
-                svnUI.LogText.text += "Result: <color=green>Everything is already up to date.</color>\n";
+                SVNLogBridge.LogLine("Result: <color=green>Everything is already up to date.</color>");
                 return;
             }
 
@@ -162,17 +162,17 @@ namespace SVN.Core
 
             if (isDryRun)
             {
-                svnUI.LogText.text += $"<color=green>[Simulation Result]</color> Files to update: {updated}, Potential conflicts: {conflicts}\n";
+                SVNLogBridge.LogLine($"<color=green>[Simulation Result]</color> Files to update: {updated}, Potential conflicts: {conflicts}");
             }
             else
             {
-                svnUI.LogText.text += $"<color=green>[Merge Result]</color> Successfully processed {updated} items.\n";
+                SVNLogBridge.LogLine($"<color=green>[Merge Result]</color> Successfully processed {updated} items.");
                 if (conflicts > 0)
                 {
-                    svnUI.LogText.text += $"<color=red><b>[WARNING] {conflicts} CONFLICTS DETECTED!</b></color>\n";
-                    svnUI.LogText.text += "Please use External Merge Tool to resolve files marked with 'C'.\n";
+                    SVNLogBridge.LogLine($"<color=red><b>[WARNING] {conflicts} CONFLICTS DETECTED!</b></color>");
+                    SVNLogBridge.LogLine("Please use External Merge Tool to resolve files marked with 'C'.");
                 }
-                svnUI.LogText.text += "<size=80%>" + output + "</size>\n";
+                SVNLogBridge.LogLine("<size=80%>" + output + "</size>");
             }
         }
 
@@ -189,19 +189,19 @@ namespace SVN.Core
             IsProcessing = true;
             try
             {
-                svnUI.LogText.text += "<b><color=yellow>[Rollback]</color> Starting Revert process...</b>\n";
-                svnUI.LogText.text += "<color=#444444>... Cleaning up all local modifications</color>\n";
+                SVNLogBridge.LogLine("<b><color=yellow>[Rollback]</color> Starting Revert process...</b>", append: false);
+                SVNLogBridge.LogLine("<color=#444444>... Cleaning up all local modifications</color>");
 
                 await SvnRunner.RunAsync("revert -R .", svnManager.WorkingDir);
 
-                svnUI.LogText.text += "<color=#444444>... Synchronizing status</color>\n";
+                SVNLogBridge.LogLine("<color=#444444>... Synchronizing status</color>");
                 await svnManager.RefreshStatus();
 
-                svnUI.LogText.text += "<color=green>[Success]</color> Local workspace is now clean. All merge changes discarded.\n";
+                SVNLogBridge.LogLine("<color=green>[Success]</color> Local workspace is now clean. All merge changes discarded.");
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>[Error]</color> Revert failed: {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>[Error]</color> Revert failed: {ex.Message}");
             }
             finally { IsProcessing = false; }
         }
@@ -210,7 +210,7 @@ namespace SVN.Core
         {
             try
             {
-                svnUI.LogText.text += "<color=#444444>... Scanning repository for branches</color>\n";
+                SVNLogBridge.LogLine("<color=#444444>... Scanning repository for branches</color>");
 
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
                 if (string.IsNullOrEmpty(repoRoot))
@@ -223,17 +223,17 @@ namespace SVN.Core
 
                 if (branches == null || branches.Length == 0)
                 {
-                    svnUI.LogText.text += "<color=yellow>[Info]</color> No branches found on server.\n";
+                    SVNLogBridge.LogLine("<color=yellow>[Info]</color> No branches found on server.");
                     return new string[0];
                 }
 
-                svnUI.LogText.text += $"<color=green>[Success]</color> Found {branches.Length} branch(es) available for merge.\n";
+                SVNLogBridge.LogLine($"<color=green>[Success]</color> Found {branches.Length} branch(es) available for merge.");
                 return branches;
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[SVN Merge] FetchAvailableBranches failed: {ex.Message}");
-                svnUI.LogText.text += $"<color=red>[Error]</color> Could not retrieve branches list: {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>[Error]</color> Could not retrieve branches list: {ex.Message}");
                 return new string[0];
             }
         }

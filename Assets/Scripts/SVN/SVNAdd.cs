@@ -17,20 +17,18 @@ namespace SVN.Core
 
             try
             {
-                svnUI.LogText.text = "<b>[Full Scan]</b> Starting project synchronization...\n";
+                SVNLogBridge.LogLine("<b>[Full Scan]</b> Starting project synchronization...", append: false);
 
                 await AddFoldersLogic();
-
                 await Task.Delay(300);
-
                 await AddFilesLogic();
 
-                svnUI.LogText.text += "<color=green><b>[Scan Complete]</b> All items are now under version control.</color>\n";
+                SVNLogBridge.LogLine("<color=green><b>[Scan Complete]</b> All items are now under version control.</color>");
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Scan Error:</color> {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>Scan Error:</color> {ex.Message}");
             }
             finally { IsProcessing = false; }
         }
@@ -39,7 +37,11 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
             IsProcessing = true;
-            try { await AddFoldersLogic(); }
+            try
+            {
+                SVNLogBridge.LogLine("<b>[Folder Sync]</b> Searching for unversioned directories...", append: false);
+                await AddFoldersLogic();
+            }
             finally { IsProcessing = false; }
         }
 
@@ -47,13 +49,17 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
             IsProcessing = true;
-            try { await AddFilesLogic(); }
+            try
+            {
+                SVNLogBridge.LogLine("<b>[File Sync]</b> Searching for unversioned files...", append: false);
+                await AddFilesLogic();
+            }
             finally { IsProcessing = false; }
         }
 
         private async Task AddFoldersLogic()
         {
-            svnUI.LogText.text += "Scanning for unversioned folders...\n";
+            SVNLogBridge.LogLine("Scanning for unversioned folders...");
             string root = svnManager.WorkingDir;
 
             var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
@@ -66,26 +72,20 @@ namespace SVN.Core
             {
                 foreach (var folderPath in foldersToAdd)
                 {
-                    svnUI.LogText.text += $"Adding folder: {folderPath}\n";
+                    SVNLogBridge.LogLine($"Adding folder: <color=#4FC3F7>{folderPath}</color>");
                     await AddFolderOnlyAsync(root, folderPath);
                 }
-                svnUI.LogText.text += $"<color=green>Added {foldersToAdd.Length} folders.</color>\n";
+                SVNLogBridge.LogLine($"<color=green>Added {foldersToAdd.Length} folders.</color>");
             }
             else
             {
-                svnUI.LogText.text += "No new folders found.\n";
+                SVNLogBridge.LogLine("No new folders found.");
             }
-        }
-
-        public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
-        {
-            string cmd = $"add \"{path}\" --depth empty";
-            return await SvnRunner.RunAsync(cmd, workingDir);
         }
 
         private async Task AddFilesLogic()
         {
-            svnUI.LogText.text += "Searching for unversioned files...\n";
+            SVNLogBridge.LogLine("Searching for unversioned files...");
             string root = svnManager.WorkingDir;
 
             string output = await SvnRunner.RunAsync("status", root);
@@ -107,12 +107,28 @@ namespace SVN.Core
             if (filesToAdd.Count > 0)
             {
                 await AddAsync(root, filesToAdd.ToArray());
-                svnUI.LogText.text += $"<color=green>Successfully added {filesToAdd.Count} files.</color>\n";
+                SVNLogBridge.LogLine($"<color=green>Successfully added {filesToAdd.Count} files.</color>");
             }
             else
             {
-                svnUI.LogText.text += "No new files found.\n";
+                SVNLogBridge.LogLine("No new files found.");
             }
+        }
+
+        // --- Static Helpers ---
+
+        public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
+        {
+            string cmd = $"add \"{path}\" --depth empty";
+            return await SvnRunner.RunAsync(cmd, workingDir);
+        }
+
+        public static async Task<string> AddAsync(string workingDir, string[] files)
+        {
+            if (files == null || files.Length == 0) return "";
+
+            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
+            return await SvnRunner.RunAsync($"add {fileArgs} --force --parents", workingDir);
         }
 
         public async Task<int> GetUnversionedCountAsync()
@@ -127,18 +143,7 @@ namespace SVN.Core
 
                 return lines.Count(line => line.Length >= 1 && line[0] == '?');
             }
-            catch (Exception)
-            {
-                return 0;
-            }
-        }
-
-        public static async Task<string> AddAsync(string workingDir, string[] files)
-        {
-            if (files == null || files.Length == 0) return "";
-
-            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
-            return await SvnRunner.RunAsync($"add {fileArgs} --force --parents", workingDir);
+            catch { return 0; }
         }
     }
 }

@@ -52,6 +52,8 @@ namespace SVN.Core
             }
             Instance = this;
 
+            SVNLogger.Initialize();
+
             InitializeAllModules();
         }
 
@@ -191,8 +193,8 @@ namespace SVN.Core
 
         private void LogToUI(string message, string color)
         {
-            if (svnUI?.LogText != null)
-                svnUI.LogText.text += $"<color={color}>{message}</color>\n";
+            SVNLogBridge.LogLine($"<color={color}>{message}</color>", true);
+            //svnUI.LogText.text += $"<color={color}>{message}</color>\n";
         }
 
         public void BroadcastWorkingDirChange(string path)

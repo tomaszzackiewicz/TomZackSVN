@@ -1,6 +1,4 @@
 using UnityEngine;
-using UnityEngine.UI;
-using System.Collections;
 using System.Collections.Generic;
 
 namespace SVN.Core
@@ -35,7 +33,8 @@ namespace SVN.Core
             string cmd = rawInput.ToLower().StartsWith("svn ") ? rawInput.Substring(4).Trim() : rawInput;
 
             svnUI.TerminalInputField.text = "";
-            LogToView($"> svn {cmd}", "#FFFF00");
+
+            SVNLogBridge.LogLine($"<color=#FFFF00>> svn {cmd}</color>", append: true);
 
             IsProcessing = true;
 
@@ -43,16 +42,19 @@ namespace SVN.Core
             {
                 string result = await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
-                LogToView(result, "white");
+                if (!string.IsNullOrEmpty(result))
+                {
+                    SVNLogBridge.LogLine(result, append: true);
+                }
 
-                if (cmd.Contains("update") || cmd.Contains("commit") || cmd.Contains("switch") || cmd.Contains("checkout"))
+                if (cmd.Contains("update") || cmd.Contains("commit") || cmd.Contains("switch") || cmd.Contains("checkout") || cmd.Contains("cleanup"))
                 {
                     await svnManager.RefreshStatus();
                 }
             }
             catch (System.Exception ex)
             {
-                LogToView(ex.Message, "red");
+                SVNLogBridge.LogLine($"<color=red>Terminal Error:</color> {ex.Message}", append: true);
             }
             finally
             {
@@ -99,32 +101,9 @@ namespace SVN.Core
             }
         }
 
-        private void LogToView(string message, string colorTag)
-        {
-            if (svnUI.LogText == null) return;
-
-            string timestamp = System.DateTime.Now.ToString("HH:mm:ss");
-            svnUI.LogText.text += $"[{timestamp}] <color={colorTag}>{message}</color>\n";
-
-            svnManager.StartCoroutine(ScrollToBottom());
-        }
-
-        private IEnumerator ScrollToBottom()
-        {
-            yield return new WaitForEndOfFrame();
-            if (svnUI.LogScrollRect != null)
-            {
-                svnUI.LogScrollRect.verticalNormalizedPosition = 0f;
-            }
-        }
-
         public void ClearLog()
         {
-            if (svnUI.LogText != null)
-            {
-                svnUI.LogText.text = "";
-                LogToView("Terminal log cleared.", "#888888");
-            }
+            SVNLogBridge.LogLine("<color=#888888>Terminal log cleared.</color>", append: true);
         }
     }
 }

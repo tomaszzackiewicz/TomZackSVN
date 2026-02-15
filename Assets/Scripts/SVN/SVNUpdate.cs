@@ -20,8 +20,9 @@ namespace SVN.Core
             string targetPath = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(targetPath))
             {
-                if (svnUI.LogText != null)
-                    svnUI.LogText.text = "<color=red>Error:</color> Working Directory not set.";
+
+                //svnUI.LogText.text = "<color=red>Error:</color> Working Directory not set.";
+                SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory not set.", false);
                 return;
             }
 
@@ -55,26 +56,25 @@ namespace SVN.Core
                     revision = ParseRevisionFromInfo(infoOutput);
                 }
 
-                if (svnUI.LogText != null)
-                {
-                    string summary = "<b>[SVN UPDATE COMPLETED]</b>\n";
-                    if (updatedCount > 0)
-                        summary += $"<color=green>Success!</color> Updated <b>{updatedCount}</b> items.\n";
-                    else
-                        summary += "<color=blue>No changes found.</color> Project is up to date.\n";
+                string summary = "<b>[SVN UPDATE COMPLETED]</b>\n";
+                if (updatedCount > 0)
+                    summary += $"<color=green>Success!</color> Updated <b>{updatedCount}</b> items.\n";
+                else
+                    summary += "<color=blue>No changes found.</color> Project is up to date.\n";
 
-                    summary += $"Current Revision: <color=#FFD700><b>{revision}</b></color>\n";
-                    summary += "-----------------------------------";
-                    svnUI.LogText.text = summary;
-                }
+                summary += $"Current Revision: <color=#FFD700><b>{revision}</b></color>\n";
+                summary += "-----------------------------------";
+                //svnUI.LogText.text = summary;
+                SVNLogBridge.LogLine(summary, false);
+
                 IsProcessing = false;
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
                 Debug.LogError($"[SVN] Update Error: {ex}");
-                if (svnUI.LogText != null)
-                    svnUI.LogText.text += $"\n<color=red><b>Update Failed:</b></color> {ex.Message}";
+                SVNLogBridge.LogLine($"\n<color=red><b>Update Failed:</b></color> {ex.Message}");
+                //svnUI.LogText.text += $"\n<color=red><b>Update Failed:</b></color> {ex.Message}";
             }
             finally
             {
@@ -93,9 +93,9 @@ namespace SVN.Core
         {
             while (IsProcessing)
             {
-                if (_hasNewLine && svnUI.LogText != null)
+                if (_hasNewLine)
                 {
-                    svnUI.LogText.text = $"<b>[SVN]</b> Updating: <color=orange>{_lastLiveLine}</color>";
+                    SVNLogBridge.LogLine($"<b>[SVN]</b> Updating: <color=orange>{_lastLiveLine}</color>", false);
                     _hasNewLine = false;
                 }
                 await Task.Yield();

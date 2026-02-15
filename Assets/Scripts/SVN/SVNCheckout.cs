@@ -26,31 +26,26 @@ namespace SVN.Core
             string keyPath = "";
 
             if (!string.IsNullOrWhiteSpace(svnUI.CheckoutPrivateKeyInput?.text))
-            {
                 keyPath = svnUI.CheckoutPrivateKeyInput.text.Trim();
-            }
             else if (svnUI.SettingsSshKeyPathInput != null && !string.IsNullOrWhiteSpace(svnUI.SettingsSshKeyPathInput.text))
-            {
                 keyPath = svnUI.SettingsSshKeyPathInput.text.Trim();
-            }
             else
-            {
                 keyPath = SvnRunner.KeyPath;
-            }
 
             if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(path))
             {
                 string errorMsg = "<color=red>Error:</color> Provide both URL and Destination Path.";
-                svnUI.LogText.text += errorMsg + "\n";
-                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = errorMsg;
+                SVNLogBridge.LogLine(errorMsg);
+                // Używamy: uiField, content, logLabel
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, errorMsg, "Checkout");
                 return;
             }
 
             if (string.IsNullOrEmpty(keyPath))
             {
                 string errorMsg = "<color=red>Error:</color> SSH Key path is empty!";
-                svnUI.LogText.text += errorMsg + "\n";
-                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = errorMsg;
+                SVNLogBridge.LogLine(errorMsg);
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, errorMsg, "Checkout");
                 return;
             }
 
@@ -62,6 +57,7 @@ namespace SVN.Core
                 svnUI.OperationProgressBar.gameObject.SetActive(true);
                 svnUI.OperationProgressBar.value = 0f;
             }
+
             try
             {
                 string absoluteKey = Path.GetFullPath(keyPath).Replace("\\", "/");
@@ -71,7 +67,7 @@ namespace SVN.Core
 
                 if (!Directory.Exists(path)) Directory.CreateDirectory(path);
 
-                svnUI.LogText.text += $"<b>Starting Checkout...</b>\nPath: <color=green>{path}</color>\n";
+                SVNLogBridge.LogLine($"<b>Starting Checkout...</b>\nPath: <color=green>{path}</color>", append: false);
 
                 await SvnRunner.RunLiveAsync(cmd, "", (line) =>
                 {
@@ -79,29 +75,24 @@ namespace SVN.Core
                     {
                         if (!string.IsNullOrWhiteSpace(line) && line.Length > 4)
                         {
-                            if (svnUI.CheckoutStatusInfoText != null)
-                            {
-                                svnUI.CheckoutStatusInfoText.text = $"<color=yellow>Processing:</color> {line.Trim()}";
-                            }
+                            // Przekazujemy label, aby dopasować się do sygnatury (4 argumenty)
+                            SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, $"<color=yellow>Processing:</color> {line.Trim()}", "Checkout", false);
                         }
                     }, null);
                 }, _checkoutCTS.Token);
 
-                if (svnUI.CheckoutStatusInfoText != null)
-                    svnUI.CheckoutStatusInfoText.text = "<color=yellow>Finalizing & Verifying...</color>";
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "<color=yellow>Finalizing & Verifying...</color>", "Checkout");
 
                 await Task.Delay(1500);
-
                 RegisterNewProjectAfterCheckout(path, url, keyPath);
-
                 svnManager.WorkingDir = path;
 
                 await svnManager.RefreshRepositoryInfo();
                 await Task.Delay(1500);
                 await svnManager.RefreshStatus();
 
-                svnUI.LogText.text += "<color=green>SUCCESS:</color> Checkout completed and project initialized.\n";
-                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = "<color=green>Checkout Finished!</color>";
+                SVNLogBridge.LogLine("<color=green>SUCCESS:</color> Checkout completed and project initialized.");
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "<color=green>Checkout Finished!</color>", "Checkout");
 
                 if (svnManager.PanelHandler != null)
                 {
@@ -112,14 +103,14 @@ namespace SVN.Core
             catch (OperationCanceledException)
             {
                 string cancelMsg = "<color=yellow>Checkout cancelled by user.</color>";
-                svnUI.LogText.text += cancelMsg + "\n";
-                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = cancelMsg;
+                SVNLogBridge.LogLine(cancelMsg);
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, cancelMsg, "Checkout");
             }
             catch (Exception ex)
             {
                 string errorMsg = $"<color=red>Checkout Error:</color> {ex.Message}";
-                svnUI.LogText.text += errorMsg + "\n";
-                if (svnUI.CheckoutStatusInfoText != null) svnUI.CheckoutStatusInfoText.text = errorMsg;
+                SVNLogBridge.LogLine(errorMsg);
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, errorMsg, "Checkout");
             }
             finally
             {
@@ -134,17 +125,14 @@ namespace SVN.Core
 
         public void CancelCheckout()
         {
-            if (_checkoutCTS != null)
-            {
-                _checkoutCTS.Cancel();
-            }
+            _checkoutCTS?.Cancel();
         }
 
         private void RegisterNewProjectAfterCheckout(string path, string repoUrl, string keyPath)
         {
             var newProj = new SVNProject
             {
-                projectName = Path.GetFileName(path),
+                projectName = Path.GetFileName(path.TrimEnd('/', '\\')),
                 repoUrl = repoUrl,
                 workingDir = path,
                 privateKeyPath = keyPath,
@@ -156,7 +144,7 @@ namespace SVN.Core
             {
                 projects.Add(newProj);
                 ProjectSettings.SaveProjects(projects);
-                svnUI.LogText.text += $"<color=green>Project '{newProj.projectName}' added to Selection List.</color>\n";
+                SVNLogBridge.LogLine($"<color=green>Project '{newProj.projectName}' added to Selection List.</color>");
             }
 
             PlayerPrefs.SetString("SVN_LastOpenedProjectPath", path);

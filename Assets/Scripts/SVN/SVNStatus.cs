@@ -22,8 +22,15 @@ namespace SVN.Core
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
 
-            if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "Refreshing...";
-            if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "Refreshing...";
+            if (svnUI.TreeDisplay != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
+            }
+
+            if (svnUI.CommitTreeDisplay != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
+            }
 
             _isCurrentViewIgnored = false;
             _ = ExecuteRefreshWithAutoExpand();
@@ -45,16 +52,8 @@ namespace SVN.Core
 
             Action<string, bool> LogSmart = (msg, isHeader) =>
             {
-                if (svnUI.LogText != null)
-                {
-                    if (isHeader) svnUI.LogText.text = msg;
-                    else svnUI.LogText.text += msg;
-                }
-
-                if (svnUI.CommitConsoleContent != null)
-                {
-                    svnUI.CommitConsoleContent.text += msg;
-                }
+                SVNLogBridge.LogLine(msg, append: !isHeader);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, msg, "COMMIT_CONSOLE", append: true);
             };
 
             LogSmart($"{timestamp} <color=#0FF>Refreshing status...</color>\n", true);
@@ -73,9 +72,20 @@ namespace SVN.Core
                         ? "<i>No ignored files found.</i>"
                         : "<i>No changes detected. (Everything up to date)</i>";
 
-                    if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = emptyMsg;
-                    if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = emptyMsg;
-                    if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Size: 0 KB";
+                    if (svnUI.TreeDisplay != null)
+                    {
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, emptyMsg, "TREE", append: false);
+                    }
+
+                    if (svnUI.CommitTreeDisplay != null)
+                    {
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, emptyMsg, "COMMIT_TREE", append: false);
+                    }
+
+                    if (svnUI.CommitSizeText != null)
+                    {
+                        SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, "Total Size: 0 KB", "STATS", append: false);
+                    }
 
                     UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
                     LogSmart("<color=green>Workspace is clean.</color>\n", false);
@@ -103,14 +113,22 @@ namespace SVN.Core
                 string report = await SvnRunner.GetCommitSizeReportAsync(root);
                 if (svnUI.CommitSizeText != null)
                 {
-                    svnUI.CommitSizeText.text = $"<color=yellow>Total Size of Changes: {report}</color>\n";
+                    string sizeMsg = $"<color=yellow>Total Size of Changes: {report}</color>";
+                    SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, sizeMsg, "STATS", append: false);
                 }
 
                 var result = await GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
                 string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
 
-                if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = treeResult;
-                if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = treeResult;
+                if (svnUI.TreeDisplay != null)
+                {
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, treeResult, "TREE", append: false);
+                }
+
+                if (svnUI.CommitTreeDisplay != null)
+                {
+                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, treeResult, "COMMIT_TREE", append: false);
+                }
 
                 UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
                 LogSmart("<color=green>Refresh finished.</color>\n", false);
@@ -130,7 +148,6 @@ namespace SVN.Core
         public void UpdateFilesStatus(Dictionary<string, (string status, string size)> newStatus)
         {
             if (newStatus == null) return;
-
             svnManager.CurrentStatusDict = newStatus;
         }
 
@@ -140,48 +157,26 @@ namespace SVN.Core
 
             if (svnUI.StatsText != null)
             {
-                if (isIgnoredView)
-                {
-                    svnUI.StatsText.text = $"<color=#444444><b>VIEW: IGNORED</b></color> | " +
-                                           $"Folders: {stats.IgnoredFolderCount} | " +
-                                           $"Files: {stats.IgnoredFileCount} | " +
-                                           $"Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>";
-                }
-                else
-                {
-                    svnUI.StatsText.text =
-                                           $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | " +
-                                           $"<color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | " +
-                                           $"<color=#00FF00>Add (A): {stats.AddedCount}</color> | " +
-                                           $"<color=#00E5FF>New (?): {stats.NewFilesCount}</color> | " +
-                                           $"<color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | " + // Zmieniono etykietę
-                                           $"<color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
-                }
+                string statsContent = isIgnoredView
+                    ? $"<color=#444444><b>VIEW: IGNORED</b></color> | Folders: {stats.IgnoredFolderCount} | Files: {stats.IgnoredFileCount} | Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>"
+                    : $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | <color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | <color=#00FF00>Add (A): {stats.AddedCount}</color> | <color=#00E5FF>New (?): {stats.NewFilesCount}</color> | <color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | <color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
+
+                SVNLogBridge.UpdateUIField(svnUI.StatsText, statsContent, "STATS", append: false);
             }
 
             if (svnUI.CommitStatsText != null)
             {
                 if (isIgnoredView)
                 {
-                    svnUI.CommitStatsText.text = "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>";
+                    SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>", "STATS", append: false);
                 }
                 else
                 {
                     int totalToCommit = stats.ModifiedCount + stats.AddedCount + stats.NewFilesCount + stats.DeletedCount;
+                    string conflictPart = stats.ConflictsCount > 0 ? $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>" : "";
+                    string commitStats = $"<b>Pending Changes:</b> <color=#FFD700>M: {stats.ModifiedCount}</color> | <color=#00FF00>A: {stats.AddedCount}</color> | <color=#00E5FF>?: {stats.NewFilesCount}</color> | <color=#FF4444>D/!: {stats.DeletedCount}</color> | <color=#FFFFFF><b>Total: {totalToCommit}</b></color>{conflictPart}";
 
-                    string conflictPart = "";
-                    if (stats.ConflictsCount > 0)
-                    {
-                        conflictPart = $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>";
-                    }
-
-                    svnUI.CommitStatsText.text = $"<b>Pending Changes:</b> " +
-                        $"<color=#FFD700>M: {stats.ModifiedCount}</color> | " +
-                        $"<color=#00FF00>A: {stats.AddedCount}</color> | " +
-                        $"<color=#00E5FF>?: {stats.NewFilesCount}</color> | " +
-                        $"<color=#FF4444>D/!: {stats.DeletedCount}</color> | " +
-                        $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>" +
-                        conflictPart;
+                    SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, commitStats, "STATS", append: false);
                 }
             }
         }
@@ -197,15 +192,12 @@ namespace SVN.Core
             foreach (var line in lines)
             {
                 if (line.Length < 8) continue;
-
                 char rawCode = line[0];
                 string stat = rawCode.ToString().ToUpper();
-
                 if ("MA?!DC".Contains(stat))
                 {
                     string rawPath = line.Substring(8).Trim();
                     string cleanPath = SvnRunner.CleanSvnPath(rawPath);
-
                     string fullPath = Path.Combine(workingDir, cleanPath);
                     statusDict[cleanPath] = (stat, SvnRunner.GetFileSizeSafe(fullPath));
                 }
@@ -224,12 +216,10 @@ namespace SVN.Core
             foreach (var line in lines)
             {
                 if (line.Length < 8) continue;
-
                 if (line[0] == 'I')
                 {
                     string rawPath = line.Substring(8).Trim();
                     string cleanPath = SvnRunner.CleanSvnPath(rawPath);
-
                     ignoredDict[cleanPath] = ("I", "<IGNORED>");
                 }
             }
@@ -258,9 +248,20 @@ namespace SVN.Core
 
         public void ClearUI()
         {
-            if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "<i>No changes found.</i>";
-            if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "";
-            if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "<color=yellow>Total Size: 0 B</color>";
+            if (svnUI.TreeDisplay != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes found.</i>", "TREE", append: false);
+            }
+
+            if (svnUI.CommitTreeDisplay != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, string.Empty, "COMMIT_TREE", append: false);
+            }
+
+            if (svnUI.CommitSizeText != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, "<color=yellow>Total Size: 0 B</color>", "STATS", append: false);
+            }
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
         }
@@ -273,13 +274,9 @@ namespace SVN.Core
         public void ReloadIgnoreRules()
         {
             if (svnManager != null && !string.IsNullOrEmpty(svnManager.WorkingDir))
-            {
                 LoadIgnoreRulesFromFile(svnManager.WorkingDir);
-            }
             else
-            {
                 Debug.LogError("[SVN] Cannot reload: WorkingDir is null or empty.");
-            }
         }
 
         public void LoadIgnoreRulesFromFile(string workingDir)
@@ -354,7 +351,7 @@ namespace SVN.Core
                 {
                     bool isFromFile = _cachedIgnoreRules.Contains(rule);
                     string color = isFromFile ? "#00FFFF" : "#00FF99";
-                    sb.AppendLine($"<color={color}>  {(isFromFile ? "[FILE]" : "[SVN]")} {rule}</color>");
+                    sb.AppendLine($"<color={color}>  {(isFromFile ? "[FILE]" : "[SVN]")} {rule}</color>");
                 }
             }
 
@@ -388,9 +385,9 @@ namespace SVN.Core
             if (count == 0 && activeRules.Count > 0)
                 sb.AppendLine("<color=green>No files match the active rules.</color>");
 
-            if (svnUI != null && svnUI.IgnoredText != null)
+            if (svnUI != null)
             {
-                svnUI.IgnoredText.text = sb.ToString();
+                SVNLogBridge.UpdateUIField(svnUI.IgnoredText, sb.ToString(), "IGNORED", append: false);
             }
         }
 
@@ -401,7 +398,6 @@ namespace SVN.Core
             {
                 string globalOutput = await SvnRunner.RunAsync("propget svn:global-ignores -R .", workingDir);
                 string standardOutput = await SvnRunner.RunAsync("propget svn:ignore -R .", workingDir);
-
                 string combinedOutput = globalOutput + "\n" + standardOutput;
 
                 if (string.IsNullOrEmpty(combinedOutput) || combinedOutput.Contains("ERROR"))
@@ -477,27 +473,25 @@ namespace SVN.Core
 
         private void UpdateStatusInUI(string message)
         {
-            if (svnUI != null && svnUI.IgnoredText != null)
+            if (svnUI != null)
             {
-                svnUI.IgnoredText.text = $"<color=#FFFF00>{message}</color>\n" + svnUI.IgnoredText.text;
+                SVNLogBridge.UpdateUIField(svnUI.IgnoredText, $"<color=#FFFF00>{message}</color>\n", "IGNORED", append: true);
             }
         }
 
         public async void ShowProjectInfo(SVNProject svnProject, string path)
         {
             if (string.IsNullOrEmpty(path)) return;
-            if (svnUI == null || svnUI.StatusInfoText == null) return;
+            if (svnUI == null) return;
 
             if (svnProject != null && !string.IsNullOrEmpty(svnProject.projectName))
-            {
                 _lastKnownProjectName = svnProject.projectName;
-            }
 
             string displayName = !string.IsNullOrEmpty(_lastKnownProjectName)
                 ? _lastKnownProjectName
                 : Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
-            svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Initializing {displayName}...</color>";
+            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Initializing {displayName}...</color>", "INFO", append: false);
 
             string sizeText = "---";
             string rawInfo = "";
@@ -511,7 +505,7 @@ namespace SVN.Core
                     if (!Directory.Exists(Path.Combine(path, ".svn")))
                     {
                         retryCount++;
-                        svnUI.StatusInfoText.text = $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Waiting for .svn metadata... ({retryCount}/{maxRetries})</color>";
+                        SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Waiting for .svn metadata... ({retryCount}/{maxRetries})</color>");
                         await Task.Delay(1000);
                         continue;
                     }
@@ -534,7 +528,7 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(rawInfo) || rawInfo == "unknown")
             {
-                svnUI.StatusInfoText.text = $"<size=120%><color=#FF5555>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>";
+                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=120%><color=#FF5555>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>", "INFO", append: false);
                 return;
             }
 
@@ -576,16 +570,17 @@ namespace SVN.Core
 
             string currentUser = svnManager.CurrentUserName ?? "Unknown";
 
-            svnUI.StatusInfoText.text =
-                $"<size=120%><color=#55FF55>●</color></size> <color=orange> <b>{displayName}</b> ({sizeText})</color> | " +
-                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{currentUser}</color> | " +
-                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{branchName}</color> | " +
-                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revision}</color> | " +
-                $"<color=#00E5FF>By:</color> <color=#E6E6E6>{author}</color> | " +
-                $"<color=#E6E6E6> {shortDate}</color> | " +
-                $"<color=#E6E6E6>Srv: {serverHost}</color> | " +
-                $"<color=#E6E6E6>App: {appVersion}</color> | " +
-                $"<color=#E6E6E6>SVN: {_svnVersionCached}</color>";
+            string statusLine = $"<size=120%><color=#55FF55>●</color></size> <color=orange> <b>{displayName}</b> ({sizeText})</color> | " +
+                                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{currentUser}</color> | " +
+                                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{branchName}</color> | " +
+                                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revision}</color> | " +
+                                $"<color=#00E5FF>By:</color> <color=#E6E6E6>{author}</color> | " +
+                                $"<color=#E6E6E6> {shortDate}</color> | " +
+                                $"<color=#E6E6E6>Srv: {serverHost}</color> | " +
+                                $"<color=#E6E6E6>App: {appVersion}</color> | " +
+                                $"<color=#E6E6E6>SVN: {_svnVersionCached}</color>";
+
+            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, statusLine, "INFO", append: false);
         }
 
         public async Task<string> GetFolderSizeAsync(string path)
@@ -596,10 +591,8 @@ namespace SVN.Core
                 {
                     DirectoryInfo dir = new DirectoryInfo(path);
                     if (!dir.Exists) return "0 GB";
-
                     long bytes = dir.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
                     double gigabytes = (double)bytes / (1024 * 1024 * 1024);
-
                     return $"{gigabytes:F2} GB";
                 }
                 catch (Exception ex)
@@ -619,26 +612,19 @@ namespace SVN.Core
                     _svnVersionCached = await SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir);
                     _svnVersionCached = _svnVersionCached.Trim();
                 }
-                catch
-                {
-                    _svnVersionCached = "?.?.?";
-                }
+                catch { _svnVersionCached = "?.?.?"; }
             }
         }
 
         private string ExtractValue(string text, string key)
         {
             if (string.IsNullOrEmpty(text)) return "N/A";
-
             using (var reader = new System.IO.StringReader(text))
             {
                 string line;
                 while ((line = reader.ReadLine()) != null)
                 {
-                    if (line.StartsWith(key))
-                    {
-                        return line.Replace(key, "").Trim();
-                    }
+                    if (line.StartsWith(key)) return line.Replace(key, "").Trim();
                 }
             }
             return "unknown";
@@ -647,28 +633,16 @@ namespace SVN.Core
         public static async Task<(string tree, SvnStats stats)> GetVisualTreeWithStatsAsync(string workingDir, HashSet<string> expandedPaths, bool showIgnored = false)
         {
             Dictionary<string, (string status, string size)> statusDict = await SvnRunner.GetFullStatusDictionaryAsync(workingDir, true);
-
             var sb = new StringBuilder();
             var stats = new SvnStats();
 
             if (!Directory.Exists(workingDir)) return ("Path error.", stats);
 
             HashSet<string> foldersWithRelevantContent = new HashSet<string>();
-
             foreach (var item in statusDict)
             {
                 string stat = item.Value.status;
-                bool isInteresting = false;
-
-                if (showIgnored)
-                {
-                    isInteresting = (stat == "I");
-                }
-                else
-                {
-                    isInteresting = !string.IsNullOrEmpty(stat) && stat != "I";
-                }
-
+                bool isInteresting = showIgnored ? (stat == "I") : (!string.IsNullOrEmpty(stat) && stat != "I");
                 if (isInteresting)
                 {
                     string[] parts = item.Key.Split('/');
@@ -682,7 +656,6 @@ namespace SVN.Core
             }
 
             SvnRunner.BuildTreeString(workingDir, workingDir, 0, statusDict, sb, stats, expandedPaths, new bool[128], showIgnored, foldersWithRelevantContent);
-
             return (sb.ToString(), stats);
         }
     }

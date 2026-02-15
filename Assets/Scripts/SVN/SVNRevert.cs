@@ -16,12 +16,12 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> Working directory not set.\n";
+                SVNLogBridge.LogLine("<color=red>Error:</color> Working directory not set.");
                 return;
             }
 
             IsProcessing = true;
-            svnUI.LogText.text = "<b>Starting Revert process...</b>\n";
+            SVNLogBridge.LogLine("<b>Starting Revert process...</b>", append: false);
 
             try
             {
@@ -34,21 +34,21 @@ namespace SVN.Core
 
                 if (filesToRevert.Length == 0)
                 {
-                    svnUI.LogText.text += "<color=yellow>No local changes detected to revert.</color>\n";
+                    SVNLogBridge.LogLine("<color=yellow>No local changes detected to revert.</color>");
                     return;
                 }
 
-                svnUI.LogText.text += $"Reverting {filesToRevert.Length} files to their original state...\n";
+                SVNLogBridge.LogLine($"Reverting {filesToRevert.Length} files to their original state...");
 
                 await RevertAsync(root, filesToRevert);
 
-                svnUI.LogText.text += $"<color=green>Success!</color> Reverted <b>{filesToRevert.Length}</b> files.\n";
+                SVNLogBridge.LogLine($"<color=green>Success!</color> Reverted <b>{filesToRevert.Length}</b> files.");
 
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Revert Error:</color> {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>Revert Error:</color> {ex.Message}");
             }
             finally
             {

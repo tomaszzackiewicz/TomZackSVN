@@ -45,6 +45,8 @@ namespace SVN.Core
         public void Button_BreakLocks() => svnManager.GetModule<SVNLock>().BreakAllLocks();
         public void Button_TerminalSubmit() => OnTerminalSubmit();
 
+        public void Button_OpenLogs() => SVNLogger.OpenLogFolder();
+
         public void Button_ClearTerminalLog()
         {
             svnManager.GetModule<SVNTerminal>().ClearLog();
@@ -55,7 +57,9 @@ namespace SVN.Core
         {
             if (svnUI.LocksText != null)
             {
-                svnUI.LocksText.text = string.Empty;
+                SVNLogBridge.UpdateUIField(svnUI.LocksText, string.Empty, "LOCKS_VIEW", append: false);
+
+                SVNLogBridge.LogLine("<color=#777777>Locks view cleared by user.</color>");
             }
         }
     }

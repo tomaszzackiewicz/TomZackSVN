@@ -14,15 +14,16 @@ namespace SVN.Core
             if (IsProcessing) return;
             IsProcessing = true;
 
-            svnUI.LogText.text = "<b>[Missing Files]</b> Scanning for items removed from disk...\n";
+            SVNLogBridge.LogLine("<b>[Missing Files]</b> Scanning for items removed from disk...", append: false);
 
             try
             {
                 await FixMissingLogic();
+                SVNLogBridge.LogLine("<color=green>Success:</color> Missing files processing completed.");
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>FixMissing Error:</color> {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>FixMissing Error:</color> {ex.Message}");
                 Debug.LogError($"[SVN] FixMissing: {ex}");
             }
             finally
@@ -43,17 +44,24 @@ namespace SVN.Core
 
             if (missingFiles.Count > 0)
             {
+                SVNLogBridge.LogLine($"Found {missingFiles.Count} missing files. Scheduling for deletion...");
+
                 foreach (var path in missingFiles)
                 {
                     try
                     {
                         await SvnRunner.RunAsync($"delete --force \"{path}\"", root);
+                        SVNLogBridge.LogLine($"<color=#888888>Deleted from SVN:</color> {path}");
                     }
                     catch (System.Exception)
                     {
-                        UnityEngine.Debug.LogWarning($"[SVN] Ignorowanie nieśledzonego pliku: {path}");
+                        Debug.LogWarning($"[SVN] Ignoring untracked or locked file: {path}");
                     }
                 }
+            }
+            else
+            {
+                SVNLogBridge.LogLine("<color=yellow>No missing files detected.</color>");
             }
         }
     }

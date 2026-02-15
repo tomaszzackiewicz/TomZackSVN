@@ -32,15 +32,14 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> Invalid destination path!\n";
+                SVNLogBridge.LogLine("<color=red>Error:</color> Invalid destination path!");
                 return;
             }
 
             IsProcessing = true;
-
             SvnRunner.KeyPath = keyPath;
 
-            svnUI.LogText.text += $"<b>Processing path:</b> <color=green>{path}</color>\n";
+            SVNLogBridge.LogLine($"<b>Processing path:</b> <color=green>{path}</color>", append: false);
 
             try
             {
@@ -57,7 +56,7 @@ namespace SVN.Core
 
                 if (hasSvnFolder)
                 {
-                    svnUI.LogText.text += "<b>Existing repository detected.</b> Linking files...\n";
+                    SVNLogBridge.LogLine("<b>Existing repository detected.</b> Linking files...");
                     await svnManager.RefreshRepositoryInfo();
                 }
                 else
@@ -68,18 +67,18 @@ namespace SVN.Core
                         string forceFlag = isFolderEmpty ? "" : " --force";
 
                         if (!isFolderEmpty)
-                            svnUI.LogText.text += "<color=orange>Note:</color> Folder not empty. Merging with existing files...\n";
+                            SVNLogBridge.LogLine("<color=orange>Note:</color> Folder not empty. Merging with existing files...");
 
-                        svnUI.LogText.text += "<color=yellow>Starting Checkout...</color>\n";
+                        SVNLogBridge.LogLine("<color=yellow>Starting Checkout...</color>");
 
                         await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath);
 
-                        svnUI.LogText.text += "<color=green>Checkout completed!</color>\n";
+                        SVNLogBridge.LogLine("<color=green>Checkout completed!</color>");
                         await svnManager.RefreshRepositoryInfo();
                     }
                     else
                     {
-                        svnUI.LogText.text += "<color=red>Error:</color> Path is not a repository and no URL provided!\n";
+                        SVNLogBridge.LogLine("<color=red>Error:</color> Path is not a repository and no URL provided!");
                         IsProcessing = false;
                         return;
                     }
@@ -98,7 +97,7 @@ namespace SVN.Core
 
                 await svnManager.RefreshStatus();
 
-                svnUI.LogText.text += "<color=green>SUCCESS:</color> System synchronized.\n";
+                SVNLogBridge.LogLine("<color=green>SUCCESS:</color> System synchronized.");
 
                 if (svnManager.PanelHandler != null)
                 {
@@ -108,7 +107,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Operation Failed:</color> {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>Operation Failed:</color> {ex.Message}");
                 Debug.LogError($"[SVN] Load Error: {ex}");
             }
             finally
@@ -136,12 +135,12 @@ namespace SVN.Core
                 projects[existingIndex].repoUrl = url;
                 projects[existingIndex].privateKeyPath = key;
                 projects[existingIndex].lastOpened = DateTime.Now;
-                svnUI.LogText.text += "<color=#888888>Existing project entry updated in list.</color>\n";
+                SVNLogBridge.LogLine("<color=#888888>Existing project entry updated in list.</color>");
             }
             else
             {
                 projects.Add(newProj);
-                svnUI.LogText.text += $"<color=green>New project '{newProj.projectName}' added to Selection List.</color>\n";
+                SVNLogBridge.LogLine($"<color=green>New project '{newProj.projectName}' added to Selection List.</color>");
             }
 
             ProjectSettings.SaveProjects(projects);

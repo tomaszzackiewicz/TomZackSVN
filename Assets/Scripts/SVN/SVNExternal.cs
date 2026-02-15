@@ -16,17 +16,16 @@ namespace SVN.Core
 
                 if (string.IsNullOrEmpty(root) || !System.IO.Directory.Exists(root))
                 {
-                    svnUI.LogText.text += "<color=red>Error: Working directory is not set or does not exist!</color>\n";
+                    SVNLogBridge.LogLine("<color=red>Error: Working directory is not set or does not exist!</color>");
                     return;
                 }
 
                 System.Diagnostics.Process.Start("explorer.exe", root.Replace('/', '\\'));
-
-                svnUI.LogText.text += $"<color=green>Explorer:</color> Opened {root}\n";
+                SVNLogBridge.LogLine($"<color=green>Explorer:</color> Opened {root}");
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Explorer Error:</color> {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>Explorer Error:</color> {ex.Message}");
             }
         }
 
@@ -34,7 +33,7 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(relativePath))
             {
-                svnUI.LogText.text += "<color=yellow>Warning:</color> No file selected for Diff.\n";
+                SVNLogBridge.LogLine("<color=yellow>Warning:</color> No file selected for Diff.");
                 return;
             }
 
@@ -43,19 +42,18 @@ namespace SVN.Core
 
             if (!System.IO.File.Exists(fullPath))
             {
-                svnUI.LogText.text += "<color=red>Error:</color> File not found on disk.\n";
+                SVNLogBridge.LogLine("<color=red>Error:</color> File not found on disk.");
                 return;
             }
 
             try
             {
-                svnUI.LogText.text += $"Opening Diff for: {relativePath}...\n";
-
+                SVNLogBridge.LogLine($"Opening Diff for: {relativePath}...");
                 await SvnRunner.RunAsync($"diff \"{relativePath}\" --external-diff-cmd TortoiseMerge", root);
             }
             catch (Exception ex)
             {
-                svnUI.LogText.text += $"<color=red>Diff Error:</color> {ex.Message}\n";
+                SVNLogBridge.LogLine($"<color=red>Diff Error:</color> {ex.Message}");
             }
         }
 
@@ -65,17 +63,13 @@ namespace SVN.Core
 
             if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
             {
-                string selectedPath = paths[0];
-
-                selectedPath = selectedPath.Replace('\\', '/');
-
+                string selectedPath = paths[0].Replace('\\', '/');
                 svnManager.WorkingDir = selectedPath;
 
                 if (svnUI.LoadDestFolderInput != null)
                     svnUI.LoadDestFolderInput.text = selectedPath;
 
                 _ = svnManager.SetWorkingDirectory(selectedPath);
-
                 Debug.Log($"SVN path selected: {selectedPath}");
             }
             else
@@ -87,16 +81,15 @@ namespace SVN.Core
         public void BrowsePrivateKeyPathLoad()
         {
             var extensions = new[] {
-            new ExtensionFilter("All Files", "*"),
-            new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh")
-        };
+                new ExtensionFilter("All Files", "*"),
+                new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh")
+            };
 
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select Private Key File", "", extensions, false);
 
             if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
             {
                 string selectedPath = paths[0].Replace('\\', '/');
-
                 svnManager.CurrentKey = selectedPath;
 
                 if (svnUI.LoadPrivateKeyInput != null)
@@ -117,11 +110,12 @@ namespace SVN.Core
             string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select SVN Working Directory", "", false);
             if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
             {
-                SVNUI.Instance.AddProjectFolderPathInput.text = paths[0].Replace('\\', '/');
+                string path = paths[0].Replace('\\', '/');
+                SVNUI.Instance.AddProjectFolderPathInput.text = path;
 
                 if (string.IsNullOrEmpty(SVNUI.Instance.AddProjectNameInput.text))
                 {
-                    SVNUI.Instance.AddProjectNameInput.text = System.IO.Path.GetFileName(paths[0]);
+                    SVNUI.Instance.AddProjectNameInput.text = System.IO.Path.GetFileName(path);
                 }
             }
         }
@@ -153,7 +147,6 @@ namespace SVN.Core
             }
         }
 
-
         public void BrowsePrivateKeyPathCheckout()
         {
             var extensions = new[] {
@@ -179,8 +172,15 @@ namespace SVN.Core
         public void OpenTortoiseLog()
         {
             string root = svnManager.RepositoryUrl;
+            if (string.IsNullOrEmpty(root))
+            {
+                SVNLogBridge.LogLine("<color=yellow>Warning:</color> Repository URL not found.");
+                return;
+            }
+
             string args = $"/command:log /path:\"{root}\"";
             System.Diagnostics.Process.Start("TortoiseProc.exe", args);
+            SVNLogBridge.LogLine("<b>[External]</b> Opening TortoiseSVN Log...");
         }
     }
 }
