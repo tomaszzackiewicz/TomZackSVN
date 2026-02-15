@@ -17,13 +17,11 @@ namespace SVN.Core
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
             string fullMessage = $"[{timestamp}] {message}";
 
-            // Update UI
             if (append)
                 SVNUI.Instance.LogText.text += fullMessage + "\n";
             else
                 SVNUI.Instance.LogText.text = fullMessage + "\n";
 
-            // Direct file log (skipping Unity Console if you want)
             string cleanMessage = StripRichText(fullMessage);
             SVNLogger.LogToFile(cleanMessage, "INFO");
 
@@ -60,6 +58,15 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(input)) return string.Empty;
             return RichTextRegex.Replace(input, string.Empty);
+        }
+
+        public static void ShowNotification(string message)
+        {
+            if (SVNUI.Instance == null) return;
+
+            SVNUI.Instance.ShowNotificationWithTimer(message, 5f);
+
+            LogLine($"<color=blue>[NOTIFY]</color> {message}");
         }
     }
 }

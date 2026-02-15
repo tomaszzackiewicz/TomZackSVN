@@ -67,6 +67,13 @@ namespace SVN.Core
         [Header("Locks")]
         [SerializeField] private Transform locksContainer;
         [SerializeField] private TextMeshProUGUI stealLocksConsole;
+        [Header("Notifications")]
+        [SerializeField] private GameObject NotificationPanel;
+        [SerializeField] private TextMeshProUGUI NotificationText;
+        [Header("Resolve")]
+        [SerializeField] private TMP_InputField resolveTargetFileInput;
+
+        private Coroutine _notificationCoroutine;
 
         public TextMeshProUGUI LogText => logText;
         public TMP_InputField LogCountInputField => logCountInputField;
@@ -122,6 +129,7 @@ namespace SVN.Core
         public GameObject ShelfItemPrefab => shelfItemPrefab;
         public Transform LocksContainer => locksContainer;
         public TextMeshProUGUI StealLocksConsole => stealLocksConsole;
+        public TMP_InputField ResolveTargetFileInput => resolveTargetFileInput;
 
         private void Awake()
         {
@@ -132,6 +140,24 @@ namespace SVN.Core
             Instance = this;
         }
 
+        public void ShowNotificationWithTimer(string message, float delay = 5f)
+        {
+            if (NotificationPanel == null) return;
 
+            NotificationText.text = message;
+            NotificationPanel.SetActive(true);
+
+
+            if (_notificationCoroutine != null) StopCoroutine(_notificationCoroutine);
+
+            _notificationCoroutine = StartCoroutine(HideNotificationAfterDelay(delay));
+        }
+
+        private System.Collections.IEnumerator HideNotificationAfterDelay(float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            NotificationPanel.SetActive(false);
+            _notificationCoroutine = null;
+        }
     }
 }

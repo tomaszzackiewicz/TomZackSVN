@@ -9,8 +9,8 @@ using UnityEngine.UI;
 public class LockPanel : MonoBehaviour
 {
     [Header("UI References")]
-    public GameObject lockEntryPrefab;
-    public Transform locksContainer;
+    [SerializeField] private GameObject lockEntryPrefab;
+    [SerializeField] private Transform locksContainer;
 
     private bool isProcessing = false;
     private SVNUI svnUI;

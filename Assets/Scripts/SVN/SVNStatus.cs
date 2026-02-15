@@ -479,7 +479,7 @@ namespace SVN.Core
             }
         }
 
-        public async void ShowProjectInfo(SVNProject svnProject, string path)
+        public async void ShowProjectInfo(SVNProject svnProject, string path, bool forceOutdatedCheck = false, bool isRefreshing = false)
         {
             if (string.IsNullOrEmpty(path)) return;
             if (svnUI == null) return;
@@ -491,7 +491,8 @@ namespace SVN.Core
                 ? _lastKnownProjectName
                 : Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
-            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Initializing {displayName}...</color>", "INFO", append: false);
+            string initialColor = isRefreshing ? "#FFFF00" : "#FFFF00"; // Yellow dot
+            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color={initialColor}>●</color></size> <color=#555555>Initializing {displayName}...</color>", "INFO", append: false);
 
             string sizeText = "---";
             string rawInfo = "";
@@ -505,7 +506,7 @@ namespace SVN.Core
                     if (!Directory.Exists(Path.Combine(path, ".svn")))
                     {
                         retryCount++;
-                        SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=120%><color=#FFFF00>●</color></size> <color=#555555>Waiting for .svn metadata... ({retryCount}/{maxRetries})</color>");
+                        SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color=#FFFF00>●</color></size> <color=#555555>Waiting for .svn metadata... ({retryCount}/{maxRetries})</color>"); //Yellow dot
                         await Task.Delay(1000);
                         continue;
                     }
@@ -528,7 +529,7 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(rawInfo) || rawInfo == "unknown")
             {
-                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=120%><color=#FF5555>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>", "INFO", append: false);
+                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color= #000000>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>", "INFO", append: false); //Black dot
                 return;
             }
 
@@ -538,6 +539,27 @@ namespace SVN.Core
             string relUrl = ExtractValue(rawInfo, "Relative URL:");
             string absUrl = ExtractValue(rawInfo, "URL:");
             string repoRootUrl = ExtractValue(rawInfo, "Repository Root:");
+
+            bool isOutdated = false;
+            string remoteRevision = revision;
+
+            try
+            {
+                string remoteRevRaw = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", path);
+                if (!string.IsNullOrEmpty(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
+                {
+                    remoteRevision = remoteRevRaw.Trim();
+                    if (int.TryParse(revision, out int localRev) && int.TryParse(remoteRevision, out int remRev))
+                    {
+                        isOutdated = remRev > localRev;
+                    }
+                }
+            }
+            catch { }
+
+            string statusColor = "#4ca74c"; // Green dot
+            if (isRefreshing) statusColor = "#FFFF00"; // Yellow dot
+            else if (isOutdated) statusColor = "#FF1A1A"; // red dot
 
             if (string.IsNullOrEmpty(_lastKnownProjectName) || _lastKnownProjectName == displayName)
             {
@@ -570,10 +592,14 @@ namespace SVN.Core
 
             string currentUser = svnManager.CurrentUserName ?? "Unknown";
 
-            string statusLine = $"<size=120%><color=#55FF55>●</color></size> <color=orange> <b>{displayName}</b> ({sizeText})</color> | " +
+            string revDisplay = isOutdated
+                ? $"<color=#FF5555>{revision}</color> <color=#FF8888>(HEAD: {remoteRevision})</color>"
+                : revision;
+
+            string statusLine = $"<size=150%><color={statusColor}>●</color></size> <color=orange> <b>{displayName}</b> ({sizeText})</color> | " +
                                 $"<color=#00E5FF>User:</color> <color=#E6E6E6>{currentUser}</color> | " +
                                 $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{branchName}</color> | " +
-                                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revision}</color> | " +
+                                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revDisplay}</color> | " +
                                 $"<color=#00E5FF>By:</color> <color=#E6E6E6>{author}</color> | " +
                                 $"<color=#E6E6E6> {shortDate}</color> | " +
                                 $"<color=#E6E6E6>Srv: {serverHost}</color> | " +
@@ -657,6 +683,16 @@ namespace SVN.Core
 
             SvnRunner.BuildTreeString(workingDir, workingDir, 0, statusDict, sb, stats, expandedPaths, new bool[128], showIgnored, foldersWithRelevantContent);
             return (sb.ToString(), stats);
+        }
+
+        public async Task<int> GetRemoteRevisionInternal()
+        {
+            string output = await SvnRunner.RunAsync("info --show-item last-changed-revision", svnManager.WorkingDir);
+            if (int.TryParse(output.Trim(), out int rev))
+            {
+                return rev;
+            }
+            return -1;
         }
     }
 }

@@ -20,8 +20,6 @@ namespace SVN.Core
             string targetPath = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(targetPath))
             {
-
-                //svnUI.LogText.text = "<color=red>Error:</color> Working Directory not set.";
                 SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory not set.", false);
                 return;
             }
@@ -64,7 +62,6 @@ namespace SVN.Core
 
                 summary += $"Current Revision: <color=#FFD700><b>{revision}</b></color>\n";
                 summary += "-----------------------------------";
-                //svnUI.LogText.text = summary;
                 SVNLogBridge.LogLine(summary, false);
 
                 IsProcessing = false;
@@ -74,7 +71,6 @@ namespace SVN.Core
             {
                 Debug.LogError($"[SVN] Update Error: {ex}");
                 SVNLogBridge.LogLine($"\n<color=red><b>Update Failed:</b></color> {ex.Message}");
-                //svnUI.LogText.text += $"\n<color=red><b>Update Failed:</b></color> {ex.Message}";
             }
             finally
             {

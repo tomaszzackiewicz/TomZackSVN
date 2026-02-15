@@ -159,9 +159,20 @@ namespace SVN.Core
         private async void InitializeActiveProject(SVNProject project)
         {
             await AutoDetectSvnUser();
-            GetModule<SVNStatus>().ShowProjectInfo(project, WorkingDir);
+            var statusModule = GetModule<SVNStatus>();
+            if (statusModule != null)
+            {
+                statusModule.ShowProjectInfo(project, WorkingDir);
+            }
+
             await RefreshRepositoryInfo();
             await RefreshStatus();
+
+            var poller = GetComponent<SVNPollingService>();
+            if (poller != null && statusModule != null)
+            {
+                poller.StartPolling(statusModule);
+            }
         }
 
         private void SyncUIToCurrentState()
@@ -181,6 +192,8 @@ namespace SVN.Core
                 await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand();
                 LogToUI("[SVN] Status refresh finished.", "green");
 
+                UpdateStatus();
+
                 var conflicted = CurrentStatusDict.Values.Count(v => v.status.Contains("C"));
                 if (conflicted > 0)
                 {
@@ -188,7 +201,21 @@ namespace SVN.Core
                     panelHandler?.Button_OpenResolve();
                 }
             }
-            catch (Exception e) { LogToUI($"[SVN] Error: {e.Message}", "red"); }
+            catch (Exception e)
+            {
+                LogToUI($"[SVN] Error: {e.Message}", "red");
+            }
+        }
+
+        public void UpdateStatus()
+        {
+            var statusModule = GetModule<SVNStatus>();
+            if (statusModule != null)
+            {
+                string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
+                var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
+                statusModule.ShowProjectInfo(lastProject, WorkingDir);
+            }
         }
 
         private void LogToUI(string message, string color)

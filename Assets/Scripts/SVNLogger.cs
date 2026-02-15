@@ -71,7 +71,7 @@ namespace SVN.Core
                     File.AppendAllText(logFilePath, logEntry);
                 }
             }
-            catch { /* Ignore file access errors */ }
+            catch { }
         }
     }
 }
