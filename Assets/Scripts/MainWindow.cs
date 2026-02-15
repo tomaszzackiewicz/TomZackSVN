@@ -14,18 +14,70 @@ namespace SVN.Core
             svnUI = SVNUI.Instance;
             svnManager = SVNManager.Instance;
 
+            // if (svnUI.TerminalInputField != null)
+            // {
+            //     svnUI.TerminalInputField.onEndEdit.AddListener(delegate { OnTerminalSubmit(); });
+            // }
+
             if (svnUI.TerminalInputField != null)
             {
-                svnUI.TerminalInputField.onEndEdit.AddListener(delegate { OnTerminalSubmit(); });
+                // Usuwamy wszystkie stare listenery, żeby mieć pewność czystego startu
+                svnUI.TerminalInputField.onEndEdit.RemoveAllListeners();
+
+                // Używamy onEndEdit tylko do wyłapania Entera
+                svnUI.TerminalInputField.onEndEdit.AddListener((val) =>
+                {
+                    // Sprawdzamy, czy edycja zakończyła się naciśnięciem Enter
+                    if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                    {
+                        ExecuteLogic();
+                    }
+                });
             }
         }
 
         void OnTerminalSubmit()
         {
-            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+            ExecuteLogic();
+            // if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+            // {
+            //     svnManager.GetModule<SVNTerminal>().ExecuteTerminalCommand();
+            // }
+        }
+
+
+        public void ExecuteCommand()
+        {
+            ExecuteLogic();
+        }
+
+        void Update()
+        {
+            if (svnUI.TerminalInputField.isFocused && (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)))
             {
-                svnManager.GetModule<SVNTerminal>().ExecuteTerminalCommand();
+                ExecuteLogic();
             }
+        }
+
+        private void ExecuteLogic()
+        {
+            string cmd = svnUI.TerminalInputField.text;
+
+            // Jeśli puste, nic nie rób
+            if (string.IsNullOrWhiteSpace(cmd)) return;
+
+            // Pobierz moduł i wykonaj
+            var terminal = svnManager.GetModule<SVNTerminal>();
+            if (terminal != null)
+            {
+                terminal.ExecuteTerminalCommand();
+            }
+
+            // UX: Czyścimy i przywracamy focus na pole tekstowe
+            svnUI.TerminalInputField.text = "";
+
+            // Ważne: ActivateInputField pozwala pisać dalej bez klikania myszką w pole
+            svnUI.TerminalInputField.ActivateInputField();
         }
 
         public void Button_Load() => svnManager.GetModule<SVNLoad>().LoadRepoPathAndRefresh();
@@ -43,14 +95,23 @@ namespace SVN.Core
         public void Button_ShowToCommit() => svnManager.GetModule<SVNCommit>().ShowWhatWillBeCommitted();
         public void Button_ShowLocks() => svnManager.GetModule<SVNLock>().ShowAllLocks();
         public void Button_BreakLocks() => svnManager.GetModule<SVNLock>().BreakAllLocks();
-        public void Button_TerminalSubmit() => OnTerminalSubmit();
+        public void Button_TerminalSubmit() => ExecuteCommand();
 
         public void Button_OpenLogs() => SVNLogger.OpenLogFolder();
 
         public void Button_ClearTerminalLog()
         {
-            svnManager.GetModule<SVNTerminal>().ClearLog();
-            svnUI.TerminalInputField.ActivateInputField();
+            var terminal = svnManager.GetModule<SVNTerminal>();
+            if (terminal != null)
+            {
+                terminal.ClearLog();
+            }
+
+            if (svnUI.TerminalInputField != null)
+            {
+                svnUI.TerminalInputField.text = "";
+                svnUI.TerminalInputField.ActivateInputField();
+            }
         }
 
         public void Button_ClearLocksView()

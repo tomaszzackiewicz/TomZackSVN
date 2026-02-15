@@ -17,37 +17,50 @@ namespace SVN.Core
             string rawInput = svnUI.TerminalInputField.text.Trim();
             if (string.IsNullOrEmpty(rawInput)) return;
 
-            if (rawInput.ToLower() == "cls" || rawInput.ToLower() == "clear")
+            // 1. Obsługa czyszczenia
+            if (rawInput.Equals("cls", System.StringComparison.OrdinalIgnoreCase) ||
+                rawInput.Equals("clear", System.StringComparison.OrdinalIgnoreCase))
             {
-                svnUI.TerminalInputField.text = "";
                 ClearLog();
+                svnUI.TerminalInputField.text = "";
                 return;
             }
 
+            // 2. Historia
             if (commandHistory.Count == 0 || commandHistory[commandHistory.Count - 1] != rawInput)
-            {
                 commandHistory.Add(rawInput);
-            }
             historyIndex = -1;
 
-            string cmd = rawInput.ToLower().StartsWith("svn ") ? rawInput.Substring(4).Trim() : rawInput;
+            // 3. Wycinanie "svn " - bezpieczniejszy sposób
+            string cmdToExecute = rawInput;
+            if (rawInput.StartsWith("svn ", System.StringComparison.OrdinalIgnoreCase))
+            {
+                cmdToExecute = rawInput.Substring(4).Trim();
+            }
+
+            // 4. Dodaj wymuszenie braku interakcji dla bezpieczeństwa
+            if (!cmdToExecute.Contains("--non-interactive"))
+            {
+                cmdToExecute += " --non-interactive";
+            }
 
             svnUI.TerminalInputField.text = "";
-
-            SVNLogBridge.LogLine($"<color=#FFFF00>> svn {cmd}</color>", append: true);
+            SVNLogBridge.LogLine($"<color=#FFFF00>> svn {cmdToExecute}</color>", append: true);
 
             IsProcessing = true;
-
             try
             {
-                string result = await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+                // Wykonanie
+                string result = await SvnRunner.RunAsync(cmdToExecute, svnManager.WorkingDir);
 
                 if (!string.IsNullOrEmpty(result))
-                {
                     SVNLogBridge.LogLine(result, append: true);
-                }
+                else
+                    SVNLogBridge.LogLine("<color=#777777>Command completed with no output.</color>", append: true);
 
-                if (cmd.Contains("update") || cmd.Contains("commit") || cmd.Contains("switch") || cmd.Contains("checkout") || cmd.Contains("cleanup"))
+                // Odświeżanie UI po zmianach
+                if (cmdToExecute.Contains("update") || cmdToExecute.Contains("commit") ||
+                    cmdToExecute.Contains("revert") || cmdToExecute.Contains("cleanup"))
                 {
                     await svnManager.RefreshStatus();
                 }
@@ -103,7 +116,7 @@ namespace SVN.Core
 
         public void ClearLog()
         {
-            SVNLogBridge.LogLine("<color=#888888>Terminal log cleared.</color>", append: true);
+            SVNLogBridge.LogLine("", append: false);
         }
     }
 }

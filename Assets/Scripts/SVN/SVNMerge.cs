@@ -74,23 +74,13 @@ namespace SVN.Core
                 SVNLogBridge.LogLine("<b><color=#4FC3F7>[Merge]</color> Initializing process...</b>", append: false);
 
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
-                SVNLogBridge.LogLine("<color=#444444>... Resolving repository paths</color>");
-
                 string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
                 currentUrl = currentUrl.TrimEnd('/');
 
-                if (sourceInput.Contains("://"))
-                {
-                    sourceUrl = sourceInput;
-                }
-                else if (sourceInput.ToLower() == "trunk")
-                {
-                    sourceUrl = $"{repoRoot}/trunk";
-                }
-                else
-                {
-                    sourceUrl = $"{repoRoot}/branches/{sourceInput}";
-                }
+                // 1. Rozwiązywanie URL źródłowego
+                if (sourceInput.Contains("://")) sourceUrl = sourceInput;
+                else if (sourceInput.ToLower() == "trunk") sourceUrl = $"{repoRoot}/trunk";
+                else sourceUrl = $"{repoRoot}/branches/{sourceInput}";
 
                 if (sourceUrl.TrimEnd('/') == currentUrl)
                 {
@@ -98,49 +88,60 @@ namespace SVN.Core
                     return;
                 }
 
-                string targetName = currentUrl.EndsWith("/trunk") ? "<color=#FFD700>Trunk</color>" : $"branch <color=#4FC3F7>{currentUrl.Split('/').Last()}</color>";
-                string sourceName = sourceUrl.EndsWith("/trunk") ? "<color=#FFD700>Trunk</color>" : $"branch <color=#4FC3F7>{sourceUrl.Split('/').Last()}</color>";
-
+                string targetName = currentUrl.EndsWith("/trunk") ? "Trunk" : $"branch {currentUrl.Split('/').Last()}";
+                string sourceName = sourceUrl.EndsWith("/trunk") ? "Trunk" : $"branch {sourceUrl.Split('/').Last()}";
                 string modeText = isDryRun ? "<color=yellow>[SIMULATION]</color>" : "<color=orange>[LIVE MERGE]</color>";
-                SVNLogBridge.LogLine($"{modeText} Source: {sourceName} —> Target: {targetName}");
-                SVNLogBridge.LogLine("<color=#444444>... Executing SVN command (please wait)</color>");
 
-                string args = $"merge \"{sourceUrl}\" --non-interactive --accept postpone --force";
+                SVNLogBridge.LogLine($"{modeText} Source: {sourceName} —> Target: {targetName}");
+
+                // 2. Próba standardowego Merga (Automatic Merge)
+                SVNLogBridge.LogLine("<color=#444444>... Trying automatic merge</color>");
+                string args = $"merge \"{sourceUrl}\" --non-interactive --accept postpone";
                 if (isDryRun) args += " --dry-run";
 
-                string output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
-                ParseMergeOutput(output, isDryRun);
+                try
+                {
+                    string output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
+                    ParseMergeOutput(output, isDryRun);
+                }
+                catch (Exception ex) when (ex.Message.Contains("E200004") || ex.Message.Contains("ancestry") || ex.Message.Contains("heritage"))
+                {
+                    // 3. Fallback: Force Merge (Ignore Ancestry)
+                    SVNLogBridge.LogLine("<color=yellow>[Notice]</color> Standard merge failed. Trying with --ignore-ancestry...");
 
+                    // Przy --ignore-ancestry SVN nie może zarządzać mergeinfo, więc wymuszamy brak zapisu tych danych
+                    string forceArgs = $"merge \"{sourceUrl}\" --ignore-ancestry --non-interactive --accept postpone";
+                    if (isDryRun) forceArgs += " --dry-run";
+
+                    try
+                    {
+                        string output = await SvnRunner.RunAsync(forceArgs, svnManager.WorkingDir);
+                        ParseMergeOutput(output, isDryRun);
+                    }
+                    catch (Exception ex2)
+                    {
+                        // 4. Ostateczny Fallback: 2-Point Diff Merge (Brute force)
+                        // Porównuje stan źródła ze stanem lokalnym całkowicie ignorując historię
+                        SVNLogBridge.LogLine("<color=orange>[Critical Fallback]</color> Ancestry ignored, but still failed. Trying 2-point comparison...");
+
+                        string bruteArgs = $"merge \"{currentUrl}\" \"{sourceUrl}\" . --non-interactive --accept postpone";
+                        if (isDryRun) bruteArgs += " --dry-run";
+
+                        string output = await SvnRunner.RunAsync(bruteArgs, svnManager.WorkingDir);
+                        ParseMergeOutput(output, isDryRun);
+                    }
+                }
+
+                // 5. Finalizacja
                 if (!isDryRun)
                 {
-                    SVNLogBridge.LogLine("<color=#444444>... Refreshing local status</color>");
                     await svnManager.RefreshStatus();
-                    SVNLogBridge.LogLine("<b><color=green>[Complete]</color> Changes merged locally. Verify and Commit to server.</b>");
+                    SVNLogBridge.LogLine("<b><color=green>[Complete]</color> Process finished. Check Unity for changes.</b>");
                 }
             }
             catch (Exception ex)
             {
-                if (ex.Message.Contains("E200004") || ex.Message.Contains("ancestry"))
-                {
-                    SVNLogBridge.LogLine("<color=yellow>[Notice]</color> Ancestry check failed. Attempting force-merge (--ignore-ancestry)...");
-                    try
-                    {
-                        string forceArgs = $"merge \"{sourceUrl}\" . --ignore-ancestry --non-interactive --accept postpone";
-                        if (isDryRun) forceArgs += " --dry-run";
-
-                        string output = await SvnRunner.RunAsync(forceArgs, svnManager.WorkingDir);
-                        ParseMergeOutput(output, isDryRun);
-                        SVNLogBridge.LogLine("<b><color=green>[Complete]</color> Force-merge finished.</b>");
-                    }
-                    catch (Exception ex2)
-                    {
-                        SVNLogBridge.LogLine($"<color=red>[Critical Error]</color> Force-merge also failed: {ex2.Message}");
-                    }
-                }
-                else
-                {
-                    SVNLogBridge.LogLine($"<color=red>[Error]</color> Merge process interrupted: {ex.Message}");
-                }
+                SVNLogBridge.LogLine($"<color=red>[Error]</color> Merge process failed: {ex.Message}");
             }
             finally
             {
@@ -208,34 +209,44 @@ namespace SVN.Core
 
         public async Task<string[]> FetchAvailableBranches()
         {
+            if (IsProcessing) return new string[0];
+            IsProcessing = true;
+
             try
             {
-                SVNLogBridge.LogLine("<color=#444444>... Scanning repository for branches</color>");
-
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
-                if (string.IsNullOrEmpty(repoRoot))
+                string branchesUrl = $"{repoRoot}/branches";
+
+                SVNLogBridge.LogLine($"<color=#4FC3F7>[Debug]</color> Scanning URL: {branchesUrl}");
+
+                // POPRAWKA TUTAJ: 
+                // 1. Komenda to "list" + "URL"
+                // 2. Ścieżka robocza to lokalny folder projektu (svnManager.WorkingDir)
+                string args = $"list \"{branchesUrl}\" --non-interactive";
+                string rawOutput = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
+
+                if (string.IsNullOrEmpty(rawOutput))
                 {
-                    Debug.LogWarning("[SVN] Cannot fetch branches: Repo Root is empty.");
+                    SVNLogBridge.LogLine("<color=yellow>[Info]</color> Branches folder is empty.");
                     return new string[0];
                 }
 
-                var branches = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, "branches");
+                // Parser (usuwa banner i gwiazdki)
+                var branchList = rawOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(line => line.Trim())
+                    .Where(line => !line.StartsWith("*") && !line.Contains("WARNING"))
+                    .Select(line => line.TrimEnd('/'))
+                    .ToArray();
 
-                if (branches == null || branches.Length == 0)
-                {
-                    SVNLogBridge.LogLine("<color=yellow>[Info]</color> No branches found on server.");
-                    return new string[0];
-                }
-
-                SVNLogBridge.LogLine($"<color=green>[Success]</color> Found {branches.Length} branch(es) available for merge.");
-                return branches;
+                SVNLogBridge.LogLine($"<color=green>[Success]</color> Found {branchList.Length} branch(es).");
+                return branchList;
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                Debug.LogWarning($"[SVN Merge] FetchAvailableBranches failed: {ex.Message}");
-                SVNLogBridge.LogLine($"<color=red>[Error]</color> Could not retrieve branches list: {ex.Message}");
+                SVNLogBridge.LogLine($"<color=red>[Critical Error]</color> Check if SvnRunner.RunAsync handles URLs correctly. Details: {ex.Message}");
                 return new string[0];
             }
+            finally { IsProcessing = false; }
         }
     }
 }
