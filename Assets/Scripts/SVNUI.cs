@@ -27,6 +27,7 @@ namespace SVN.Core
         [SerializeField] private TMP_InputField checkoutPrivateKeyInput;
         [SerializeField] private TextMeshProUGUI checkoutStatusInfoText;
         [Header("Branching & Tagging")]
+        [SerializeField] private TextMeshProUGUI mergeConsoleText;
         [SerializeField] private TMP_InputField mergeSourceInput;
         [SerializeField] private TMP_InputField branchNameInput;
         [SerializeField] private TMP_InputField branchCommitMsgInput;
@@ -34,6 +35,7 @@ namespace SVN.Core
         [SerializeField] private TMP_Dropdown branchesDropdown;
         [SerializeField] private TMP_Dropdown tagsDropdown;
         [SerializeField] private TMP_Dropdown mergeBranchesDropdown;
+        [SerializeField] private TextMeshProUGUI branchTagConsoleText;
         [Header("Status Info")]
         [SerializeField] private TextMeshProUGUI fileStatusText;
         [SerializeField] private TextMeshProUGUI statusInfoText;
@@ -88,6 +90,7 @@ namespace SVN.Core
         public TMP_InputField CheckoutDestFolderInput => checkoutDestFolderInput;
         public TMP_InputField CheckoutPrivateKeyInput => checkoutPrivateKeyInput;
         public TextMeshProUGUI CheckoutStatusInfoText => checkoutStatusInfoText;
+        public TextMeshProUGUI MergeConsoleText => mergeConsoleText;
         public TMP_InputField MergeSourceInput => mergeSourceInput;
         public TMP_InputField BranchNameInput => branchNameInput;
         public TMP_InputField BranchCommitMsgInput => branchCommitMsgInput;
@@ -95,6 +98,7 @@ namespace SVN.Core
         public TMP_Dropdown BranchesDropdown => branchesDropdown;
         public TMP_Dropdown TagsDropdown => tagsDropdown;
         public TMP_Dropdown MergeBranchesDropdown => mergeBranchesDropdown;
+        public TextMeshProUGUI BranchTagConsoleText => branchTagConsoleText;
         public TextMeshProUGUI StatusInfoText => statusInfoText;
         public TextMeshProUGUI FileStatusText => fileStatusText;
         public TextMeshProUGUI LocksText => locksText;

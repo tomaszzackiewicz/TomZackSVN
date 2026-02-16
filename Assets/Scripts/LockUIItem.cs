@@ -21,7 +21,7 @@ public class LockUIItem : MonoBehaviour
         }
 
         infoText.text = $"<b>Owner:</b> {(isMe ? "<color=green>YOU</color>" : owner)}\n" +
-                        $"<size=90%><color=#444444>Date: {formattedDate}</color></size>";
+                        $"<size=90%><color=#E6E6E6>Date: {formattedDate}</color></size>";
 
         commentText.text = string.IsNullOrEmpty(comment) ? "" : $"<i>\"{comment}\"</i>";
 

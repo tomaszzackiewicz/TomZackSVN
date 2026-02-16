@@ -59,23 +59,40 @@ namespace SVN.Core
 
         private void InitializeAllModules()
         {
-            var moduleTypes = Assembly.GetExecutingAssembly().GetTypes()
-                .Where(t => t.IsSubclassOf(typeof(SVNBase)) && !t.IsAbstract);
+            _modules.Clear();
 
-            foreach (var type in moduleTypes)
+            try
             {
-                try
-                {
-                    var module = (SVNBase)Activator.CreateInstance(type, svnUI, this);
-                    _modules[type] = module;
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError($"[SVN] Failed to initialize module {type.Name}: {e.Message}");
-                }
-            }
+                RegisterModule(new SVNAdd(svnUI, this));
+                RegisterModule(new SVNBranchTag(svnUI, this));
+                RegisterModule(new SVNCheckout(svnUI, this));
+                RegisterModule(new SVNClean(svnUI, this));
+                RegisterModule(new SVNCommit(svnUI, this));
+                RegisterModule(new SVNExternal(svnUI, this));
+                RegisterModule(new SVNLoad(svnUI, this));
+                RegisterModule(new SVNLock(svnUI, this));
+                RegisterModule(new SVNLog(svnUI, this));
+                RegisterModule(new SVNMerge(svnUI, this));
+                RegisterModule(new SVNMissing(svnUI, this));
+                RegisterModule(new SVNResolve(svnUI, this));
+                RegisterModule(new SVNRevert(svnUI, this));
+                RegisterModule(new SVNSettings(svnUI, this));
+                RegisterModule(new SVNShelve(svnUI, this));
+                RegisterModule(new SVNStatus(svnUI, this));
+                RegisterModule(new SVNTerminal(svnUI, this));
+                RegisterModule(new SVNUpdate(svnUI, this));
 
-            Debug.Log($"[SVN] Successfully initialized {_modules.Count} modules.");
+                Debug.Log($"<color=green>[SVN]</color> Successfully initialized {_modules.Count} modules manually.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[SVN] Manual initialization failed: {e.Message}");
+            }
+        }
+
+        private void RegisterModule<T>(T module) where T : SVNBase
+        {
+            _modules[typeof(T)] = module;
         }
 
         public T GetModule<T>() where T : SVNBase

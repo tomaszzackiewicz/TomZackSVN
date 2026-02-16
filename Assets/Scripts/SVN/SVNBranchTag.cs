@@ -1,6 +1,4 @@
 using System;
-using UnityEngine;
-using System.Linq;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Threading;
@@ -11,6 +9,15 @@ namespace SVN.Core
     {
         public SVNBranchTag(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
+        private void LogToPanel(string msg, bool append = true)
+        {
+            SVNLogBridge.LogLine(msg);
+            if (svnUI.BranchTagConsoleText != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.BranchTagConsoleText, msg, "BRANCH/TAG", append);
+            }
+        }
+
         public async void CreateRemoteCopy()
         {
             if (IsProcessing) return;
@@ -18,7 +25,7 @@ namespace SVN.Core
             string name = svnUI.BranchNameInput.text.Trim();
             if (string.IsNullOrEmpty(name))
             {
-                SVNLogBridge.LogLine("<color=red>[Error]</color> Please enter a valid name for the new copy.");
+                LogToPanel("<color=red>[Error]</color> Please enter a valid name.");
                 return;
             }
 
@@ -27,36 +34,32 @@ namespace SVN.Core
 
             try
             {
-                SVNLogBridge.LogLine($"<b><color=#4FC3F7>[Remote Copy]</color> Initializing creation of {subFolder}...</b>", append: false);
+                LogToPanel($"<b><color=#4FC3F7>[Create]</color> Creating {subFolder}: {name}</b>", false);
 
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
                 string sourceUrl = $"{repoRoot}/trunk";
                 string targetUrl = $"{repoRoot}/{subFolder}/{name}";
 
-                SVNLogBridge.LogLine($"<color=#444444>... Source: {sourceUrl}</color>");
-                SVNLogBridge.LogLine($"<color=#444444>... Target: {targetUrl}</color>");
-                SVNLogBridge.LogLine("<color=#444444>... Performing remote SVN Copy operation (please wait)</color>");
+                LogToPanel($"<color=#444444>... Source: {sourceUrl}</color>");
+                LogToPanel($"<color=#444444>... Target: {targetUrl}</color>");
 
                 await CopyAsync(svnManager.WorkingDir, sourceUrl, targetUrl, $"Created {subFolder}/{name}");
 
-                SVNLogBridge.LogLine($"<b><color=green>[Success]</color> Remote {subFolder} '{name}' created successfully!</b>");
-
+                LogToPanel($"<b><color=green>[Success]</color> Remote {subFolder} '{name}' created!</b>");
                 RefreshUnifiedList();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>[Create Error]</color> {ex.Message}");
+                LogToPanel($"<color=red>[Create Error]</color> {ex.Message}");
             }
             finally { IsProcessing = false; }
         }
 
         public async void RefreshUnifiedList()
         {
-            if (svnUI == null || svnUI.BranchesDropdown == null) return;
+            if (svnUI == null || (svnUI.BranchesDropdown == null && svnUI.TagsDropdown == null)) return;
 
-            SVNLogBridge.LogLine("<b><color=#4FC3F7>[Refresh]</color> Updating Branch and Tag lists from server...</b>", append: true);
-            svnUI.BranchesDropdown.Hide();
-            svnUI.BranchesDropdown.ClearOptions();
+            LogToPanel("<b><color=#4FC3F7>[Refresh]</color> Syncing lists with server...</b>");
 
             try
             {
@@ -64,20 +67,17 @@ namespace SVN.Core
                 string branchesUrl = $"{repoRoot}/branches";
                 string tagsUrl = $"{repoRoot}/tags";
 
-                SVNLogBridge.LogLine("<color=#444444>... Fetching folder entries from repository root</color>");
-
                 var branches = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, branchesUrl);
                 var tags = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, tagsUrl);
 
                 UpdateDropdown(svnUI.BranchesDropdown, branches, "No branches", true);
                 UpdateDropdown(svnUI.TagsDropdown, tags, "No tags", false);
 
-                SVNLogBridge.LogLine("<b><color=green>[Refresh Complete]</color> UI Dropdowns synchronized with server.</b>");
+                LogToPanel("<b><color=green>[Refresh Complete]</color> UI synchronized.</b>");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Refresh error: {ex.Message}");
-                SVNLogBridge.LogLine($"<color=red>[Refresh Error]</color> {ex.Message}");
+                LogToPanel($"<color=red>[Refresh Error]</color> {ex.Message}");
                 UpdateDropdown(svnUI.BranchesDropdown, null, "Error", true);
             }
         }
@@ -113,53 +113,49 @@ namespace SVN.Core
 
             try
             {
-                SVNLogBridge.LogLine($"<b><color=#4FC3F7>[Switch]</color> Preparing switch to {subFolder}: {targetName}</b>", append: false);
+                LogToPanel($"<b><color=#4FC3F7>[Switch]</color> Switching to {targetName}...</b>", false);
 
-                string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
                 string repoRoot = svnManager.GetRepoRoot();
-
                 string targetUrl = (targetName.ToLower() == "trunk")
                     ? $"{repoRoot}/trunk"
                     : $"{repoRoot}/{subFolder}/{targetName}";
 
-                SVNLogBridge.LogLine($"<color=#444444>... Destination URL: {targetUrl}</color>");
-                SVNLogBridge.LogLine("<color=#444444>... Updating local working copy files (please wait)</color>");
+                LogToPanel($"<color=#444444>... Target: {targetUrl}</color>");
 
                 string result = await SwitchAsync(svnManager.WorkingDir, targetUrl);
 
                 if (!result.ToLower().Contains("error") && !result.ToLower().Contains("failed"))
                 {
-                    SVNLogBridge.LogLine($"<b><color=green>[Switch Complete]</color> Working copy is now on {targetName}.</b>");
-
+                    LogToPanel($"<b><color=green>[Switch Complete]</color> Now on {targetName}.</b>");
                     svnManager.GetModule<SVNStatus>().ShowProjectInfo(null, svnManager.WorkingDir);
                     await svnManager.RefreshStatus();
                 }
                 else
                 {
-                    SVNLogBridge.LogLine($"<color=red>[Switch Failed]</color>\n{result}");
+                    LogToPanel($"<color=red>[Switch Failed]</color>\n{result}");
                 }
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>[Switch Error]</color> {ex.Message}");
+                LogToPanel($"<color=red>[Switch Error]</color> {ex.Message}");
             }
             finally { IsProcessing = false; }
         }
 
         private async Task<bool> CanPerformSwitch()
         {
-            SVNLogBridge.LogLine("<color=#444444>... Checking working copy safety</color>");
+            LogToPanel("<color=#444444>... Validating safety</color>");
             var stats = await GetStatsAsync(svnManager.WorkingDir);
 
             if (stats.ConflictsCount > 0)
             {
-                SVNLogBridge.LogLine("<color=red><b>CRITICAL ERROR:</b> Unresolved conflicts detected! You must resolve them before switching branches.</color>");
+                LogToPanel("<color=red><b>ERROR:</b> Unresolved conflicts!</color>");
                 return false;
             }
 
             if (stats.ModifiedCount > 0 || stats.AddedCount > 0 || stats.DeletedCount > 0)
             {
-                SVNLogBridge.LogLine("<color=yellow>[Warning]</color> Uncommitted changes detected. SVN will attempt to merge them into the target branch.");
+                LogToPanel("<color=yellow>[Warning]</color> Uncommitted changes detected.");
             }
 
             return true;
@@ -175,7 +171,7 @@ namespace SVN.Core
 
             if (selectedBranch.ToLower().Contains("trunk"))
             {
-                SVNLogBridge.LogLine("<color=red><b>SECURITY DENIED:</b> The Trunk branch cannot be deleted via this interface!</color>");
+                LogToPanel("<color=red><b>SECURITY:</b> Cannot delete Trunk!</color>");
                 return;
             }
 
@@ -198,7 +194,7 @@ namespace SVN.Core
             IsProcessing = true;
             try
             {
-                SVNLogBridge.LogLine($"<b><color=#4FC3F7>[Delete]</color> Initializing remote deletion of {subFolder}: {targetName}</b>", append: false);
+                LogToPanel($"<b><color=#4FC3F7>[Delete]</color> Deleting {subFolder}: {targetName}</b>", false);
 
                 string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
                 string repoRoot = svnManager.GetRepoRoot();
@@ -206,26 +202,22 @@ namespace SVN.Core
 
                 if (currentUrl.TrimEnd('/') == targetUrl.TrimEnd('/'))
                 {
-                    SVNLogBridge.LogLine("<color=red><b>ABORTED:</b> Cannot delete the active branch/tag you are currently working on!</color>");
+                    LogToPanel("<color=red><b>ABORTED:</b> Active branch cannot be deleted!</color>");
                     return;
                 }
-
-                SVNLogBridge.LogLine($"<color=#444444>... Removing remote path: {targetUrl}</color>");
 
                 string msg = $"Deleted {subFolder}: {targetName} via Unity SVN Tool";
                 await DeleteRemotePathAsync(svnManager.WorkingDir, targetUrl, msg);
 
-                SVNLogBridge.LogLine($"<b><color=green>[Success]</color> Remote {subFolder} '{targetName}' has been removed.</b>");
+                LogToPanel($"<b><color=green>[Success]</color> {targetName} removed from server.</b>");
                 RefreshUnifiedList();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>[Delete Error]</color> {ex.Message}");
+                LogToPanel($"<color=red>[Delete Error]</color> {ex.Message}");
             }
             finally { IsProcessing = false; }
         }
-
-        // --- Helper Methods (Logic remain unchanged but cleanup code style) ---
 
         public static async Task<SvnStats> GetStatsAsync(string workingDir)
         {

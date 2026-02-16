@@ -37,10 +37,8 @@ public class MergePanel : MonoBehaviour
         svnManager.GetModule<SVNMerge>().ExecuteMerge(source, false);
     }
 
-    // W klasie MergePanel.cs
     public async void Button_RefreshBranchDropdown()
     {
-        // Wywołujemy nową, bezpieczniejszą metodę z modułu SVNMerge
         string[] branches = await svnManager.GetModule<SVNMerge>().FetchAvailableBranches();
 
         svnUI.MergeBranchesDropdown.ClearOptions();
@@ -49,13 +47,11 @@ public class MergePanel : MonoBehaviour
 
         if (branches != null && branches.Length > 0)
         {
-            // Dodajemy tylko nazwy folderów (usuwamy ewentualne slashe na końcu)
             options.AddRange(branches.Select(b => b.TrimEnd('/')).ToList());
         }
 
         svnUI.MergeBranchesDropdown.AddOptions(options);
 
-        // Automatycznie ustawiamy tekst w polu Input na pierwszą opcję
         Dropdown_OnBranchSelected(0);
     }
 
@@ -72,6 +68,4 @@ public class MergePanel : MonoBehaviour
     {
         await svnManager.GetModule<SVNMerge>().RevertMerge();
     }
-
-
 }

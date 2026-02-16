@@ -171,10 +171,8 @@ namespace SVN.Core
 
         public void BrowseResolveFilePath()
         {
-            // Jako punkt startowy bierzemy aktualny WorkingDir
             string root = svnManager.WorkingDir;
 
-            // Filtry plików - opcjonalne, tutaj pozwalamy na wszystko
             var extensions = new[] { new ExtensionFilter("All Files", "*") };
 
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select File to Resolve", root, extensions, false);
@@ -183,18 +181,15 @@ namespace SVN.Core
             {
                 string selectedPath = paths[0].Replace('\\', '/');
 
-                // Obliczamy ścieżkę relatywną względem WorkingDir (SVN operuje na relatywnych)
                 if (selectedPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                 {
-                    // +1 usuwa pozostały slash na początku
                     selectedPath = selectedPath.Substring(root.Length).TrimStart('/');
                 }
 
-                // Wpisujemy ścieżkę do Twojego nowego Input Fielda w UI Resolve
                 if (svnUI.ResolveTargetFileInput != null)
                 {
                     svnUI.ResolveTargetFileInput.text = selectedPath;
-                    SVNLogBridge.LogLine($"<color=cyan>Resolve:</color> Selected target file: {selectedPath}");
+                    SVNLogBridge.LogLine($"<color=green>Resolve:</color> Selected target file: {selectedPath}");
                 }
                 else
                 {
