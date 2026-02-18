@@ -24,4 +24,6 @@ public class CommitPanel : MonoBehaviour
     public void Button_Commit() => svnManager.GetModule<SVNCommit>().CommitAll();
     public void Button_Add() => svnManager.GetModule<SVNAdd>().AddAll();
     public void Button_FixMissing() => svnManager.GetModule<SVNMissing>().FixMissingFiles();
+
+    public void Button_CancelCommit() => svnManager.GetModule<SVNCommit>().CancelOperation();
 }

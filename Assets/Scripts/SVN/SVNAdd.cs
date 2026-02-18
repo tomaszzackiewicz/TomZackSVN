@@ -2,148 +2,191 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace SVN.Core
 {
     public class SVNAdd : SVNBase
     {
+        // Token pozwalający na przerwanie poprzedniej operacji przy nowym wywołaniu
+        private CancellationTokenSource _activeCTS;
+
         public SVNAdd(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
+        /// <summary>
+        /// Pełna synchronizacja: najpierw foldery, potem pliki.
+        /// </summary>
         public async void AddAll()
         {
-            if (IsProcessing) return;
-            IsProcessing = true;
+            CancellationToken token = PrepareNewOperation();
 
             try
             {
                 SVNLogBridge.LogLine("<b>[Full Scan]</b> Starting project synchronization...", append: false);
 
-                await AddFoldersLogic();
-                await Task.Delay(300);
-                await AddFilesLogic();
+                // 1. Dodaj foldery (muszą być pierwsze, żeby pliki miały "miejsce")
+                await AddFoldersLogic(token);
+
+                token.ThrowIfCancellationRequested();
+                await Task.Delay(200, token);
+
+                // 2. Dodaj pliki
+                await AddFilesLogic(token);
 
                 SVNLogBridge.LogLine("<color=green><b>[Scan Complete]</b> All items are now under version control.</color>");
                 await svnManager.RefreshStatus();
             }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogLine($"<color=red>Scan Error:</color> {ex.Message}");
-            }
-            finally { IsProcessing = false; }
+            catch (OperationCanceledException) { /* Ignorujemy - nowa operacja nas przerwała */ }
+            catch (Exception ex) { SVNLogBridge.LogLine($"<color=red>Scan Error:</color> {ex.Message}"); }
+            finally { CleanUpOperation(token); }
         }
 
         public async void AddAllNewFolders()
         {
-            if (IsProcessing) return;
-            IsProcessing = true;
-            try
-            {
-                SVNLogBridge.LogLine("<b>[Folder Sync]</b> Searching for unversioned directories...", append: false);
-                await AddFoldersLogic();
-            }
-            finally { IsProcessing = false; }
+            CancellationToken token = PrepareNewOperation();
+            try { await AddFoldersLogic(token); }
+            catch (OperationCanceledException) { }
+            finally { CleanUpOperation(token); }
         }
 
         public async void AddAllNewFiles()
         {
-            if (IsProcessing) return;
-            IsProcessing = true;
-            try
-            {
-                SVNLogBridge.LogLine("<b>[File Sync]</b> Searching for unversioned files...", append: false);
-                await AddFilesLogic();
-            }
-            finally { IsProcessing = false; }
+            CancellationToken token = PrepareNewOperation();
+            try { await AddFilesLogic(token); }
+            catch (OperationCanceledException) { }
+            finally { CleanUpOperation(token); }
         }
 
-        private async Task AddFoldersLogic()
+        // --- Logika Wewnętrzna ---
+
+        private async Task AddFoldersLogic(CancellationToken token)
         {
             SVNLogBridge.LogLine("Scanning for unversioned folders...");
             string root = svnManager.WorkingDir;
 
-            var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+            // Pobieramy status z przekazaniem tokena
+            var statusDict = await GetFullStatusDictionaryAsync(root, false, token);
+
             var foldersToAdd = statusDict
                 .Where(x => x.Value.status == "?" && Directory.Exists(Path.Combine(root, x.Key)))
                 .Select(x => x.Key)
+                .OrderBy(path => path.Length) // Najpierw foldery nadrzędne
                 .ToArray();
 
             if (foldersToAdd.Length > 0)
             {
                 foreach (var folderPath in foldersToAdd)
                 {
+                    token.ThrowIfCancellationRequested();
                     SVNLogBridge.LogLine($"Adding folder: <color=#4FC3F7>{folderPath}</color>");
-                    await AddFolderOnlyAsync(root, folderPath);
+                    // Depth empty, aby nie dodawać wszystkiego na raz (lepiej kontrolować to etapami)
+                    await SvnRunner.RunAsync($"add \"{folderPath}\" --depth empty", root, true, token);
                 }
                 SVNLogBridge.LogLine($"<color=green>Added {foldersToAdd.Length} folders.</color>");
             }
-            else
-            {
-                SVNLogBridge.LogLine("No new folders found.");
-            }
         }
 
-        private async Task AddFilesLogic()
+        public static async Task<Dictionary<string, (string status, string lockInfo)>> GetFullStatusDictionaryAsync(
+    string workingDir,
+    bool showIgnored,
+    CancellationToken token = default) // Dodajemy ten parametr
+        {
+            var dict = new Dictionary<string, (string status, string lockInfo)>();
+
+            // Przekazujemy token do RunAsync
+            string output = await SvnRunner.RunAsync(showIgnored ? "status --no-ignore" : "status", workingDir, true, token);
+
+            if (string.IsNullOrEmpty(output)) return dict;
+
+            using (var reader = new System.IO.StringReader(output))
+            {
+                string line;
+                while ((line = await reader.ReadLineAsync()) != null)
+                {
+                    // Reagujemy na przerwanie zadania wewnątrz pętli
+                    token.ThrowIfCancellationRequested();
+
+                    if (line.Length < 8) continue;
+
+                    string status = line[0].ToString();
+                    string lockInfo = line[5].ToString();
+                    string path = line.Substring(8).Trim().Replace('\\', '/');
+
+                    dict[path] = (status, lockInfo);
+                }
+            }
+            return dict;
+        }
+
+        private async Task AddFilesLogic(CancellationToken token)
         {
             SVNLogBridge.LogLine("Searching for unversioned files...");
             string root = svnManager.WorkingDir;
 
-            string output = await SvnRunner.RunAsync("status", root);
+            string output = await SvnRunner.RunAsync("status", root, true, token);
             List<string> filesToAdd = new List<string>();
-            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
 
-            foreach (var line in lines)
+            using (var reader = new StringReader(output))
             {
-                if (line.Length >= 8 && line[0] == '?')
+                string line;
+                while ((line = await reader.ReadLineAsync()) != null)
                 {
-                    string path = line.Substring(8).Trim().Replace('\\', '/');
-                    if (File.Exists(Path.Combine(root, path)))
+                    token.ThrowIfCancellationRequested();
+                    if (line.Length >= 8 && line[0] == '?')
                     {
-                        filesToAdd.Add(path);
+                        string path = line.Substring(8).Trim().Replace('\\', '/');
+                        if (File.Exists(Path.Combine(root, path)))
+                        {
+                            filesToAdd.Add(path);
+                        }
                     }
                 }
             }
 
             if (filesToAdd.Count > 0)
             {
-                await AddAsync(root, filesToAdd.ToArray());
+                // Grupowanie plików, aby nie odpalać svn.exe 1000 razy (max 20 plików na raz)
+                int batchSize = 20;
+                for (int i = 0; i < filesToAdd.Count; i += batchSize)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var batch = filesToAdd.Skip(i).Take(batchSize).Select(f => $"\"{f}\"");
+                    string args = string.Join(" ", batch);
+
+                    await SvnRunner.RunAsync($"add {args} --force --parents", root, true, token);
+                    SVNLogBridge.LogLine($"Added batch {i / batchSize + 1}...");
+                }
                 SVNLogBridge.LogLine($"<color=green>Successfully added {filesToAdd.Count} files.</color>");
             }
-            else
+        }
+
+        // --- Zarządzanie Stanem i Tokenami ---
+
+        private CancellationToken PrepareNewOperation()
+        {
+            // Jeśli coś już działa - cancelujemy to natychmiast
+            if (_activeCTS != null)
             {
-                SVNLogBridge.LogLine("No new files found.");
+                _activeCTS.Cancel();
+                _activeCTS.Dispose();
             }
+
+            _activeCTS = new CancellationTokenSource();
+            IsProcessing = true;
+            return _activeCTS.Token;
         }
 
-        // --- Static Helpers ---
-
-        public static async Task<string> AddFolderOnlyAsync(string workingDir, string path)
+        private void CleanUpOperation(CancellationToken token)
         {
-            string cmd = $"add \"{path}\" --depth empty";
-            return await SvnRunner.RunAsync(cmd, workingDir);
-        }
-
-        public static async Task<string> AddAsync(string workingDir, string[] files)
-        {
-            if (files == null || files.Length == 0) return "";
-
-            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
-            return await SvnRunner.RunAsync($"add {fileArgs} --force --parents", workingDir);
-        }
-
-        public async Task<int> GetUnversionedCountAsync()
-        {
-            try
+            // Tylko jeśli to nasze zadanie dobiegło końca (nie zostało zastąpione nowym)
+            if (_activeCTS != null && _activeCTS.Token == token)
             {
-                string root = svnManager.WorkingDir;
-                if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return 0;
-
-                string output = await SvnRunner.RunAsync("status", root);
-                string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-
-                return lines.Count(line => line.Length >= 1 && line[0] == '?');
+                IsProcessing = false;
+                _activeCTS.Dispose();
+                _activeCTS = null;
             }
-            catch { return 0; }
         }
     }
 }

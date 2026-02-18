@@ -27,7 +27,9 @@ namespace SVN.Core
             count = Mathf.Clamp(count, 1, 500);
 
             IsProcessing = true;
-            SVNLogBridge.LogLine($"<b>Fetching last {count} log entries...</b>", append: false);
+
+            string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
+            SVNLogBridge.LogLine($"{timestamp} <color=#00FF99>Fetching last {count} log entries...</color>", append: false);
 
             try
             {
@@ -39,9 +41,20 @@ namespace SVN.Core
                 }
                 else
                 {
-                    SVNLogBridge.LogLine("------------------------------------------");
-                    SVNLogBridge.LogLine(output);
-                    SVNLogBridge.LogLine("------------------------------------------");
+                    string cleanOutput = StripBanner(output);
+
+                    string coloredOutput = ApplyColoring(cleanOutput);
+
+                    if (string.IsNullOrWhiteSpace(coloredOutput))
+                    {
+                        SVNLogBridge.LogLine("<color=yellow>Log is empty after filtering.</color>");
+                    }
+                    else
+                    {
+                        SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
+                        SVNLogBridge.LogLine(coloredOutput);
+                        SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
+                    }
 
                     await ScrollToBottom();
                 }
@@ -60,6 +73,36 @@ namespace SVN.Core
         public static async Task<string> LogAsync(string workingDir, int lastN = 10)
         {
             return await SvnRunner.RunAsync($"log -l {lastN}", workingDir);
+        }
+
+        private string ApplyColoring(string rawText)
+        {
+            if (string.IsNullOrEmpty(rawText)) return rawText;
+
+            string[] lines = rawText.Split(new[] { "\n", "\r" }, StringSplitOptions.None);
+            var compressedLines = new System.Collections.Generic.List<string>();
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].TrimEnd();
+
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                if (line.StartsWith("r") && line.Contains(" | "))
+                {
+                    compressedLines.Add($"<color=yellow><b>{line}</b></color>");
+                }
+                else if (line.StartsWith("---"))
+                {
+                    compressedLines.Add($"<color=#444444>{line}</color>");
+                }
+                else
+                {
+                    compressedLines.Add($"<color=#E6E6E6>{line}</color>");
+                }
+            }
+
+            return string.Join("\n", compressedLines);
         }
 
         private async Task ScrollToBottom()

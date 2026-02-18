@@ -12,7 +12,15 @@ Installation Checklist for Using the Application:
 - Install TortoiseSVN (make sure to select Command Line Tools) or SlikSVN (which includes only CLI tools for Windows). 
 - Verify that the OpenSSH Client is enabled in Windows Features and that its path is included in the Windows environment variables.
 - Generate SSH keys (the application requires a private key for authentication). 
-- Ensure you have write permissions for the folder you choose as your Working Directory. 
+- Ensure you have write permissions for the folder you choose as your Working Directory.
+
+If Windows SmartScreen prevents the app from starting:
+1. Click on "More info" in the blue Windows popup.
+2. Select "Run anyway" to launch the application.
+
+This warning appears simply because the app is new and hasn't 
+built up a "reputation" with Microsoft yet. We guarantee the 
+file is safe and virus-free.
 
 
 Third-Party Libraries

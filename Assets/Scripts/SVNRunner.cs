@@ -62,6 +62,7 @@ namespace SVN.Core
             process.OutputDataReceived += outHandler;
             process.ErrorDataReceived += errHandler;
 
+            // Rejestracja zabicia procesu przy anulowaniu tokena
             using var registration = token.Register(() =>
             {
                 try { if (!process.HasExited) process.Kill(); } catch { }
@@ -73,19 +74,23 @@ namespace SVN.Core
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
+                // --- DYNAMICZNY TIMEOUT ---
+                // Dla commitu 600s (10 min), dla reszty 45s
+                float timeoutLimit = args.StartsWith("commit") ? float.MaxValue : 45f;
                 DateTime startTime = DateTime.Now;
+
                 while (!process.HasExited)
                 {
                     if (token.IsCancellationRequested)
                     {
-                        try { process.Kill(); } catch { }
+                        try { if (!process.HasExited) process.Kill(); } catch { }
                         throw new OperationCanceledException("SVN operation cancelled by user.");
                     }
 
-                    if ((DateTime.Now - startTime).TotalSeconds > 45)
+                    if ((DateTime.Now - startTime).TotalSeconds > timeoutLimit)
                     {
-                        try { process.Kill(); } catch { }
-                        throw new Exception("SVN Timeout: Operation exceeded 45 seconds.");
+                        try { if (!process.HasExited) process.Kill(); } catch { }
+                        throw new Exception($"SVN Timeout: Operation exceeded {timeoutLimit} seconds.");
                     }
 
                     await Task.Delay(100);
@@ -94,7 +99,6 @@ namespace SVN.Core
                 if (process.ExitCode != 0)
                 {
                     string err = errorBuilder.ToString();
-
                     if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
                     {
                         UnityEngine.Debug.LogWarning("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
@@ -117,54 +121,83 @@ namespace SVN.Core
 
         public static async Task<string> RunLiveAsync(string args, string workingDir, Action<string> onLineReceived, CancellationToken token = default)
         {
-            int dynamicTimeout = args.Contains("update") ? 600 : 45;
-
             string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
+
             var psi = new ProcessStartInfo
             {
                 FileName = "svn",
-                Arguments = args + " --non-interactive --trust-server-cert",
+                Arguments = $"{args} --non-interactive --trust-server-cert",
                 WorkingDirectory = workingDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8
+                StandardOutputEncoding = new UTF8Encoding(false)
             };
 
-            psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+            psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
 
             using var process = new Process { StartInfo = psi };
-            var outputBuilder = new StringBuilder();
+            var processExitTcs = new TaskCompletionSource<bool>();
+            bool hasError = false;
 
+            // Obsługa wyjścia w tle, aby nie blokować bufora systemowego (kluczowe przy setkach GB)
             process.OutputDataReceived += (s, e) =>
+            {
+                if (e.Data != null) Task.Run(() => onLineReceived?.Invoke(e.Data));
+            };
+
+            process.ErrorDataReceived += (s, e) =>
             {
                 if (e.Data != null)
                 {
-                    outputBuilder.AppendLine(e.Data);
-                    onLineReceived?.Invoke(e.Data);
+                    if (e.Data.Contains("E:") || e.Data.ToLower().Contains("error")) hasError = true;
+                    Task.Run(() => onLineReceived?.Invoke($"[SVN ERROR]: {e.Data}"));
                 }
             };
 
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            DateTime startTime = DateTime.Now;
-            while (!process.HasExited)
+            // Reakcja na Cancel - zabijamy cały graf procesów (SVN + SSH)
+            // Zamień sekcję wewnątrz token.Register na to:
+            using (token.Register(() =>
             {
-                if (token.IsCancellationRequested) { process.Kill(); throw new OperationCanceledException(); }
-
-                if ((DateTime.Now - startTime).TotalSeconds > dynamicTimeout)
+                try
                 {
-                    process.Kill();
-                    throw new Exception($"SVN Timeout: Operation exceeded {dynamicTimeout} seconds.");
+                    if (!process.HasExited)
+                    {
+                        // W Unity / .NET Standard 2.0 używamy Kill() bez argumentów
+                        // Aby zabić ssh.exe, .NET automatycznie spróbuje posprzątać, 
+                        // ale dla pewności wywołujemy standardowe Kill:
+                        process.Kill();
+
+                        processExitTcs.TrySetCanceled();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"Błąd podczas zabijania procesu: {ex.Message}");
+                }
+            }))
+            {
+                process.EnableRaisingEvents = true;
+                process.Exited += (s, e) => processExitTcs.TrySetResult(true);
+
+                if (!process.Start()) throw new Exception("Failed to start SVN process.");
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                try
+                {
+                    await processExitTcs.Task;
+                }
+                catch (OperationCanceledException)
+                {
+                    return "Canceled";
                 }
 
-                await Task.Delay(100);
+                process.WaitForExit();
+                return hasError ? "Error" : "Success";
             }
-
-            return outputBuilder.ToString();
         }
 
         public static async Task<string> GetInfoAsync(string workingDir)
