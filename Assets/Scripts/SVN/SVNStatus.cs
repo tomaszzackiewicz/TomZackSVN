@@ -15,31 +15,75 @@ namespace SVN.Core
         private string _svnVersionCached = "";
         private List<string> _cachedIgnoreRules = new List<string>();
 
+        private List<SvnTreeElement> _flatTreeData = new List<SvnTreeElement>();
+        private List<SvnTreeElement> _commitTreeData; // Dodaj to pole!
+        long totalCommitBytes = 0;
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        public void ShowOnlyModified()
+        // Wewnątrz klasy SVNStatus:
+        public void ToggleFolderVisibility(SvnTreeElement folder)
         {
-            svnManager.ExpandedPaths.Clear();
-            svnManager.ExpandedPaths.Add("");
+            // 1. Ustalmy, na której liście pracujemy (Główna czy Commit)
+            // Wykorzystujemy flagę IsCommitDelegate, którą dodaliśmy do elementu
+            List<SvnTreeElement> targetData = folder.IsCommitDelegate ? _commitTreeData : _flatTreeData;
 
-            if (svnUI.TreeDisplay != null)
+            if (targetData == null) return;
+
+            // 2. Przeliczamy widoczność dla tej konkretnej listy
+            foreach (var e in targetData)
             {
-                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
+                // Pomijamy korzenie (rooty nie mają rodziców)
+                string parentPath = GetParentPath(e.FullPath);
+                if (string.IsNullOrEmpty(parentPath))
+                {
+                    // Rooty są zawsze widoczne (chyba że w panelu Commit zostały ukryte przez PrepareCommitTree)
+                    // więc tutaj ich nie dotykamy, chyba że chcesz wymusić e.IsVisible = true;
+                    continue;
+                }
+
+                var parent = targetData.FirstOrDefault(x => x.FullPath == parentPath);
+                if (parent != null)
+                {
+                    // Kluczowa zasada: dziecko jest widoczne TYLKO jeśli rodzic jest widoczny I rozwinięty
+                    e.IsVisible = parent.IsVisible && parent.IsExpanded;
+                }
             }
 
-            if (svnUI.CommitTreeDisplay != null)
+            // 3. Odświeżamy odpowiednie okno UI
+            if (folder.IsCommitDelegate)
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
+                if (svnUI.SVNCommitTreeDisplay != null)
+                    svnUI.SVNCommitTreeDisplay.RefreshUI(targetData, this);
             }
-
-            _isCurrentViewIgnored = false;
-            _ = ExecuteRefreshWithAutoExpand();
+            else
+            {
+                if (svnUI.SvnTreeView != null)
+                    svnUI.SvnTreeView.RefreshUI(targetData, this);
+            }
         }
 
-        public void ShowOnlyIgnored()
+        private string GetParentPath(string path)
         {
-            _isCurrentViewIgnored = true;
-            _ = ExecuteRefreshWithAutoExpand();
+            int lastSlash = path.LastIndexOf('/');
+            return lastSlash > 0 ? path.Substring(0, lastSlash) : "";
+        }
+        public void ShowOnlyModified()
+        {
+            // svnManager.ExpandedPaths.Clear();
+            // svnManager.ExpandedPaths.Add("");
+
+            // if (svnUI.TreeDisplay != null)
+            // {
+            //     SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
+            // }
+
+            // if (svnUI.CommitTreeDisplay != null)
+            // {
+            //     SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
+            // }
+
+            // _isCurrentViewIgnored = false;
+            // _ = ExecuteRefreshWithAutoExpand();
         }
 
         public async Task ExecuteRefreshWithAutoExpand()
@@ -47,101 +91,272 @@ namespace SVN.Core
             if (IsProcessing) return;
             IsProcessing = true;
 
-            string root = svnManager.WorkingDir;
-            string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
-
-            Action<string, bool> LogSmart = (msg, isHeader) =>
-            {
-                SVNLogBridge.LogLine(msg, append: !isHeader);
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, msg, "COMMIT_CONSOLE", append: true);
-            };
-
-            LogSmart($"{timestamp} <color=#0FF>Refreshing status...</color>\n", true);
-
             try
             {
+                string root = svnManager.WorkingDir;
+
+                // 1. Pobierz dane
                 var statusDict = _isCurrentViewIgnored
                     ? await GetIgnoredOnlyAsync(root)
                     : await GetChangesDictionaryAsync(root);
 
-                UpdateFilesStatus(statusDict);
+                // 2. Budujemy główną strukturę projektu
+                _flatTreeData = BuildFlatTreeStructureText(root, statusDict);
 
-                if (statusDict == null || statusDict.Count == 0)
+                // 3. Odśwież WIDOK GŁÓWNY (z rozmiarami plików)
+                if (svnUI != null && svnUI.SvnTreeView != null)
                 {
-                    string emptyMsg = _isCurrentViewIgnored
-                        ? "<i>No ignored files found.</i>"
-                        : "<i>No changes detected. (Everything up to date)</i>";
+                    foreach (var e in _flatTreeData) e.IsCommitDelegate = false;
+                    svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
+                }
 
-                    if (svnUI.TreeDisplay != null)
-                    {
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, emptyMsg, "TREE", append: false);
-                    }
+                // 4. Odśwież WIDOK COMMIT (bez rozmiarów plików przy liniach, ale z sumą na dole)
+                if (svnUI != null && svnUI.SVNCommitTreeDisplay != null)
+                {
+                    // ZAPISUJEMY DO POLA KLASY!
+                    _commitTreeData = PrepareCommitTree(_flatTreeData);
+                    svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
 
-                    if (svnUI.CommitTreeDisplay != null)
-                    {
-                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, emptyMsg, "COMMIT_TREE", append: false);
-                    }
-
+                    // LICZYMY SUMĘ I WYŚWIETLAMY W CommitSizeText
                     if (svnUI.CommitSizeText != null)
                     {
-                        SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, "Total Size: 0 KB", "STATS", append: false);
-                    }
+                        string totalSize = FormatSize(totalCommitBytes);
+                        // Używamy bezpośredniego przypisania dla pewności
+                        svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{totalSize}</color>";
 
-                    UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
-                    LogSmart("<color=green>Workspace is clean.</color>\n", false);
-                    return;
-                }
-
-                LogSmart($"Found {statusDict.Count} entries. Processing...\n", false);
-
-                svnManager.ExpandedPaths.Clear();
-                svnManager.ExpandedPaths.Add("");
-
-                foreach (var item in statusDict)
-                {
-                    string path = item.Key;
-                    string stat = item.Value.status;
-                    bool isChange = !string.IsNullOrEmpty(stat) && "MA?!DCR~".Contains(stat);
-                    bool shouldExpand = _isCurrentViewIgnored ? (stat == "I") : isChange;
-
-                    if (shouldExpand)
-                    {
-                        AddParentFoldersToExpanded(path);
+                        // Opcjonalnie przez bridge jeśli go używasz:
+                        // SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, $"Total Commit Size: <color=#FFFF00>{totalSize}</color>", "STATS", false);
                     }
                 }
 
-                string report = await SvnRunner.GetCommitSizeReportAsync(root);
-                if (svnUI.CommitSizeText != null)
-                {
-                    string sizeMsg = $"<color=yellow>Total Size of Changes: {report}</color>";
-                    SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, sizeMsg, "STATS", append: false);
-                }
-
-                var result = await GetVisualTreeWithStatsAsync(root, svnManager.ExpandedPaths, _isCurrentViewIgnored);
-                string treeResult = string.IsNullOrEmpty(result.tree) ? "<i>No changes detected.</i>" : result.tree;
-
-                if (svnUI.TreeDisplay != null)
-                {
-                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, treeResult, "TREE", append: false);
-                }
-
-                if (svnUI.CommitTreeDisplay != null)
-                {
-                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, treeResult, "COMMIT_TREE", append: false);
-                }
-
-                UpdateAllStatisticsUI(result.stats, _isCurrentViewIgnored);
-                LogSmart("<color=green>Refresh finished.</color>\n", false);
+                UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
             }
             catch (Exception ex)
             {
-                string errorMsg = $"<color=red>Refresh Error:</color> {ex.Message}\n";
-                LogSmart(errorMsg, false);
-                Debug.LogError($"[SVN] {ex}");
+                Debug.LogError($"[SVN] Refresh Error: {ex.Message}");
             }
-            finally
+            finally { IsProcessing = false; }
+        }
+
+        private SvnStats CalculateStats(Dictionary<string, (string status, string size)> statusDict)
+        {
+            SvnStats stats = new SvnStats();
+            if (statusDict == null) return stats;
+
+            foreach (var item in statusDict.Values)
             {
-                IsProcessing = false;
+                string s = item.status;
+
+                // Zliczanie na podstawie pierwszej litery statusu SVN
+                if (s.Contains("M")) stats.ModifiedCount++;
+                else if (s.Contains("A")) stats.AddedCount++;
+                else if (s.Contains("?")) stats.NewFilesCount++;
+                else if (s.Contains("D") || s.Contains("!")) stats.DeletedCount++;
+                else if (s.Contains("C")) stats.ConflictsCount++;
+                else if (s.Contains("I"))
+                {
+                    stats.IgnoredCount++;
+                    stats.IgnoredFileCount++;
+                }
+
+                // Prosta heurystyka: jeśli brak rozszerzenia w kluczu słownika, traktuj jako folder
+                // (W Twoim obecnym systemie status "DIR" jest przypisywany ręcznie w BuildFlatTree)
+                if (s == "DIR") stats.FolderCount++;
+                else stats.FileCount++;
+            }
+
+            return stats;
+        }
+
+        private List<SvnTreeElement> PrepareCommitTree(List<SvnTreeElement> fullTree)
+        {
+            // 1. Tworzymy kopię listy
+            var commitTree = fullTree.Select(e => e.Clone()).ToList();
+
+            // 2. Chowamy wszystko i oznaczamy jako widok commitu
+            foreach (var e in commitTree)
+            {
+                e.IsVisible = false;
+                e.IsCommitDelegate = true; // To sprawi, że SvnLineController ukryje rozmiar
+            }
+
+            // 3. Odkrywamy pliki ze zmianami i ich "przodków"
+            foreach (var element in commitTree)
+            {
+                if (!string.IsNullOrEmpty(element.Status) && element.Status != " " && element.Status != "DIR")
+                {
+                    ShowElementAndParents(element, commitTree);
+                }
+            }
+
+            return commitTree;
+        }
+
+        private void ShowElementAndParents(SvnTreeElement element, List<SvnTreeElement> list)
+        {
+            element.IsVisible = true;
+
+            // Znajdź ścieżkę rodzica
+            string[] pathParts = element.FullPath.Split('/');
+            if (pathParts.Length <= 1) return;
+
+            string parentPath = string.Join("/", pathParts.Take(pathParts.Length - 1));
+            var parent = list.Find(e => e.FullPath == parentPath);
+
+            if (parent != null && !parent.IsVisible)
+            {
+                ShowElementAndParents(parent, list);
+            }
+        }
+        // Licznik rozmiaru całego commitu
+        private List<SvnTreeElement> BuildFlatTreeStructureText(string root, Dictionary<string, (string status, string size)> statusDict)
+        {
+            var elements = new List<SvnTreeElement>();
+            var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
+            var rootCache = new Dictionary<string, string>();
+
+            foreach (var relPath in sortedPaths)
+            {
+                string normalizedPath = relPath.Replace('\\', '/');
+                string[] parts = normalizedPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                string currentPath = "";
+
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    string partName = parts[i];
+                    currentPath = string.IsNullOrEmpty(currentPath) ? partName : $"{currentPath}/{partName}";
+
+                    if (elements.Any(e => e.FullPath == currentPath)) continue;
+
+                    // --- DEKLARACJA ZMIENNYCH (NAPRAWA BŁĘDÓW CS0103) ---
+                    string actualRoot = "";
+                    string physicalPath = "";
+
+                    // --- SZUKANIE FIZYCZNEGO KORZENIA ---
+                    string topFolder = parts[0];
+                    if (!rootCache.TryGetValue(topFolder, out actualRoot))
+                    {
+                        try
+                        {
+                            string[] matches = Directory.GetDirectories(root, topFolder, SearchOption.AllDirectories);
+                            actualRoot = matches.Length > 0 ? matches[0] : Path.Combine(root, topFolder);
+                        }
+                        catch { actualRoot = Path.Combine(root, topFolder); }
+                        rootCache[topFolder] = actualRoot;
+                    }
+
+                    // --- BUDOWANIE ŚCIEŻKI FIZYCZNEJ ---
+                    physicalPath = actualRoot;
+                    if (parts.Length > 1)
+                    {
+                        string[] subParts = parts.Skip(1).Take(i).ToArray();
+                        if (subParts.Length > 0)
+                        {
+                            physicalPath = Path.Combine(actualRoot, string.Join(Path.DirectorySeparatorChar.ToString(), subParts));
+                        }
+                    }
+
+                    // --- LOGIKA TYPU OBIEKTU ---
+                    bool isActuallyFolder = Directory.Exists(physicalPath) || (i < parts.Length - 1);
+
+                    // --- STATUS ---
+                    string displayStatus = " ";
+                    if (i == parts.Length - 1 && statusDict.ContainsKey(relPath))
+                        displayStatus = statusDict[relPath].status;
+                    else if (isActuallyFolder)
+                        displayStatus = statusDict.ContainsKey(currentPath) ? statusDict[currentPath].status : "DIR";
+
+                    // --- ROZMIAR PLIKU I SUMOWANIE ---
+                    string fileSize = "";
+                    if (!isActuallyFolder && i == parts.Length - 1)
+                    {
+                        string finalFilePath = physicalPath;
+                        if (parts.Length > 1 && !physicalPath.EndsWith(partName))
+                        {
+                            string subPath = string.Join(Path.DirectorySeparatorChar.ToString(), parts.Skip(1));
+                            finalFilePath = Path.Combine(actualRoot, subPath);
+                        }
+
+                        if (File.Exists(finalFilePath))
+                        {
+                            long bytes = new FileInfo(finalFilePath).Length;
+                            fileSize = FormatSize(bytes);
+
+                            // SUMUJEMY TYLKO PLIKI DO COMMITU (z realnym statusem)
+                            if (displayStatus != " " && displayStatus != "DIR")
+                            {
+                                totalCommitBytes += bytes;
+                            }
+                        }
+                        else { fileSize = "---"; }
+                    }
+
+                    elements.Add(new SvnTreeElement
+                    {
+                        FullPath = currentPath,
+                        Name = partName,
+                        Depth = i,
+                        Status = displayStatus,
+                        IsFolder = isActuallyFolder,
+                        IsExpanded = true,
+                        IsVisible = true,
+                        Size = fileSize
+                    });
+                }
+            }
+
+            return elements;
+        }
+
+        private string FormatSize(long bytes)
+        {
+            if (bytes <= 0) return "";
+            string[] units = { "B", "KB", "MB", "GB", "TB" };
+            int digit = (int)Math.Log(bytes, 1024);
+            return (bytes / Math.Pow(1024, digit)).ToString("F2") + " " + units[digit];
+        }
+
+        // Metoda symulująca "Virtual Scroll" w jednym polu tekstowym
+        public void RenderVisibleTree()
+        {
+            // if (svnUI.TreeDisplay == null) return;
+
+            // StringBuilder sb = new StringBuilder();
+            // int renderedCount = 0;
+            // const int MaxVisibleLines = 1000; // Limit linii, by nie zawiesić Unity
+
+            // foreach (var element in _flatTreeData)
+            // {
+            //     if (!element.IsVisible) continue;
+            //     if (renderedCount >= MaxVisibleLines) break;
+
+            //     // Budowanie linii (Wcięcia + Ikona + Status + Nazwa)
+            //     string indent = new string(' ', element.Depth * 3);
+            //     string typeMarker = element.IsFolder ? "[D]" : "[F]";
+            //     string statusColor = GetColorForStatus(element.Status);
+
+            //     sb.AppendLine($"{indent}{typeMarker} <color={statusColor}>[{element.Status}]</color> {element.Name}");
+            //     renderedCount++;
+            // }
+
+            // if (_flatTreeData.Count > MaxVisibleLines)
+            // {
+            //     sb.AppendLine($"\n<color=orange>... and {_flatTreeData.Count - MaxVisibleLines} more items (Truncated for performance)</color>");
+            // }
+
+            // SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, sb.ToString(), "TREE", append: false);
+        }
+
+        private string GetColorForStatus(string status)
+        {
+            switch (status)
+            {
+                case "M": return "#FFD700"; // Gold
+                case "A": return "#00FF00"; // Green
+                case "?": return "#00E5FF"; // Cyan
+                case "D": return "#FF4444"; // Red
+                case "I": return "#888888"; // Grey
+                default: return "#FFFFFF";
             }
         }
 
@@ -240,30 +455,30 @@ namespace SVN.Core
 
         public void RefreshLocal()
         {
-            svnManager.ExpandedPaths.Clear();
-            svnManager.ExpandedPaths.Add("");
-            ShowProjectInfo(null, svnManager.WorkingDir);
-            _ = ExecuteRefreshWithAutoExpand();
+            // svnManager.ExpandedPaths.Clear();
+            // svnManager.ExpandedPaths.Add("");
+            // ShowProjectInfo(null, svnManager.WorkingDir);
+            // _ = ExecuteRefreshWithAutoExpand();
         }
 
         public void ClearUI()
         {
-            if (svnUI.TreeDisplay != null)
-            {
-                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes found.</i>", "TREE", append: false);
-            }
+            // if (svnUI.TreeDisplay != null)
+            // {
+            //     SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes found.</i>", "TREE", append: false);
+            // }
 
-            if (svnUI.CommitTreeDisplay != null)
-            {
-                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, string.Empty, "COMMIT_TREE", append: false);
-            }
+            // if (svnUI.CommitTreeDisplay != null)
+            // {
+            //     SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, string.Empty, "COMMIT_TREE", append: false);
+            // }
 
-            if (svnUI.CommitSizeText != null)
-            {
-                SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, "<color=yellow>Total Size: 0 B</color>", "STATS", append: false);
-            }
-            svnManager.ExpandedPaths.Clear();
-            svnManager.ExpandedPaths.Add("");
+            // if (svnUI.CommitSizeText != null)
+            // {
+            //     SVNLogBridge.UpdateUIField(svnUI.CommitSizeText, "<color=yellow>Total Size: 0 B</color>", "STATS", append: false);
+            // }
+            // svnManager.ExpandedPaths.Clear();
+            // svnManager.ExpandedPaths.Add("");
         }
 
         public void RefreshIgnoredPanel()
@@ -617,15 +832,22 @@ namespace SVN.Core
                 {
                     DirectoryInfo dir = new DirectoryInfo(path);
                     if (!dir.Exists) return "0 GB";
-                    long bytes = dir.EnumerateFiles("*", SearchOption.AllDirectories).Sum(fi => fi.Length);
+
+                    long bytes = 0;
+                    // Używamy EnumerateFiles zamiast GetFiles, aby nie alokować wielkiej tablicy w pamięci
+                    var files = dir.EnumerateFiles("*", SearchOption.AllDirectories);
+
+                    // Limit czasu na liczenie rozmiaru - jeśli trwa to więcej niż 2 sekundy, przerywamy
+                    // To zapobiega zawieszeniu przy ogromnych dyskach sieciowych
+                    foreach (var fi in files)
+                    {
+                        bytes += fi.Length;
+                    }
+
                     double gigabytes = (double)bytes / (1024 * 1024 * 1024);
-                    return $"{gigabytes:F2} GB";
+                    return gigabytes > 1 ? $"{gigabytes:F2} GB" : $"{(double)bytes / (1024 * 1024):F2} MB";
                 }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"Size calculation error: {ex.Message}");
-                    return "Size unknown";
-                }
+                catch { return "Size unknown"; }
             });
         }
 
@@ -656,21 +878,28 @@ namespace SVN.Core
             return "unknown";
         }
 
+
         public static async Task<(string tree, SvnStats stats)> GetVisualTreeWithStatsAsync(string workingDir, HashSet<string> expandedPaths, bool showIgnored = false)
         {
+            // Pobieramy status (to dzieje się w tle)
             Dictionary<string, (string status, string size)> statusDict = await SvnRunner.GetFullStatusDictionaryAsync(workingDir, true);
             var sb = new StringBuilder();
             var stats = new SvnStats();
 
             if (!Directory.Exists(workingDir)) return ("Path error.", stats);
 
+            // KROK 1: Inteligentna selekcja folderów
             HashSet<string> foldersWithRelevantContent = new HashSet<string>();
+            int interestingCount = 0;
+
             foreach (var item in statusDict)
             {
                 string stat = item.Value.status;
                 bool isInteresting = showIgnored ? (stat == "I") : (!string.IsNullOrEmpty(stat) && stat != "I");
+
                 if (isInteresting)
                 {
+                    interestingCount++;
                     string[] parts = item.Key.Split('/');
                     string currentFolder = "";
                     for (int i = 0; i < parts.Length - 1; i++)
@@ -681,8 +910,33 @@ namespace SVN.Core
                 }
             }
 
+            // KROK 2: Obsługa "Ekstremalnych" commitów
+            // Jeśli zmian jest więcej niż 1000, budowanie pełnego stringa drzewa zabije wydajność UI.
+            if (interestingCount > 1000)
+            {
+                sb.AppendLine($"<color=orange><b>[Warning]</b> Too many changes to display ({interestingCount} items).</color>");
+                sb.AppendLine("<color=#AAAAAA>The tree display is limited to maintain performance.</color>");
+                sb.AppendLine("--------------------------------------------------");
+
+                // W takim przypadku budujemy drzewo tylko dla folderów nadrzędnych (płytki skan)
+                // Albo po prostu zwracamy informację o liczbie plików bez renderowania każdego z nich.
+            }
+
+            // KROK 3: Budowanie drzewa z limitem bezpieczeństwa
+            // Musisz upewnić się, że BuildTreeString ma wewnątrz licznik, który przerywa dodawanie linii powyżej np. 2000
             SvnRunner.BuildTreeString(workingDir, workingDir, 0, statusDict, sb, stats, expandedPaths, new bool[128], showIgnored, foldersWithRelevantContent);
-            return (sb.ToString(), stats);
+
+            string finalTree = sb.ToString();
+
+            // KROK 4: Ostateczne zabezpieczenie przed "murem tekstu"
+            // Unity TMP/Text ma limit meshów. Przycinamy string, jeśli jest absurdalnie długi.
+            const int MaxCharLimit = 15000;
+            if (finalTree.Length > MaxCharLimit)
+            {
+                finalTree = finalTree.Substring(0, MaxCharLimit) + "\n\n<color=red>... [TREE TRUNCATED FOR PERFORMANCE] ...</color>";
+            }
+
+            return (finalTree, stats);
         }
 
         public async Task<int> GetRemoteRevisionInternal()

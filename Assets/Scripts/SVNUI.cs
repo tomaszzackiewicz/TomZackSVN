@@ -37,10 +37,12 @@ namespace SVN.Core
         [SerializeField] private TMP_Dropdown mergeBranchesDropdown;
         [SerializeField] private TextMeshProUGUI branchTagConsoleText;
         [Header("Status Info")]
-        [SerializeField] private TextMeshProUGUI fileStatusText;
+        // [SerializeField] private TextMeshProUGUI fileStatusText;
         [SerializeField] private TextMeshProUGUI statusInfoText;
         [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
+        [SerializeField] private SvnTreeView svnTreeView;
+        [SerializeField] private SvnTreeView svnCommitTreeDisplay;
         [Header("Ignored")]
         [SerializeField] private TextMeshProUGUI ignoredText;
         [Header("Commit")]
@@ -100,9 +102,11 @@ namespace SVN.Core
         public TMP_Dropdown MergeBranchesDropdown => mergeBranchesDropdown;
         public TextMeshProUGUI BranchTagConsoleText => branchTagConsoleText;
         public TextMeshProUGUI StatusInfoText => statusInfoText;
-        public TextMeshProUGUI FileStatusText => fileStatusText;
+        // public TextMeshProUGUI FileStatusText => fileStatusText;
         public TextMeshProUGUI LocksText => locksText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
+        public SvnTreeView SvnTreeView => svnTreeView;
+        public SvnTreeView SVNCommitTreeDisplay => svnCommitTreeDisplay;
         public TextMeshProUGUI IgnoredText => ignoredText;
         public TextMeshProUGUI CommitSizeText => commitSizeText;
         public GameObject LoadingOverlay => loadingOverlay;
