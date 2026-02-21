@@ -37,7 +37,6 @@ namespace SVN.Core
         [SerializeField] private TMP_Dropdown mergeBranchesDropdown;
         [SerializeField] private TextMeshProUGUI branchTagConsoleText;
         [Header("Status Info")]
-        // [SerializeField] private TextMeshProUGUI fileStatusText;
         [SerializeField] private TextMeshProUGUI statusInfoText;
         [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
@@ -102,7 +101,6 @@ namespace SVN.Core
         public TMP_Dropdown MergeBranchesDropdown => mergeBranchesDropdown;
         public TextMeshProUGUI BranchTagConsoleText => branchTagConsoleText;
         public TextMeshProUGUI StatusInfoText => statusInfoText;
-        // public TextMeshProUGUI FileStatusText => fileStatusText;
         public TextMeshProUGUI LocksText => locksText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
         public SvnTreeView SvnTreeView => svnTreeView;

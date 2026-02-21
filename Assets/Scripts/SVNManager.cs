@@ -207,7 +207,7 @@ namespace SVN.Core
             try
             {
                 await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand();
-                LogToUI("[SVN] Status refresh finished.", "green");
+                LogToUI("[SVN] Status refresh finished.", "green", append: false);
 
                 UpdateStatus();
 
@@ -235,10 +235,9 @@ namespace SVN.Core
             }
         }
 
-        private void LogToUI(string message, string color)
+        private void LogToUI(string message, string color, bool append = true)
         {
-            SVNLogBridge.LogLine($"<color={color}>{message}</color>", true);
-            //svnUI.LogText.text += $"<color={color}>{message}</color>\n";
+            SVNLogBridge.LogLine($"<color={color}>{message}</color>", append);
         }
 
         public void BroadcastWorkingDirChange(string path)

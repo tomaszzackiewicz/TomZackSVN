@@ -2,7 +2,6 @@ using UnityEngine;
 using System.Text.RegularExpressions;
 using TMPro;
 using System;
-using UnityEngine.UI;
 
 namespace SVN.Core
 {
@@ -30,12 +29,6 @@ namespace SVN.Core
                 Canvas.ForceUpdateCanvases();
                 SVNUI.Instance.LogScrollRect.verticalNormalizedPosition = 0f;
             }
-        }
-
-        public static void LogError(string message)
-        {
-            LogLine($"<color=red>[ERROR] {message}</color>", true);
-            SVNLogger.LogToFile(StripRichText(message), "ERROR");
         }
 
         public static void UpdateUIField(TextMeshProUGUI uiField, string content, string logLabel = "UI", bool append = false)

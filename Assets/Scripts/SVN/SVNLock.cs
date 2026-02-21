@@ -130,7 +130,6 @@ namespace SVN.Core
             if (IsProcessing) return;
             IsProcessing = true;
 
-            // Specifically updating the LocksText UI field
             SVNLogBridge.UpdateUIField(svnUI.LocksText, "<b><color=orange>Fetching Repository Status...</color></b>", append: false);
 
             try
@@ -202,7 +201,7 @@ namespace SVN.Core
                     });
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 Debug.LogError("SVN XML Parse Error: " + ex.Message);
             }

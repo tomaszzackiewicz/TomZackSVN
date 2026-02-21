@@ -5,7 +5,6 @@ using SVN.Core;
 public class SvnTreeView : MonoBehaviour
 {
     public GameObject linePrefab;
-    // To pole ustawiasz w Inspektorze Unity:
     public bool isCommitView;
 
     private List<GameObject> _pool = new List<GameObject>();
@@ -26,8 +25,6 @@ public class SvnTreeView : MonoBehaviour
             var controller = line.GetComponent<SvnLineController>();
             if (controller != null)
             {
-                // PRZEKAZUJEMY INFORMACJĘ DO KONTROLERA LINII:
-                // Ustawiamy flagę w elemencie danych tuż przed Setupem
                 element.IsCommitDelegate = isCommitView;
                 controller.Setup(element, manager);
             }
@@ -45,5 +42,13 @@ public class SvnTreeView : MonoBehaviour
         GameObject newObj = Instantiate(linePrefab, transform);
         _pool.Add(newObj);
         return newObj;
+    }
+
+    public void ClearView()
+    {
+        foreach (var obj in _pool)
+        {
+            if (obj != null) obj.SetActive(false);
+        }
     }
 }
