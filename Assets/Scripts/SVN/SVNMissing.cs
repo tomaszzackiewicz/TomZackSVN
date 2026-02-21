@@ -19,7 +19,21 @@ namespace SVN.Core
             try
             {
                 await FixMissingLogic();
-                SVNLogBridge.LogLine("<color=green>Success:</color> Missing files processing completed.");
+
+                IsProcessing = false;
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    //statusModule.IsProcessing = false;
+                    statusModule.ClearSVNTreeView();
+                    statusModule.ClearCurrentData();
+
+                    SVNLogBridge.LogLine("<color=#4FC3F7>Rebuilding tree...</color>");
+                    await statusModule.ExecuteRefreshWithAutoExpand();
+                }
+
+                SVNLogBridge.LogLine("<color=green><b>SUCCESS!</b></color> Missing files have been removed from SVN index.");
             }
             catch (Exception ex)
             {
@@ -44,24 +58,27 @@ namespace SVN.Core
 
             if (missingFiles.Count > 0)
             {
-                SVNLogBridge.LogLine($"Found {missingFiles.Count} missing files. Scheduling for deletion...");
+                SVNLogBridge.LogLine($"Found <b>{missingFiles.Count}</b> missing files. Deleting from SVN index...");
 
-                foreach (var path in missingFiles)
+                int batchSize = 25;
+                for (int i = 0; i < missingFiles.Count; i += batchSize)
                 {
+                    var batch = missingFiles.Skip(i).Take(batchSize);
+                    string filesArgs = string.Join(" ", batch.Select(f => $"\"{f}\""));
+
                     try
                     {
-                        await SvnRunner.RunAsync($"delete --force \"{path}\"", root);
-                        SVNLogBridge.LogLine($"<color=#888888>Deleted from SVN:</color> {path}");
+                        await SvnRunner.RunAsync($"delete --force {filesArgs}", root);
                     }
-                    catch (System.Exception)
+                    catch (Exception ex)
                     {
-                        Debug.LogWarning($"[SVN] Ignoring untracked or locked file: {path}");
+                        Debug.LogWarning($"[SVN] Batch delete partial failure: {ex.Message}");
                     }
                 }
             }
             else
             {
-                SVNLogBridge.LogLine("<color=yellow>No missing files detected.</color>");
+                SVNLogBridge.LogLine("<color=yellow>No missing files (!) detected.</color>");
             }
         }
     }

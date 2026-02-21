@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace SVN.Core
@@ -63,13 +64,14 @@ namespace SVN.Core
             }
         }
 
-        public void Button_OpenResolve()
+        public async Task Button_OpenResolve()
         {
             ResetAllPanels();
 
             if (resolvePanel != null)
             {
                 resolvePanel.SetActive(true);
+                await SVNManager.Instance.GetModule<SVNResolve>().AutoRefreshConflictList();
             }
         }
 

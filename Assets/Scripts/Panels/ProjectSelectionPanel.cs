@@ -57,6 +57,13 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private async void OnProjectSelected(SVNProject project)
     {
+        var statusModule = svnManager.GetModule<SVNStatus>();
+        if (statusModule != null)
+        {
+            statusModule.ClearSVNTreeView();
+            statusModule.ClearCurrentData();
+        }
+
         svnManager.LoadProject(project);
 
         if (!string.IsNullOrEmpty(project.privateKeyPath))

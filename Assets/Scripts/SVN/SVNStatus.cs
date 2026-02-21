@@ -60,21 +60,23 @@ namespace SVN.Core
         }
         public void ShowOnlyModified()
         {
-            // svnManager.ExpandedPaths.Clear();
-            // svnManager.ExpandedPaths.Add("");
+            svnManager.ExpandedPaths.Clear();
+            svnManager.ExpandedPaths.Add("");
 
-            // if (svnUI.TreeDisplay != null)
-            // {
-            //     SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
-            // }
+            ClearSVNTreeView();
 
-            // if (svnUI.CommitTreeDisplay != null)
-            // {
-            //     SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
-            // }
+            if (svnUI.TreeDisplay != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
+            }
 
-            // _isCurrentViewIgnored = false;
-            // _ = ExecuteRefreshWithAutoExpand();
+            if (svnUI.CommitTreeDisplay != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
+            }
+
+            _isCurrentViewIgnored = false;
+            _ = ExecuteRefreshWithAutoExpand();
         }
 
         public async Task ExecuteRefreshWithAutoExpand()
@@ -84,45 +86,57 @@ namespace SVN.Core
 
             try
             {
-                string root = svnManager.WorkingDir;
+                // 1. Czyścimy oba pola na samym starcie (Zastępujemy "Refreshing...")
+                if (svnUI != null)
+                {
+                    if (svnUI.TreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
 
+                    if (svnUI.CommitTreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+                }
+
+                string root = svnManager.WorkingDir;
                 var statusDict = _isCurrentViewIgnored
                     ? await GetIgnoredOnlyAsync(root)
                     : await GetChangesDictionaryAsync(root);
 
+                // 2. OBSŁUGA PUSTEGO REPOZYTORIUM
                 if (statusDict == null || statusDict.Count == 0)
                 {
-                    if (svnUI != null && svnUI.SvnTreeView != null)
-                    {
-                        ResetTreeView();
-                    }
-
+                    ResetTreeView();
                     _flatTreeData.Clear();
                     _commitTreeData?.Clear();
 
+                    if (svnUI.TreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected. (Everything up to date)</i>", "TREE", append: false);
+
+                    if (svnUI.CommitTreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
+
                     if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Commit Size: <color=#FFFF00>0 B</color>";
+
                     UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
-
                     return;
-                }
-
-                if (svnUI != null && svnUI.TreeDisplay != null)
-                {
-                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
                 }
 
                 _flatTreeData = BuildFlatTreeStructureText(root, statusDict);
 
-                if (svnUI != null && svnUI.SvnTreeView != null)
+                if (svnUI.SvnTreeView != null)
                 {
                     foreach (var e in _flatTreeData) e.IsCommitDelegate = false;
                     svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
                 }
 
-                if (svnUI != null && svnUI.SVNCommitTreeDisplay != null)
+                if (svnUI.SVNCommitTreeDisplay != null || svnUI.CommitTreeDisplay != null)
                 {
                     _commitTreeData = PrepareCommitTree(_flatTreeData);
-                    svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
+
+                    if (svnUI.SVNCommitTreeDisplay != null)
+                        svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
+
+                    if (svnUI.CommitTreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
 
                     if (svnUI.CommitSizeText != null)
                     {
@@ -144,8 +158,16 @@ namespace SVN.Core
         {
             _flatTreeData?.Clear();
             _commitTreeData?.Clear();
-            // Jeśli masz słownik statusów w SVNManager, jego też warto wyczyścić:
-            // svnManager.CurrentStatusDict?.Clear();
+            svnManager.CurrentStatusDict?.Clear();
+        }
+
+        public void ClearSVNTreeView()
+        {
+            SvnTreeView[] svnTreeViews = GameObject.FindObjectsByType<SvnTreeView>(FindObjectsSortMode.None);
+            foreach (var svnTreeView in svnTreeViews)
+            {
+                svnTreeView.ClearView();
+            }
         }
 
         public void ResetTreeView()
@@ -412,18 +434,6 @@ namespace SVN.Core
             return ignoredDict;
         }
 
-        private void AddParentFoldersToExpanded(string filePath)
-        {
-            string[] parts = filePath.Split('/');
-            string currentPath = "";
-            for (int i = 0; i < parts.Length - 1; i++)
-            {
-                currentPath = string.IsNullOrEmpty(currentPath) ? parts[i] : $"{currentPath}/{parts[i]}";
-                if (!svnManager.ExpandedPaths.Contains(currentPath))
-                    svnManager.ExpandedPaths.Add(currentPath);
-            }
-        }
-
         public void RefreshIgnoredPanel()
         {
             _ = RefreshIgnoredPanelAsync();
@@ -687,7 +697,7 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(rawInfo) || rawInfo == "unknown")
             {
-                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color= #000000>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>", "INFO", append: false); //Black dot
+                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color=black>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>", "INFO", append: false); //Black dot
                 return;
             }
 

@@ -34,18 +34,17 @@ namespace SVN.Core
 
             try
             {
-                LogToPanel($"<b><color=#4FC3F7>[Create]</color> Creating {subFolder}: {name}</b>", false);
+                string sourceUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
 
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
-                string sourceUrl = $"{repoRoot}/trunk";
                 string targetUrl = $"{repoRoot}/{subFolder}/{name}";
 
-                LogToPanel($"<color=#444444>... Source: {sourceUrl}</color>");
-                LogToPanel($"<color=#444444>... Target: {targetUrl}</color>");
+                LogToPanel($"<b>[Create]</b> Copying current working copy to {subFolder}...");
 
-                await CopyAsync(svnManager.WorkingDir, sourceUrl, targetUrl, $"Created {subFolder}/{name}");
+                string cmd = $"copy \"{svnManager.WorkingDir}\" \"{targetUrl}\" -m \"Created {subFolder}/{name} from local workspace\" --parents";
+                await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
-                LogToPanel($"<b><color=green>[Success]</color> Remote {subFolder} '{name}' created!</b>");
+                LogToPanel($"<color=green>Success!</color> Created: {name}");
                 RefreshUnifiedList();
             }
             catch (Exception ex)

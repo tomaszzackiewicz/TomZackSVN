@@ -4,8 +4,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
-using System.Text;
-using System.Xml;
 
 namespace SVN.Core
 {
@@ -92,11 +90,30 @@ namespace SVN.Core
             return totalBytes;
         }
 
+        private async Task EnsureRepoStructure(string repoRoot)
+        {
+            try
+            {
+                string result = await SvnRunner.RunAsync($"ls \"{repoRoot}\"", "");
+
+                if (string.IsNullOrEmpty(result) || !result.Contains("trunk"))
+                {
+                    SVNLogBridge.LogLine("<b>[Server]</b> Creating trunk/branches/tags structure...");
+                    string cmd = $"mkdir \"{repoRoot}/trunk\" \"{repoRoot}/branches\" \"{repoRoot}/tags\" -m \"Initial structure\" --parents --non-interactive";
+                    await SvnRunner.RunAsync(cmd, "");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("Structure check failed (repo might be empty): " + ex.Message);
+            }
+        }
+
         public async void Checkout()
         {
             if (IsProcessing) return;
 
-            string url = svnUI.CheckoutRepoUrlInput.text.Trim();
+            string baseUrl = svnUI.CheckoutRepoUrlInput.text.Trim().TrimEnd('/');
             string path = svnUI.CheckoutDestFolderInput.text.Trim();
 
             if (Directory.Exists(path) && Directory.GetFileSystemEntries(path).Length > 0)
@@ -105,7 +122,13 @@ namespace SVN.Core
                 return;
             }
 
-            await ExecuteSvnOperation(url, path, $"checkout \"{url}\" \"{path}\" --force");
+            await EnsureRepoStructure(baseUrl);
+
+            string trunkUrl = $"{baseUrl}/trunk";
+
+            SVNLogBridge.LogLine($"<b>[Checkout]</b> Target set to: {trunkUrl}");
+
+            await ExecuteSvnOperation(trunkUrl, path, $"checkout \"{trunkUrl}\" \"{path}\" --force");
         }
 
         public async void ResumeCheckout()

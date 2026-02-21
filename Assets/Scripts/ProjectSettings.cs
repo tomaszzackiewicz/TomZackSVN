@@ -17,6 +17,7 @@ namespace SVN.Core
 
         public static List<SVNProject> LoadProjects()
         {
+
             if (!File.Exists(FilePath)) return new List<SVNProject>();
             string json = File.ReadAllText(FilePath);
             return JsonUtility.FromJson<SVNProjectList>(json).projects;
@@ -24,6 +25,7 @@ namespace SVN.Core
 
         public static void DeleteProject(string workingDir)
         {
+
             List<SVNProject> projects = LoadProjects();
             projects.RemoveAll(p => p.workingDir == workingDir);
             SaveProjects(projects);

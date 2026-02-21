@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using UnityEngine;
 
 namespace SVN.Core
 {
@@ -26,7 +25,6 @@ namespace SVN.Core
             try
             {
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
-
                 var filesToRevert = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && "MADRC".Contains(x.Value.status))
                     .Select(x => x.Key)
@@ -38,11 +36,21 @@ namespace SVN.Core
                     return;
                 }
 
-                SVNLogBridge.LogLine($"Reverting {filesToRevert.Length} files to their original state...");
-
                 await RevertAsync(root, filesToRevert);
 
-                SVNLogBridge.LogLine($"<color=green>Success!</color> Reverted <b>{filesToRevert.Length}</b> files.");
+                if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
+                if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                statusModule.ClearCurrentData();
+
+                if (svnUI.TreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected. (Everything up to date)</i>", "TREE", append: false);
+
+                if (svnUI.CommitTreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<color=green>No changes to commit.</color>", "COMMIT_TREE", append: false);
+
+                SVNLogBridge.LogLine($"<color=green><b>SUCCESS!</b></color> Reverted <b>{filesToRevert.Length}</b> files.");
 
                 await svnManager.RefreshStatus();
             }

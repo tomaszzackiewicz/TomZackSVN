@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -146,6 +145,18 @@ namespace SVN.Core
             }
             catch (Exception ex) { LogBoth($"<color=red>Exception:</color> {ex.Message}"); }
             finally { IsProcessing = false; }
+        }
+
+        public async Task AutoRefreshConflictList()
+        {
+            string root = svnManager.WorkingDir;
+            string[] conflicts = await GetTargetPaths(root);
+
+            if (conflicts.Length > 0)
+            {
+                LogBoth($"<b>[Detected]</b> Found {conflicts.Length} files with conflicts.");
+                foreach (var c in conflicts) LogBoth($"<color=orange>! {c}</color>");
+            }
         }
     }
 }

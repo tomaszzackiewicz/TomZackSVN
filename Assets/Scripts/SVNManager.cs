@@ -174,6 +174,9 @@ namespace SVN.Core
 
         public void LoadProject(SVNProject project)
         {
+            var statusModule = GetModule<SVNStatus>();
+            statusModule.ClearCurrentData();
+
             WorkingDir = SVNAssetLocator.NormalizePath(project.workingDir);
             RepositoryUrl = project.repoUrl;
             CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
@@ -221,16 +224,24 @@ namespace SVN.Core
             try
             {
                 await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand();
-                LogToUI("[SVN] Status refresh finished.", "green", append: false);
+
+                var statusDict = CurrentStatusDict;
+
+                if (statusDict != null)
+                {
+                    bool hasConflicts = statusDict.Values.Any(v => v.status != null && v.status.Contains("C"));
+
+                    if (hasConflicts)
+                    {
+                        LogToUI("[SVN] Conflicts detected! Opening Resolve panel.", "orange");
+                        if (panelHandler != null)
+                        {
+                            await panelHandler.Button_OpenResolve();
+                        }
+                    }
+                }
 
                 UpdateStatus();
-
-                var conflicted = CurrentStatusDict.Values.Count(v => v.status.Contains("C"));
-                if (conflicted > 0)
-                {
-                    LogToUI($"[SVN] Found {conflicted} conflicts!", "orange");
-                    panelHandler?.Button_OpenResolve();
-                }
             }
             catch (Exception e)
             {

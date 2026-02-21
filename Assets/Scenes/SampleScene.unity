@@ -27305,6 +27305,7 @@ GameObject:
   - component: {fileID: 1152531279}
   - component: {fileID: 1152531278}
   - component: {fileID: 1152531277}
+  - component: {fileID: 1152531281}
   m_Layer: 5
   m_Name: Explorer
   m_TagString: Untagged
@@ -27421,6 +27422,21 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1152531275}
   m_CullTransparentMesh: 1
+--- !u!114 &1152531281
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1152531275}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7deeddd64c714fe49a21f96a3bc68f6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVN.Core.SmoothScroll
+  scrollRect: {fileID: 1152531278}
+  scrollSpeed: 20
+  autoScroll: 1
 --- !u!1 &1158324671
 GameObject:
   m_ObjectHideFlags: 0
@@ -35152,6 +35168,7 @@ GameObject:
   - component: {fileID: 1465576936}
   - component: {fileID: 1465576935}
   - component: {fileID: 1465576939}
+  - component: {fileID: 1465576940}
   m_Layer: 5
   m_Name: Explorer
   m_TagString: Untagged
@@ -35294,6 +35311,21 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &1465576940
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1465576933}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7deeddd64c714fe49a21f96a3bc68f6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVN.Core.SmoothScroll
+  scrollRect: {fileID: 1465576936}
+  scrollSpeed: 20
+  autoScroll: 1
 --- !u!1 &1468470228
 GameObject:
   m_ObjectHideFlags: 0
@@ -44550,6 +44582,7 @@ GameObject:
   - component: {fileID: 1886612321}
   - component: {fileID: 1886612320}
   - component: {fileID: 1886612319}
+  - component: {fileID: 1886612323}
   m_Layer: 5
   m_Name: Explorer
   m_TagString: Untagged
@@ -44666,6 +44699,21 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1886612317}
   m_CullTransparentMesh: 1
+--- !u!114 &1886612323
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1886612317}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7deeddd64c714fe49a21f96a3bc68f6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVN.Core.SmoothScroll
+  scrollRect: {fileID: 1886612320}
+  scrollSpeed: 20
+  autoScroll: 1
 --- !u!1 &1886992653
 GameObject:
   m_ObjectHideFlags: 0
@@ -46718,6 +46766,7 @@ GameObject:
   - component: {fileID: 1980112186}
   - component: {fileID: 1980112185}
   - component: {fileID: 1980112184}
+  - component: {fileID: 1980112188}
   m_Layer: 5
   m_Name: Console
   m_TagString: Untagged
@@ -46834,6 +46883,21 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1980112182}
   m_CullTransparentMesh: 1
+--- !u!114 &1980112188
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1980112182}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7deeddd64c714fe49a21f96a3bc68f6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVN.Core.SmoothScroll
+  scrollRect: {fileID: 1980112185}
+  scrollSpeed: 20
+  autoScroll: 1
 --- !u!1 &1986327968
 GameObject:
   m_ObjectHideFlags: 0
@@ -49857,6 +49921,7 @@ GameObject:
   - component: {fileID: 2097978686}
   - component: {fileID: 2097978685}
   - component: {fileID: 2097978684}
+  - component: {fileID: 2097978688}
   m_Layer: 5
   m_Name: Console
   m_TagString: Untagged
@@ -49973,6 +50038,21 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2097978682}
   m_CullTransparentMesh: 1
+--- !u!114 &2097978688
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2097978682}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7deeddd64c714fe49a21f96a3bc68f6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVN.Core.SmoothScroll
+  scrollRect: {fileID: 2097978685}
+  scrollSpeed: 20
+  autoScroll: 1
 --- !u!1 &2099476868
 GameObject:
   m_ObjectHideFlags: 0
@@ -50417,6 +50497,7 @@ GameObject:
   - component: {fileID: 2106861022}
   - component: {fileID: 2106861021}
   - component: {fileID: 2106861020}
+  - component: {fileID: 2106861024}
   m_Layer: 5
   m_Name: Console
   m_TagString: Untagged
@@ -50533,6 +50614,21 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2106861018}
   m_CullTransparentMesh: 1
+--- !u!114 &2106861024
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2106861018}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7deeddd64c714fe49a21f96a3bc68f6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVN.Core.SmoothScroll
+  scrollRect: {fileID: 2106861021}
+  scrollSpeed: 20
+  autoScroll: 1
 --- !u!1 &2110920139
 GameObject:
   m_ObjectHideFlags: 0

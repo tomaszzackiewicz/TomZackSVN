@@ -11,7 +11,6 @@ namespace SVN.Core
     public class SVNAdd : SVNBase
     {
         private CancellationTokenSource _activeCTS;
-        // Limit linii w konsoli, aby UI nie "puchło"
         private const int MaxLogLines = 50;
         private List<string> _logBuffer = new List<string>();
 
@@ -19,68 +18,48 @@ namespace SVN.Core
 
         public async void AddAll()
         {
+            if (IsProcessing) return;
             CancellationToken token = PrepareNewOperation();
 
             try
             {
                 string root = svnManager.WorkingDir;
+                ClearAndLog("<b>[Recursive Add]</b> Scanning...");
 
-                // Czysty start konsoli
-                ClearAndLog("<b>[Recursive Scan]</b> Initiating light-weight synchronization...");
-
-                // KROK 1: Szybki skan (bez logowania każdego pliku)
                 string rawStatus = await SvnRunner.RunAsync("status", root, true, token);
-                int totalToProcess = rawStatus.Split('\n').Count(l => l.StartsWith("?"));
-
-                if (totalToProcess == 0)
+                if (!rawStatus.Contains("?"))
                 {
-                    UpdateLightLog("<color=green>No new files to add.</color>");
+                    UpdateLightLog("<color=yellow>Nothing to add.</color>");
                     return;
                 }
 
-                UpdateLightLog($"Found <b>{totalToProcess}</b> new items. Adding recursively...");
+                UpdateLightLog("Adding files to SVN...");
+                await Task.Run(() => SvnRunner.RunAsync("add . --force --parents --depth infinity", root, true, token));
 
-                // KROK 2: Uruchomienie SVN (Add)
-                // Używamy Task.Run, aby operacja tekstowa nie blokowała wątku głównego Unity
-                string addResult = await Task.Run(() => SvnRunner.RunAsync("add . --force --parents --depth infinity", root, true, token));
+                IsProcessing = false;
 
-                token.ThrowIfCancellationRequested();
+                UpdateLightLog("<color=#4FC3F7>Rebuilding tree...</color>");
 
-                // KROK 3: Przetwarzanie wyniku w sposób lekki dla UI
-                ParseAddResultLight(addResult, totalToProcess);
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    statusModule.ClearSVNTreeView();
+                    statusModule.ClearCurrentData();
+                    await statusModule.ExecuteRefreshWithAutoExpand();
+                }
 
-                UpdateLightLog("\n<color=green><b>[SUCCESS]</b> Sync complete.</color>");
-                await svnManager.RefreshStatus();
-            }
-            catch (OperationCanceledException)
-            {
-                UpdateLightLog("\n<color=orange>Operation cancelled.</color>");
+                UpdateLightLog("\n<color=green><b>[SUCCESS]</b> Items added and UI refreshed.</color>");
             }
             catch (Exception ex)
             {
                 UpdateLightLog($"\n<color=red>Error: {ex.Message}</color>");
+                IsProcessing = false;
             }
             finally
             {
                 CleanUpOperation(token);
             }
         }
-
-        private void ParseAddResultLight(string result, int total)
-        {
-            if (string.IsNullOrEmpty(result)) return;
-
-            string[] lines = result.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            int count = lines.Length;
-
-            // Zamiast listować wszystko, dajemy tylko podsumowanie co jakiś czas
-            UpdateLightLog($"<color=#4FC3F7>Processed {count} items...</color>");
-
-            if (svnUI.OperationProgressBar != null)
-                svnUI.OperationProgressBar.value = 1.0f;
-        }
-
-        // --- Lekki System Logowania ---
 
         private void ClearAndLog(string initialMessage)
         {
@@ -93,10 +72,9 @@ namespace SVN.Core
         {
             _logBuffer.Add(message);
 
-            // Jeśli logów jest za dużo, usuwamy najstarsze (zachowując nagłówek)
             if (_logBuffer.Count > MaxLogLines)
             {
-                _logBuffer.RemoveAt(1); // Usuwamy linię zaraz po nagłówku
+                _logBuffer.RemoveAt(1);
             }
 
             SyncBufferWithUI();
@@ -106,7 +84,6 @@ namespace SVN.Core
         {
             if (svnUI.CommitConsoleContent == null) return;
 
-            // Budujemy jeden zbiorczy string zamiast wielokrotnych aktualizacji pola tekstowego
             StringBuilder sb = new StringBuilder();
             foreach (var line in _logBuffer)
             {
@@ -115,8 +92,6 @@ namespace SVN.Core
 
             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, sb.ToString(), append: false);
         }
-
-        // --- Zarządzanie Stanem ---
 
         private CancellationToken PrepareNewOperation()
         {

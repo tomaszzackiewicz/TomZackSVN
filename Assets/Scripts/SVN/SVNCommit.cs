@@ -144,7 +144,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    string info = string.IsNullOrWhiteSpace(commitResult) ? "Nothing to commit." : commitResult;
+                    string info = string.IsNullOrWhiteSpace(commitResult) ? "<i>Nothing to commit.</i>" : commitResult;
                     SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=yellow>Result:</color> {info}", append: true);
                 }
             }

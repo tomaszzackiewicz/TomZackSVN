@@ -1,12 +1,5 @@
 using SVN.Core;
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Unity.Burst.Intrinsics;
 using UnityEngine;
-using UnityEngine.UIElements;
 
 public class CommitPanel : MonoBehaviour
 {
