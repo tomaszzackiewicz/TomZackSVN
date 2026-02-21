@@ -14,20 +14,12 @@ namespace SVN.Core
             svnUI = SVNUI.Instance;
             svnManager = SVNManager.Instance;
 
-            // if (svnUI.TerminalInputField != null)
-            // {
-            //     svnUI.TerminalInputField.onEndEdit.AddListener(delegate { OnTerminalSubmit(); });
-            // }
-
             if (svnUI.TerminalInputField != null)
             {
-                // Usuwamy wszystkie stare listenery, żeby mieć pewność czystego startu
                 svnUI.TerminalInputField.onEndEdit.RemoveAllListeners();
 
-                // Używamy onEndEdit tylko do wyłapania Entera
                 svnUI.TerminalInputField.onEndEdit.AddListener((val) =>
                 {
-                    // Sprawdzamy, czy edycja zakończyła się naciśnięciem Enter
                     if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
                     {
                         ExecuteLogic();
@@ -39,10 +31,6 @@ namespace SVN.Core
         void OnTerminalSubmit()
         {
             ExecuteLogic();
-            // if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
-            // {
-            //     svnManager.GetModule<SVNTerminal>().ExecuteTerminalCommand();
-            // }
         }
 
 
@@ -63,20 +51,16 @@ namespace SVN.Core
         {
             string cmd = svnUI.TerminalInputField.text;
 
-            // Jeśli puste, nic nie rób
             if (string.IsNullOrWhiteSpace(cmd)) return;
 
-            // Pobierz moduł i wykonaj
             var terminal = svnManager.GetModule<SVNTerminal>();
             if (terminal != null)
             {
                 terminal.ExecuteTerminalCommand();
             }
 
-            // UX: Czyścimy i przywracamy focus na pole tekstowe
             svnUI.TerminalInputField.text = "";
 
-            // Ważne: ActivateInputField pozwala pisać dalej bez klikania myszką w pole
             svnUI.TerminalInputField.ActivateInputField();
         }
 

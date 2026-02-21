@@ -239,6 +239,7 @@ namespace SVN.Core
             IsProcessing = true;
 
             string root = svnManager.WorkingDir;
+            // Czyścimy konsolę na starcie
             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<b>[Revert]</b> Starting recovery of missing files...", append: false);
 
             try
@@ -253,6 +254,7 @@ namespace SVN.Core
                     {
                         if (line.StartsWith("!"))
                         {
+                            // Wyciągamy ścieżkę (pomijamy status i spacji)
                             filesToRevert.Add(line.Substring(1).Trim());
                         }
                     }
@@ -266,24 +268,49 @@ namespace SVN.Core
 
                 SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"Found {filesToRevert.Count} missing files. Restoring...", append: true);
 
+                // Wykonanie revertu w paczkach
                 int batchSize = 20;
                 for (int i = 0; i < filesToRevert.Count; i += batchSize)
                 {
                     var batch = filesToRevert.Skip(i).Take(batchSize).Select(p => $"\"{p}\"");
                     await SvnRunner.RunAsync($"revert {string.Join(" ", batch)}", root);
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"Restored {Math.Min(i + batchSize, filesToRevert.Count)}/{filesToRevert.Count}...", append: true);
                 }
 
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=green><b>Success:</b> All missing files restored.</color>", append: true);
+                // --- KLUCZOWE: CZYSZCZENIE OKIEN (Jak w Commicie) ---
+
+                // 1. Czyścimy widoki wizualne (GameObjecty drzewa)
+                if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
+                if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
+
+                // 2. Pobieramy moduł statusu i czyścimy jego pamięć cache
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    statusModule.ClearCurrentData();
+
+                    // 3. Resetujemy napisy "Refreshing..." w obu oknach przed finałem
+                    if (svnUI.TreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+
+                    if (svnUI.CommitTreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+
+                    // 4. Odblokowujemy flagi i wymuszamy świeży skan
+                    IsProcessing = false;
+                    //statusModule.IsProcessing = false;
+
+                    await statusModule.ExecuteRefreshWithAutoExpand();
+                }
+
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<color=green><b>SUCCESS!</b></color> All missing files restored and UI updated.", append: true);
             }
             catch (Exception ex)
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"<color=red>Revert Error:</color> {ex.Message}", append: true);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Revert Error:</color> {ex.Message}", append: true);
             }
             finally
             {
                 IsProcessing = false;
-                await svnManager.RefreshStatus();
             }
         }
 
