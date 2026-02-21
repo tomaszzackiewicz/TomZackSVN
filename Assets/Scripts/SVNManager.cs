@@ -37,11 +37,25 @@ namespace SVN.Core
         public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
         public GameObject MainUIPanel => mainUIPanel;
         public string CurrentUserName => currentUserName;
-        public bool IsProcessing { get => isProcessing; set => isProcessing = value; }
+        //public bool IsProcessing { get => isProcessing; set => isProcessing = value; }
         public string WorkingDir { get => workingDir; set => workingDir = value; }
         public string CurrentKey { get => currentKey; set => currentKey = value; }
         public string MergeToolPath { get => mergeToolPath; set => mergeToolPath = value; }
         private readonly Dictionary<Type, SVNBase> _modules = new Dictionary<Type, SVNBase>();
+
+        public event Action<bool> OnProcessingStateChanged;
+
+        private bool _isProcessing;
+        public bool IsProcessing
+        {
+            get => _isProcessing;
+            set
+            {
+                if (_isProcessing == value) return;
+                _isProcessing = value;
+                OnProcessingStateChanged?.Invoke(_isProcessing);
+            }
+        }
 
         private void Awake()
         {

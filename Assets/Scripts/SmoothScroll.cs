@@ -1,18 +1,32 @@
 using UnityEngine;
 using UnityEngine.UI;
+using System.Collections;
 
 namespace SVN.Core
 {
     public class SmoothScroll : MonoBehaviour
     {
-        [Header("Settings")]
-        public ScrollRect scrollRect;
-        public float scrollSpeed = 10f; // Prędkość płynnego przewijania
+        [SerializeField] private ScrollRect scrollRect;
+        [SerializeField] private float scrollSpeed = 20f;
+        [SerializeField] private bool autoScroll = true;
 
         private float _targetPosition = -1f;
+        private RectTransform _content;
+        private float _lastHeight;
+
+        private void Start()
+        {
+            if (scrollRect != null) _content = scrollRect.content;
+        }
 
         private void Update()
         {
+            if (autoScroll && _content != null && _content.rect.height != _lastHeight)
+            {
+                _lastHeight = _content.rect.height;
+                ScrollToBottom();
+            }
+
             if (_targetPosition >= 0f)
             {
                 scrollRect.verticalNormalizedPosition = Mathf.Lerp(
@@ -31,20 +45,18 @@ namespace SVN.Core
 
         public void ScrollToBottom()
         {
-            if (scrollRect == null) return;
-
-            // Wymuszamy przeliczenie UI, żeby znać nową wysokość tekstu
-            Canvas.ForceUpdateCanvases();
-            _targetPosition = 0f; // 0 to dół w ScrollRect
+            if (gameObject.activeInHierarchy)
+                StartCoroutine(EnsureScroll());
         }
 
-        // Funkcja do natychmiastowego skoku (np. przy otwieraniu okna)
-        public void InstantScrollToBottom()
+        private IEnumerator EnsureScroll()
         {
-            if (scrollRect == null) return;
+
+            yield return new WaitForEndOfFrame();
             Canvas.ForceUpdateCanvases();
-            scrollRect.verticalNormalizedPosition = 0f;
-            _targetPosition = -1f;
+            _targetPosition = 0f;
+            yield return null;
+            _targetPosition = 0f;
         }
     }
 }

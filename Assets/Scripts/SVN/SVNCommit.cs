@@ -113,13 +113,7 @@ namespace SVN.Core
                 await SvnRunner.RunAsync("add . --force --parents --depth infinity", root, true, _commitCTS.Token);
                 if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.6f;
 
-                string stepMsg = "<b>[4/4]</b> Sending data to server (This may take a while)...";
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n" + stepMsg, append: true);
-
                 var commitTask = SvnRunner.RunAsync($"commit -m \"{message}\" --non-interactive .", root, true, _commitCTS.Token);
-                string proc = $"\nProcessing";
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, proc, append: true);
-                await Task.WhenAny(commitTask, MonitorProgressVisual(commitTask, svnUI.CommitConsoleContent, proc));
 
                 string commitResult = await commitTask;
 
@@ -169,37 +163,6 @@ namespace SVN.Core
                 _commitCTS = null;
                 await svnManager.RefreshStatus();
                 HideProgressBarAfterDelay(3.0f);
-            }
-        }
-
-        private async Task MonitorProgressVisual(Task mainTask, TMPro.TextMeshProUGUI targetUI, string baseLine)
-        {
-            SVN.Core.UnityMainThreadDispatcher.EnsureExists();
-            int dotsCount = 0;
-
-            string dotStyleStart = "<b><color=#00FF00><size=140%>";
-            string dotStyleEnd = "</size></color></b>";
-
-            while (!mainTask.IsCompleted)
-            {
-                await Task.Delay(500);
-                if (mainTask.IsCompleted) break;
-
-                dotsCount = (dotsCount % 3) + 1;
-                string dots = new string('.', dotsCount);
-
-                UnityMainThreadDispatcher.Enqueue(() =>
-                {
-                    if (targetUI != null)
-                    {
-                        string txt = targetUI.text;
-                        int idx = txt.LastIndexOf(baseLine);
-                        if (idx != -1)
-                        {
-                            targetUI.text = txt.Substring(0, idx + baseLine.Length) + $" {dotStyleStart}{dots}{dotStyleEnd}";
-                        }
-                    }
-                });
             }
         }
 
