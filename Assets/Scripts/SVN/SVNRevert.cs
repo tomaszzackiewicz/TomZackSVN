@@ -1,9 +1,7 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Collections.Generic;
 using System.IO;
-using System.Text;
 
 namespace SVN.Core
 {
@@ -29,14 +27,12 @@ namespace SVN.Core
             {
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
-                // 1. NAPRAWA ŚCIEŻEK: Budujemy pełne, czyste ścieżki systemowe
                 var filesToRevert = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && "MADRC".Contains(x.Value.status))
                     .Select(x =>
                     {
-                        // Łączymy root z relatywną ścieżką i zamieniamy / na \ (standard Windows)
                         string fullPath = Path.Combine(root, x.Key).Replace("/", "\\");
-                        return Path.GetFullPath(fullPath); // To usunie wszelkie podwójne ukośniki itp.
+                        return Path.GetFullPath(fullPath);
                     })
                     .ToArray();
 
@@ -46,13 +42,11 @@ namespace SVN.Core
                     return;
                 }
 
-                // 2. WYWOŁANIE REVERTU
                 await RevertAsync(root, filesToRevert, (msg) =>
                 {
                     SVNLogBridge.LogLine($"<color=cyan>[Progress]</color> {msg}");
                 });
 
-                // Odświeżanie UI (Twoje istniejące wywołania)
                 if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
                 if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
                 svnManager.GetModule<SVNStatus>().ClearCurrentData();
@@ -72,22 +66,16 @@ namespace SVN.Core
 
         public static async Task<string> RevertAsync(string workingDir, string[] files, Action<string> onProgress = null)
         {
-            // Czyścimy ścieżkę roboczą
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim()).Replace('\\', '/');
 
             try
             {
                 onProgress?.Invoke("Performing recursive revert on working directory...");
 
-                // Komenda: revert -R .
-                // -R: Rekurencyjnie (wszystkie podfoldery, w tym trunk)
-                // . : Bieżący folder (workingDir)
-                // To cofnie wszystkie zmiany wykryte przez SVN w tym projekcie.
                 string result = await SvnRunner.RunAsync("revert -R .", cleanWorkingDir);
 
                 if (result.Contains("svn: E"))
                 {
-                    // Jeśli wystąpi błąd (np. blokada), próbujemy najpierw cleanup
                     onProgress?.Invoke("Revert failed, attempting cleanup...");
                     await SvnRunner.RunAsync("cleanup", cleanWorkingDir);
 

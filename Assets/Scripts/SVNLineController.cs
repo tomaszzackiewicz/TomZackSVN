@@ -21,7 +21,6 @@ public class SvnLineController : MonoBehaviour
         _element = element;
         _manager = manager;
 
-        // --- 1. WCIĘCIA ---
         string indent = "";
         for (int i = 0; i < element.Depth; i++)
         {
@@ -29,7 +28,6 @@ public class SvnLineController : MonoBehaviour
         }
         indentText.text = indent;
 
-        // --- 2. STATUS I TYP ---
         string statusClean = (element.Status == "DIR" || string.IsNullOrEmpty(element.Status))
                              ? ""
                              : $" [{element.Status}]";
@@ -63,10 +61,8 @@ public class SvnLineController : MonoBehaviour
             }
         }
 
-        // --- 4. PRZYCISK (Naprawa błędu CanvasGroup) ---
         if (foldButton != null)
         {
-            // Sprawdzamy czy komponent istnieje, jeśli nie - dodajemy go w locie
             CanvasGroup cg = foldButton.GetComponent<CanvasGroup>();
             if (cg == null)
             {
@@ -99,27 +95,24 @@ public class SvnLineController : MonoBehaviour
 
         if (selectionToggle != null)
         {
-            // Pokazujemy checkbox zawsze (dla plików i folderów)
             selectionToggle.gameObject.SetActive(true);
 
-            // Czyścimy stare eventy
             selectionToggle.onValueChanged.RemoveAllListeners();
 
-            // Ustawiamy stan z danych
             selectionToggle.isOn = element.IsChecked;
 
-            // Reagujemy na zmianę
             selectionToggle.onValueChanged.AddListener((val) =>
             {
                 _element.IsChecked = val;
 
-                // Wizualny feedback - wyszarzenie jeśli odznaczone
                 if (nameText != null) nameText.alpha = val ? 1.0f : 0.6f;
 
                 if (_element.IsFolder)
                 {
                     _manager.ToggleChildrenSelection(_element, val);
                 }
+
+                _manager.NotifySelectionChanged();
             });
         }
     }

@@ -51,11 +51,6 @@ namespace SVN.Core
                 StandardErrorEncoding = Encoding.UTF8
             };
 
-            // if (!string.IsNullOrEmpty(safeKeyPath))
-            // {
-            //     psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
-            // }
-
             if (!string.IsNullOrEmpty(safeKeyPath))
             {
                 psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
@@ -71,7 +66,6 @@ namespace SVN.Core
             process.OutputDataReceived += outHandler;
             process.ErrorDataReceived += errHandler;
 
-            // Rejestracja zabicia procesu przy anulowaniu tokena
             using var registration = token.Register(() =>
             {
                 try { if (!process.HasExited) process.Kill(); } catch { }
@@ -83,8 +77,6 @@ namespace SVN.Core
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                // --- DYNAMICZNY TIMEOUT ---
-                // Dla commitu 600s (10 min), dla reszty 45s
                 float timeoutLimit = args.StartsWith("commit") ? float.MaxValue : 45f;
                 DateTime startTime = DateTime.Now;
 
@@ -150,7 +142,6 @@ namespace SVN.Core
             var processExitTcs = new TaskCompletionSource<bool>();
             bool hasError = false;
 
-            // Obsługa wyjścia w tle, aby nie blokować bufora systemowego (kluczowe przy setkach GB)
             process.OutputDataReceived += (s, e) =>
             {
                 if (e.Data != null) Task.Run(() => onLineReceived?.Invoke(e.Data));
@@ -165,17 +156,12 @@ namespace SVN.Core
                 }
             };
 
-            // Reakcja na Cancel - zabijamy cały graf procesów (SVN + SSH)
-            // Zamień sekcję wewnątrz token.Register na to:
             using (token.Register(() =>
             {
                 try
                 {
                     if (!process.HasExited)
                     {
-                        // W Unity / .NET Standard 2.0 używamy Kill() bez argumentów
-                        // Aby zabić ssh.exe, .NET automatycznie spróbuje posprzątać, 
-                        // ale dla pewności wywołujemy standardowe Kill:
                         process.Kill();
 
                         processExitTcs.TrySetCanceled();
@@ -183,7 +169,7 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"Błąd podczas zabijania procesu: {ex.Message}");
+                    UnityEngine.Debug.LogWarning($"Error while killing process: {ex.Message}");
                 }
             }))
             {
@@ -493,20 +479,13 @@ namespace SVN.Core
         public static string CleanSvnPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return "";
-            string p = path.Replace('\\', '/').Trim('/');
 
-            if (p.StartsWith("trunk/", StringComparison.OrdinalIgnoreCase))
-                return p.Substring(6);
+            string p = path.Replace('\\', '/').Trim(' ', '"', '/');
 
-            if (p.StartsWith("branches/", StringComparison.OrdinalIgnoreCase))
-            {
-                int secondSlash = p.IndexOf('/', 9);
-                return (secondSlash != -1) ? p.Substring(secondSlash + 1) : p;
-            }
+            if (p.StartsWith("./")) p = p.Substring(2);
 
             return p;
         }
-
         public static async Task<string> GetCommitSizeReportAsync(string workingDir)
         {
             var statusDict = await GetFullStatusDictionaryAsync(workingDir, false);

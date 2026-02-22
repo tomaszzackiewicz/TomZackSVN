@@ -433,93 +433,102 @@ namespace SVN.Core
             }
         }
 
-        // Tę metodę przypiszemy do przycisku w Inspektorze
         public void CommitSelected()
         {
-            // 1. Pobieramy tekst z Twojego pola InputField
-            // Zakładam, że masz do niego dostęp przez svnUI.CommitMessageInput
-            string messageFromUI = svnUI.CommitMessageInput.text;
-
-            // 2. Sprawdzamy, czy wiadomość nie jest pusta
-            if (string.IsNullOrWhiteSpace(messageFromUI))
+            try
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent,
-                    "<color=red>Error:</color> Please enter a commit message!", append: true);
-                return;
-            }
+                string messageFromUI = svnUI.CommitMessageInput?.text;
 
-            // 3. Wywołujemy właściwą metodę asynchroniczną
-            // Używamy "_ =" aby wywołać Task bez oczekiwania (tzw. fire and forget) 
-            // lub używamy asynchronicznego wywołania wewnątrz
-            var commitModule = svnManager.GetModule<SVNCommit>();
-            _ = commitModule.ExecuteCommitSelected(messageFromUI);
+                if (string.IsNullOrWhiteSpace(messageFromUI))
+                {
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent,
+                        "<color=red>Error:</color> Please enter a commit message!", append: true);
+                    return;
+                }
+
+                var commitModule = svnManager.GetModule<SVNCommit>();
+                _ = commitModule.ExecuteCommitSelected(messageFromUI);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[SVN] Button click failed: {ex.Message}");
+            }
         }
 
         public async Task ExecuteCommitSelected(string message)
         {
             if (IsProcessing) return;
 
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=red>Error:</color> Message is empty!", append: true);
-                return;
-            }
-
             var statusModule = svnManager.GetModule<SVNStatus>();
             var allElements = statusModule.GetCurrentData();
-            string root = svnManager.WorkingDir.Replace("\\", "/").TrimEnd('/');
 
-            // 1. Pobieramy zaznaczone pliki jako ścieżki relatywne
-            var selectedPaths = allElements
-                .Where(e => !e.IsFolder && e.IsChecked)
-                .Select(e =>
-                {
-                    string full = e.FullPath.Replace("\\", "/");
-                    return full.StartsWith(root) ? full.Substring(root.Length).TrimStart('/') : full;
-                })
-                .ToList();
+            string root = "E:/UE5/TestSVN".Replace("\\", "/").TrimEnd('/');
 
-            if (selectedPaths.Count == 0) return;
+            var selectedToUpdate = allElements.Where(e => !e.IsFolder && e.IsChecked && e.Status != "!").ToList();
+            var selectedToMissing = allElements.Where(e => !e.IsFolder && e.IsChecked && e.Status == "!").ToList();
+
+            if (selectedToUpdate.Count == 0 && selectedToMissing.Count == 0) return;
 
             IsProcessing = true;
             _commitCTS = new CancellationTokenSource();
 
             try
             {
-                // KROK 1: Cleanup
-                await SvnRunner.RunAsync("cleanup", root, true, _commitCTS.Token);
-
-                // KROK 2: WYMUSZONE DODAWANIE (z flagą --no-ignore)
-                // To jest rozwiązanie problemu "Nothing to add"
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<b>[1/2]</b> Forcing registration of {selectedPaths.Count} items...", append: true);
-
-                foreach (var path in selectedPaths)
+                // STEP 0: Delete MISSING
+                if (selectedToMissing.Count > 0)
                 {
-                    // Dodajemy --no-ignore, żeby SVN dodał plik nawet jeśli .mp4 jest na czarnej liście
-                    await SvnRunner.RunAsync($"add \"{path}\" --force --parents --no-ignore", root, true, _commitCTS.Token);
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<b>[0/2]</b> Removing missing files (!) from SVN...", append: true);
+                    string missingTargets = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_missing.txt");
+                    var missingPaths = selectedToMissing.Select(e => $"{root}/{e.FullPath.Replace("\\", "/").TrimStart('/')}");
+                    System.IO.File.WriteAllLines(missingTargets, missingPaths, new System.Text.UTF8Encoding(false));
+                    await SvnRunner.RunAsync($"delete --targets \"{missingTargets}\" --force", root, true, _commitCTS.Token);
+                    if (System.IO.File.Exists(missingTargets)) System.IO.File.Delete(missingTargets);
                 }
 
-                // KROK 3: Commit
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[2/2]</b> Executing commit...", append: true);
+                var updatePaths = selectedToUpdate.Select(e => $"{root}/{e.FullPath.Replace("\\", "/").TrimStart('/')}").ToList();
+                string targetsPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_selected_commit.txt");
+                var allCommitPaths = updatePaths.Concat(selectedToMissing.Select(e => $"{root}/{e.FullPath.Replace("\\", "/").TrimStart('/')}")).ToList();
+                System.IO.File.WriteAllLines(targetsPath, allCommitPaths, new System.Text.UTF8Encoding(false));
 
-                string filesArgs = string.Join(" ", selectedPaths.Select(p => $"\"{p}\""));
-                string commitResult = await SvnRunner.RunAsync($"commit {filesArgs} -m \"{message}\" --non-interactive", root, true, _commitCTS.Token);
+                // STEP 1: ADD
+                if (updatePaths.Count > 0)
+                {
+                    string addTargets = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_add_only.txt");
+                    System.IO.File.WriteAllLines(addTargets, updatePaths, new System.Text.UTF8Encoding(false));
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<b>[1/2]</b> Registering files (Add)...", append: true);
+                    await SvnRunner.RunAsync($"add --force --parents --no-ignore --targets \"{addTargets}\"", root, true, _commitCTS.Token);
+                    if (System.IO.File.Exists(addTargets)) System.IO.File.Delete(addTargets);
+                }
 
+                // STEP 2: COMMIT
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[2/2]</b> Sending to repository...", append: true);
+                string commitResult = await SvnRunner.RunAsync($"commit --targets \"{targetsPath}\" -m \"{message}\" --non-interactive", root, true, _commitCTS.Token);
+
+                if (System.IO.File.Exists(targetsPath)) System.IO.File.Delete(targetsPath);
+
+                // --- SUCCESS SECTION ---
                 if (commitResult.Contains("Committed revision") || !string.IsNullOrWhiteSpace(svnManager.ParseRevision(commitResult)))
                 {
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=green><b>SUCCESS!</b></color>", append: true);
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<color=green><b>SUCCESS!</b> Committed to repository.</color>", append: true);
+
                     if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
+
                     statusModule.ClearCurrentData();
-                    await statusModule.ExecuteRefreshWithAutoExpand();
+
+                    // Release lock before calling refresh to avoid "if (IsProcessing) return" in SVNStatus
+                    IsProcessing = false;
+                    statusModule.ShowOnlyModified();
                 }
                 else
                 {
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=yellow>Result:</color> {commitResult}", append: true);
+                    IsProcessing = false;
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=yellow>SVN Result:</color>\n{commitResult}", append: true);
                 }
             }
             catch (Exception ex)
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Error:</color> {ex.Message}", append: true);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Critical Error:</color> {ex.Message}", append: true);
+                Debug.LogException(ex);
             }
             finally
             {

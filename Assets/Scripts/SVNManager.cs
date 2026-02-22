@@ -37,7 +37,7 @@ namespace SVN.Core
         public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
         public GameObject MainUIPanel => mainUIPanel;
         public string CurrentUserName => currentUserName;
-        //public bool IsProcessing { get => isProcessing; set => isProcessing = value; }
+
         public string WorkingDir
         {
             get => workingDir;
@@ -49,19 +49,15 @@ namespace SVN.Core
                     return;
                 }
 
-                // Usuwamy ABSOLUTNIE wszystko co nie jest literą, cyfrą, znakiem dysku lub ukośnikiem
-                // To jest najbardziej agresywna metoda czyszczenia
                 string cleaned = "";
                 foreach (char c in value)
                 {
-                    // Zezwalaj tylko na standardowe znaki ścieżki Windows
                     if (char.IsLetterOrDigit(c) || ":\\/._- ".Contains(c.ToString()))
                     {
                         cleaned += c;
                     }
                 }
 
-                // Dodatkowo usuwamy podwójne spacje, które mogły powstać po czyszczeniu
                 workingDir = cleaned.Trim();
 
                 UnityEngine.Debug.Log($"[SVN Manager] WorkingDir sanitized to: '{workingDir}'");

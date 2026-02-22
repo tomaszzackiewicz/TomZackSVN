@@ -1,3 +1,4 @@
+using System.Linq;
 using SVN.Core;
 using UnityEngine;
 
@@ -10,6 +11,28 @@ public class CommitPanel : MonoBehaviour
     {
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
+    }
+
+    private void OnEnable()
+    {
+        RefreshCommitList();
+    }
+
+    public void RefreshCommitList()
+    {
+        if (svnManager == null) return;
+
+        var statusModule = svnManager.GetModule<SVNStatus>();
+        var allData = statusModule.GetCurrentData();
+
+        var changedElements = allData
+            .Where(e => e.Status != "normal" && !string.IsNullOrEmpty(e.Status))
+            .ToList();
+
+        if (svnUI.SVNCommitTreeDisplay != null)
+        {
+            svnUI.SVNCommitTreeDisplay.RefreshUI(changedElements, statusModule);
+        }
     }
 
     public async void Button_ShowModified() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();
