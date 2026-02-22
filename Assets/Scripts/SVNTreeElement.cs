@@ -13,7 +13,7 @@ namespace SVN.Core
         public bool IsFolder;
         public bool IsExpanded = true;
         public bool IsVisible = true;
-
+        public bool IsChecked = true;
         public bool IsCommitDelegate;
 
         public SvnTreeElement Clone()

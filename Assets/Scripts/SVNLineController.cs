@@ -2,9 +2,6 @@ using UnityEngine;
 using TMPro;
 using SVN.Core;
 using UnityEngine.UI;
-using System;
-using System.IO;
-using System.Linq;
 
 public class SvnLineController : MonoBehaviour
 {
@@ -14,6 +11,7 @@ public class SvnLineController : MonoBehaviour
     public TextMeshProUGUI nameText;
     public TextMeshProUGUI sizeText;
     public Button foldButton;
+    public Toggle selectionToggle;
 
     private SvnTreeElement _element;
     private SVNStatus _manager;
@@ -98,25 +96,39 @@ public class SvnLineController : MonoBehaviour
                 cg.blocksRaycasts = false;
             }
         }
-    }
 
-    // private void OnFoldClick()
-    // {
-    //     if (_manager != null && _element != null)
-    //     {
-    //         _element.IsExpanded = !_element.IsExpanded;
-    //         _manager.ToggleFolderVisibility(_element);
-    //     }
-    // }
+        if (selectionToggle != null)
+        {
+            // Pokazujemy checkbox zawsze (dla plików i folderów)
+            selectionToggle.gameObject.SetActive(true);
+
+            // Czyścimy stare eventy
+            selectionToggle.onValueChanged.RemoveAllListeners();
+
+            // Ustawiamy stan z danych
+            selectionToggle.isOn = element.IsChecked;
+
+            // Reagujemy na zmianę
+            selectionToggle.onValueChanged.AddListener((val) =>
+            {
+                _element.IsChecked = val;
+
+                // Wizualny feedback - wyszarzenie jeśli odznaczone
+                if (nameText != null) nameText.alpha = val ? 1.0f : 0.6f;
+
+                if (_element.IsFolder)
+                {
+                    _manager.ToggleChildrenSelection(_element, val);
+                }
+            });
+        }
+    }
 
     private void OnFoldClick()
     {
         if (_manager != null && _element != null)
         {
-            // 1. Zmieniamy stan (rozminięty/zwinięty)
             _element.IsExpanded = !_element.IsExpanded;
-
-            // 2. Wywołujemy metodę z JEDNYM argumentem
             _manager.ToggleFolderVisibility(_element);
         }
     }

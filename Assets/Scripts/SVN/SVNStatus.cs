@@ -777,6 +777,26 @@ namespace SVN.Core
             SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, statusLine, "INFO", append: false);
         }
 
+        public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
+        {
+            if (_flatTreeData == null) return;
+
+            string parentPath = parentFolder.FullPath + "/";
+
+            foreach (var element in _flatTreeData)
+            {
+                if (element.FullPath.StartsWith(parentPath))
+                {
+                    element.IsChecked = isChecked;
+                }
+            }
+
+            if (svnUI.SVNCommitTreeDisplay != null)
+            {
+                svnUI.SVNCommitTreeDisplay.RefreshUI(_flatTreeData, this);
+            }
+        }
+
         public async Task<string> GetFolderSizeAsync(string path)
         {
             return await Task.Run(() =>
@@ -827,6 +847,11 @@ namespace SVN.Core
                 }
             }
             return "unknown";
+        }
+
+        public List<SvnTreeElement> GetCurrentData()
+        {
+            return _flatTreeData;
         }
     }
 }
