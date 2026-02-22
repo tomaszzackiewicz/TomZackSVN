@@ -38,7 +38,35 @@ namespace SVN.Core
         public GameObject MainUIPanel => mainUIPanel;
         public string CurrentUserName => currentUserName;
         //public bool IsProcessing { get => isProcessing; set => isProcessing = value; }
-        public string WorkingDir { get => workingDir; set => workingDir = value; }
+        public string WorkingDir
+        {
+            get => workingDir;
+            set
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    workingDir = value;
+                    return;
+                }
+
+                // Usuwamy ABSOLUTNIE wszystko co nie jest literą, cyfrą, znakiem dysku lub ukośnikiem
+                // To jest najbardziej agresywna metoda czyszczenia
+                string cleaned = "";
+                foreach (char c in value)
+                {
+                    // Zezwalaj tylko na standardowe znaki ścieżki Windows
+                    if (char.IsLetterOrDigit(c) || ":\\/._- ".Contains(c.ToString()))
+                    {
+                        cleaned += c;
+                    }
+                }
+
+                // Dodatkowo usuwamy podwójne spacje, które mogły powstać po czyszczeniu
+                workingDir = cleaned.Trim();
+
+                UnityEngine.Debug.Log($"[SVN Manager] WorkingDir sanitized to: '{workingDir}'");
+            }
+        }
         public string CurrentKey { get => currentKey; set => currentKey = value; }
         public string MergeToolPath { get => mergeToolPath; set => mergeToolPath = value; }
         private readonly Dictionary<Type, SVNBase> _modules = new Dictionary<Type, SVNBase>();
@@ -177,7 +205,7 @@ namespace SVN.Core
             var statusModule = GetModule<SVNStatus>();
             statusModule.ClearCurrentData();
 
-            WorkingDir = SVNAssetLocator.NormalizePath(project.workingDir);
+            WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
             RepositoryUrl = project.repoUrl;
             CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
             MergeToolPath = SVNAssetLocator.NormalizePath(project.mergeToolPath);
@@ -217,16 +245,48 @@ namespace SVN.Core
             svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
         }
 
-        public async Task RefreshStatus()
+        private string CleanPath(string path)
         {
-            if (string.IsNullOrEmpty(WorkingDir) || isProcessing) return;
+            if (string.IsNullOrEmpty(path)) return string.Empty;
+
+            System.Text.StringBuilder debugInfo = new System.Text.StringBuilder();
+            debugInfo.AppendLine($"[SVN Path Debug] Original Path: '{path}'");
+            for (int i = 0; i < path.Length; i++)
+            {
+                char c = path[i];
+                int code = (int)c;
+                debugInfo.AppendLine($"[{i}] '{(char.IsControl(c) ? '?' : c)}' (Code: {code})");
+            }
+            UnityEngine.Debug.Log(debugInfo.ToString());
+
+            return new string(path.Where(c => !char.IsControl(c) && (int)c != 160 && (int)c != 8203).ToArray()).Trim();
+        }
+
+        public async Task RefreshStatus(bool force = false)
+        {
+            if (string.IsNullOrEmpty(WorkingDir))
+            {
+                Debug.LogWarning("[SVN] Refresh aborted: WorkingDir is not set.");
+                return;
+            }
+
+            if (isProcessing && !force) return;
 
             try
             {
-                await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand();
+#if UNITY_EDITOR
+                SVNLogBridge.LogLine("<i>Synchronizing Unity AssetDatabase...</i>", append: true);
+                UnityEditor.AssetDatabase.Refresh();
+#endif
+
+                var statusModule = GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    SVNLogBridge.LogLine("<b>[Refresh]</b> Fetching SVN status...", append: true);
+                    await statusModule.ExecuteRefreshWithAutoExpand();
+                }
 
                 var statusDict = CurrentStatusDict;
-
                 if (statusDict != null)
                 {
                     bool hasConflicts = statusDict.Values.Any(v => v.status != null && v.status.Contains("C"));
@@ -236,16 +296,19 @@ namespace SVN.Core
                         LogToUI("[SVN] Conflicts detected! Opening Resolve panel.", "orange");
                         if (panelHandler != null)
                         {
-                            await panelHandler.Button_OpenResolve();
+                            _ = panelHandler.Button_OpenResolve();
                         }
                     }
                 }
 
                 UpdateStatus();
+
+                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>", append: true);
             }
             catch (Exception e)
             {
-                LogToUI($"[SVN] Error: {e.Message}", "red");
+                LogToUI($"[SVN] Refresh Error: {e.Message}", "red");
+                Debug.LogError($"[SVN] Refresh Exception: {e}");
             }
         }
 
@@ -267,7 +330,7 @@ namespace SVN.Core
 
         public void BroadcastWorkingDirChange(string path)
         {
-            WorkingDir = SVNAssetLocator.NormalizePath(path);
+            WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(path));
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
             svnUI.CheckoutDestFolderInput?.SetTextWithoutNotify(WorkingDir);
             svnUI.LoadDestFolderInput?.SetTextWithoutNotify(WorkingDir);

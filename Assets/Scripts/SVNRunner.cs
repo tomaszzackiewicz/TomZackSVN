@@ -28,6 +28,10 @@ namespace SVN.Core
 
         public static async Task<string> RunAsync(string args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
         {
+            if (string.IsNullOrEmpty(workingDir)) throw new Exception("Working Directory is null!");
+
+            string cleanWorkingDir = Path.GetFullPath(workingDir.Trim().Where(c => !char.IsControl(c) && (int)c != 160).ToArray().Aggregate("", (s, c) => s + c));
+
             string safeKeyPath = "";
             if (!string.IsNullOrEmpty(KeyPath))
             {
@@ -46,6 +50,11 @@ namespace SVN.Core
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+
+            // if (!string.IsNullOrEmpty(safeKeyPath))
+            // {
+            //     psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+            // }
 
             if (!string.IsNullOrEmpty(safeKeyPath))
             {
@@ -374,7 +383,9 @@ namespace SVN.Core
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(string workingDir, bool includeIgnored = true)
         {
-            string output = await RunAsync("status --no-ignore", workingDir);
+            string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
+            string output = await RunAsync("status --no-ignore", cleanWorkingDir);
+
             var statusDict = new Dictionary<string, (string status, string size)>();
 
             if (string.IsNullOrEmpty(output)) return statusDict;
@@ -392,21 +403,27 @@ namespace SVN.Core
 
                 if (stat == " " && propStatus == 'C') stat = "C";
 
-                string rawPath = line.Substring(8).Trim().Replace('\\', '/');
-                string cleanPath = rawPath;
+                string pathPart = line.Substring(8).TrimStart();
+
+                string rawPath = new string(pathPart
+                    .Where(c => !char.IsControl(c) && (int)c != 160)
+                    .ToArray()).TrimEnd();
+
+                string cleanPath = rawPath.Replace('\\', '/');
 
                 bool isRelevant = "MA?!DC".Contains(stat) || (includeIgnored && stat == "I");
 
                 if (isRelevant)
                 {
-                    string fullPathForSize = Path.Combine(workingDir, rawPath);
+                    string fullPathForSize = Path.Combine(cleanWorkingDir, rawPath).Replace('/', '\\');
+
                     string size = GetFileSizeSafe(fullPathForSize);
 
                     statusDict[cleanPath] = (stat, size);
                 }
             }
 
-            UnityEngine.Debug.Log($"[SVN] Parser finished. Dictionary count: {statusDict.Count}");
+            UnityEngine.Debug.Log($"<color=green>[SVN]</color> Parser finished. Dictionary count: {statusDict.Count}");
             return statusDict;
         }
 

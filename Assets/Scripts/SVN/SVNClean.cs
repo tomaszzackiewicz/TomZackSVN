@@ -24,13 +24,11 @@ namespace SVN.Core
 
             try
             {
-                // Wykonanie standardowej komendy cleanup
                 string output = await CleanupAsync(targetPath);
 
                 SVNLogBridge.LogLine("<color=green>Cleanup Successful!</color>");
                 if (!string.IsNullOrWhiteSpace(output)) SVNLogBridge.LogLine(output);
 
-                // Odświeżenie UI
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
@@ -57,7 +55,6 @@ namespace SVN.Core
 
             try
             {
-                // Wykonanie vacuum cleanup (usuwa nieużywane kopie bazy)
                 string output = await VacuumCleanupAsync(targetPath);
 
                 SVNLogBridge.LogLine("<color=green>Vacuum Cleanup Successful!</color>");
@@ -95,9 +92,21 @@ namespace SVN.Core
             try
             {
                 await SvnRunner.RunAsync("cleanup . --remove-unversioned", targetPath);
+
+                if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
+                if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
+                if (svnUI.TreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    statusModule.ClearCurrentData();
+                }
+
                 SVNLogBridge.LogLine("<color=green>Unversioned files removed successfully!</color>");
 
-                await svnManager.RefreshStatus();
+                await Task.Delay(300);
             }
             catch (Exception ex)
             {
@@ -106,6 +115,8 @@ namespace SVN.Core
             finally
             {
                 IsProcessing = false;
+
+                await svnManager.RefreshStatus(force: true);
             }
         }
 

@@ -1,6 +1,9 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
 
 namespace SVN.Core
 {
@@ -25,9 +28,16 @@ namespace SVN.Core
             try
             {
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+
+                // 1. NAPRAWA ŚCIEŻEK: Budujemy pełne, czyste ścieżki systemowe
                 var filesToRevert = statusDict
                     .Where(x => !string.IsNullOrEmpty(x.Value.status) && "MADRC".Contains(x.Value.status))
-                    .Select(x => x.Key)
+                    .Select(x =>
+                    {
+                        // Łączymy root z relatywną ścieżką i zamieniamy / na \ (standard Windows)
+                        string fullPath = Path.Combine(root, x.Key).Replace("/", "\\");
+                        return Path.GetFullPath(fullPath); // To usunie wszelkie podwójne ukośniki itp.
+                    })
                     .ToArray();
 
                 if (filesToRevert.Length == 0)
@@ -36,22 +46,18 @@ namespace SVN.Core
                     return;
                 }
 
-                await RevertAsync(root, filesToRevert);
+                // 2. WYWOŁANIE REVERTU
+                await RevertAsync(root, filesToRevert, (msg) =>
+                {
+                    SVNLogBridge.LogLine($"<color=cyan>[Progress]</color> {msg}");
+                });
 
+                // Odświeżanie UI (Twoje istniejące wywołania)
                 if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
                 if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
-
-                var statusModule = svnManager.GetModule<SVNStatus>();
-                statusModule.ClearCurrentData();
-
-                if (svnUI.TreeDisplay != null)
-                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected. (Everything up to date)</i>", "TREE", append: false);
-
-                if (svnUI.CommitTreeDisplay != null)
-                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<color=green>No changes to commit.</color>", "COMMIT_TREE", append: false);
+                svnManager.GetModule<SVNStatus>().ClearCurrentData();
 
                 SVNLogBridge.LogLine($"<color=green><b>SUCCESS!</b></color> Reverted <b>{filesToRevert.Length}</b> files.");
-
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
@@ -64,12 +70,39 @@ namespace SVN.Core
             }
         }
 
-        public static async Task<string> RevertAsync(string workingDir, string[] files)
+        public static async Task<string> RevertAsync(string workingDir, string[] files, Action<string> onProgress = null)
         {
-            if (files == null || files.Length == 0) return "No files to revert.";
+            // Czyścimy ścieżkę roboczą
+            string cleanWorkingDir = Path.GetFullPath(workingDir.Trim()).Replace('\\', '/');
 
-            string fileArgs = string.Join(" ", files.Select(f => $"\"{f}\""));
-            return await SvnRunner.RunAsync($"revert -R {fileArgs}", workingDir);
+            try
+            {
+                onProgress?.Invoke("Performing recursive revert on working directory...");
+
+                // Komenda: revert -R .
+                // -R: Rekurencyjnie (wszystkie podfoldery, w tym trunk)
+                // . : Bieżący folder (workingDir)
+                // To cofnie wszystkie zmiany wykryte przez SVN w tym projekcie.
+                string result = await SvnRunner.RunAsync("revert -R .", cleanWorkingDir);
+
+                if (result.Contains("svn: E"))
+                {
+                    // Jeśli wystąpi błąd (np. blokada), próbujemy najpierw cleanup
+                    onProgress?.Invoke("Revert failed, attempting cleanup...");
+                    await SvnRunner.RunAsync("cleanup", cleanWorkingDir);
+
+                    onProgress?.Invoke("Retrying recursive revert...");
+                    result = await SvnRunner.RunAsync("revert -R .", cleanWorkingDir);
+                }
+
+                UnityEngine.Debug.Log("<color=green>[SVN]</color> Recursive revert completed successfully.");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogError($"[SVN Revert Error] Recursive revert failed: {ex.Message}");
+                throw;
+            }
         }
     }
 }
