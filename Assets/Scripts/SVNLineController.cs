@@ -95,16 +95,16 @@ public class SvnLineController : MonoBehaviour
 
         if (selectionToggle != null)
         {
-            selectionToggle.gameObject.SetActive(true);
-
             selectionToggle.onValueChanged.RemoveAllListeners();
 
-            selectionToggle.isOn = element.IsChecked;
+            // Używamy tego, żeby UI pokazało poprawny stan bez wywoływania listenera ponownie
+            selectionToggle.SetIsOnWithoutNotify(element.IsChecked);
+
+            if (nameText != null) nameText.alpha = element.IsChecked ? 1.0f : 0.6f;
 
             selectionToggle.onValueChanged.AddListener((val) =>
             {
                 _element.IsChecked = val;
-
                 if (nameText != null) nameText.alpha = val ? 1.0f : 0.6f;
 
                 if (_element.IsFolder)
@@ -112,6 +112,7 @@ public class SvnLineController : MonoBehaviour
                     _manager.ToggleChildrenSelection(_element, val);
                 }
 
+                // To musi spowodować, że inne wiersze (dzieci) zaktualizują swój widok Toggle
                 _manager.NotifySelectionChanged();
             });
         }
