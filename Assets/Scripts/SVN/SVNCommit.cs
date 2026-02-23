@@ -41,132 +41,6 @@ namespace SVN.Core
             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, sb.ToString(), append: true);
         }
 
-        // public async void CommitAll()
-        // {
-        //     if (IsProcessing) return;
-
-        //     string message = svnUI.CommitMessageInput?.text;
-        //     if (string.IsNullOrWhiteSpace(message))
-        //     {
-        //         SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=red>Error:</color> Commit message is empty!", append: true);
-        //         return;
-        //     }
-
-        //     SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>Initiating commit...</b>", append: true);
-
-        //     SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n", append: true);
-
-        //     string root = svnManager.WorkingDir;
-        //     IsProcessing = true;
-        //     _commitCTS = new CancellationTokenSource();
-
-        //     if (svnUI.OperationProgressBar != null)
-        //     {
-        //         svnUI.OperationProgressBar.gameObject.SetActive(true);
-        //         svnUI.OperationProgressBar.value = 0.05f;
-        //     }
-
-        //     try
-        //     {
-        //         SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[1/4]</b> Cleaning up database...", append: true);
-        //         await SvnRunner.RunAsync("cleanup", root, true, _commitCTS.Token);
-        //         if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.2f;
-
-        //         SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[2/4]</b> Scanning & fixing missing files...", append: true);
-        //         string rawStatus = await SvnRunner.RunAsync("status", root, true, _commitCTS.Token);
-
-        //         List<string> missingFiles = new List<string>();
-        //         if (!string.IsNullOrEmpty(rawStatus))
-        //         {
-        //             using (var reader = new System.IO.StringReader(rawStatus))
-        //             {
-        //                 string line;
-        //                 while ((line = reader.ReadLine()) != null)
-        //                 {
-        //                     if (line.StartsWith("!"))
-        //                     {
-        //                         string path = line.Substring(1).Trim();
-        //                         if (!string.IsNullOrEmpty(path)) missingFiles.Add($"\"{path}\"");
-        //                     }
-        //                 }
-        //             }
-        //         }
-
-        //         if (missingFiles.Count > 0)
-        //         {
-        //             int batchSize = 50;
-        //             for (int i = 0; i < missingFiles.Count; i += batchSize)
-        //             {
-        //                 _commitCTS.Token.ThrowIfCancellationRequested();
-        //                 var batch = missingFiles.Skip(i).Take(batchSize);
-        //                 string batchArgs = $"delete --force {string.Join(" ", batch)}";
-        //                 await SvnRunner.RunAsync(batchArgs, root, true, _commitCTS.Token);
-
-        //                 float progress = 0.2f + ((float)i / missingFiles.Count * 0.2f);
-        //                 if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = progress;
-        //             }
-        //             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=white>Fixed {missingFiles.Count} missing entries.</color>", append: true);
-        //         }
-        //         if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.4f;
-
-        //         SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[3/4]</b> Adding all new files (Recursive)...", append: true);
-
-        //         await SvnRunner.RunAsync("add . --force --parents --depth infinity", root, true, _commitCTS.Token);
-        //         if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 0.6f;
-
-        //         var commitTask = SvnRunner.RunAsync($"commit -m \"{message}\" --non-interactive .", root, true, _commitCTS.Token);
-
-        //         string commitResult = await commitTask;
-
-        //         bool isSuccess = commitResult.Contains("Committed revision") ||
-        //                          !string.IsNullOrWhiteSpace(svnManager.ParseRevision(commitResult));
-
-        //         if (isSuccess)
-        //         {
-        //             string revision = svnManager.ParseRevision(commitResult);
-        //             if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = 1.0f;
-
-        //             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n", append: true);
-
-        //             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=green><b>SUCCESS!</b></color> Revision: {revision}", append: true);
-
-        //             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n", append: true);
-
-        //             if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
-        //             if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
-
-        //             var statusModule = svnManager.GetModule<SVNStatus>();
-        //             statusModule.ClearCurrentData();
-
-        //             if (svnUI.TreeDisplay != null)
-        //                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-        //             if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
-
-        //         }
-        //         else
-        //         {
-        //             string info = string.IsNullOrWhiteSpace(commitResult) ? "<i>Nothing to commit.</i>" : commitResult;
-        //             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=yellow>Result:</color> {info}", append: true);
-        //         }
-        //     }
-        //     catch (OperationCanceledException)
-        //     {
-        //         SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<color=orange><b>[ABORTED]</b></color> User cancelled.", append: true);
-        //     }
-        //     catch (Exception ex)
-        //     {
-        //         SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Error:</color> {ex.Message}", append: true);
-        //     }
-        //     finally
-        //     {
-        //         IsProcessing = false;
-        //         _commitCTS?.Dispose();
-        //         _commitCTS = null;
-        //         await svnManager.RefreshStatus();
-        //         HideProgressBarAfterDelay(3.0f);
-        //     }
-        // }
-
         public async void CommitAll()
         {
             if (IsProcessing) return;
@@ -462,7 +336,7 @@ namespace SVN.Core
             var statusModule = svnManager.GetModule<SVNStatus>();
             var allElements = statusModule.GetCurrentData();
 
-            string root = "E:/UE5/TestSVN".Replace("\\", "/").TrimEnd('/');
+            string root = "E:/UE5/TestSVN".Replace("\\", "/").Trim();
 
             var selectedToUpdate = allElements.Where(e => !e.IsFolder && e.IsChecked && e.Status != "!").ToList();
             var selectedToMissing = allElements.Where(e => !e.IsFolder && e.IsChecked && e.Status == "!").ToList();
@@ -474,48 +348,74 @@ namespace SVN.Core
 
             try
             {
-                // STEP 0: Delete MISSING
+                // KROK 0: CZYSZCZENIE KONFLIKTÓW
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[0/3]</b> Resolving conflicts and cleanup...", append: true);
+                await SvnRunner.RunAsync("resolve --accept working -R .", root, true, _commitCTS.Token);
+                await SvnRunner.RunAsync("cleanup", root, true, _commitCTS.Token);
+
+                // KROK 1: REJESTRACJA PLIKÓW I BUDOWANIE STRUKTURY
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[1/3]</b> Registering items and folders...", append: true);
+
+                HashSet<string> commitTargets = new HashSet<string>();
+
+                foreach (var item in selectedToUpdate)
+                {
+                    string cleanRelPath = item.FullPath.Replace("\\", "/").TrimStart('/');
+                    string finalPath = $"{root}/{cleanRelPath}".Replace("//", "/");
+
+                    // 1. Dodaj plik do listy
+                    commitTargets.Add(finalPath);
+
+                    // 2. Jeśli plik jest nowy, wykonaj ADD --PARENTS
+                    if (item.Status == "?" || item.Status == "A")
+                    {
+                        await SvnRunner.RunAsync($"add \"{finalPath}\" --force --parents --no-ignore", root, true, _commitCTS.Token);
+                    }
+
+                    // 3. AGRESYWNE DODAWANIE RODZICÓW:
+                    // Idziemy od pliku w górę do samego roota i dodajemy KAŻDY folder po drodze.
+                    // SVN przy komendzie commit z flagą --depth empty po prostu zignoruje te, 
+                    // które już są w repozytorium, ale naprawi błąd E200009 dla nowych.
+                    string currentDir = System.IO.Path.GetDirectoryName(finalPath).Replace("\\", "/");
+                    while (!string.IsNullOrEmpty(currentDir) && currentDir.Length > root.Length)
+                    {
+                        commitTargets.Add(currentDir);
+                        currentDir = System.IO.Path.GetDirectoryName(currentDir).Replace("\\", "/");
+                    }
+                }
+
+                // KROK 2: USUWANIE BRAKUJĄCYCH
                 if (selectedToMissing.Count > 0)
                 {
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<b>[0/2]</b> Removing missing files (!) from SVN...", append: true);
-                    string missingTargets = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_missing.txt");
-                    var missingPaths = selectedToMissing.Select(e => $"{root}/{e.FullPath.Replace("\\", "/").TrimStart('/')}");
-                    System.IO.File.WriteAllLines(missingTargets, missingPaths, new System.Text.UTF8Encoding(false));
-                    await SvnRunner.RunAsync($"delete --targets \"{missingTargets}\" --force", root, true, _commitCTS.Token);
-                    if (System.IO.File.Exists(missingTargets)) System.IO.File.Delete(missingTargets);
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[2/3]</b> Handling deletions...", append: true);
+                    foreach (var item in selectedToMissing)
+                    {
+                        string finalPath = $"{root}/{item.FullPath.Replace("\\", "/").TrimStart('/')}".Replace("//", "/");
+                        commitTargets.Add(finalPath);
+                        await SvnRunner.RunAsync($"delete \"{finalPath}\" --force", root, true, _commitCTS.Token);
+                    }
                 }
 
-                var updatePaths = selectedToUpdate.Select(e => $"{root}/{e.FullPath.Replace("\\", "/").TrimStart('/')}").ToList();
-                string targetsPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_selected_commit.txt");
-                var allCommitPaths = updatePaths.Concat(selectedToMissing.Select(e => $"{root}/{e.FullPath.Replace("\\", "/").TrimStart('/')}")).ToList();
-                System.IO.File.WriteAllLines(targetsPath, allCommitPaths, new System.Text.UTF8Encoding(false));
+                // KROK 3: COMMIT
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[3/3]</b> Sending to server...", append: true);
 
-                // STEP 1: ADD
-                if (updatePaths.Count > 0)
-                {
-                    string addTargets = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_add_only.txt");
-                    System.IO.File.WriteAllLines(addTargets, updatePaths, new System.Text.UTF8Encoding(false));
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<b>[1/2]</b> Registering files (Add)...", append: true);
-                    await SvnRunner.RunAsync($"add --force --parents --no-ignore --targets \"{addTargets}\"", root, true, _commitCTS.Token);
-                    if (System.IO.File.Exists(addTargets)) System.IO.File.Delete(addTargets);
-                }
+                string targetsPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_final_commit.txt");
 
-                // STEP 2: COMMIT
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<b>[2/2]</b> Sending to repository...", append: true);
-                string commitResult = await SvnRunner.RunAsync($"commit --targets \"{targetsPath}\" -m \"{message}\" --non-interactive", root, true, _commitCTS.Token);
+                // Sortowanie jest KLUCZOWE: najpierw foldery nadrzędne (krótsze ścieżki), potem dzieci.
+                var sortedTargets = commitTargets.Distinct().OrderBy(t => t.Length).ToList();
+                System.IO.File.WriteAllLines(targetsPath, sortedTargets, new System.Text.UTF8Encoding(false));
+
+                // --depth empty jest tu KLUCZOWE. Mówi SVN: "Wyślij tylko te rzeczy z listy, 
+                // nie skanuj całych folderów w poszukiwaniu innych plików".
+                string commitResult = await SvnRunner.RunAsync($"commit --targets \"{targetsPath}\" -m \"{message}\" --non-interactive --depth empty", root, true, _commitCTS.Token);
 
                 if (System.IO.File.Exists(targetsPath)) System.IO.File.Delete(targetsPath);
 
-                // --- SUCCESS SECTION ---
-                if (commitResult.Contains("Committed revision") || !string.IsNullOrWhiteSpace(svnManager.ParseRevision(commitResult)))
+                if (commitResult.Contains("Committed revision"))
                 {
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<color=green><b>SUCCESS!</b> Committed to repository.</color>", append: true);
-
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "\n<color=green><b>SUCCESS!</b></color>", append: true);
                     if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
-
                     statusModule.ClearCurrentData();
-
-                    // Release lock before calling refresh to avoid "if (IsProcessing) return" in SVNStatus
                     IsProcessing = false;
                     statusModule.ShowOnlyModified();
                 }
@@ -525,10 +425,10 @@ namespace SVN.Core
                     SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=yellow>SVN Result:</color>\n{commitResult}", append: true);
                 }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Critical Error:</color> {ex.Message}", append: true);
-                Debug.LogException(ex);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Error:</color> {ex.Message}", append: true);
+                UnityEngine.Debug.LogException(ex);
             }
             finally
             {

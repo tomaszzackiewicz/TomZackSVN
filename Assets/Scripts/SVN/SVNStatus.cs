@@ -86,7 +86,6 @@ namespace SVN.Core
 
             try
             {
-                // 1. Czyścimy oba pola na samym starcie (Zastępujemy "Refreshing...")
                 if (svnUI != null)
                 {
                     if (svnUI.TreeDisplay != null)
@@ -101,7 +100,6 @@ namespace SVN.Core
                     ? await GetIgnoredOnlyAsync(root)
                     : await GetChangesDictionaryAsync(root);
 
-                // 2. OBSŁUGA PUSTEGO REPOZYTORIUM
                 if (statusDict == null || statusDict.Count == 0)
                 {
                     ResetTreeView();
@@ -205,19 +203,15 @@ namespace SVN.Core
 
         private List<SvnTreeElement> PrepareCommitTree(List<SvnTreeElement> fullTree)
         {
-            // Robimy wszystko w jednym przejściu
             var commitTree = fullTree.Select(e =>
             {
                 var clone = e.Clone();
-                // Ponieważ fullTree to jest właśnie _flatTreeData, 
-                // to 'e.IsChecked' ma już aktualną wartość z UI!
                 clone.IsChecked = e.IsChecked;
                 clone.IsVisible = false;
                 clone.IsCommitDelegate = true;
                 return clone;
             }).ToList();
 
-            // Tutaj tylko pokazujemy zmodyfikowane
             foreach (var element in commitTree)
             {
                 if (!string.IsNullOrEmpty(element.Status) && element.Status != " " && element.Status != "DIR")
@@ -247,7 +241,6 @@ namespace SVN.Core
 
         private List<SvnTreeElement> BuildFlatTreeStructureText(string root, Dictionary<string, (string status, string size)> statusDict)
         {
-            // 1. KROK: Zapamiętujemy obecne stany checkboxów z istniejącej listy
             var previousSelectionStates = new Dictionary<string, bool>();
             if (_flatTreeData != null)
             {
@@ -262,7 +255,7 @@ namespace SVN.Core
             var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
             totalCommitBytes = 0;
 
-            Debug.Log($"<color=cyan>[SVN BUILDER]</color> Start. Root roboczy: {root}");
+            Debug.Log($"<color=cyan>[SVN BUILDER]</color> Budowanie struktury. Root: {root}");
 
             foreach (var relPath in sortedPaths)
             {
@@ -312,15 +305,10 @@ namespace SVN.Core
                         }
                     }
 
-                    // 2. KROK: Logika ustalania stanu IsChecked
-                    // Domyślnie: zaznaczamy zmienione, ale nie foldery i nie Unversioned (?)
-                    bool isChecked = !isActuallyFolder &&
-                                     !string.IsNullOrWhiteSpace(displayStatus) &&
+                    bool isChecked = !string.IsNullOrWhiteSpace(displayStatus) &&
                                      displayStatus != " " &&
-                                     displayStatus != "DIR" &&
                                      displayStatus != "?";
 
-                    // 3. KROK: Nadpisujemy stan, jeśli użytkownik już wcześniej coś tu kliknął
                     if (previousSelectionStates.TryGetValue(currentPath, out bool previousValue))
                     {
                         isChecked = previousValue;
@@ -333,110 +321,29 @@ namespace SVN.Core
                         Depth = i,
                         Status = displayStatus,
                         IsFolder = isActuallyFolder,
-                        IsChecked = isChecked, // Tu wpada finalna wartość
+                        IsChecked = isChecked,
                         IsExpanded = true,
                         IsVisible = true,
                         Size = fileSize
                     });
                 }
             }
+
+            var reversedElements = elements.Where(e => e.IsFolder).OrderByDescending(e => e.Depth).ToList();
+            foreach (var folder in reversedElements)
+            {
+                bool hasAnyCheckedChild = elements.Any(e =>
+                    e.FullPath.StartsWith(folder.FullPath + "/") &&
+                    e.IsChecked);
+
+                if (hasAnyCheckedChild)
+                {
+                    folder.IsChecked = true;
+                }
+            }
+
             return elements;
         }
-
-        // private List<SvnTreeElement> BuildFlatTreeStructureText(string root, Dictionary<string, (string status, string size)> statusDict)
-        // {
-        //     var elements = new List<SvnTreeElement>();
-        //     var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
-        //     totalCommitBytes = 0;
-
-        //     // DIAGNOSTYKA STARTU
-        //     Debug.Log($"<color=cyan>[SVN BUILDER]</color> Start. Root roboczy: {root}");
-
-        //     foreach (var relPath in sortedPaths)
-        //     {
-        //         string normalizedPath = relPath.Replace('\\', '/');
-
-        //         // LOGOWANIE WEJŚCIA
-        //         // Sprawdzamy co dokładnie dostajemy ze słownika statusów
-        //         Debug.Log($"<color=#777777>[SVN IN]</color> Surowa ścieżka ze słownika: {relPath}");
-
-        //         if (normalizedPath.Contains(":/"))
-        //         {
-        //             int trunkIdx = normalizedPath.LastIndexOf("trunk/");
-        //             if (trunkIdx != -1)
-        //             {
-        //                 normalizedPath = normalizedPath.Substring(trunkIdx);
-        //                 Debug.Log($"<color=yellow>[SVN CLEAN]</color> Wykryto pełną ścieżkę! Skrócono do: {normalizedPath}");
-        //             }
-        //         }
-
-        //         string[] parts = normalizedPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-        //         string currentPath = "";
-
-        //         for (int i = 0; i < parts.Length; i++)
-        //         {
-        //             string partName = parts[i];
-        //             currentPath = string.IsNullOrEmpty(currentPath) ? partName : $"{currentPath}/{partName}";
-
-        //             if (elements.Any(e => e.FullPath == currentPath)) continue;
-
-        //             // FIZYCZNA ŚCIEŻKA
-        //             string physicalPath = (root.TrimEnd('/') + "/" + currentPath).Replace("\\", "/");
-
-        //             bool isActuallyFolder = Directory.Exists(physicalPath) || (i < parts.Length - 1);
-
-        //             // LOGOWANIE POWIĄZANIA
-        //             if (i == parts.Length - 1) // Tylko dla plików końcowych
-        //             {
-        //                 Debug.Log($"<color=lime>[SVN MAPPING]</color>\n" +
-        //                           $" - Nazwa: {partName}\n" +
-        //                           $" - Relatywna (FullPath): {currentPath}\n" +
-        //                           $" - Na dysku: {physicalPath}");
-        //             }
-
-        //             string displayStatus = " ";
-        //             if (i == parts.Length - 1 && statusDict.ContainsKey(relPath))
-        //                 displayStatus = statusDict[relPath].status;
-        //             else if (isActuallyFolder)
-        //                 displayStatus = statusDict.ContainsKey(currentPath) ? statusDict[currentPath].status : "DIR";
-
-        //             string fileSize = "";
-        //             if (!isActuallyFolder && i == parts.Length - 1)
-        //             {
-        //                 if (File.Exists(physicalPath))
-        //                 {
-        //                     long bytes = new FileInfo(physicalPath).Length;
-        //                     fileSize = FormatSize(bytes);
-        //                     if (displayStatus != " " && displayStatus != "DIR")
-        //                         totalCommitBytes += bytes;
-        //                 }
-        //                 else
-        //                 {
-        //                     fileSize = "---";
-        //                     Debug.LogWarning($"<color=red>[SVN MISSING]</color> Nie znaleziono pliku na dysku: {physicalPath}");
-        //                 }
-        //             }
-
-        //             elements.Add(new SvnTreeElement
-        //             {
-        //                 FullPath = currentPath,
-        //                 Name = partName,
-        //                 Depth = i,
-        //                 Status = displayStatus,
-        //                 IsFolder = isActuallyFolder,
-        //                 IsChecked = !isActuallyFolder &&
-        //     !string.IsNullOrWhiteSpace(displayStatus) &&
-        //     displayStatus != " " &&
-        //     displayStatus != "DIR" &&
-        //     displayStatus != "?",
-        //                 IsExpanded = true,
-        //                 IsVisible = true,
-        //                 Size = fileSize
-        //             });
-        //         }
-        //     }
-        //     return elements;
-        // }
 
         private string FormatSize(long bytes)
         {
@@ -497,13 +404,12 @@ namespace SVN.Core
 
         public static async Task<Dictionary<string, (string status, string size)>> GetChangesDictionaryAsync(string workingDir)
         {
-            // Uruchamiamy status w folderze nadrzędnym (E:/UE5/TestSVN)
             string output = await SvnRunner.RunAsync("status", workingDir);
             var statusDict = new Dictionary<string, (string status, string size)>();
 
             if (string.IsNullOrEmpty(output)) return statusDict;
 
-            Debug.Log($"<color=cyan>[SVN DEBUG]</color> Rozpoczynam parsowanie statusu. WorkingDir: {workingDir}");
+            Debug.Log($"<color=cyan>[SVN]</color> Parsowanie zmian w: {workingDir}");
 
             string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var line in lines)
@@ -512,41 +418,15 @@ namespace SVN.Core
 
                 char rawCode = line[0];
                 string stat = rawCode.ToString().ToUpper();
-
                 if ("MA?!DC".Contains(stat))
                 {
-                    // 1. Co dokładnie dostajemy z linii SVN?
                     string rawPath = line.Substring(8).Trim();
 
-                    // 2. Co robi CleanSvnPath? (Tu może być błąd!)
-                    string cleanPath = SvnRunner.CleanSvnPath(rawPath);
+                    string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
 
-                    // 3. Budujemy ścieżkę absolutną do rozmiaru pliku
-                    // Używamy Path.GetFullPath, żeby upewnić się, że nie ma tam śmieci
-                    string fullPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
+                    string fullPhysicalPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
 
-                    // --- LOGI DIAGNOSTYCZNE ---
-                    Debug.Log($"<color=orange>[LINIA SVN]</color> {line}");
-                    Debug.Log($" - RawPath: {rawPath}");
-                    Debug.Log($" - CleanPath: {cleanPath}");
-                    Debug.Log($" - FullPath (do rozmiaru): {fullPath}");
-
-                    // Sprawdzenie czy FullPath nie "uciekł" do folderu Unity
-                    if (fullPath.Contains("E:/Unity"))
-                    {
-                        Debug.LogError($"<color=red>[ALARM]</color> Ścieżka skaziła się projektem Unity! \n" +
-                                       $"Próba naprawy: Odcinam projekt Unity i wymuszam relatywność.");
-
-                        // Siłowa naprawa, jeśli CleanPath stał się pełną ścieżką
-                        if (cleanPath.Contains(":/"))
-                        {
-                            int trunkIdx = cleanPath.LastIndexOf("trunk/");
-                            if (trunkIdx != -1) cleanPath = cleanPath.Substring(trunkIdx);
-                        }
-                    }
-
-                    // KLUCZEM musi być cleanPath (np. "trunk/plik.mp4")
-                    statusDict[cleanPath] = (stat, SvnRunner.GetFileSizeSafe(fullPath));
+                    statusDict[cleanPath] = (stat, SvnRunner.GetFileSizeSafe(fullPhysicalPath));
                 }
             }
             return statusDict;
@@ -727,7 +607,7 @@ namespace SVN.Core
                     }
                 }
             }
-            catch (Exception e) { UnityEngine.Debug.LogError(e.Message); }
+            catch (Exception e) { Debug.LogError(e.Message); }
             return rules;
         }
 
@@ -918,10 +798,8 @@ namespace SVN.Core
 
         public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
         {
-            // Aktualizujemy główną bazę danych
             UpdateListSelection(_flatTreeData, parentFolder.FullPath, isChecked);
 
-            // Aktualizujemy bazę commitu
             UpdateListSelection(_commitTreeData, parentFolder.FullPath, isChecked);
         }
 
@@ -930,11 +808,9 @@ namespace SVN.Core
             if (list == null) return;
             string prefix = path + "/";
 
-            // Zaznacz/odznacz sam folder
             var folder = list.FirstOrDefault(e => e.FullPath == path);
             if (folder != null) folder.IsChecked = isChecked;
 
-            // Zaznacz/odznacz wszystkie dzieci
             foreach (var e in list)
             {
                 if (e.FullPath.StartsWith(prefix))
@@ -1003,20 +879,15 @@ namespace SVN.Core
 
         public void NotifySelectionChanged()
         {
-            // 1. Odśwież widok główny (to zaktualizuje wizualnie foldery i dzieci w głównym oknie)
             if (svnUI.SvnTreeView != null)
                 svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
 
-            // 2. Znajdź panel commitu
             var commitPanel = UnityEngine.Object.FindFirstObjectByType<CommitPanel>(UnityEngine.FindObjectsInactive.Include);
 
-            // 3. Jeśli panel jest aktywny, odświeżamy go używając dedykowanej listy commitu
             if (commitPanel != null && commitPanel.gameObject.activeInHierarchy)
             {
                 if (svnUI.SVNCommitTreeDisplay != null && _commitTreeData != null)
                 {
-                    // Zamiast filtrować _flatTreeData, używamy przygotowanego wcześniej _commitTreeData
-                    // Musimy tylko upewnić się, że _commitTreeData ma zsynchronizowane IsChecked (co już robimy)
                     svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
                 }
             }
@@ -1026,13 +897,10 @@ namespace SVN.Core
         {
             if (element == null) return;
 
-            // 1. Ustaw stan dla samego elementu
             element.IsChecked = isChecked;
 
-            // 2. Jeśli to folder, odznacz/zaznacz wszystkie dzieci (REKURENCJA W DÓŁ)
             if (element.IsFolder)
             {
-                // Szukamy wszystkich elementów, których ścieżka zaczyna się od ścieżki tego folderu
                 string prefix = element.FullPath + "/";
                 var children = currentTree.Where(e => e.FullPath.StartsWith(prefix));
 
@@ -1041,9 +909,6 @@ namespace SVN.Core
                     child.IsChecked = isChecked;
                 }
             }
-
-            // 3. Opcjonalnie: Jeśli zaznaczasz plik, musisz upewnić się, że folder-rodzic też jest zaznaczony
-            // (SVN potrzebuje ścieżki folderu, by dotrzeć do pliku)
             if (isChecked)
             {
                 string[] parts = element.FullPath.Split('/');
