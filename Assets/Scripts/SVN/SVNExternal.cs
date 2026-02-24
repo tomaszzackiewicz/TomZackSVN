@@ -198,6 +198,94 @@ namespace SVN.Core
             }
         }
 
+        public void BrowseDiffFilePath()
+        {
+            // Pobieramy ścieżkę roboczą z managera
+            string root = svnManager.WorkingDir;
+
+            // Definiujemy filtr plików (wszystkie pliki)
+            var extensions = new[] { new ExtensionFilter("All Files", "*") };
+
+            // Otwieramy okno wyboru pliku (false na końcu oznacza brak multiselectu)
+            string[] paths = StandaloneFileBrowser.OpenFilePanel("Select File to Diff", root, extensions, false);
+
+            // Sprawdzamy czy użytkownik coś wybrał
+            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
+            {
+                // Normalizujemy ukośniki
+                string selectedPath = paths[0].Replace('\\', '/');
+                string normalizedRoot = root.Replace('\\', '/');
+
+                // Sprawdzamy, czy wybrany plik znajduje się wewnątrz WorkingDir
+                if (selectedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Wycinamy ścieżkę absolutną, zostawiając relatywną dla SVN
+                    selectedPath = selectedPath.Substring(normalizedRoot.Length).TrimStart('/');
+                }
+                else
+                {
+                    SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!", true);
+                }
+
+                // Przypisujemy do pola Input w panelu Diff
+                if (svnUI.DiffTargetFileInput != null)
+                {
+                    svnUI.DiffTargetFileInput.text = selectedPath;
+                    SVNLogBridge.LogLine($"<color=cyan>Diff:</color> Selected file: {selectedPath}");
+                }
+                else
+                {
+                    Debug.LogWarning("[SVN] DiffTargetFileInput is not assigned in SVNUI!");
+                }
+            }
+        }
+
+        public void BrowseBlameFilePath()
+        {
+            string root = svnManager.WorkingDir;
+
+            if (string.IsNullOrEmpty(root))
+            {
+                SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory is not set!", true);
+                return;
+            }
+
+            // Filtr plików tekstowych jest świetnym pomysłem dla Blame
+            var extensions = new[] {
+        new ExtensionFilter("Text Files", "cs", "shader", "json", "txt", "xml", "yaml"),
+        new ExtensionFilter("All Files", "*")
+    };
+
+            string[] paths = StandaloneFileBrowser.OpenFilePanel("Select File for Blame", root, extensions, false);
+
+            if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
+            {
+                string selectedPath = paths[0].Replace('\\', '/');
+                string normalizedRoot = root.Replace('\\', '/');
+
+                if (selectedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Konwersja na ścieżkę relatywną
+                    selectedPath = selectedPath.Substring(normalizedRoot.Length).TrimStart('/');
+
+                    if (svnUI.BlameTargetFileInput != null)
+                    {
+                        svnUI.BlameTargetFileInput.text = selectedPath;
+                        SVNLogBridge.LogLine($"<color=cyan>Blame:</color> Target file set to: {selectedPath}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[SVN] BlameTargetFileInput is not assigned in SVNUI!");
+                    }
+                }
+                else
+                {
+                    // Bardzo ważne ostrzeżenie
+                    SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file for Blame is outside of the Working Directory!", true);
+                }
+            }
+        }
+
         public void OpenTortoiseLog()
         {
             string root = svnManager.RepositoryUrl;

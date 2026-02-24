@@ -18,6 +18,8 @@ namespace SVN.Core
         [SerializeField] private GameObject ignoredPanel = null;
         [SerializeField] private GameObject shelvePanel = null;
         [SerializeField] private GameObject stealPanel = null;
+        [SerializeField] private GameObject diffPanel = null;
+        [SerializeField] private GameObject blamePanel = null;
 
         private SVNUI svnUI;
         private SVNManager svnManager;
@@ -44,6 +46,8 @@ namespace SVN.Core
             Button_CloseIgnored();
             Button_CloseShelve();
             Button_CloseSteal();
+            Button_CloseDiff();
+            Button_CloseBlame();
         }
 
         public void Button_OpenHelp()
@@ -264,6 +268,42 @@ namespace SVN.Core
             if (stealPanel != null)
             {
                 stealPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenDiff()
+        {
+            ResetAllPanels();
+
+            if (diffPanel != null)
+            {
+                diffPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseDiff()
+        {
+            if (diffPanel != null)
+            {
+                diffPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenBlame()
+        {
+            ResetAllPanels();
+
+            if (blamePanel != null)
+            {
+                blamePanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseBlame()
+        {
+            if (blamePanel != null)
+            {
+                blamePanel.SetActive(false);
             }
         }
 

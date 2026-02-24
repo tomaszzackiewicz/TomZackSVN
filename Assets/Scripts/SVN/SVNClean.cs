@@ -86,7 +86,7 @@ namespace SVN.Core
             IsProcessing = true;
 
             SVNLogBridge.LogLine("<b>[Deep Repair]</b> Running full diagnostic...", append: false);
-
+            SVNLogBridge.LogLine("<color=orange>Warning: Deep Repair will auto-resolve conflicts using YOUR version.</color>");
             try
             {
                 await SvnRunner.RunAsync("cleanup", targetPath);

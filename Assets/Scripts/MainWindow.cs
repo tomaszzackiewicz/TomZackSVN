@@ -82,6 +82,8 @@ namespace SVN.Core
         public void Button_BreakLocks() => svnManager.GetModule<SVNLock>().BreakAllLocks();
         public void Button_TerminalSubmit() => ExecuteCommand();
 
+        public void Button_CheckRemoteModifications() => svnManager.GetModule<SVNUpdate>().CheckRemoteModifications();
+
         public void Button_OpenLogs() => SVNLogger.OpenLogFolder();
 
         public void Button_ClearTerminalLog()

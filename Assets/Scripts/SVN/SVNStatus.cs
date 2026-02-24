@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -666,7 +667,7 @@ namespace SVN.Core
             }
         }
 
-        public async void ShowProjectInfo(SVNProject svnProject, string path, bool forceOutdatedCheck = false, bool isRefreshing = false)
+        public async Task ShowProjectInfo(SVNProject svnProject, string path, bool forceOutdatedCheck = false, bool isRefreshing = false)
         {
             if (string.IsNullOrEmpty(path)) return;
             if (svnUI == null) return;
@@ -858,18 +859,11 @@ namespace SVN.Core
             }
         }
 
-        private string ExtractValue(string text, string key)
+        private string ExtractValue(string info, string key)
         {
-            if (string.IsNullOrEmpty(text)) return "N/A";
-            using (var reader = new System.IO.StringReader(text))
-            {
-                string line;
-                while ((line = reader.ReadLine()) != null)
-                {
-                    if (line.StartsWith(key)) return line.Replace(key, "").Trim();
-                }
-            }
-            return "unknown";
+            if (string.IsNullOrEmpty(info)) return "unknown";
+            var match = Regex.Match(info, $@"^{key}\s*(.*)", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups[1].Value.Trim() : "unknown";
         }
 
         public List<SvnTreeElement> GetCurrentData()

@@ -12,10 +12,10 @@ namespace SVN.Core
     {
         public static SVNManager Instance { get; private set; }
 
+        public const string KEY_REPO_URL = "SVN_Persisted_RepositoryURL";
         public const string KEY_WORKING_DIR = "SVN_Persisted_WorkingDir";
         public const string KEY_SSH_PATH = "SVN_Persisted_SSHKeyPath";
         public const string KEY_MERGE_TOOL = "SVN_Persisted_MergeTool";
-        public const string KEY_REPO_URL = "SVN_Persisted_RepositoryURL";
 
         [Header("UI References")]
         [SerializeField] private SVNUI svnUI = null;
@@ -119,6 +119,8 @@ namespace SVN.Core
                 RegisterModule(new SVNStatus(svnUI, this));
                 RegisterModule(new SVNTerminal(svnUI, this));
                 RegisterModule(new SVNUpdate(svnUI, this));
+                RegisterModule(new SVNDiff(svnUI, this));
+                RegisterModule(new SVNBlame(svnUI, this));
 
                 Debug.Log($"<color=green>[SVN]</color> Successfully initialized {_modules.Count} modules manually.");
             }
@@ -270,11 +272,6 @@ namespace SVN.Core
 
             try
             {
-#if UNITY_EDITOR
-                SVNLogBridge.LogLine("<i>Synchronizing Unity AssetDatabase...</i>", append: true);
-                UnityEditor.AssetDatabase.Refresh();
-#endif
-
                 var statusModule = GetModule<SVNStatus>();
                 if (statusModule != null)
                 {
@@ -297,7 +294,7 @@ namespace SVN.Core
                     }
                 }
 
-                UpdateStatus();
+                await UpdateStatus();
 
                 SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>", append: true);
             }
@@ -308,14 +305,15 @@ namespace SVN.Core
             }
         }
 
-        public void UpdateStatus()
+        public async Task UpdateStatus()
         {
             var statusModule = GetModule<SVNStatus>();
             if (statusModule != null)
             {
                 string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
                 var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
-                statusModule.ShowProjectInfo(lastProject, WorkingDir);
+
+                await statusModule.ShowProjectInfo(lastProject, WorkingDir, isRefreshing: false);
             }
         }
 

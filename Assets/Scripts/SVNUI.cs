@@ -75,6 +75,13 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI NotificationText;
         [Header("Resolve")]
         [SerializeField] private TMP_InputField resolveTargetFileInput;
+        [Header("Diff Panel References")]
+        public TMP_InputField DiffTargetFileInput;
+        public TextMeshProUGUI DiffConsoleText;
+        [Header("Blame Panel References")]
+        public TMP_InputField BlameTargetFileInput;
+        public TextMeshProUGUI BlameDisplayArea;
+        public TextMeshProUGUI BlameConsoleText;
 
         private Coroutine _notificationCoroutine;
 
