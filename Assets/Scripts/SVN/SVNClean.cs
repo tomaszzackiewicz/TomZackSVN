@@ -79,6 +79,35 @@ namespace SVN.Core
             }
         }
 
+        public async void DeepRepair()
+        {
+            if (IsProcessing) return;
+            string targetPath = GetTargetPath();
+            IsProcessing = true;
+
+            SVNLogBridge.LogLine("<b>[Deep Repair]</b> Running full diagnostic...", append: false);
+
+            try
+            {
+                await SvnRunner.RunAsync("cleanup", targetPath);
+
+                await SvnRunner.RunAsync("cleanup --fix-recorded-timestamps", targetPath);
+
+                await SvnRunner.RunAsync("resolve --accept working -R .", targetPath);
+
+                SVNLogBridge.LogLine("<color=green>Deep Repair Finished!</color> Project is now stable.");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=red>Repair Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+                await svnManager.RefreshStatus(force: true);
+            }
+        }
+
         public async void DiscardUnversioned()
         {
             if (IsProcessing) return;

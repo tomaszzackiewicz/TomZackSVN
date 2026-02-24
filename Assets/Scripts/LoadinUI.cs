@@ -34,7 +34,17 @@ namespace SVN.UI
 
         private void HandleProcessingStateChanged(bool isProcessing)
         {
-            if (!isProcessing && animatedDots != null) animatedDots.text = "";
+            if (animatedDots != null && !isProcessing) animatedDots.text = "";
+
+            if (isProcessing)
+            {
+                WindowsTaskbarProgress.SetState(WindowsTaskbarProgress.TaskbarState.Indeterminate);
+            }
+            else
+            {
+                WindowsTaskbarProgress.SetState(WindowsTaskbarProgress.TaskbarState.NoProgress);
+                WindowsTaskbarProgress.Flash();
+            }
         }
 
         private void Update()
@@ -57,9 +67,7 @@ namespace SVN.UI
         private string GetPulseAlpha(float offset)
         {
             float alpha = (Mathf.Sin(Time.time * pulseSpeed - offset) + 1f) / 2f;
-
             alpha = Mathf.Pow(alpha, 2);
-
             int alphaInt = Mathf.RoundToInt(alpha * 255);
             return alphaInt.ToString("X2");
         }

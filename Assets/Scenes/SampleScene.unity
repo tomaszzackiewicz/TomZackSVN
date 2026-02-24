@@ -6185,7 +6185,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1911977654}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.1570202
+  m_Size: 0.13020116
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -10565,6 +10565,136 @@ PrefabInstance:
 RectTransform:
   m_CorrespondingSourceObject: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
   m_PrefabInstance: {fileID: 356591779}
+  m_PrefabAsset: {fileID: 0}
+--- !u!1001 &364071952
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 627124797}
+    m_Modifications:
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1232145534}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: Button_DeepRepair
+      objectReference: {fileID: 0}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: SVN.Core.MainWindow, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Name
+      value: DeepRepairButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_text
+      value: Deep Repair
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_fontAsset
+      value: 
+      objectReference: {fileID: 11400000, guid: 172eef75301fc6b4a912f014abbb3caf, type: 2}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_sharedMaterial
+      value: 
+      objectReference: {fileID: -2777958717642092937, guid: 172eef75301fc6b4a912f014abbb3caf, type: 2}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_hasFontAssetChanged
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 100
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 40
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+--- !u!224 &364071953 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+  m_PrefabInstance: {fileID: 364071952}
   m_PrefabAsset: {fileID: 0}
 --- !u!1001 &374599333
 PrefabInstance:
@@ -16433,6 +16563,7 @@ RectTransform:
   - {fileID: 2041644913}
   - {fileID: 177763112}
   - {fileID: 1711770181}
+  - {fileID: 364071953}
   - {fileID: 1785851777}
   - {fileID: 97857031}
   - {fileID: 2046226074}
@@ -38268,7 +38399,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 5421.296}
+  m_SizeDelta: {x: 0, y: 6745.986}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1662562891
 MonoBehaviour:
@@ -38359,64 +38490,82 @@ MonoBehaviour:
     current status (Modified, Added, etc.).\n\n\u2022 <b>Commit:</b> Opens the primary
     Commit window where you manage your contribution. It shows all your local changes
     and allows you to select which files to send to the server with a descriptive
-    log message.\n\n\u2022 <b>Refresh (Inside Commit):</b> A secondary refresh button
-    specifically for the commit window to ensure you are looking at the most recent
-    state of your changes before hitting the final send button.\n\n\u2022 <b>Revert:</b>
-    The \"undo\" button for SVN. It discards all your local modifications to a file
-    and restores it to the exact state it was in when last downloaded from the server.\n\n\u2022
-    <b>Add:</b> Notifies SVN to start tracking a new file. New files created in your
-    folder are \"Unversioned\" (?) until you use this command; once added, they will
-    be included in your next commit.\n\n\u2022 <b>Discard Untracked:</b> A cleanup
-    tool that deletes \"untracked\" files\u2014files that are in your folder but
-    not registered in SVN. Use this to remove temporary files or junk that SVN is
-    not managing.\n\n<size=120%><b>Maintenance & Repair Tools</b></size>\n\n\u2022
-    <b>Fix Missing:</b> Repairs <b>Missing (!)</b> errors. If you manually deleted
-    files via Windows Explorer or Unity instead of using the SVN Delete command,
-    SVN will block your commit. Clicking <b>Fix Missing</b> is the fastest way to
-    \"clean\" these errors from your database and unblock your ability to send the
-    rest of your changes.\n\n\u2022 <b>Revert All Missing:</b> Physically restores
-    files to your hard drive that were accidentally deleted. If you see the <b>(!)</b>
-    status but realized you actually need those files back, this will download them
-    again from the last known revision.\n\n\u2022 <b>Cleanup:</b> Fixes a <b>\"Locked\"</b>
-    repository. If an SVN process was interrupted (due to a PC crash, power loss,
-    or app freeze), the database stays locked. This command releases those locks
-    so you can resume work.\n\n\u2022 <b>Vacuum:</b> Optimizes the internal <color=#94A3B8>.svn</color>
-    database (the <i>wc.db</i> file). Over time, this file can grow massive or become
-    slow. Vacuuming removes unused entries and physically reclaims disk space, noticeably
-    speeding up SVN operations.\n\n<size=120%><b>Branching, Tagging & Merging</b></size>\n\n\u2022
+    log message.\r\n\r\n\u2022 <b>Commit Selected:</b> A specialized function within
+    the Commit window that allows you to send <b>only the items you have checked</b>.
+    It is smarter than a standard commit because it: automatically <b>registers parent
+    folders</b> for new files, handles the deletion of <b>(!) Missing</b> items,
+    and allows for selective workflow without forcing you to upload all changes at
+    once.\r\n\r\n\u2022 <b>Cancel Commit:</b> This button allows you to <b>safely
+    abort</b> an ongoing commit process. It sends a cancellation signal to the SVN
+    thread, stopping the file upload. <b>Note:</b> After using this, the application
+    will automatically run a <i>Cleanup</i> to ensure your local database is not
+    left in a \"Locked\" state, allowing you to resume work immediately.\n\n\u2022
+    <b>Refresh (Inside Commit):</b> A secondary refresh button specifically for the
+    commit window to ensure you are looking at the most recent state of your changes
+    before hitting the final send button.\n\n\u2022 <b>Revert:</b> The \"undo\" button
+    for SVN. It discards all your local modifications to a file and restores it to
+    the exact state it was in when last downloaded from the server.\n\n\u2022 <b>Add:</b>
+    Notifies SVN to start tracking a new file. New files created in your folder are
+    \"Unversioned\" (?) until you use this command; once added, they will be included
+    in your next commit.\n\n\u2022 <b>Discard Untracked:</b> A cleanup tool that
+    deletes \"untracked\" files\u2014files that are in your folder but not registered
+    in SVN. Use this to remove temporary files or junk that SVN is not managing.\n\n<size=120%><b>Maintenance
+    & Repair Tools</b></size>\n\n\u2022 <b>Fix Missing:</b> Repairs <b>Missing (!)</b>
+    errors. If you manually deleted files via Windows Explorer or Unity instead of
+    using the SVN Delete command, SVN will block your commit. Clicking <b>Fix Missing</b>
+    is the fastest way to \"clean\" these errors from your database and unblock your
+    ability to send the rest of your changes.\n\n\u2022 <b>Revert All Missing:</b>
+    Physically restores files to your hard drive that were accidentally deleted.
+    If you see the <b>(!)</b> status but realized you actually need those files back,
+    this will download them again from the last known revision.\n\n\u2022 <b>Cleanup:</b>
+    Fixes a <b>\"Locked\"</b> repository. If an SVN process was interrupted (due
+    to a PC crash, power loss, or app freeze), the database stays locked. This command
+    releases those locks so you can resume work.\n\n\u2022 <b>Vacuum:</b> Optimizes
+    the internal <color=#94A3B8>.svn</color> database (the <i>wc.db</i> file). Over
+    time, this file can grow massive or become slow. Vacuuming removes unused entries
+    and physically reclaims disk space, noticeably speeding up SVN operations.\r\n\r\n\u2022
+    <b>Deep Repair:</b> <b>Advanced recovery mechanism.</b> It combines a standard
+    <i>Cleanup</i> with a metadata time-sync (<i>Fix Timestamps</i>) and <b>automatic
+    conflict resolution</b> (by accepting your local \"working\" version). Use this
+    button when the project is \"stuck\" due to failed merge operations or when standard
+    tools cannot refresh the file status.\n\n<size=120%><b>Branching, Tagging & Merging</b></size>\n\n\u2022
     <b>Branch Tag:</b> A management panel for creating new branches (for features)
     or tags (for releases). It also allows you to switch your working copy between
     different branches or delete old ones.\n\n\u2022 <b>Merge:</b> Opens the branch
-    integration panel. You can select a branch from the list or type its name manually.\n   
-    - <b>Refresh Branches:</b> Updates the list of available branches from the server.\n   
-    - <b>Compare with Trunk:</b> Compares your current branch with the main Trunk
-    to see exactly what differences exist before you merge.\n    - <b>Dry Run:</b>
+    integration panel. You can select a branch from the list or type its name manually.\r\n\r\n-
+    <b>Refresh Branches:</b> Updates the list of available branches from the server.\r\n\r\n-
+    <b>Compare with Trunk:</b> Compares your current branch with the main Trunk to
+    see exactly what differences exist before you merge.\r\n\r\n- <b>Dry Run:</b>
     Performs a full \"mock\" merge. It simulates the process and reports potential
     conflicts without changing any of your code. <b>Crucial:</b> Always run this
-    before a real merge to assess the scale of changes.\n    - <b>Merge (Action):</b>
+    before a real merge to assess the scale of changes.\r\n\n - <b>Merge (Action):</b>
     Executes the actual merging of the selected branch into your current working
     copy.\n\n<size=120%><b>Conflict Resolution (Resolve)</b></size>\nIf a conflict
     <b>(C)</b> is detected, these tools become active for the selected file (or all
     files if none are selected):\n\n\u2022 <b>Open in Editor:</b> Opens the file
-    in a text editor so you can manually resolve overlapping lines of code.\n\u2022
+    in a text editor so you can manually resolve overlapping lines of code.\r\n\n\u2022
     <b>Mark as Resolved:</b> Tells SVN that you have fixed the conflict and the file
-    is ready to be committed.\n\u2022 <b>Resolve as Theirs:</b> Automatically accepts
-    the server's version and throws away your local changes.\n\u2022 <b>Resolve as
-    Mine:</b> Automatically keeps your local version and ignores the changes from
-    the server.\n\n<size=120%><b> System & Advanced Options</b></size>\n\n\u2022
+    is ready to be committed.\r\n\n\u2022 <b>Resolve as Theirs:</b> Automatically
+    accepts the server's version and throws away your local changes.\r\n\n\u2022
+    <b>Resolve as Mine:</b> Automatically keeps your local version and ignores the
+    changes from the server.\n\n<size=120%><b> System & Advanced Options</b></size>\n\n\u2022
     <b>Show Ignored / Refresh Rules:</b> Displays which files are currently being
-    ignored by the system and allows you to refresh the exclusion list.\n\u2022 <b>Load/Apply
-    New Rules:</b> Allows you to load ignore rules from a text file and <b>Apply</b>
-    them to the server, making the rules active for every user in the project.\n\u2022
-    <b>Explore:</b> Instantly opens the root directory of your project in the system
-    file manager.\n\u2022 <b>Settings:</b> Configuration panel for project details,
-    connection paths, and the path to your external text editor for resolving conflicts.\n\u2022
-    <b>Show Log:</b> Fetches the repository history (default 10 entries). You can
-    specify the number of log entries you wish to retrieve.\n\u2022 <b>Clear/Open
-    Log:</b> Clears the internal application log console or opens the raw log file
-    for technical troubleshooting.\n\u2022 <b>Run Command:</b> An advanced input
-    field where you can manually type and execute raw SVN commands directly.\n\u2022
-    <b>Exit:</b> Safely closes the application."
+    ignored by the system and allows you to refresh the exclusion list.\r\n\n\u2022
+    <b>Load/Apply New Rules:</b> Allows you to load ignore rules from a text file
+    and <b>Apply</b> them to the server, making the rules active for every user in
+    the project.\r\n\r\n\u2022 <b>Explore:</b> Instantly opens the root directory
+    of your project in the system file manager.\r\n\n\u2022 <b>Settings:</b> Configuration
+    panel for project details, connection paths, and the path to your external text
+    editor for resolving conflicts.\r\n\n\u2022 <b>Show Log:</b> Fetches the repository
+    history (default 10 entries). You can specify the number of log entries you wish
+    to retrieve.\r\n\n\u2022 <b>Clear/Open Log:</b> Clears the internal application
+    log console or opens the raw log file for technical troubleshooting.\r\n\n\u2022
+    <b>Run Command:</b> An advanced input field where you can manually type and execute
+    raw SVN commands directly.\r\n\n\u2022 <b>Exit:</b> Safely closes the application.\r\n\r\n\u2022
+    <b>Copy Button (C):</b> A small utility button located near the console output.
+    Clicking this will instantly <b>copy the entire console log</b> to your Windows
+    Clipboard, allowing you to easily paste error reports or revision details into
+    external documents or chat for troubleshooting."
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -45829,7 +45978,7 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1657918751}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.8429798}
+  m_AnchorMin: {x: 0, y: 0.86979884}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}
