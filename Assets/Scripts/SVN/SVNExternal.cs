@@ -231,7 +231,7 @@ namespace SVN.Core
                 if (svnUI.DiffTargetFileInput != null)
                 {
                     svnUI.DiffTargetFileInput.text = selectedPath;
-                    SVNLogBridge.LogLine($"<color=cyan>Diff:</color> Selected file: {selectedPath}");
+                    SVNLogBridge.LogLine($"<color=green>Diff:</color> Selected file: {selectedPath}");
                 }
                 else
                 {
@@ -271,7 +271,7 @@ namespace SVN.Core
                     if (svnUI.BlameTargetFileInput != null)
                     {
                         svnUI.BlameTargetFileInput.text = selectedPath;
-                        SVNLogBridge.LogLine($"<color=cyan>Blame:</color> Target file set to: {selectedPath}");
+                        SVNLogBridge.LogLine($"<color=green>Blame:</color> Target file set to: {selectedPath}");
                     }
                     else
                     {

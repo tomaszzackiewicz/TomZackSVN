@@ -256,7 +256,7 @@ namespace SVN.Core
             var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
             totalCommitBytes = 0;
 
-            Debug.Log($"<color=cyan>[SVN BUILDER]</color> Budowanie struktury. Root: {root}");
+            Debug.Log($"<color=green>[SVN BUILDER]</color> Budowanie struktury. Root: {root}");
 
             foreach (var relPath in sortedPaths)
             {
@@ -410,7 +410,7 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(output)) return statusDict;
 
-            Debug.Log($"<color=cyan>[SVN]</color> Parsowanie zmian w: {workingDir}");
+            Debug.Log($"<color=green>[SVN]</color> Parsowanie zmian w: {workingDir}");
 
             string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var line in lines)

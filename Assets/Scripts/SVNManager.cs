@@ -121,6 +121,7 @@ namespace SVN.Core
                 RegisterModule(new SVNUpdate(svnUI, this));
                 RegisterModule(new SVNDiff(svnUI, this));
                 RegisterModule(new SVNBlame(svnUI, this));
+                RegisterModule(new SVNRevGraph(svnUI, this));
 
                 Debug.Log($"<color=green>[SVN]</color> Successfully initialized {_modules.Count} modules manually.");
             }

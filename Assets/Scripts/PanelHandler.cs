@@ -20,6 +20,7 @@ namespace SVN.Core
         [SerializeField] private GameObject stealPanel = null;
         [SerializeField] private GameObject diffPanel = null;
         [SerializeField] private GameObject blamePanel = null;
+        [SerializeField] private GameObject revGraphPanel = null;
 
         private SVNUI svnUI;
         private SVNManager svnManager;
@@ -48,6 +49,7 @@ namespace SVN.Core
             Button_CloseSteal();
             Button_CloseDiff();
             Button_CloseBlame();
+            Button_CloseRevGraph();
         }
 
         public void Button_OpenHelp()
@@ -304,6 +306,24 @@ namespace SVN.Core
             if (blamePanel != null)
             {
                 blamePanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenRevGraph()
+        {
+            ResetAllPanels();
+
+            if (revGraphPanel != null)
+            {
+                revGraphPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseRevGraph()
+        {
+            if (revGraphPanel != null)
+            {
+                revGraphPanel.SetActive(false);
             }
         }
 

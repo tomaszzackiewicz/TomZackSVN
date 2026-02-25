@@ -54,7 +54,7 @@ namespace SVN.Core
                 if (svnUI.DiffTargetFileInput != null)
                 {
                     svnUI.DiffTargetFileInput.text = selectedPath;
-                    LogBoth($"<color=cyan>Diff:</color> Selected file: {selectedPath}");
+                    LogBoth($"<color=green>Diff:</color> Selected file: {selectedPath}");
                 }
             }
         }

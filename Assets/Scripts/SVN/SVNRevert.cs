@@ -44,7 +44,7 @@ namespace SVN.Core
 
                 await RevertAsync(root, filesToRevert, (msg) =>
                 {
-                    SVNLogBridge.LogLine($"<color=cyan>[Progress]</color> {msg}");
+                    SVNLogBridge.LogLine($"<color=green>[Progress]</color> {msg}");
                 });
 
                 if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();

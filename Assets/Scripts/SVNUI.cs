@@ -82,6 +82,9 @@ namespace SVN.Core
         public TMP_InputField BlameTargetFileInput;
         public TextMeshProUGUI BlameDisplayArea;
         public TextMeshProUGUI BlameConsoleText;
+        [Header("Revision Graph")]
+        public Transform GraphContainer;
+        public GameObject GraphItemPrefab;
 
         private Coroutine _notificationCoroutine;
 
