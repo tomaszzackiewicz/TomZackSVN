@@ -106,4 +106,7 @@ public class RevGraphPanel : MonoBehaviour
         }
         return nodes;
     }
+
+    public void Button_CollpaseAll() => svnManager.GetModule<SVNRevGraph>().CollapseAll();
+    public void Button_ExpandAll() => svnManager.GetModule<SVNRevGraph>().ExpandAll();
 }

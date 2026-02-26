@@ -21,6 +21,7 @@ namespace SVN.Core
         [SerializeField] private GameObject diffPanel = null;
         [SerializeField] private GameObject blamePanel = null;
         [SerializeField] private GameObject revGraphPanel = null;
+        [SerializeField] private GameObject cleanPanel = null;
 
         private SVNUI svnUI;
         private SVNManager svnManager;
@@ -50,6 +51,7 @@ namespace SVN.Core
             Button_CloseDiff();
             Button_CloseBlame();
             Button_CloseRevGraph();
+            Button_CloseClean();
         }
 
         public void Button_OpenHelp()
@@ -324,6 +326,24 @@ namespace SVN.Core
             if (revGraphPanel != null)
             {
                 revGraphPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenClean()
+        {
+            ResetAllPanels();
+
+            if (cleanPanel != null)
+            {
+                cleanPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseClean()
+        {
+            if (cleanPanel != null)
+            {
+                cleanPanel.SetActive(false);
             }
         }
 

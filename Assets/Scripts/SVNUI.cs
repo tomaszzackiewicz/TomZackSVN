@@ -75,6 +75,8 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI NotificationText;
         [Header("Resolve")]
         [SerializeField] private TMP_InputField resolveTargetFileInput;
+        [Header("Clean")]
+        [SerializeField] private TextMeshProUGUI cleanText;
         [Header("Diff Panel References")]
         public TMP_InputField DiffTargetFileInput;
         public TextMeshProUGUI DiffConsoleText;
@@ -146,6 +148,7 @@ namespace SVN.Core
         public Transform LocksContainer => locksContainer;
         public TextMeshProUGUI StealLocksConsole => stealLocksConsole;
         public TMP_InputField ResolveTargetFileInput => resolveTargetFileInput;
+        public TextMeshProUGUI CleanText => cleanText;
 
         private void Awake()
         {

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace SVN.Core
 {
@@ -110,6 +111,53 @@ namespace SVN.Core
                 }
             }
             return new BranchInfo { Name = "trunk", Type = NodeType.Trunk };
+        }
+
+        public void CollapseAll()
+        {
+            foreach (GameObject go in instantiatedItems)
+            {
+                if (go != null)
+                {
+                    SVNGraphItem item = go.GetComponent<SVNGraphItem>();
+                    if (item != null)
+                    {
+                        item.SetExpanded(false);
+
+                        LayoutRebuilder.ForceRebuildLayoutImmediate(go.GetComponent<RectTransform>());
+                    }
+                }
+            }
+
+            RefreshLayout();
+        }
+
+        public void ExpandAll()
+        {
+            foreach (GameObject go in instantiatedItems)
+            {
+                if (go != null)
+                {
+                    SVNGraphItem item = go.GetComponent<SVNGraphItem>();
+                    if (item != null)
+                    {
+                        item.SetExpanded(true);
+
+                        RectTransform rect = go.GetComponent<RectTransform>();
+                        LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+                    }
+                }
+            }
+
+            RefreshLayout();
+        }
+
+        private void RefreshLayout()
+        {
+            if (svnUI.GraphContainer != null)
+            {
+                LayoutRebuilder.MarkLayoutForRebuild(svnUI.GraphContainer as RectTransform);
+            }
         }
     }
 }

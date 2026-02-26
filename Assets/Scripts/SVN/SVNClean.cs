@@ -8,6 +8,18 @@ namespace SVN.Core
     {
         public SVNClean(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
+        private void LogToClean(string message, bool append = true)
+        {
+            if (svnUI.CleanText != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CleanText, message, "CLEAN", append);
+            }
+            else
+            {
+                SVNLogBridge.LogLine(message, append);
+            }
+        }
+
         public async void LightCleanup()
         {
             if (IsProcessing) return;
@@ -15,26 +27,26 @@ namespace SVN.Core
             string targetPath = GetTargetPath();
             if (string.IsNullOrEmpty(targetPath))
             {
-                SVNLogBridge.LogLine("<color=red>Error:</color> No valid path found for Cleanup.");
+                LogToClean("<color=red>Error:</color> No valid path found for Cleanup.", append: false);
                 return;
             }
 
             IsProcessing = true;
-            SVNLogBridge.LogLine("<b>Attempting to release SVN database locks...</b>", append: false);
+            LogToClean("<b>Attempting to release SVN database locks...</b>", append: false);
 
             try
             {
                 string output = await CleanupAsync(targetPath);
 
-                SVNLogBridge.LogLine("<color=green>Cleanup Successful!</color>");
-                if (!string.IsNullOrWhiteSpace(output)) SVNLogBridge.LogLine(output);
+                LogToClean("<color=green>Cleanup Successful!</color>");
+                if (!string.IsNullOrWhiteSpace(output)) LogToClean(output);
 
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Cleanup Failed:</color> {ex.Message}");
-                SVNLogBridge.LogLine("<color=yellow>Hint:</color> Close external SVN tools and try again.");
+                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
+                LogToClean("<color=yellow>Hint:</color> Close external SVN tools and try again.");
             }
             finally
             {
@@ -50,15 +62,15 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(targetPath)) return;
 
             IsProcessing = true;
-            SVNLogBridge.LogLine("<b>Starting Deep Vacuum Cleanup (Optimization)...</b>", append: false);
-            SVNLogBridge.LogLine("<color=yellow>This may take a while for large projects.</color>");
+            LogToClean("<b>Starting Deep Vacuum Cleanup (Optimization)...</b>", append: false);
+            LogToClean("<color=yellow>This may take a while for large projects.</color>");
 
             try
             {
                 string output = await VacuumCleanupAsync(targetPath);
 
-                SVNLogBridge.LogLine("<color=green>Vacuum Cleanup Successful!</color>");
-                if (!string.IsNullOrWhiteSpace(output)) SVNLogBridge.LogLine(output);
+                LogToClean("<color=green>Vacuum Cleanup Successful!</color>");
+                if (!string.IsNullOrWhiteSpace(output)) LogToClean(output);
 
                 await svnManager.RefreshStatus();
             }
@@ -66,11 +78,11 @@ namespace SVN.Core
             {
                 if (ex.Message.Contains("invalid option"))
                 {
-                    SVNLogBridge.LogLine("<color=red>Error:</color> Your SVN version is too old for Vacuum Cleanup (requires 1.9+).");
+                    LogToClean("<color=red>Error:</color> Your SVN version is too old for Vacuum Cleanup (requires 1.9+).");
                 }
                 else
                 {
-                    SVNLogBridge.LogLine($"<color=red>Cleanup Failed:</color> {ex.Message}");
+                    LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
                 }
             }
             finally
@@ -85,21 +97,32 @@ namespace SVN.Core
             string targetPath = GetTargetPath();
             IsProcessing = true;
 
-            SVNLogBridge.LogLine("<b>[Deep Repair]</b> Running full diagnostic...", append: false);
-            SVNLogBridge.LogLine("<color=orange>Warning: Deep Repair will auto-resolve conflicts using YOUR version.</color>");
+            LogToClean("<b>[Deep Repair]</b> Running full diagnostic...", append: false);
+            LogToClean("<color=orange>Warning: Auto-resolving conflicts using YOUR version.</color>");
+
             try
             {
+                LogToClean("Step 1/3: Basic Cleanup...");
                 await SvnRunner.RunAsync("cleanup", targetPath);
 
-                await SvnRunner.RunAsync("cleanup --fix-recorded-timestamps", targetPath);
+                LogToClean("Step 2/3: Repairing timestamps...");
+                try
+                {
+                    await SvnRunner.RunAsync("cleanup --fix-recorded-timestamps", targetPath);
+                }
+                catch (Exception ex) when (ex.Message.Contains("invalid option"))
+                {
+                    LogToClean("<color=yellow>Note:</color> Timestamp repair skipped (version not supported).");
+                }
 
+                LogToClean("Step 3/3: Resolving conflicts...");
                 await SvnRunner.RunAsync("resolve --accept working -R .", targetPath);
 
-                SVNLogBridge.LogLine("<color=green>Deep Repair Finished!</color> Project is now stable.");
+                LogToClean("<color=green>Deep Repair Finished!</color> Project is now stable.");
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Repair Error:</color> {ex.Message}");
+                LogToClean($"<color=red>Repair Error:</color> {ex.Message}");
             }
             finally
             {
@@ -116,7 +139,7 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(targetPath)) return;
 
             IsProcessing = true;
-            SVNLogBridge.LogLine("<b>Cleaning up unversioned files [?]...</b>", append: false);
+            LogToClean("<b>Cleaning up unversioned files [?]...</b>", append: false);
 
             try
             {
@@ -133,13 +156,13 @@ namespace SVN.Core
                     statusModule.ClearCurrentData();
                 }
 
-                SVNLogBridge.LogLine("<color=green>Unversioned files removed successfully!</color>");
+                LogToClean("<color=green>Unversioned files removed successfully!</color>");
 
                 await Task.Delay(300);
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Cleanup Failed:</color> {ex.Message}");
+                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
             }
             finally
             {

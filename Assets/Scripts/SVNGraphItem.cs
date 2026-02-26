@@ -15,9 +15,11 @@ public class SVNGraphItem : MonoBehaviour
     public TextMeshProUGUI branchNameText;
     public TextMeshProUGUI dateText;
 
-    [Header("Expandable File List")]
-    public GameObject filesContainer;
-    public TextMeshProUGUI filesText;
+    [Header("Scrollable File List (Prefabs)")]
+    public GameObject filesContainer;  // Obiekt posiadający komponent ScrollRect
+    public Transform scrollContent;    // Obiekt 'Content' wewnątrz ScrollRect (z VerticalLayoutGroup)
+    public GameObject fileItemPrefab;  // Mały prefab z komponentem TextMeshProUGUI
+    public TextMeshProUGUI summaryText; // Nagłówek nad listą plików (np. "Summary: 2A, 3M")
 
     private List<string> changedPaths = new List<string>();
     private string currentBranchName;
@@ -25,12 +27,19 @@ public class SVNGraphItem : MonoBehaviour
     private long revisionNumber;
     private bool isExpanded = false;
 
+    // Metody wymagane przez RevGraphPanel.cs do filtrowania
     public string GetBranchName() => currentBranchName;
     public string GetMessage() => currentMessage;
 
     public void Setup(string visual, SVNRevisionNode node, string branchName, string hexColor)
     {
+        // Przypisanie danych do pól (kluczowe dla filtrowania i logowania)
         this.revisionNumber = node.Revision;
+        this.currentBranchName = branchName;
+        this.currentMessage = node.Message;
+        this.changedPaths = node.ChangedPaths;
+
+        // Wizualizacja grafu i rewizji
         graphVisualText.text = visual;
         revisionText.text = $"<color=black><b>r{node.Revision}</b></color>";
 
@@ -41,12 +50,13 @@ public class SVNGraphItem : MonoBehaviour
 
         authorText.text = node.Author;
 
+        // Czyszczenie wiadomości commita
         string cleanMsg = node.Message;
         int idx = cleanMsg.LastIndexOf(" /");
         if (idx != -1) cleanMsg = cleanMsg.Substring(0, idx).Trim();
-
         messageText.text = cleanMsg;
 
+        // Formatowanie daty
         if (dateText != null)
         {
             if (System.DateTime.TryParse(node.Date, out System.DateTime dt))
@@ -55,59 +65,62 @@ public class SVNGraphItem : MonoBehaviour
                 dateText.text = node.Date;
         }
 
-        this.currentBranchName = branchName;
-        this.currentMessage = node.Message;
-        this.changedPaths = node.ChangedPaths;
-
-        PrepareFilesText();
+        // Przygotowanie listy plików i ukrycie jej na starcie
+        PrepareFileList();
         filesContainer.SetActive(false);
     }
 
-    private void PrepareFilesText()
+    private void PrepareFileList()
     {
+        // Czyszczenie starych elementów w ScrollView (jeśli istnieją)
+        foreach (Transform child in scrollContent)
+        {
+            Destroy(child.gameObject);
+        }
+
         if (changedPaths == null || changedPaths.Count == 0)
         {
-            filesText.text = "<color=#BBBBBB><i>No file data available.</i></color>";
+            summaryText.text = "<color=#BBBBBB><i>No file data available.</i></color>";
             return;
         }
 
         int added = 0, modified = 0, deleted = 0, replaced = 0, conflicted = 0;
 
+        // Generowanie prefabów dla każdego pliku
         foreach (var path in changedPaths)
         {
-            if (path.StartsWith("A")) added++;
-            else if (path.StartsWith("M")) modified++;
-            else if (path.StartsWith("D")) deleted++;
-            else if (path.StartsWith("R")) replaced++;
-            else if (path.StartsWith("C")) conflicted++;
-        }
-
-        StringBuilder sb = new StringBuilder();
-
-        sb.Append("<size=85%><color=#EEEEEE><b>Summary: </b></color>");
-        if (added > 0) sb.Append($"<color=#55FF55>{added} Added</color>  ");
-        if (modified > 0) sb.Append($"<color=#FFFF55>{modified} Modified</color>  ");
-        if (deleted > 0) sb.Append($"<color=#FF5555>{deleted} Deleted</color>  ");
-        if (replaced > 0) sb.Append($"<color=#CC88FF>{replaced} Replaced</color>  ");
-        if (conflicted > 0) sb.Append($"<color=#FFB347>{conflicted} Conflicted</color>");
-        sb.AppendLine("</size>\n");
-
-        foreach (var path in changedPaths)
-        {
+            // Neonowe kolory dla szarego tła
             string color = "#FFFFFF";
             string statusTag = "";
 
-            if (path.StartsWith("A")) { color = "#55FF55"; statusTag = "[A]"; }
-            else if (path.StartsWith("M")) { color = "#FFFF55"; statusTag = "[M]"; }
-            else if (path.StartsWith("D")) { color = "#FF5555"; statusTag = "[D]"; }
-            else if (path.StartsWith("R")) { color = "#CC88FF"; statusTag = "[R]"; }
-            else if (path.StartsWith("C")) { color = "#FFB347"; statusTag = "[C]"; }
+            if (path.StartsWith("A")) { color = "#55FF55"; statusTag = "[A]"; added++; }
+            else if (path.StartsWith("M")) { color = "#FFFF55"; statusTag = "[M]"; modified++; }
+            else if (path.StartsWith("D")) { color = "#FF5555"; statusTag = "[D]"; deleted++; }
+            else if (path.StartsWith("R")) { color = "#CC88FF"; statusTag = "[R]"; replaced++; }
+            else if (path.StartsWith("C")) { color = "#FFB347"; statusTag = "[C]"; conflicted++; }
             else { statusTag = "[?]"; }
 
-            sb.AppendLine($"<size=90%><color={color}><b>{statusTag}</b> {path.Substring(1).Trim()}</color></size>");
+            // Tworzenie nowego elementu listy
+            GameObject item = Instantiate(fileItemPrefab, scrollContent);
+            TextMeshProUGUI txt = item.GetComponent<TextMeshProUGUI>();
+
+            if (txt != null)
+            {
+                // Wyświetlamy status i ścieżkę (bez pierwszej litery statusu z danych surowych)
+                txt.text = $"<size=90%><color={color}><b>{statusTag}</b> {path.Substring(1).Trim()}</color></size>";
+            }
         }
 
-        filesText.text = sb.ToString();
+        // Aktualizacja nagłówka Summary
+        StringBuilder sb = new StringBuilder();
+        sb.Append("<size=85%><color=#EEEEEE><b>Summary: </b></color>");
+        if (added > 0) sb.Append($"<color=#55FF55>{added}A</color> ");
+        if (modified > 0) sb.Append($"<color=#FFFF55>{modified}M</color> ");
+        if (deleted > 0) sb.Append($"<color=#FF5555>{deleted}D</color> ");
+        if (replaced > 0) sb.Append($"<color=#CC88FF>{replaced}R</color> ");
+        if (conflicted > 0) sb.Append($"<color=#FFB347>{conflicted}C</color>");
+
+        summaryText.text = sb.ToString();
     }
 
     public void OnItemClicked()
@@ -115,14 +128,18 @@ public class SVNGraphItem : MonoBehaviour
         isExpanded = !isExpanded;
         filesContainer.SetActive(isExpanded);
 
-        LayoutRebuilder.ForceRebuildLayoutImmediate(transform.parent.GetComponent<RectTransform>());
+        // Wymuszenie odświeżenia layoutu rodzica (Content w głównym grafie), aby wiersz się rozsunął
+        if (transform.parent != null)
+        {
+            LayoutRebuilder.ForceRebuildLayoutImmediate(transform.parent.GetComponent<RectTransform>());
+        }
     }
 
     public void LogChangedFiles()
     {
         if (changedPaths == null || changedPaths.Count == 0)
         {
-            Debug.Log("No changed paths data found (missing --verbose flag in logs?)");
+            Debug.Log("No changed paths data found.");
             return;
         }
 
@@ -136,6 +153,15 @@ public class SVNGraphItem : MonoBehaviour
 
     public void OnClick()
     {
-        Debug.Log($"Clicked r{revisionNumber}");
+        Debug.Log($"Selected revision r{revisionNumber}");
+    }
+
+    public void SetExpanded(bool state)
+    {
+        isExpanded = state;
+        if (filesContainer != null)
+        {
+            filesContainer.SetActive(state);
+        }
     }
 }
