@@ -22,6 +22,8 @@ public class SVNGraphItem : MonoBehaviour
     public TextMeshProUGUI summaryText; // Nagłówek nad listą plików (np. "Summary: 2A, 3M")
 
     private List<string> changedPaths = new List<string>();
+
+    private string currentAuthor;
     private string currentBranchName;
     private string currentMessage;
     private long revisionNumber;
@@ -30,6 +32,8 @@ public class SVNGraphItem : MonoBehaviour
     // Metody wymagane przez RevGraphPanel.cs do filtrowania
     public string GetBranchName() => currentBranchName;
     public string GetMessage() => currentMessage;
+    public string GetAuthor() => currentAuthor;
+    public long GetRevision() => revisionNumber;
 
     public void Setup(string visual, SVNRevisionNode node, string branchName, string hexColor)
     {
@@ -49,6 +53,7 @@ public class SVNGraphItem : MonoBehaviour
         }
 
         authorText.text = node.Author;
+        currentAuthor = node.Author; ;
 
         // Czyszczenie wiadomości commita
         string cleanMsg = node.Message;

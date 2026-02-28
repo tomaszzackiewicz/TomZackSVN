@@ -24,8 +24,11 @@ public class RevGraphPanel : MonoBehaviour
 
     public void OnFilterChanged(string filterText)
     {
+        if (graphModule == null) return;
+
         filterText = filterText.ToLower();
-        Debug.Log($"Filtering: {filterText} on {graphModule.InstantiatedItems.Count} elements");
+
+        bool hasFilter = !string.IsNullOrEmpty(filterText);
 
         foreach (var itemGo in graphModule.InstantiatedItems)
         {
@@ -34,14 +37,20 @@ public class RevGraphPanel : MonoBehaviour
             SVNGraphItem item = itemGo.GetComponent<SVNGraphItem>();
             if (item == null) continue;
 
-            bool matches = string.IsNullOrEmpty(filterText) ||
-                           item.GetBranchName().ToLower().Contains(filterText) ||
-                           item.GetMessage().ToLower().Contains(filterText);
+            string branch = item.GetBranchName().ToLower();
+            string message = item.GetMessage().ToLower();
+            string author = item.GetAuthor().ToLower();
+            string revision = item.GetRevision().ToString();
+
+            bool matches = !hasFilter ||
+                           branch.Contains(filterText) ||
+                           message.Contains(filterText) ||
+                           author.Contains(filterText) ||
+                           revision.Contains(filterText);
 
             itemGo.SetActive(matches);
         }
     }
-
     public async void Button_RefreshGraph()
     {
         SVNLogBridge.LogLine("<b>[SVN]</b> Fetching revision history...");
