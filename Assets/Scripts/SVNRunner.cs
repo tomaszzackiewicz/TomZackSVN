@@ -77,7 +77,8 @@ namespace SVN.Core
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                float timeoutLimit = args.StartsWith("commit") ? float.MaxValue : 45f;
+                //0 - inifinity
+                float timeoutLimit = IsLongRunningOperation(args) ? 0f : 60f;
                 DateTime startTime = DateTime.Now;
 
                 while (!process.HasExited)
@@ -88,7 +89,7 @@ namespace SVN.Core
                         throw new OperationCanceledException("SVN operation cancelled by user.");
                     }
 
-                    if ((DateTime.Now - startTime).TotalSeconds > timeoutLimit)
+                    if (timeoutLimit > 0 && (DateTime.Now - startTime).TotalSeconds > timeoutLimit)
                     {
                         try { if (!process.HasExited) process.Kill(); } catch { }
                         throw new Exception($"SVN Timeout: Operation exceeded {timeoutLimit} seconds.");
@@ -118,6 +119,16 @@ namespace SVN.Core
                 process.OutputDataReceived -= outHandler;
                 process.ErrorDataReceived -= errHandler;
             }
+        }
+
+        private static bool IsLongRunningOperation(string args)
+        {
+            if (string.IsNullOrEmpty(args)) return false;
+            string low = args.ToLower();
+
+            string[] longOps = { "commit", "update", "checkout", "switch", "export", "upgrade" };
+
+            return longOps.Any(op => low.Contains(op)) || low.Contains("--targets");
         }
 
         public static async Task<string> RunLiveAsync(string args, string workingDir, Action<string> onLineReceived, CancellationToken token = default)

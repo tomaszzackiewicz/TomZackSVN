@@ -256,7 +256,7 @@ namespace SVN.Core
             var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
             totalCommitBytes = 0;
 
-            Debug.Log($"<color=green>[SVN BUILDER]</color> Budowanie struktury. Root: {root}");
+            Debug.Log($"<color=green>[SVN BUILDER]</color> Building structure. Root: {root}");
 
             foreach (var relPath in sortedPaths)
             {
@@ -282,7 +282,15 @@ namespace SVN.Core
                     if (elements.Any(e => e.FullPath == currentPath)) continue;
 
                     string physicalPath = (root.TrimEnd('/') + "/" + currentPath).Replace("\\", "/");
-                    bool isActuallyFolder = Directory.Exists(physicalPath) || (i < parts.Length - 1);
+
+                    // --- UPDATED FOLDER LOGIC ---
+                    // Item is treated as a directory if:
+                    // 1. It acts as a parent in the path hierarchy
+                    // 2. It exists on disk as a Directory
+                    // 3. It's missing from disk (Status: !) but was identified as DIR by SVN
+                    bool isActuallyFolder = (i < parts.Length - 1) ||
+                                            Directory.Exists(physicalPath) ||
+                                            (statusDict.ContainsKey(currentPath) && (statusDict[currentPath].status == "DIR" || statusDict[currentPath].size == "DIR"));
 
                     string displayStatus = " ";
                     if (i == parts.Length - 1 && statusDict.ContainsKey(relPath))
@@ -354,25 +362,6 @@ namespace SVN.Core
             return (bytes / Math.Pow(1024, digit)).ToString("F2") + " " + units[digit];
         }
 
-        private string GetColorForStatus(string status)
-        {
-            switch (status)
-            {
-                case "M": return "#FFD700"; // Gold
-                case "A": return "#00FF00"; // Green
-                case "?": return "#00E5FF"; // Cyan
-                case "D": return "#FF4444"; // Red
-                case "I": return "#888888"; // Grey
-                default: return "#FFFFFF";
-            }
-        }
-
-        public void UpdateFilesStatus(Dictionary<string, (string status, string size)> newStatus)
-        {
-            if (newStatus == null) return;
-            svnManager.CurrentStatusDict = newStatus;
-        }
-
         public void UpdateAllStatisticsUI(SvnStats stats, bool isIgnoredView)
         {
             if (svnUI == null) return;
@@ -405,6 +394,8 @@ namespace SVN.Core
 
         public static async Task<Dictionary<string, (string status, string size)>> GetChangesDictionaryAsync(string workingDir)
         {
+            // Czyścimy workingDir ze ścieżek typu "\" na "/"
+            workingDir = workingDir.Replace("\\", "/").TrimEnd('/');
             string output = await SvnRunner.RunAsync("status", workingDir);
             var statusDict = new Dictionary<string, (string status, string size)>();
 
@@ -419,15 +410,25 @@ namespace SVN.Core
 
                 char rawCode = line[0];
                 string stat = rawCode.ToString().ToUpper();
+
                 if ("MA?!DC".Contains(stat))
                 {
                     string rawPath = line.Substring(8).Trim();
-
                     string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
 
                     string fullPhysicalPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
+                    string typeInfo = "FILE";
 
-                    statusDict[cleanPath] = (stat, SvnRunner.GetFileSizeSafe(fullPhysicalPath));
+                    if (Directory.Exists(fullPhysicalPath))
+                    {
+                        typeInfo = "DIR";
+                    }
+                    else if (stat == "!" || stat == "D")
+                    {
+                        if (!Path.GetFileName(cleanPath).Contains(".")) typeInfo = "DIR";
+                    }
+
+                    statusDict[cleanPath] = (stat, typeInfo);
                 }
             }
             return statusDict;
@@ -883,35 +884,6 @@ namespace SVN.Core
                 if (svnUI.SVNCommitTreeDisplay != null && _commitTreeData != null)
                 {
                     svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-                }
-            }
-        }
-
-        public void SetElementChecked(SvnTreeElement element, bool isChecked, List<SvnTreeElement> currentTree)
-        {
-            if (element == null) return;
-
-            element.IsChecked = isChecked;
-
-            if (element.IsFolder)
-            {
-                string prefix = element.FullPath + "/";
-                var children = currentTree.Where(e => e.FullPath.StartsWith(prefix));
-
-                foreach (var child in children)
-                {
-                    child.IsChecked = isChecked;
-                }
-            }
-            if (isChecked)
-            {
-                string[] parts = element.FullPath.Split('/');
-                string parentPath = "";
-                for (int i = 0; i < parts.Length - 1; i++)
-                {
-                    parentPath = i == 0 ? parts[i] : $"{parentPath}/{parts[i]}";
-                    var parent = currentTree.FirstOrDefault(e => e.FullPath == parentPath);
-                    if (parent != null) parent.IsChecked = true;
                 }
             }
         }
