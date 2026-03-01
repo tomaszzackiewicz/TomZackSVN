@@ -73,7 +73,7 @@ namespace SVN.Core
         public void Button_DeepRepair() => svnManager.GetModule<SVNClean>().DeepRepair();
         public void Button_Log() => svnManager.GetModule<SVNLog>().ShowLog();
         public void Button_RevertAllMissing() => svnManager.GetModule<SVNCommit>().ExecuteRevertAllMissing();
-        public void Button_ShowOnlyIgnored() => svnManager.GetModule<SVNStatus>().RefreshIgnoredPanel();
+        public void Button_ShowOnlyIgnored() => svnManager.GetModule<SVNIgnore>().RefreshIgnoredPanel();
         public void Button_Explore() => svnManager.GetModule<SVNExternal>().OpenInExplorer();
         public void Button_Lock() => svnManager.GetModule<SVNLock>().LockModified();
         public void Button_Unlock() => svnManager.GetModule<SVNLock>().UnlockAll();

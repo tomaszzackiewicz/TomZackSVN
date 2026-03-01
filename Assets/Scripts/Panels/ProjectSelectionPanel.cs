@@ -78,7 +78,7 @@ public class ProjectSelectionPanel : MonoBehaviour
             svnManager.GetModule<SVNSettings>().UpdateUIFromManager();
         }
 
-        svnManager.GetModule<SVNStatus>().ShowProjectInfo(project, project.workingDir);
+        await svnManager.GetModule<SVNBar>().ShowProjectInfo(project, project.workingDir);
         PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
         PlayerPrefs.Save();
 

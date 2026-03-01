@@ -68,7 +68,6 @@ namespace SVN.Core
                 SVNLogBridge.LogLine(summary, false);
 
                 IsProcessing = false;
-                await Task.Delay(500);
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)

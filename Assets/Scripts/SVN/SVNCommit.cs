@@ -395,7 +395,9 @@ namespace SVN.Core
 
                 if (commitResult.Contains("Committed revision"))
                 {
-                    LogToConsole("\n<color=green><b>SUCCESS!</b></color>");
+                    string revision = svnManager.ParseRevision(commitResult);
+                    LogToConsole($"\n<color=green><b>SUCCESS!</b></color> Revision: {revision}");
+
                     if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
 
                     statusModule.ClearCurrentData();

@@ -126,7 +126,7 @@ namespace SVN.Core
                 if (!result.ToLower().Contains("error") && !result.ToLower().Contains("failed"))
                 {
                     LogToPanel($"<b><color=green>[Switch Complete]</color> Now on {targetName}.</b>");
-                    svnManager.GetModule<SVNStatus>().ShowProjectInfo(null, svnManager.WorkingDir);
+                    await svnManager.GetModule<SVNBar>().ShowProjectInfo(null, svnManager.WorkingDir);
                     await svnManager.RefreshStatus();
                 }
                 else

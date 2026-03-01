@@ -11,10 +11,10 @@ public class IgnoredPanel : MonoBehaviour
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
 
-        svnManager.GetModule<SVNStatus>().RefreshIgnoredPanel();
+        svnManager.GetModule<SVNIgnore>().RefreshIgnoredPanel();
     }
 
-    public void Button_RefreshRules() => svnManager.GetModule<SVNStatus>().RefreshIgnoredPanel();
-    public void Button_ReloadIgnoreRules() => svnManager.GetModule<SVNStatus>().ReloadIgnoreRules();
-    public void Button_PushLocalRulesToSvn() => svnManager.GetModule<SVNStatus>().PushLocalRulesToSvn();
+    public void Button_RefreshRules() => svnManager.GetModule<SVNIgnore>().RefreshIgnoredPanel();
+    public void Button_ReloadIgnoreRules() => svnManager.GetModule<SVNIgnore>().ReloadIgnoreRules();
+    public void Button_PushLocalRulesToSvn() => svnManager.GetModule<SVNIgnore>().PushLocalRulesToSvn();
 }

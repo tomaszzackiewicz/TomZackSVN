@@ -122,6 +122,8 @@ namespace SVN.Core
                 RegisterModule(new SVNDiff(svnUI, this));
                 RegisterModule(new SVNBlame(svnUI, this));
                 RegisterModule(new SVNRevGraph(svnUI, this));
+                RegisterModule(new SVNBar(svnUI, this));
+                RegisterModule(new SVNIgnore(svnUI, this));
 
                 Debug.Log($"<color=green>[SVN]</color> Successfully initialized {_modules.Count} modules manually.");
             }
@@ -220,15 +222,16 @@ namespace SVN.Core
         private async void InitializeActiveProject(SVNProject project)
         {
             await AutoDetectSvnUser();
-            var statusModule = GetModule<SVNStatus>();
-            if (statusModule != null)
+            var barModule = GetModule<SVNBar>();
+            if (barModule != null)
             {
-                statusModule.ShowProjectInfo(project, WorkingDir);
+                await barModule.ShowProjectInfo(project, WorkingDir);
             }
 
             await RefreshRepositoryInfo();
             await RefreshStatus();
 
+            var statusModule = GetModule<SVNStatus>();
             var poller = GetComponent<SVNPollingService>();
             if (poller != null && statusModule != null)
             {
@@ -308,13 +311,13 @@ namespace SVN.Core
 
         public async Task UpdateStatus()
         {
-            var statusModule = GetModule<SVNStatus>();
-            if (statusModule != null)
+            var barModule = GetModule<SVNBar>();
+            if (barModule != null)
             {
                 string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
                 var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
 
-                await statusModule.ShowProjectInfo(lastProject, WorkingDir, isRefreshing: false);
+                await barModule.ShowProjectInfo(lastProject, WorkingDir, isRefreshing: false);
             }
         }
 
