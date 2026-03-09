@@ -19527,8 +19527,8 @@ RectTransform:
   - {fileID: 1166306703}
   - {fileID: 1357545938}
   - {fileID: 1829657687}
-  - {fileID: 1059909124}
   - {fileID: 112827867}
+  - {fileID: 1059909124}
   - {fileID: 816366540}
   m_Father: {fileID: 1232145531}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -38167,7 +38167,7 @@ PrefabInstance:
       objectReference: {fileID: 1074149138}
     - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
-      value: Button_ExpandAll
+      value: Button_ExportHistoryToTxt
       objectReference: {fileID: 0}
     - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
@@ -38175,11 +38175,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: ExpandButton
+      value: ExportHistoryToTxtButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Expand
+      value: Export History
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_fontAsset
@@ -61809,11 +61813,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: CollapsButton
+      value: CollapsAllButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Collaps
+      value: Collaps All
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_fontAsset

@@ -200,26 +200,19 @@ namespace SVN.Core
 
         public void BrowseDiffFilePath()
         {
-            // Pobieramy ścieżkę roboczą z managera
             string root = svnManager.WorkingDir;
 
-            // Definiujemy filtr plików (wszystkie pliki)
             var extensions = new[] { new ExtensionFilter("All Files", "*") };
 
-            // Otwieramy okno wyboru pliku (false na końcu oznacza brak multiselectu)
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select File to Diff", root, extensions, false);
 
-            // Sprawdzamy czy użytkownik coś wybrał
             if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
             {
-                // Normalizujemy ukośniki
                 string selectedPath = paths[0].Replace('\\', '/');
                 string normalizedRoot = root.Replace('\\', '/');
 
-                // Sprawdzamy, czy wybrany plik znajduje się wewnątrz WorkingDir
                 if (selectedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Wycinamy ścieżkę absolutną, zostawiając relatywną dla SVN
                     selectedPath = selectedPath.Substring(normalizedRoot.Length).TrimStart('/');
                 }
                 else
@@ -227,7 +220,6 @@ namespace SVN.Core
                     SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!", true);
                 }
 
-                // Przypisujemy do pola Input w panelu Diff
                 if (svnUI.DiffTargetFileInput != null)
                 {
                     svnUI.DiffTargetFileInput.text = selectedPath;
@@ -250,7 +242,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Filtr plików tekstowych jest świetnym pomysłem dla Blame
             var extensions = new[] {
         new ExtensionFilter("Text Files", "cs", "shader", "json", "txt", "xml", "yaml"),
         new ExtensionFilter("All Files", "*")
@@ -265,7 +256,6 @@ namespace SVN.Core
 
                 if (selectedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Konwersja na ścieżkę relatywną
                     selectedPath = selectedPath.Substring(normalizedRoot.Length).TrimStart('/');
 
                     if (svnUI.BlameTargetFileInput != null)
@@ -280,7 +270,6 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // Bardzo ważne ostrzeżenie
                     SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file for Blame is outside of the Working Directory!", true);
                 }
             }
@@ -298,6 +287,33 @@ namespace SVN.Core
             string args = $"/command:log /path:\"{root}\"";
             System.Diagnostics.Process.Start("TortoiseProc.exe", args);
             SVNLogBridge.LogLine("<b>[External]</b> Opening TortoiseSVN Log...");
+        }
+
+        public void SaveHistoryToFile(string content)
+        {
+            if (string.IsNullOrEmpty(content))
+            {
+                SVNLogBridge.LogLine("<color=yellow>Warning:</color> No content to export.");
+                return;
+            }
+
+            string defaultName = $"SVN_History_{DateTime.Now:yyyyMMdd_HHmm}";
+            string path = StandaloneFileBrowser.SaveFilePanel("Save SVN History Report", "", defaultName, "txt");
+
+            if (!string.IsNullOrEmpty(path))
+            {
+                try
+                {
+                    System.IO.File.WriteAllText(path, content);
+                    SVNLogBridge.LogLine($"<color=green>Success:</color> History exported to {path}");
+
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogLine($"<color=red>Export Error:</color> {ex.Message}");
+                }
+            }
         }
     }
 }

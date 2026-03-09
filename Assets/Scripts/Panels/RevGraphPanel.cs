@@ -27,7 +27,6 @@ public class RevGraphPanel : MonoBehaviour
         if (graphModule == null) return;
 
         filterText = filterText.ToLower();
-
         bool hasFilter = !string.IsNullOrEmpty(filterText);
 
         foreach (var itemGo in graphModule.InstantiatedItems)
@@ -37,20 +36,41 @@ public class RevGraphPanel : MonoBehaviour
             SVNGraphItem item = itemGo.GetComponent<SVNGraphItem>();
             if (item == null) continue;
 
+            // Pobieramy podstawowe dane
             string branch = item.GetBranchName().ToLower();
             string message = item.GetMessage().ToLower();
             string author = item.GetAuthor().ToLower();
             string revision = item.GetRevision().ToString();
 
+            // 1. Sprawdzamy podstawowe pola (to co miałeś)
             bool matches = !hasFilter ||
-                           branch.Contains(filterText) ||
-                           message.Contains(filterText) ||
-                           author.Contains(filterText) ||
-                           revision.Contains(filterText);
+                            branch.Contains(filterText) ||
+                            message.Contains(filterText) ||
+                            author.Contains(filterText) ||
+                            revision.Contains(filterText);
 
+            // 2. JEŚLI jeszcze nie ma dopasowania, przeszukujemy listę plików
+            if (!matches && hasFilter)
+            {
+                var paths = item.GetChangedPaths(); // Używamy gettera, który dodaliśmy wcześniej
+                if (paths != null)
+                {
+                    foreach (string path in paths)
+                    {
+                        if (path.ToLower().Contains(filterText))
+                        {
+                            matches = true;
+                            break; // Znaleźliśmy plik, nie musimy sprawdzać reszty w tej rewizji
+                        }
+                    }
+                }
+            }
+
+            // Ustawiamy widoczność wiersza w grafie
             itemGo.SetActive(matches);
         }
     }
+
     public async void Button_RefreshGraph()
     {
         SVNLogBridge.LogLine("<b>[SVN]</b> Fetching revision history...");
@@ -102,11 +122,7 @@ public class RevGraphPanel : MonoBehaviour
             {
                 foreach (XmlNode p in pathNodes)
                 {
-                    // KEY FIX: Get the "action" attribute (A, M, or D)
                     string action = p.Attributes["action"]?.Value ?? "";
-
-                    // Add the action character to the start of the string
-                    // Now StartsWith("A") etc. will work in SVNGraphItem
                     node.ChangedPaths.Add($"{action} {p.InnerText}");
                 }
             }
@@ -117,5 +133,5 @@ public class RevGraphPanel : MonoBehaviour
     }
 
     public void Button_CollpaseAll() => svnManager.GetModule<SVNRevGraph>().CollapseAll();
-    public void Button_ExpandAll() => svnManager.GetModule<SVNRevGraph>().ExpandAll();
+    public void Button_ExportHistoryToTxt() => svnManager.GetModule<SVNRevGraph>().ExportHistoryToTxt();
 }

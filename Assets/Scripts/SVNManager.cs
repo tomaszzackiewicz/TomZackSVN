@@ -397,6 +397,87 @@ namespace SVN.Core
                 }
             }
         }
+
+        public async void CatAndOpenFile(string relativePath, long revision)
+        {
+            if (string.IsNullOrEmpty(RepositoryUrl))
+            {
+                Debug.LogError("[SVN] Repository URL is missing. Cannot perform 'cat'.");
+                return;
+            }
+
+            try
+            {
+                IsProcessing = true;
+                SVNLogBridge.LogLine($"<b>[SVN]</b> Fetching r{revision}: {relativePath}...", append: true);
+
+                // 1. Ścieżka tymczasowa
+                string fileName = Path.GetFileName(relativePath);
+                string tempFileName = $"r{revision}_{fileName}";
+                string cacheFolder = Path.Combine(Application.temporaryCachePath, "SVN_Cache");
+
+                if (!Directory.Exists(cacheFolder))
+                    Directory.CreateDirectory(cacheFolder);
+
+                string tempPath = Path.Combine(cacheFolder, tempFileName);
+
+                // 2. URL
+                string repoRoot = GetRepoRoot();
+                string fullUrl = repoRoot + (relativePath.StartsWith("/") ? "" : "/") + relativePath;
+
+                // 3. Pobieranie zawartości
+                string command = $"cat -r {revision} \"{fullUrl}\"";
+                string fileContent = await SvnRunner.RunAsync(command, WorkingDir, false);
+
+                if (string.IsNullOrEmpty(fileContent))
+                {
+                    Debug.LogError($"[SVN] Failed to fetch content for {relativePath}");
+                    return;
+                }
+
+                // 4. Zapis (używamy standardowego zapisu, jeśli File.WriteAllTextAsync nie jest dostępny w Twoim profilu .NET)
+                File.WriteAllText(tempPath, fileContent);
+
+                // 5. Inteligentne otwieranie
+                string absoluteTempPath = Path.GetFullPath(tempPath);
+
+                // Sprawdzamy, czy ścieżka do edytora (MergeToolPath) jest ustawiona i czy plik istnieje
+                if (!string.IsNullOrEmpty(MergeToolPath) && File.Exists(MergeToolPath))
+                {
+                    try
+                    {
+                        // Uruchamiamy wybrany w ustawieniach program z plikiem jako argumentem
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
+                        {
+                            FileName = MergeToolPath,
+                            Arguments = $"\"{absoluteTempPath}\"",
+                            UseShellExecute = true // Pozwala na uruchomienie GUI
+                        });
+
+                        SVNLogBridge.LogLine($"<color=green>Opened in editor:</color> {tempFileName}", append: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[SVN] Failed to open with MergeTool: {ex.Message}. Falling back to default.");
+                        Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
+                    }
+                }
+                else
+                {
+                    // Jeśli ścieżka do edytora jest pusta, używamy domyślnego programu systemowego
+                    Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
+                    SVNLogBridge.LogLine($"<color=yellow>Opened with default app:</color> {tempFileName} (No editor path set)", append: true);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[SVN] CatAndOpenFile error: {e.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
     }
 
     [Serializable]

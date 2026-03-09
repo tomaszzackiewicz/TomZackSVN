@@ -14,7 +14,7 @@ public class ClipboardPrefab : MonoBehaviour
     {
         if (scrollContent == null)
         {
-            Debug.LogError("Clipboard: 'Scroll Content' is not assigned in the Inspector!");
+            Debug.LogError("Clipboard: 'Scroll Content' is not assigned!");
             return;
         }
 
@@ -28,18 +28,38 @@ public class ClipboardPrefab : MonoBehaviour
             sb.AppendLine("---------------------------");
         }
 
-        TextMeshProUGUI[] fileTexts = scrollContent.GetComponentsInChildren<TextMeshProUGUI>(true);
+        SVNFileItem[] fileItems = scrollContent.GetComponentsInChildren<SVNFileItem>(true);
         int fileCount = 0;
 
-        foreach (var tmp in fileTexts)
+        if (fileItems.Length > 0)
         {
-            if (tmp == summaryText) continue;
-
-            string cleanPath = Regex.Replace(tmp.text, "<.*?>", string.Empty).Trim();
-            if (!string.IsNullOrEmpty(cleanPath))
+            foreach (var item in fileItems)
             {
-                sb.AppendLine(cleanPath);
-                fileCount++;
+                TextMeshProUGUI tmp = item.GetComponentInChildren<TextMeshProUGUI>();
+                if (tmp != null)
+                {
+                    string cleanLine = Regex.Replace(tmp.text, "<.*?>", string.Empty).Trim();
+                    if (!string.IsNullOrEmpty(cleanLine))
+                    {
+                        sb.AppendLine(cleanLine);
+                        fileCount++;
+                    }
+                }
+            }
+        }
+        else
+        {
+            TextMeshProUGUI[] allTexts = scrollContent.GetComponentsInChildren<TextMeshProUGUI>(true);
+            foreach (var tmp in allTexts)
+            {
+                if (tmp == summaryText) continue;
+
+                string cleanLine = Regex.Replace(tmp.text, "<.*?>", string.Empty).Trim();
+                if (!string.IsNullOrEmpty(cleanLine))
+                {
+                    sb.AppendLine(cleanLine);
+                    fileCount++;
+                }
             }
         }
 
@@ -47,25 +67,8 @@ public class ClipboardPrefab : MonoBehaviour
 
         if (!string.IsNullOrEmpty(finalResult))
         {
-            try
-            {
-                GUIUtility.systemCopyBuffer = finalResult;
-
-                TextEditor te = new TextEditor();
-                te.text = finalResult;
-                te.SelectAll();
-                te.Copy();
-
-                Debug.Log($"<color=green><b>SUCCESS!</b></color> Copied {fileCount} lines.\n<b>Clipboard content:</b>\n{finalResult}");
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"Clipboard critical error: {e.Message}");
-            }
-        }
-        else
-        {
-            Debug.LogWarning("Clipboard: No text found to copy.");
+            GUIUtility.systemCopyBuffer = finalResult;
+            Debug.Log($"<color=green><b>SUCCESS!</b></color> Copied {fileCount} files to clipboard.");
         }
     }
 }

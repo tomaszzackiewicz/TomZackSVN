@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
@@ -25,7 +26,7 @@ namespace SVN.Core
         {
             foreach (Transform t in svnUI.GraphContainer)
             {
-                Object.Destroy(t.gameObject);
+                UnityEngine.Object.Destroy(t.gameObject);
             }
             instantiatedItems.Clear();
 
@@ -71,14 +72,15 @@ namespace SVN.Core
                     }
                 }
 
-                GameObject itemGo = Object.Instantiate(svnUI.GraphItemPrefab, svnUI.GraphContainer);
+                GameObject itemGo = UnityEngine.Object.Instantiate(svnUI.GraphItemPrefab, svnUI.GraphContainer);
 
                 instantiatedItems.Add(itemGo);
 
                 SVNGraphItem item = itemGo.GetComponent<SVNGraphItem>();
                 if (item != null)
                 {
-                    item.Setup(treeStr.ToString(), node, info.Name, branchColor);
+                    //item.Setup(treeStr.ToString(), node, info.Name, branchColor);
+                    item.Setup(treeStr.ToString(), node, info.Name, branchColor, svnManager);
                 }
             }
 
@@ -159,5 +161,55 @@ namespace SVN.Core
                 LayoutRebuilder.MarkLayoutForRebuild(svnUI.GraphContainer as RectTransform);
             }
         }
+
+        public void ExportHistoryToTxt()
+        {
+            if (instantiatedItems == null || instantiatedItems.Count == 0)
+            {
+                Debug.LogWarning("[SVN] Graph revision is empty.");
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("=== SVN REVISION HISTORY REPORT ===");
+            sb.AppendLine($"Generated: {DateTime.Now}");
+            sb.AppendLine($"Total Revisions: {instantiatedItems.Count}");
+            sb.AppendLine("===================================\n");
+
+            foreach (GameObject go in instantiatedItems)
+            {
+                if (go == null) continue;
+
+                SVNGraphItem item = go.GetComponent<SVNGraphItem>();
+                if (item != null)
+                {
+                    sb.AppendLine($"[r{item.GetRevision()}]");
+                    sb.AppendLine($"Date:    {item.GetDate()}");
+                    sb.AppendLine($"Author:  {item.GetAuthor()}");
+                    sb.AppendLine($"Branch:  [{item.GetBranchName()}]");
+                    sb.AppendLine($"Message: {item.GetMessage()}");
+
+                    List<string> paths = item.GetChangedPaths();
+
+                    if (paths != null && paths.Count > 0)
+                    {
+                        sb.AppendLine("Changes:");
+                        foreach (string path in paths)
+                        {
+                            string cleanPath = System.Text.RegularExpressions.Regex.Replace(path, "<.*?>", string.Empty);
+                            sb.AppendLine($"  {cleanPath}");
+                        }
+                    }
+                    sb.AppendLine("-----------------------------------");
+                }
+            }
+
+            var external = svnManager.GetModule<SVNExternal>();
+            if (external != null)
+            {
+                external.SaveHistoryToFile(sb.ToString());
+            }
+        }
+
     }
 }
