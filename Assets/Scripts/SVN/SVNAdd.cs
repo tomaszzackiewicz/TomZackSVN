@@ -123,5 +123,43 @@ namespace SVN.Core
             if (!IsProcessing && svnUI.OperationProgressBar != null)
                 svnUI.OperationProgressBar.gameObject.SetActive(false);
         }
+
+        public async void AddSingleItem(SvnTreeElement element)
+        {
+            if (IsProcessing || element == null) return;
+
+            string root = svnManager.WorkingDir;
+            if (string.IsNullOrEmpty(root)) return;
+
+            CancellationToken token = PrepareNewOperation();
+            ClearAndLog($"<b>[Add]</b> Adding item: {element.Name}...");
+
+            try
+            {
+                await SvnRunner.RunAsync($"add \"{element.FullPath}\"", root, true, token);
+
+                UpdateLightLog($"<color=green>Successfully added:</color> {element.Name}");
+
+                IsProcessing = false;
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    UpdateLightLog("<color=#4FC3F7>Rebuilding tree...</color>");
+
+                    statusModule.ShowOnlyModified();
+                }
+            }
+            catch (Exception ex)
+            {
+                UpdateLightLog($"<color=red>Add Error: {ex.Message}</color>");
+
+                IsProcessing = false;
+            }
+            finally
+            {
+                CleanUpOperation(token);
+            }
+        }
     }
 }

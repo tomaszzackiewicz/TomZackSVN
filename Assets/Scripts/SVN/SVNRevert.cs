@@ -92,5 +92,35 @@ namespace SVN.Core
                 throw;
             }
         }
+
+        public async void RevertSingleItem(SvnTreeElement element)
+        {
+            if (IsProcessing || element == null) return;
+
+            string root = svnManager.WorkingDir;
+            if (string.IsNullOrEmpty(root)) return;
+
+            IsProcessing = true;
+            SVNLogBridge.LogLine($"<b>Reverting:</b> {element.Name}...");
+
+            try
+            {
+                await SvnRunner.RunAsync($"revert \"{element.FullPath}\"", root);
+                SVNLogBridge.LogLine($"<color=green>Successfully reverted:</color> {element.Name}");
+
+                IsProcessing = false;
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    statusModule.ShowOnlyModified();
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=red>Revert Error:</color> {ex.Message}");
+                IsProcessing = false;
+            }
+        }
     }
 }

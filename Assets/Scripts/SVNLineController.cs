@@ -2,24 +2,33 @@ using UnityEngine;
 using TMPro;
 using SVN.Core;
 using UnityEngine.UI;
+using System.IO;
 
 public class SvnLineController : MonoBehaviour
 {
-    public bool IsCommitDelegate;
-    public TextMeshProUGUI indentText;
-    public TextMeshProUGUI statusText;
-    public TextMeshProUGUI nameText;
-    public TextMeshProUGUI sizeText;
-    public Button foldButton;
-    public Toggle selectionToggle;
+    [SerializeField] private bool IsCommitDelegate;
+    [SerializeField] private TextMeshProUGUI indentText;
+    [SerializeField] private TextMeshProUGUI statusText;
+    [SerializeField] private TextMeshProUGUI nameText;
+    [SerializeField] private TextMeshProUGUI sizeText;
+    [SerializeField] private Button foldButton;
+    [SerializeField] private Toggle selectionToggle;
+    [SerializeField] private Button fullRowButton;
+    [SerializeField] private Button revertBtn;
+    [SerializeField] private Button logBtn;
+    [SerializeField] private Button explorerBtn;
+    [SerializeField] private Button addBtn;
 
     private SvnTreeElement _element;
-    private SVNStatus _manager;
+    private SVNStatus svnStatus;
+
+    private float lastClickTime;
+    private const float doubleClickThreshold = 0.3f;
 
     public void Setup(SvnTreeElement element, SVNStatus manager)
     {
         _element = element;
-        _manager = manager;
+        svnStatus = manager;
 
         string indent = "";
         for (int i = 0; i < element.Depth; i++)
@@ -108,20 +117,127 @@ public class SvnLineController : MonoBehaviour
 
                 if (_element.IsFolder)
                 {
-                    _manager.ToggleChildrenSelection(_element, val);
+                    svnStatus.ToggleChildrenSelection(_element, val);
                 }
 
-                _manager.NotifySelectionChanged();
+                svnStatus.NotifySelectionChanged();
             });
         }
+
+        if (fullRowButton != null)
+        {
+            fullRowButton.onClick.RemoveAllListeners();
+
+            bool canDiff = !element.IsFolder && !string.IsNullOrEmpty(element.Status) && element.Status != "DIR";
+
+            if (canDiff)
+            {
+                fullRowButton.interactable = true;
+                fullRowButton.onClick.AddListener(OnFullRowClick);
+            }
+            else
+            {
+                if (element.IsFolder)
+                    fullRowButton.onClick.AddListener(OnFoldClick);
+                else
+                    fullRowButton.interactable = false;
+            }
+        }
+
+        string status = _element.Status;
+        bool isUnversioned = status == "?";
+        bool isMissingOrDeleted = status == "!" || status == "D";
+        bool hasChanges = !string.IsNullOrEmpty(status) && status != " ";
+
+        if (addBtn != null) addBtn.gameObject.SetActive(false);
+        if (revertBtn != null) revertBtn.gameObject.SetActive(false);
+        if (logBtn != null) logBtn.gameObject.SetActive(false);
+
+        if (!_element.IsFolder && hasChanges)
+        {
+            if (isUnversioned && addBtn != null)
+            {
+                addBtn.gameObject.SetActive(true);
+                addBtn.onClick.RemoveAllListeners();
+                addBtn.onClick.AddListener(() =>
+                {
+                    SVNManager.Instance.GetModule<SVNAdd>()?.AddSingleItem(_element);
+                });
+            }
+
+            if (!isUnversioned && revertBtn != null)
+            {
+                revertBtn.gameObject.SetActive(true);
+                revertBtn.onClick.RemoveAllListeners();
+                revertBtn.onClick.AddListener(() =>
+                {
+                    SVNManager.Instance.GetModule<SVNRevert>()?.RevertSingleItem(_element);
+                });
+            }
+
+            if (!isUnversioned && logBtn != null)
+            {
+                logBtn.gameObject.SetActive(true);
+                logBtn.onClick.RemoveAllListeners();
+                logBtn.onClick.AddListener(() =>
+                {
+                    SVNManager.Instance.GetModule<SVNLog>()?.ShowLogForPath(_element.FullPath);
+                });
+            }
+
+            if (explorerBtn != null)
+            {
+                explorerBtn.gameObject.SetActive(true);
+                explorerBtn.onClick.RemoveAllListeners();
+                explorerBtn.onClick.AddListener(() =>
+                {
+                    var external = SVNManager.Instance.GetModule<SVNExternal>();
+                    if (isMissingOrDeleted)
+                        external?.OpenInExplorer();
+                    else
+                        external?.OpenInExplorerAndSelect(_element.FullPath);
+                });
+            }
+        }
+        else
+        {
+            if (explorerBtn != null)
+            {
+                explorerBtn.gameObject.SetActive(true);
+                explorerBtn.onClick.RemoveAllListeners();
+                explorerBtn.onClick.AddListener(() =>
+                {
+                    SVNManager.Instance.GetModule<SVNExternal>()?.OpenInExplorerAndSelect(_element.FullPath);
+                });
+            }
+        }
+    }
+
+    private void OnFullRowClick()
+    {
+        float timeSinceLastClick = Time.time - lastClickTime;
+
+        var diffModule = SVNManager.Instance?.GetModule<SVNDiff>();
+        if (diffModule == null) return;
+
+        if (timeSinceLastClick <= doubleClickThreshold)
+        {
+            _ = diffModule.ShowDiff(_element.FullPath);
+        }
+        else
+        {
+            _ = diffModule.ShowPreviewInUnity(_element.FullPath);
+        }
+
+        lastClickTime = Time.time;
     }
 
     private void OnFoldClick()
     {
-        if (_manager != null && _element != null)
+        if (svnStatus != null && _element != null)
         {
             _element.IsExpanded = !_element.IsExpanded;
-            _manager.ToggleFolderVisibility(_element);
+            svnStatus.ToggleFolderVisibility(_element);
         }
     }
 

@@ -26,7 +26,8 @@ public class RevGraphPanel : MonoBehaviour
     {
         if (graphModule == null) return;
 
-        filterText = filterText.ToLower();
+        // Przygotowujemy filtr do porównań (małe litery)
+        string filterLower = filterText.ToLower();
         bool hasFilter = !string.IsNullOrEmpty(filterText);
 
         foreach (var itemGo in graphModule.InstantiatedItems)
@@ -36,38 +37,36 @@ public class RevGraphPanel : MonoBehaviour
             SVNGraphItem item = itemGo.GetComponent<SVNGraphItem>();
             if (item == null) continue;
 
-            // Pobieramy podstawowe dane
-            string branch = item.GetBranchName().ToLower();
-            string message = item.GetMessage().ToLower();
-            string author = item.GetAuthor().ToLower();
-            string revision = item.GetRevision().ToString();
-
-            // 1. Sprawdzamy podstawowe pola (to co miałeś)
+            // 1. Sprawdzamy podstawowe pola (branch, wiadomość, autor, rewizja)
             bool matches = !hasFilter ||
-                            branch.Contains(filterText) ||
-                            message.Contains(filterText) ||
-                            author.Contains(filterText) ||
-                            revision.Contains(filterText);
+                           item.GetBranchName().ToLower().Contains(filterLower) ||
+                           item.GetMessage().ToLower().Contains(filterLower) ||
+                           item.GetAuthor().ToLower().Contains(filterLower) ||
+                           item.GetRevision().ToString().Contains(filterLower);
 
-            // 2. JEŚLI jeszcze nie ma dopasowania, przeszukujemy listę plików
+            // 2. Jeśli brak dopasowania w nagłówku, przeszukujemy listę plików
             if (!matches && hasFilter)
             {
-                var paths = item.GetChangedPaths(); // Używamy gettera, który dodaliśmy wcześniej
+                var paths = item.GetChangedPaths();
                 if (paths != null)
                 {
                     foreach (string path in paths)
                     {
-                        if (path.ToLower().Contains(filterText))
+                        if (path.ToLower().Contains(filterLower))
                         {
                             matches = true;
-                            break; // Znaleźliśmy plik, nie musimy sprawdzać reszty w tej rewizji
+                            break;
                         }
                     }
                 }
             }
 
-            // Ustawiamy widoczność wiersza w grafie
             itemGo.SetActive(matches);
+
+            if (matches)
+            {
+                item.ApplyHighlight(hasFilter ? filterText : null);
+            }
         }
     }
 

@@ -114,5 +114,48 @@ namespace SVN.Core
                 svnUI.LogScrollRect.verticalNormalizedPosition = 0f;
             }
         }
+
+        public async void ShowLogForPath(string relativePath)
+        {
+            if (IsProcessing) return;
+
+            string root = svnManager.WorkingDir;
+            if (string.IsNullOrEmpty(root)) return;
+
+            IsProcessing = true;
+
+            SVNLogBridge.LogLine($"<color=#00FF99>Fetching history for: {relativePath}...</color>", append: false);
+
+            try
+            {
+                string output = await SvnRunner.RunAsync($"log -l 10 \"{relativePath}\"", root);
+
+                if (string.IsNullOrWhiteSpace(output))
+                {
+                    SVNLogBridge.LogLine("<color=yellow>No history found for this file.</color>");
+                }
+                else
+                {
+                    string coloredOutput = ApplyColoring(output);
+                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
+                    SVNLogBridge.LogLine(coloredOutput);
+                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
+
+                    // if (svnUI.LogScrollRect != null)
+                    // {
+                    //     Canvas.ForceUpdateCanvases();
+                    //     svnUI.LogScrollRect.verticalNormalizedPosition = 1f;
+                    // }
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=red>Log Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
     }
 }

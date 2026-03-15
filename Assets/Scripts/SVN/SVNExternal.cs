@@ -315,5 +315,32 @@ namespace SVN.Core
                 }
             }
         }
+
+        public void OpenInExplorerAndSelect(string relativePath)
+        {
+            try
+            {
+                string root = svnManager.WorkingDir;
+                if (string.IsNullOrEmpty(root)) return;
+
+                // Budujemy pełną ścieżkę i normalizujemy pod Windowsa
+                string fullPath = System.IO.Path.Combine(root, relativePath).Replace('/', '\\');
+
+                if (System.IO.File.Exists(fullPath) || System.IO.Directory.Exists(fullPath))
+                {
+                    // Argument /select, wymusza zaznaczenie pliku w otwartym oknie
+                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{fullPath}\"");
+                }
+                else
+                {
+                    // Jeśli plik nie istnieje (np. został usunięty), otwórz po prostu root
+                    System.Diagnostics.Process.Start("explorer.exe", root.Replace('/', '\\'));
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=red>Explorer Error:</color> {ex.Message}");
+            }
+        }
     }
 }
