@@ -10,7 +10,7 @@ namespace SVN.Core
     public class SVNStatus : SVNBase
     {
         private List<SvnTreeElement> _flatTreeData = new List<SvnTreeElement>();
-        
+
         private List<SvnTreeElement> _commitTreeData;
 
         private bool _isCurrentViewIgnored = false;
@@ -252,19 +252,15 @@ namespace SVN.Core
             var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
             totalCommitBytes = 0;
 
-            Debug.Log($"<color=green>[SVN BUILDER]</color> Building structure. Root: {root}");
-
             foreach (var relPath in sortedPaths)
             {
                 string normalizedPath = relPath.Replace('\\', '/');
 
+                // Obsługa ścieżek z trunk (specyficzne dla Twojego środowiska)
                 if (normalizedPath.Contains(":/"))
                 {
                     int trunkIdx = normalizedPath.LastIndexOf("trunk/");
-                    if (trunkIdx != -1)
-                    {
-                        normalizedPath = normalizedPath.Substring(trunkIdx);
-                    }
+                    if (trunkIdx != -1) normalizedPath = normalizedPath.Substring(trunkIdx);
                 }
 
                 string[] parts = normalizedPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
@@ -277,31 +273,48 @@ namespace SVN.Core
 
                     if (elements.Any(e => e.FullPath == currentPath)) continue;
 
-                    string physicalPath = (root.TrimEnd('/') + "/" + currentPath).Replace("\\", "/");
+                    string physicalPath = Path.Combine(root, currentPath).Replace("\\", "/");
 
-                    // --- UPDATED FOLDER LOGIC ---
-                    // Item is treated as a directory if:
-                    // 1. It acts as a parent in the path hierarchy
-                    // 2. It exists on disk as a Directory
-                    // 3. It's missing from disk (Status: !) but was identified as DIR by SVN
-                    bool isActuallyFolder = (i < parts.Length - 1) ||
-                                            Directory.Exists(physicalPath) ||
-                                            (statusDict.ContainsKey(currentPath) && (statusDict[currentPath].status == "DIR" || statusDict[currentPath].size == "DIR"));
+                    // --- POPRAWIONA LOGIKA FOLDERU ---
+                    bool isLastPart = (i == parts.Length - 1);
+                    bool isActuallyFolder = false;
 
+                    if (!isLastPart)
+                    {
+                        // Jeśli to nie jest ostatni element ścieżki (np. "Content" w "Content/Maps/Level.uasset"),
+                        // to na 100% jest to folder.
+                        isActuallyFolder = true;
+                    }
+                    else
+                    {
+                        // Jeśli to jest ostatni element, sprawdźmy fizycznie lub w statusie
+                        if (Directory.Exists(physicalPath))
+                        {
+                            isActuallyFolder = true;
+                        }
+                        else if (statusDict.ContainsKey(currentPath) && statusDict[currentPath].size == "DIR")
+                        {
+                            isActuallyFolder = true;
+                        }
+                        // Jeśli plik nie istnieje i nie jest DIR w statusie, isActuallyFolder zostaje false.
+                    }
+
+                    // Ustalanie statusu do wyświetlenia
                     string displayStatus = " ";
-                    if (i == parts.Length - 1 && statusDict.ContainsKey(relPath))
+                    if (isLastPart && statusDict.ContainsKey(relPath))
                         displayStatus = statusDict[relPath].status;
                     else if (isActuallyFolder)
                         displayStatus = statusDict.ContainsKey(currentPath) ? statusDict[currentPath].status : "DIR";
 
+                    // Rozmiar tylko dla plików
                     string fileSize = "";
-                    if (!isActuallyFolder && i == parts.Length - 1)
+                    if (!isActuallyFolder && isLastPart)
                     {
                         if (File.Exists(physicalPath))
                         {
                             long bytes = new FileInfo(physicalPath).Length;
                             fileSize = FormatSize(bytes);
-                            if (displayStatus != " " && displayStatus != "DIR")
+                            if (displayStatus != " " && displayStatus != "DIR" && displayStatus != "?")
                                 totalCommitBytes += bytes;
                         }
                         else
@@ -310,15 +323,14 @@ namespace SVN.Core
                         }
                     }
 
+                    // Logika zaznaczania (Checkbox)
                     bool isChecked = !string.IsNullOrWhiteSpace(displayStatus) &&
                                      displayStatus != " " &&
                                      displayStatus != "?" &&
                                      displayStatus != "I";
 
                     if (previousSelectionStates.TryGetValue(currentPath, out bool previousValue))
-                    {
                         isChecked = previousValue;
-                    }
 
                     elements.Add(new SvnTreeElement
                     {
@@ -335,14 +347,11 @@ namespace SVN.Core
                 }
             }
 
-            var reversedElements = elements.Where(e => e.IsFolder).OrderByDescending(e => e.Depth).ToList();
-            foreach (var folder in reversedElements)
+            // Aktualizacja zaznaczeń rodziców (jeśli dziecko zaznaczone, rodzic też)
+            var reversedFolders = elements.Where(e => e.IsFolder).OrderByDescending(e => e.Depth).ToList();
+            foreach (var folder in reversedFolders)
             {
-                bool hasAnyCheckedChild = elements.Any(e =>
-                    e.FullPath.StartsWith(folder.FullPath + "/") &&
-                    e.IsChecked);
-
-                if (hasAnyCheckedChild)
+                if (elements.Any(e => e.FullPath.StartsWith(folder.FullPath + "/") && e.IsChecked))
                 {
                     folder.IsChecked = true;
                 }
@@ -407,21 +416,35 @@ namespace SVN.Core
                 char rawCode = line[0];
                 string stat = rawCode.ToString().ToUpper();
 
-                if ("MA?!DC".Contains(stat))
+                // SVN Status może zwracać różne znaki, sprawdzamy te najważniejsze
+                if ("MA?!DC~R".Contains(stat))
                 {
                     string rawPath = line.Substring(8).Trim();
                     string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
-
                     string fullPhysicalPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
+
                     string typeInfo = "FILE";
 
+                    // 1. Sprawdzamy fizycznie na dysku
                     if (Directory.Exists(fullPhysicalPath))
                     {
                         typeInfo = "DIR";
                     }
+                    else if (File.Exists(fullPhysicalPath))
+                    {
+                        typeInfo = "FILE";
+                    }
+                    // 2. Jeśli plik/folder nie istnieje (Status ! lub D)
                     else if (stat == "!" || stat == "D")
                     {
-                        if (!Path.GetFileName(cleanPath).Contains(".")) typeInfo = "DIR";
+                        // W SVN 'status' dla folderów usuniętych często nie ma rozszerzenia, 
+                        // ale najbezpieczniej jest sprawdzić, czy ścieżka kończy się slashem 
+                        // lub czy w metadanych SVN figurował jako katalog (opcjonalnie).
+                        // Tutaj usuwamy błędny warunek z kropką (Contains(".")).
+
+                        // Jeśli ścieżka występuje w hierarchii jako rodzic innych zmienionych plików,
+                        // zostanie i tak obsłużona jako DIR w metodzie BuildFlatTreeStructureText.
+                        typeInfo = "FILE";
                     }
 
                     statusDict[cleanPath] = (stat, typeInfo);

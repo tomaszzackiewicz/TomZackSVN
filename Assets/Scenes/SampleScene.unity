@@ -7902,7 +7902,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1911977654}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.16725145
+  m_Size: 0.13473439
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -46185,7 +46185,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 5027.886}
+  m_SizeDelta: {x: 0, y: 6485.036}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1662562891
 MonoBehaviour:
@@ -46221,65 +46221,87 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "\r\n<size=140%><color=blue><b>TomZackSVN ver. 1.0</b></color></size>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>Support
-    & Credits</b></size>\r\n<line-height=125%>\r\n<b>Developer:</b> <color=#FBBF24>Tomasz
-    Zackiewicz</color>\r\n<b>Support Email:</b> <color=#34D399>pogtoma@gmail.com</color>\r\n<b>Bug
+  m_text: "<size=140%><color=blue><b>TomZackSVN ver. 1.0</b></color></size>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Support
+    & Credits</b></size>\n<line-height=125%>\n<b>Developer:</b> <color=#FBBF24>Tomasz
+    Zackiewicz</color>\n<b>Support Email:</b> <color=#34D399>pogtoma@gmail.com</color>\n<b>Bug
     Reports:</b> Please provide the <b>Log Text File</b> by using the <b>Open Log</b>
-    button when reporting issues.\r\n</line-height>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>Project
-    & Repository Management</b></size>\r\n<line-height=125%>\r\n\u2022 <b>Switch
-    Project:</b>\r\nHub for managing workspaces. Add projects by URL, Path, and Private
-    Key.\r\n\u2022 <b>Checkout:</b>\r\nPanel for the first download of a project.
-    Includes an <b>Abort</b> option.\r\n\u2022 <b>Add Repo:</b>\r\nQuickly register
-    a new repository without switching your current working copy.\r\n</line-height>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>Daily
-    Development Workflow</b></size>\r\n<line-height=125%>\r\n\u2022 <b>Update:</b>\r\nSync
-    local files with the server. Use this daily before starting work.\r\n\u2022 <b>Refresh:</b>\r\nTriggers
-    a manual scan of your local directory to update file statuses.\r\n\u2022 <b>Commit:</b>\r\nOpens
-    the primary commit window to review changes and write log messages.\r\n\u2022
-    <b>Commit Selected:</b>\r\nSmart commit for checked items. Auto-registers folders
-    and handles missing (!) items.\r\n\u2022 <b>Cancel Commit:</b>\r\nSafely aborts
-    an upload and runs a <i>Cleanup</i> to unlock the database.\r\n\u2022 <b>Refresh
-    (Inside Commit):</b>\r\nSecondary refresh to ensure the commit list is up-to-date
-    before sending.\r\n\u2022 <b>Revert:</b>\r\nDiscards local modifications and
-    restores the file to the server state.\r\n\u2022 <b>Add:</b>\r\nNotifies SVN
-    to start tracking a new \"Unversioned\" (?) file.\r\n\u2022 <b>Discard Untracked:</b>\r\nDeletes
-    files that are not registered in SVN (cleanup tool).\r\n</line-height>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>Maintenance
-    & Repair (Clean Panel)</b></size>\r\n<line-height=125%>\r\n\u2022 <b>Cleanup:</b>\r\nUnlocks
-    the database (removes <b>\"Locked\"</b> status) after crashes or interruptions.\r\n\u2022
-    <b>Vacuum:</b>\r\nOptimizes <i>wc.db</i> to reclaim disk space and speed up the
-    application.\r\n\u2022 <b>Deep Repair:</b>\r\n<b>Advanced Mode.</b> Combines
-    Cleanup, timestamp refresh, and auto-resolution of stuck merges.\r\n\u2022 <b>Fix
-    Missing / Revert All Missing:</b>\r\nRepairs or restores files that were deleted
-    manually outside of SVN.\r\n</line-height>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>Revision
-    Graph (RevGraph)</b></size>\r\n<line-height=125%>\r\n\u2022 <b>Load Graph:</b>\r\nFetches
-    data and renders the visual history tree (Trunk, Branches, Tags).\r\n\u2022 <b>Expand
-    All:</b>\r\nUnfolds every commit to show the list of changed files (Modified,
-    Added, Deleted).\r\n\u2022 <b>Collapse All:</b>\r\nHides file details for a clean
-    overview of the branch structure.\r\n</line-height>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>Branching
-    & Merging</b></size>\r\n<line-height=125%>\r\n\u2022 <b>Branch Tag:</b>\r\nPanel
-    for creating, switching, or deleting branches and release tags.\r\n\u2022 <b>Refresh
-    Branches:</b>\r\nUpdates the list of available branches/tags from the server.\r\n\u2022
-    <b>Compare with Trunk:</b>\r\nShows differences between your current branch and
-    the main Trunk.\r\n\u2022 <b>Dry Run:</b>\r\n<b>Crucial!</b> Simulates a merge
-    to report potential conflicts without changing code.\r\n\u2022 <b>Merge (Action):</b>\r\nExecutes
-    the actual merging of the selected branch into your working copy.\r\n</line-height>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>Conflict
-    Resolution (Resolve)</b></size>\r\n<line-height=125%>\r\n\u2022 <b>Open in Editor:</b>\r\nOpens
-    the file to manually fix overlapping lines of code.\r\n\u2022 <b>Mark as Resolved:</b>\r\nTells
-    SVN the conflict is fixed and the file is ready to commit.\r\n\u2022 <b>Resolve
-    as Theirs:</b>\r\nOverwrites your changes with the server's version.\r\n\u2022
-    <b>Resolve as Mine:</b>\r\nKeeps your local version and ignores the server's
-    changes.\r\n</line-height>\r\n<voffset=1em>--------------------------------------------------</voffset>\r\n<size=120%><b>System
-    & Advanced Options</b></size>\r\n<line-height=125%>\r\n\u2022 <b>Show Ignored
-    / Refresh Rules:</b>\r\nDisplays ignored files and refreshes the exclusion list.\r\n\u2022
-    <b>Load/Apply New Rules:</b>\r\nLoads ignore rules from a file and applies them
-    globally to the server.\r\n\u2022 <b>Open Log:</b>\r\nOpens the raw log file.
-    <b>Required for reporting bugs.</b>\r\n\u2022 <b>Clear Log:</b>\r\nClears the
-    internal application log console.\r\n\u2022 <b>Show Log:</b>\r\nDisplays the
-    repository revision history.\r\n\u2022 <b>Settings:</b>\r\nConfiguration for
-    connections, paths, and external text editors.\r\n\u2022 <b>Explore:</b>\r\nOpens
-    the project root directory in Windows Explorer.\r\n\u2022 <b>Run Command:</b>\r\nAdvanced
-    field to execute raw SVN commands directly.\r\n\u2022 <b>Copy Button (C):</b>\r\nCopies
-    the current console log to the clipboard for quick sharing.\r\n\u2022 <b>Exit:</b>\r\nSafely
-    closes the application.\r\n</line-height>\n<voffset=4em>  </voffset>"
+    button when reporting issues.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Project
+    & Repository Management</b></size>\n<line-height=125%>\n\u2022 <b>Switch Project:</b>\nHub
+    for managing workspaces. Add projects by URL, Path, and Private Key.\n\u2022
+    <b>Checkout:</b>\nPanel for the first download of a project. Includes an <b>Abort</b>
+    option.\n\u2022 <b>Add Repo:</b>\nQuickly register a new repository without switching
+    your current working copy.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Daily
+    Development Workflow</b></size>\n<line-height=125%>\r\n<size=120%><b>File Status
+    Legend (Understanding the Icons)</b></size>\n<line-height=130%>\nIn the file
+    list, you will see specific prefixes or icons. Here is what they mean:\n\n\u2022
+    <color=#FFFFFF><b>? (Unversioned):</b></color> This is a <b>New File</b> that
+    exists in your folder but is not yet tracked by SVN. It will not be sent to the
+    server unless you use the <b>Add</b> command first.\n\n\u2022 <color=#FBBF24><b>M
+    (Modified):</b></color> You have <b>changed this file</b> locally. These changes
+    are only on your computer and need to be <b>Committed</b> to be visible to others.\n\n\u2022
+    <color=#34D399><b>A (Added):</b></color> A new file that you have successfully
+    scheduled to be added. It is now <b>tracked by SVN</b> and will be uploaded during
+    your next Commit.\n\n\u2022 <color=#F87171><b>! (Missing):</b></color> This file
+    was <b>deleted manually</b> (e.g., via Windows Explorer or Unity) without telling
+    SVN. This status <b>blocks Commits</b>. You must use <b>Fix Missing</b> to remove
+    it from the database or <b>Revert</b> to bring it back.\n\n\u2022 <color=#F87171><b>D
+    (Deleted):</b></color> The file is officially <b>scheduled for deletion</b> from
+    the repository. It will be removed from the server once you Commit.\n\n\u2022
+    <color=#EF4444><b>C (Conflicted):</b></color> <b>Critical Error.</b> This happens
+    when you and another person changed the same lines in the same file. You <b>must
+    resolve</b> this conflict (using the Resolve tools) before SVN allows you to
+    Commit.\n\n\u2022 <color=#94A3B8><b>I (Ignored):</b></color> This file is explicitly
+    <b>excluded</b> from the repository (like temporary build files or local settings).
+    It will not be tracked or shown in normal file lists.\r\n</line-height>\r\n<line-height=125%>\r\n\u2022
+    <b>A:</b> Add file to repository. \r\n\u2022 <b>R:</b> Revert changes to file
+    .\r\n\u2022 <b>L:</b> View file history (log) .\r\n\u2022 <b>E:</b> Open file
+    location on disk .\n</line-height>\n\u2022 <b>Update:</b>\nSync local files with
+    the server. Use this daily before starting work.\n\u2022 <b>Refresh:</b>\nTriggers
+    a manual scan of your local directory to update file statuses.\n\u2022 <b>Commit:</b>\nOpens
+    the primary commit window to review changes and write log messages.\n\u2022 <b>Commit
+    Selected:</b>\nSmart commit for checked items. Auto-registers folders and handles
+    missing (!) items.\n\u2022 <b>Cancel Commit:</b>\nSafely aborts an upload and
+    runs a <i>Cleanup</i> to unlock the database.\n\u2022 <b>Refresh (Inside Commit):</b>\nSecondary
+    refresh to ensure the commit list is up-to-date before sending.\n\u2022 <b>Revert:</b>\nDiscards
+    local modifications and restores the file to the server state.\n\u2022 <b>Add:</b>\nNotifies
+    SVN to start tracking a new \"Unversioned\" (?) file.\n\u2022 <b>Discard Untracked:</b>\nDeletes
+    files that are not registered in SVN (cleanup tool).\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Maintenance
+    & Repair (Clean Panel)</b></size>\n<line-height=125%>\n\u2022 <b>Cleanup:</b>\nUnlocks
+    the database (removes <b>\"Locked\"</b> status) after crashes or interruptions.\n\u2022
+    <b>Vacuum:</b>\nOptimizes <i>wc.db</i> to reclaim disk space and speed up the
+    application.\n\u2022 <b>Deep Repair:</b>\n<b>Advanced Mode.</b> Combines Cleanup,
+    timestamp refresh, and auto-resolution of stuck merges.\n\u2022 <b>Fix Missing
+    / Revert All Missing:</b>\nRepairs or restores files that were deleted manually
+    outside of SVN.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Revision
+    Graph (RevGraph)</b></size>\n<line-height=125%>\n\u2022 <b>Load Graph:</b>\nFetches
+    data and renders the visual history tree (Trunk, Branches, Tags).\n\u2022 <b>Expand
+    All:</b>\nUnfolds every commit to show the list of changed files (Modified, Added,
+    Deleted).\n\u2022 <b>Collapse All:</b>\nHides file details for a clean overview
+    of the branch structure.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Branching
+    & Merging</b></size>\n<line-height=125%>\n\u2022 <b>Branch Tag:</b>\nPanel for
+    creating, switching, or deleting branches and release tags.\n\u2022 <b>Refresh
+    Branches:</b>\nUpdates the list of available branches/tags from the server.\n\u2022
+    <b>Compare with Trunk:</b>\nShows differences between your current branch and
+    the main Trunk.\n\u2022 <b>Dry Run:</b>\n<b>Crucial!</b> Simulates a merge to
+    report potential conflicts without changing code.\n\u2022 <b>Merge (Action):</b>\nExecutes
+    the actual merging of the selected branch into your working copy.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Conflict
+    Resolution (Resolve)</b></size>\n<line-height=125%>\n\u2022 <b>Open in Editor:</b>\nOpens
+    the file to manually fix overlapping lines of code.\n\u2022 <b>Mark as Resolved:</b>\nTells
+    SVN the conflict is fixed and the file is ready to commit.\n\u2022 <b>Resolve
+    as Theirs:</b>\nOverwrites your changes with the server's version.\n\u2022 <b>Resolve
+    as Mine:</b>\nKeeps your local version and ignores the server's changes.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>System
+    & Advanced Options</b></size>\n<line-height=125%>\n\u2022 <b>Show Ignored / Refresh
+    Rules:</b>\nDisplays ignored files and refreshes the exclusion list.\n\u2022
+    <b>Load/Apply New Rules:</b>\nLoads ignore rules from a file and applies them
+    globally to the server.\n\u2022 <b>Open Log:</b>\nOpens the raw log file. <b>Required
+    for reporting bugs.</b>\n\u2022 <b>Clear Log:</b>\nClears the internal application
+    log console.\n\u2022 <b>Show Log:</b>\nDisplays the repository revision history.\n\u2022
+    <b>Settings:</b>\nConfiguration for connections, paths, and external text editors.\n\u2022
+    <b>Explore:</b>\nOpens the project root directory in Windows Explorer.\n\u2022
+    <b>Run Command:</b>\nAdvanced field to execute raw SVN commands directly.\n\u2022
+    <b>Copy Button (C):</b>\nCopies the current console log to the clipboard for
+    quick sharing.\n\u2022 <b>Exit:</b>\nSafely closes the application.\n</line-height>\n<voffset=4em> 
+    </voffset>"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -55125,7 +55147,7 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1657918751}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.83274853}
+  m_AnchorMin: {x: 0, y: 0.8652656}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}

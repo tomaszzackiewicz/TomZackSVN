@@ -3,7 +3,7 @@ using TMPro;
 using SVN.Core;
 using System.Collections.Generic;
 using UnityEngine.UI;
-using System.Text.RegularExpressions; // Wymagane dla Regex
+using System.Text.RegularExpressions;
 
 public class SVNGraphItem : MonoBehaviour
 {
@@ -26,12 +26,14 @@ public class SVNGraphItem : MonoBehaviour
     private bool isExpanded = false;
     private SVNManager svnManager;
 
-    // --- Surowe dane do podświetlania ---
+    private float lastClickTime = 0f;
+    private const float doubleClickThreshold = 0.3f;
+
     private string rawAuthor;
     private string rawBranchName;
     private string rawMessage;
     private string rawRevisionStr;
-    private string currentFilter; // Zapamiętujemy filtr dla listy plików
+    private string currentFilter;
     private string branchHexColor;
 
     public string GetBranchName() => rawBranchName;
@@ -48,7 +50,6 @@ public class SVNGraphItem : MonoBehaviour
         this.branchHexColor = hexColor;
         this.changedPaths = node.ChangedPaths;
 
-        // Zapisujemy surowe dane
         this.rawAuthor = node.Author;
         this.rawBranchName = branchName;
         this.rawRevisionStr = $"r{node.Revision}";
@@ -58,7 +59,6 @@ public class SVNGraphItem : MonoBehaviour
         if (idx != -1) cleanMsg = cleanMsg.Substring(0, idx).Trim();
         this.rawMessage = cleanMsg;
 
-        // Stałe wizualia
         graphVisualText.text = visual;
 
         if (dateText != null)
@@ -71,32 +71,25 @@ public class SVNGraphItem : MonoBehaviour
 
         filesContainer.SetActive(false);
 
-        // Inicjalne ustawienie tekstu bez filtra
         ApplyHighlight(null);
     }
 
-    // --- KLUCZOWA METODA PODŚWIETLAJĄCA ---
     public void ApplyHighlight(string filter)
     {
         this.currentFilter = filter;
 
-        // 1. Podświetlamy numer rewizji (zachowując kolor czarny)
         revisionText.text = $"<color=black><b>{GetMarkedText(rawRevisionStr, filter)}</b></color>";
 
-        // 2. Autor
         authorText.text = GetMarkedText(rawAuthor, filter);
 
-        // 3. Branch (zachowując jego oryginalny kolor)
         if (branchNameText != null)
         {
             string highlightedBranch = GetMarkedText(rawBranchName, filter);
             branchNameText.text = $"<color={branchHexColor}>[{highlightedBranch}]</color>";
         }
 
-        // 4. Wiadomość
         messageText.text = GetMarkedText(rawMessage, filter);
 
-        // 5. Jeśli lista plików jest otwarta, musimy ją przerysować z nowym podświetleniem
         if (isExpanded)
         {
             BuildFileButtons();
@@ -107,7 +100,6 @@ public class SVNGraphItem : MonoBehaviour
     {
         if (string.IsNullOrEmpty(filter) || string.IsNullOrEmpty(text)) return text;
 
-        // Mark z lekką przezroczystością (AA)
         string pattern = Regex.Escape(filter);
         return Regex.Replace(text, pattern, "<mark=#FFFF00AA>$0</mark>", RegexOptions.IgnoreCase);
     }
@@ -148,7 +140,6 @@ public class SVNGraphItem : MonoBehaviour
             SVNFileItem script = go.GetComponent<SVNFileItem>();
             if (script != null)
             {
-                // PRZEKAZUJEMY PODŚWIETLONĄ NAZWĘ PLIKU
                 string highlightedPath = GetMarkedText(filePath, currentFilter);
                 script.Setup($"[{statusChar}]", highlightedPath, color, revisionNumber, svnManager);
             }

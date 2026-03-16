@@ -277,10 +277,11 @@ namespace SVN.Core
             // Added <b> to removed count to match the style of removed lines
             string stats = $"<color=#A6FFB5>+{addedCount}</color>  <color=#800000><b>-{removedCount}</b></color>";
 
-            string legend = $"<b>[ PREVIEW MODE ]</b>  {stats}\n" +
-                            $"<color=#00E5FF>[@@/Index] Metadata</color>  " +
-                            $"<color=#50C8FF>Double-click for External Editor</color>\n" +
-                            $"<color=#555555>__________________________________________________________________________</color>\n\n";
+            string legend = $@"<b>[ PREVIEW MODE ]</b>  {stats}
+<color=#50C8FF>Double-click file for External Editor</color>
+<color=#555555>__________________________________________________________________________</color>
+
+";
 
             return legend + formattedBody.ToString();
         }

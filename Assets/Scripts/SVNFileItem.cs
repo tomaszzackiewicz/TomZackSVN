@@ -1,13 +1,16 @@
 using UnityEngine;
 using TMPro;
-using UnityEngine.UI;
 
 public class SVNFileItem : MonoBehaviour
 {
     [SerializeField] private TextMeshProUGUI fileText;
+
     private string fullPath;
     private long revision;
     private SVN.Core.SVNManager svnManager;
+
+    private float lastClickTime = 0f;
+    private const float doubleClickThreshold = 0.3f;
 
     public void Setup(string statusTag, string path, string color, long rev, SVN.Core.SVNManager mgr)
     {
@@ -20,9 +23,22 @@ public class SVNFileItem : MonoBehaviour
 
     public void Button_OpenFile()
     {
-        if (svnManager != null)
+        float timeSinceLastClick = Time.time - lastClickTime;
+
+        if (timeSinceLastClick <= doubleClickThreshold)
         {
-            svnManager.CatAndOpenFile(fullPath, revision);
+            // DOUBLE CLICK
+            if (svnManager != null)
+            {
+                svnManager.CatAndOpenFile(fullPath, revision);
+            }
+
+            lastClickTime = 0f;
+        }
+        else
+        {
+            // SINGLE CLICK
+            lastClickTime = Time.time;
         }
     }
 }

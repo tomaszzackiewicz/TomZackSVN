@@ -41,6 +41,9 @@ public class SvnLineController : MonoBehaviour
                              ? ""
                              : $" [{element.Status}]";
 
+        nameText.fontStyle = FontStyles.Normal;
+        nameText.color = Color.white;
+
         if (element.IsFolder)
         {
             string dirHex = "#003366";
