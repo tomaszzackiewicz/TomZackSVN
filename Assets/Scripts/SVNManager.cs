@@ -60,7 +60,7 @@ namespace SVN.Core
 
                 workingDir = cleaned.Trim();
 
-                SVNLogBridge.LogLine($"[SVN Manager] WorkingDir sanitized to: '{workingDir}'");
+                //SVNLogBridge.LogLine($"[SVN Manager] WorkingDir sanitized to: '{workingDir}'");
             }
         }
         public string CurrentKey { get => currentKey; set => currentKey = value; }
@@ -222,17 +222,25 @@ namespace SVN.Core
         private async void InitializeActiveProject(SVNProject project)
         {
             await AutoDetectSvnUser();
+
+            if (this == null) return;
+
             var barModule = GetModule<SVNBar>();
             if (barModule != null)
             {
                 await barModule.ShowProjectInfo(project, WorkingDir);
+                if (this == null) return;
             }
 
             await RefreshRepositoryInfo();
+            if (this == null) return;
+
             await RefreshStatus();
+            if (this == null) return;
 
             var statusModule = GetModule<SVNStatus>();
             var poller = GetComponent<SVNPollingService>();
+
             if (poller != null && statusModule != null)
             {
                 poller.StartPolling(statusModule);
@@ -252,7 +260,7 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(path)) return string.Empty;
 
             System.Text.StringBuilder debugInfo = new System.Text.StringBuilder();
-            debugInfo.AppendLine($"[SVN Path Debug] Original Path: '{path}'");
+            //debugInfo.AppendLine($"[SVN Path Debug] Original Path: '{path}'");
             // for (int i = 0; i < path.Length; i++)
             // {
             //     char c = path[i];
