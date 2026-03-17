@@ -79,12 +79,11 @@ namespace SVN.Core
                 SVNGraphItem item = itemGo.GetComponent<SVNGraphItem>();
                 if (item != null)
                 {
-                    //item.Setup(treeStr.ToString(), node, info.Name, branchColor);
                     item.Setup(treeStr.ToString(), node, info.Name, branchColor, svnManager);
                 }
             }
 
-            Debug.Log($"[SVN] Render complete. Generated and registered {instantiatedItems.Count} rows.");
+            SVNLogBridge.LogLine($"[SVN] Render complete. Generated and registered {instantiatedItems.Count} rows.");
         }
 
         private BranchInfo GetBranchInfo(SVNRevisionNode node)
@@ -166,7 +165,7 @@ namespace SVN.Core
         {
             if (instantiatedItems == null || instantiatedItems.Count == 0)
             {
-                Debug.LogWarning("[SVN] Graph revision is empty.");
+                SVNLogBridge.LogError("[SVN] Graph revision is empty.");
                 return;
             }
 

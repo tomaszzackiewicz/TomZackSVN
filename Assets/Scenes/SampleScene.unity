@@ -3192,6 +3192,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 16bc3724c53b91c4f808452fed19ce5a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  tooltipText: {fileID: 1793665157}
   logText: {fileID: 75739079}
   logCountInputField: {fileID: 1568406459}
   addProjectNameInput: {fileID: 410745829}
@@ -3244,13 +3245,13 @@ MonoBehaviour:
   NotificationText: {fileID: 76472617}
   resolveTargetFileInput: {fileID: 1078187115}
   cleanText: {fileID: 653496554}
-  DiffTargetFileInput: {fileID: 121790332}
-  DiffConsoleText: {fileID: 1702355785}
-  BlameTargetFileInput: {fileID: 658214032}
-  BlameDisplayArea: {fileID: 129525250}
-  BlameConsoleText: {fileID: 129525250}
-  GraphContainer: {fileID: 1500895345}
-  GraphItemPrefab: {fileID: 676361721842306418, guid: cecbb736ac5834e4096ffed9490ef7ba, type: 3}
+  diffTargetFileInput: {fileID: 121790332}
+  diffConsoleText: {fileID: 1702355785}
+  blameTargetFileInput: {fileID: 658214032}
+  blameDisplayArea: {fileID: 129525250}
+  blameConsoleText: {fileID: 129525250}
+  graphContainer: {fileID: 1500895345}
+  graphItemPrefab: {fileID: 676361721842306418, guid: cecbb736ac5834e4096ffed9490ef7ba, type: 3}
 --- !u!114 &72008808
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7902,7 +7903,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1911977654}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.13473439
+  m_Size: 0.1320003
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -35728,6 +35729,7 @@ RectTransform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 627124797}
+  - {fileID: 1793665156}
   - {fileID: 1588657422}
   - {fileID: 1512555523}
   - {fileID: 38543059}
@@ -46185,7 +46187,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 6485.036}
+  m_SizeDelta: {x: 0, y: 6640.276}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1662562891
 MonoBehaviour:
@@ -46253,10 +46255,11 @@ MonoBehaviour:
     Commit.\n\n\u2022 <color=#94A3B8><b>I (Ignored):</b></color> This file is explicitly
     <b>excluded</b> from the repository (like temporary build files or local settings).
     It will not be tracked or shown in normal file lists.\r\n</line-height>\r\n<line-height=125%>\r\n\u2022
-    <b>A:</b> Add file to repository. \r\n\u2022 <b>R:</b> Revert changes to file
-    .\r\n\u2022 <b>L:</b> View file history (log) .\r\n\u2022 <b>E:</b> Open file
-    location on disk .\n</line-height>\n\u2022 <b>Update:</b>\nSync local files with
-    the server. Use this daily before starting work.\n\u2022 <b>Refresh:</b>\nTriggers
+    <b>A:</b> Add file to repository. \r\n\u2022 <b>R:</b> Revert changes to file.\r\n\u2022
+    <b>L:</b> View file history (log).\r\n\u2022 <b>E:</b> Open file location on
+    disk.\r\n\u2022 <b>U:</b> Unlock file.\r\n\u2022 <b>K:</b> Lock file.\r\n\u2022
+    <b>O:</b> File Locked by another user.\n</line-height>\n\u2022 <b>Update:</b>\nSync
+    local files with the server. Use this daily before starting work.\n\u2022 <b>Refresh:</b>\nTriggers
     a manual scan of your local directory to update file statuses.\n\u2022 <b>Commit:</b>\nOpens
     the primary commit window to review changes and write log messages.\n\u2022 <b>Commit
     Selected:</b>\nSmart commit for checked items. Auto-registers folders and handles
@@ -50860,6 +50863,143 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1786378000}
   m_CullTransparentMesh: 1
+--- !u!1 &1793665155
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1793665156}
+  - component: {fileID: 1793665158}
+  - component: {fileID: 1793665157}
+  m_Layer: 5
+  m_Name: TooltipText (TMP)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1793665156
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1793665155}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1232145531}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 1908.8, y: 20}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1793665157
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1793665155}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.TextMeshPro::TMPro.TextMeshProUGUI
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_text: 
+  m_isRightToLeft: 0
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_fontSharedMaterials: []
+  m_fontMaterial: {fileID: 0}
+  m_fontMaterials: []
+  m_fontColor32:
+    serializedVersion: 2
+    rgba: 4293322470
+  m_fontColor: {r: 0.9019608, g: 0.9019608, b: 0.9019608, a: 1}
+  m_enableVertexGradient: 0
+  m_colorMode: 3
+  m_fontColorGradient:
+    topLeft: {r: 1, g: 1, b: 1, a: 1}
+    topRight: {r: 1, g: 1, b: 1, a: 1}
+    bottomLeft: {r: 1, g: 1, b: 1, a: 1}
+    bottomRight: {r: 1, g: 1, b: 1, a: 1}
+  m_fontColorGradientPreset: {fileID: 0}
+  m_spriteAsset: {fileID: 0}
+  m_tintAllSprites: 0
+  m_StyleSheet: {fileID: 0}
+  m_TextStyleHashCode: -1183493901
+  m_overrideHtmlColors: 0
+  m_faceColor:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontSize: 20
+  m_fontSizeBase: 20
+  m_fontWeight: 400
+  m_enableAutoSizing: 0
+  m_fontSizeMin: 18
+  m_fontSizeMax: 72
+  m_fontStyle: 0
+  m_HorizontalAlignment: 2
+  m_VerticalAlignment: 512
+  m_textAlignment: 65535
+  m_characterSpacing: 0
+  m_characterHorizontalScale: 1
+  m_wordSpacing: 0
+  m_lineSpacing: 0
+  m_lineSpacingMax: 0
+  m_paragraphSpacing: 0
+  m_charWidthMaxAdj: 0
+  m_TextWrappingMode: 1
+  m_wordWrappingRatios: 0.4
+  m_overflowMode: 0
+  m_linkedTextComponent: {fileID: 0}
+  parentLinkedComponent: {fileID: 0}
+  m_enableKerning: 0
+  m_ActiveFontFeatures: 6e72656b
+  m_enableExtraPadding: 0
+  checkPaddingRequired: 0
+  m_isRichText: 1
+  m_EmojiFallbackSupport: 1
+  m_parseCtrlCharacters: 1
+  m_isOrthographic: 1
+  m_isCullingEnabled: 0
+  m_horizontalMapping: 0
+  m_verticalMapping: 0
+  m_uvLineOffset: 0
+  m_geometrySortingOrder: 0
+  m_IsTextObjectScaleStatic: 0
+  m_VertexBufferAutoSizeReduction: 0
+  m_useMaxVisibleDescender: 1
+  m_pageToDisplay: 1
+  m_margin: {x: 0, y: 0, z: 0, w: 0}
+  m_isUsingLegacyAnimationComponent: 0
+  m_isVolumetricText: 0
+  m_hasFontAssetChanged: 0
+  m_baseMaterial: {fileID: 0}
+  m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!222 &1793665158
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1793665155}
+  m_CullTransparentMesh: 1
 --- !u!1 &1795171282
 GameObject:
   m_ObjectHideFlags: 0
@@ -55147,7 +55287,7 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1657918751}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.8652656}
+  m_AnchorMin: {x: 0, y: 0.8679997}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}

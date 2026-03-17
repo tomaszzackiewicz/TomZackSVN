@@ -26,9 +26,6 @@ public class SVNGraphItem : MonoBehaviour
     private bool isExpanded = false;
     private SVNManager svnManager;
 
-    private float lastClickTime = 0f;
-    private const float doubleClickThreshold = 0.3f;
-
     private string rawAuthor;
     private string rawBranchName;
     private string rawMessage;

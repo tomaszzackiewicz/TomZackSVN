@@ -9,26 +9,33 @@ namespace SVN.Core
     {
         private static readonly Regex RichTextRegex = new Regex(@"<[^>]*>");
 
-        public static void LogLine(string message, bool append = true)
+        public static void LogLine(string message, bool append = true, string level = "INFO")
         {
             if (SVNUI.Instance == null || SVNUI.Instance.LogText == null) return;
 
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            string fullMessage = $"[{timestamp}] {message}";
+
+            string uiMessage = $"[{timestamp}] {message}";
 
             if (append)
-                SVNUI.Instance.LogText.text += fullMessage + "\n";
+                SVNUI.Instance.LogText.text += uiMessage + "\n";
             else
-                SVNUI.Instance.LogText.text = fullMessage + "\n";
-
-            string cleanMessage = StripRichText(fullMessage);
-            SVNLogger.LogToFile(cleanMessage, "INFO");
+                SVNUI.Instance.LogText.text = uiMessage + "\n";
+            string cleanMessage = StripRichText(uiMessage);
+            SVNLogger.LogToFile(cleanMessage, level);
 
             if (append && SVNUI.Instance.LogScrollRect != null)
             {
                 Canvas.ForceUpdateCanvases();
                 SVNUI.Instance.LogScrollRect.verticalNormalizedPosition = 0f;
             }
+        }
+
+        public static void LogError(string message, bool append = true)
+        {
+            string errorMessage = $"<color=#FF8800><b>[ERROR]</b> {message}</color>";
+
+            LogLine(errorMessage, append, "ERROR");
         }
 
         public static void UpdateUIField(TextMeshProUGUI uiField, string content, string logLabel = "UI", bool append = false)
@@ -60,6 +67,18 @@ namespace SVN.Core
             SVNUI.Instance.ShowNotificationWithTimer(message, 5f);
 
             LogLine($"<color=blue>[NOTIFY]</color> {message}");
+        }
+        public static void LogTooltip(string message)
+        {
+            if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
+
+            SVNUI.Instance.TooltipText.text = $"<color=#CCCCCC>{message}</color>";
+        }
+
+        public static void ClearTooltip()
+        {
+            if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
+            SVNUI.Instance.TooltipText.text = "";
         }
     }
 }

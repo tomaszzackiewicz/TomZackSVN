@@ -178,7 +178,7 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(path))
             {
-                Debug.LogWarning("[SVN] Target path is empty! Make sure WorkingDir is set in SVNManager.");
+                SVNLogBridge.LogError("[SVN] Target path is empty! Make sure WorkingDir is set in SVNManager.");
             }
 
             return path;
@@ -192,7 +192,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[SvnCommands] Standard cleanup failed, trying extended: {ex.Message}");
+                SVNLogBridge.LogError($"[SvnCommands] Standard cleanup failed, trying extended: {ex.Message}");
                 return await SvnRunner.RunAsync("cleanup --include-externals", workingDir);
             }
         }

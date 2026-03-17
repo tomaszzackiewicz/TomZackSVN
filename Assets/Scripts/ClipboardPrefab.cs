@@ -3,6 +3,7 @@ using TMPro;
 using System.Text;
 using System.Text.RegularExpressions;
 using System;
+using SVN.Core;
 
 public class ClipboardPrefab : MonoBehaviour
 {
@@ -14,7 +15,7 @@ public class ClipboardPrefab : MonoBehaviour
     {
         if (scrollContent == null)
         {
-            Debug.LogError("Clipboard: 'Scroll Content' is not assigned!");
+            SVNLogBridge.LogError("Clipboard: 'Scroll Content' is not assigned!");
             return;
         }
 
@@ -68,7 +69,7 @@ public class ClipboardPrefab : MonoBehaviour
         if (!string.IsNullOrEmpty(finalResult))
         {
             GUIUtility.systemCopyBuffer = finalResult;
-            Debug.Log($"<color=green><b>SUCCESS!</b></color> Copied {fileCount} files to clipboard.");
+            SVNLogBridge.LogLine($"<color=green><b>SUCCESS!</b></color> Copied {fileCount} files to clipboard.");
         }
     }
 }

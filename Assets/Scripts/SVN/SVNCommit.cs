@@ -98,7 +98,7 @@ namespace SVN.Core
                 {
                     string deleteTargets = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "svn_delete_targets.txt");
 
-                    UnityEngine.Debug.Log($"[SVN Commit Debug] First missing path: '{missingFiles[0]}'");
+                    SVNLogBridge.LogLine($"[SVN Commit Debug] First missing path: '{missingFiles[0]}'");
 
                     var utf8NoBom = new System.Text.UTF8Encoding(false);
                     System.IO.File.WriteAllLines(deleteTargets, missingFiles, utf8NoBom);
@@ -326,7 +326,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SVN] Button click failed: {ex.Message}");
+                SVNLogBridge.LogError($"[SVN] Button click failed: {ex.Message}");
             }
         }
 

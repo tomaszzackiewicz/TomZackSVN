@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -9,6 +8,8 @@ namespace SVN.Core
     {
         public static SVNUI Instance { get; private set; }
 
+        [Header("Tooltip")]
+        [SerializeField] private TextMeshProUGUI tooltipText;
         [Header("Logs")]
         [SerializeField] private TextMeshProUGUI logText;
         [SerializeField] private TMP_InputField logCountInputField;
@@ -78,18 +79,19 @@ namespace SVN.Core
         [Header("Clean")]
         [SerializeField] private TextMeshProUGUI cleanText;
         [Header("Diff Panel References")]
-        public TMP_InputField DiffTargetFileInput;
-        public TextMeshProUGUI DiffConsoleText;
+        [SerializeField] private TMP_InputField diffTargetFileInput;
+        [SerializeField] private TextMeshProUGUI diffConsoleText;
         [Header("Blame Panel References")]
-        public TMP_InputField BlameTargetFileInput;
-        public TextMeshProUGUI BlameDisplayArea;
-        public TextMeshProUGUI BlameConsoleText;
+        [SerializeField] private TMP_InputField blameTargetFileInput;
+        [SerializeField] private TextMeshProUGUI blameDisplayArea;
+        [SerializeField] private TextMeshProUGUI blameConsoleText;
         [Header("Revision Graph")]
-        public Transform GraphContainer;
-        public GameObject GraphItemPrefab;
+        [SerializeField] private Transform graphContainer;
+        [SerializeField] public GameObject graphItemPrefab;
 
         private Coroutine _notificationCoroutine;
 
+        public TextMeshProUGUI TooltipText => tooltipText;
         public TextMeshProUGUI LogText => logText;
         public TMP_InputField LogCountInputField => logCountInputField;
         public TMP_InputField AddProjectNameInput => addProjectNameInput;
@@ -149,6 +151,13 @@ namespace SVN.Core
         public TextMeshProUGUI StealLocksConsole => stealLocksConsole;
         public TMP_InputField ResolveTargetFileInput => resolveTargetFileInput;
         public TextMeshProUGUI CleanText => cleanText;
+        public TMP_InputField DiffTargetFileInput => diffTargetFileInput;
+        public TextMeshProUGUI DiffConsoleText => diffConsoleText;
+        public TMP_InputField BlameTargetFileInput => blameTargetFileInput;
+        public TextMeshProUGUI BlameDisplayArea => blameDisplayArea;
+        public TextMeshProUGUI BlameConsoleText => blameConsoleText;
+        public Transform GraphContainer => graphContainer;
+        public GameObject GraphItemPrefab => graphItemPrefab;
 
         private void Awake()
         {

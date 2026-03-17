@@ -86,12 +86,12 @@ public class RevGraphPanel : MonoBehaviour
             }
             else
             {
-                Debug.LogError("Module SVNRevGraph not found in SVNManager!");
+                SVNLogBridge.LogError("Module SVNRevGraph not found in SVNManager!");
             }
         }
         catch (System.Exception ex)
         {
-            Debug.LogError($"[SVN Graph Error] {ex.Message}");
+            SVNLogBridge.LogError($"[SVN Graph Error] {ex.Message}");
             SVNLogBridge.LogLine($"<color=red>Error fetching graph:</color> {ex.Message}");
         }
     }

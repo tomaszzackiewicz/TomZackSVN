@@ -2,10 +2,13 @@ using UnityEngine;
 using TMPro;
 using SVN.Core;
 using UnityEngine.UI;
-using System.IO;
+using System;
 
 public class SvnLineController : MonoBehaviour
 {
+    public event Action OnHoverEnter;
+    public event Action OnHoverExit;
+
     [SerializeField] private bool IsCommitDelegate;
     [SerializeField] private TextMeshProUGUI indentText;
     [SerializeField] private TextMeshProUGUI statusText;
@@ -18,6 +21,8 @@ public class SvnLineController : MonoBehaviour
     [SerializeField] private Button logBtn;
     [SerializeField] private Button explorerBtn;
     [SerializeField] private Button addBtn;
+    [SerializeField] private Button lockBtn;
+    [SerializeField] private TextMeshProUGUI lockBtnText;
 
     private SvnTreeElement _element;
     private SVNStatus svnStatus;
@@ -131,19 +136,27 @@ public class SvnLineController : MonoBehaviour
         {
             fullRowButton.onClick.RemoveAllListeners();
 
-            bool canDiff = !element.IsFolder && !string.IsNullOrEmpty(element.Status) && element.Status != "DIR";
+            bool isFile = !_element.IsFolder;
+            bool canDiff = isFile && !string.IsNullOrEmpty(_element.Status);
 
             if (canDiff)
             {
                 fullRowButton.interactable = true;
                 fullRowButton.onClick.AddListener(OnFullRowClick);
+
+                statusText.text = statusClean;
+                BindHover(fullRowButton, "Click: Preview | Double-Click: External Diff");
+            }
+            else if (_element.IsFolder)
+            {
+                fullRowButton.interactable = true;
+                fullRowButton.onClick.AddListener(OnFoldClick);
+                BindHover(fullRowButton, _element.IsExpanded ? "Click to collapse" : "Click to expand");
             }
             else
             {
-                if (element.IsFolder)
-                    fullRowButton.onClick.AddListener(OnFoldClick);
-                else
-                    fullRowButton.interactable = false;
+                fullRowButton.interactable = false;
+                BindHover(fullRowButton, "File is up to date.");
             }
         }
 
@@ -155,6 +168,7 @@ public class SvnLineController : MonoBehaviour
         if (addBtn != null) addBtn.gameObject.SetActive(false);
         if (revertBtn != null) revertBtn.gameObject.SetActive(false);
         if (logBtn != null) logBtn.gameObject.SetActive(false);
+        if (lockBtn != null) lockBtn.gameObject.SetActive(false);
 
         if (!_element.IsFolder && hasChanges)
         {
@@ -166,6 +180,44 @@ public class SvnLineController : MonoBehaviour
                 {
                     SVNManager.Instance.GetModule<SVNAdd>()?.AddSingleItem(_element);
                 });
+                BindHover(addBtn, "Add this unversioned file to SVN control.");
+            }
+
+            bool isLockedByMe = status.Contains("K");
+            bool isLockedByOthers = status.Contains("O");
+
+            if (!_element.IsFolder && !isUnversioned && !isMissingOrDeleted && lockBtn != null)
+            {
+                lockBtn.gameObject.SetActive(true);
+                lockBtn.onClick.RemoveAllListeners();
+
+                if (isLockedByOthers)
+                {
+                    lockBtn.interactable = false;
+                    lockBtnText.text = "<color=#FF4444>O</color>";
+                    lockBtnText.fontStyle = FontStyles.Bold;
+                    BindHover(lockBtn, "File is LOCKED by another user.");
+                }
+                else if (isLockedByMe)
+                {
+                    lockBtn.interactable = true;
+                    lockBtn.onClick.AddListener(() => SVNManager.Instance.GetModule<SVNLock>()?.ToggleLockSingleItem(_element));
+                    lockBtnText.text = "<color=#00FF00>K</color>";
+                    lockBtnText.fontStyle = FontStyles.Bold;
+                    BindHover(lockBtn, "You have the lock. Click to release it.");
+                }
+                else
+                {
+                    lockBtn.interactable = true;
+                    lockBtn.onClick.AddListener(() => SVNManager.Instance.GetModule<SVNLock>()?.ToggleLockSingleItem(_element));
+                    lockBtnText.text = "<color=#E6E6E6>U</color>";
+                    lockBtnText.fontStyle = FontStyles.Bold;
+                    BindHover(lockBtn, "File is unlocked. Click to lock it for exclusive editing.");
+                }
+            }
+            else if (lockBtn != null)
+            {
+                lockBtn.gameObject.SetActive(false);
             }
 
             if (!isUnversioned && revertBtn != null)
@@ -176,6 +228,7 @@ public class SvnLineController : MonoBehaviour
                 {
                     SVNManager.Instance.GetModule<SVNRevert>()?.RevertSingleItem(_element);
                 });
+                BindHover(revertBtn, "Discard local changes and restore to repository version.");
             }
 
             if (!isUnversioned && logBtn != null)
@@ -186,6 +239,7 @@ public class SvnLineController : MonoBehaviour
                 {
                     SVNManager.Instance.GetModule<SVNLog>()?.ShowLogForPath(_element.FullPath);
                 });
+                BindHover(logBtn, "Open SVN Log history for this file.");
             }
 
             if (explorerBtn != null)
@@ -200,6 +254,7 @@ public class SvnLineController : MonoBehaviour
                     else
                         external?.OpenInExplorerAndSelect(_element.FullPath);
                 });
+                BindHover(explorerBtn, "Open file location in Windows Explorer.");
             }
         }
         else
@@ -212,6 +267,7 @@ public class SvnLineController : MonoBehaviour
                 {
                     SVNManager.Instance.GetModule<SVNExternal>()?.OpenInExplorerAndSelect(_element.FullPath);
                 });
+                BindHover(explorerBtn, "Open location in Windows Explorer.");
             }
         }
     }
@@ -219,7 +275,6 @@ public class SvnLineController : MonoBehaviour
     private void OnFullRowClick()
     {
         float timeSinceLastClick = Time.time - lastClickTime;
-
         var diffModule = SVNManager.Instance?.GetModule<SVNDiff>();
         if (diffModule == null) return;
 
@@ -249,6 +304,8 @@ public class SvnLineController : MonoBehaviour
         switch (status)
         {
             case "M": return ParseHex("#FFD700"); // Mod (M)
+            case "K": return ParseHex("#00FF00"); // Locked by ME
+            case "O": return ParseHex("#FF4444"); // Locked by OTHERS
             case "A": return ParseHex("#00FF00"); // Add (A)
             case "?": return ParseHex("#00E5FF"); // New (?)
             case "D":
@@ -264,5 +321,23 @@ public class SvnLineController : MonoBehaviour
         if (ColorUtility.TryParseHtmlString(hex, out Color color))
             return color;
         return Color.white;
+    }
+
+    private void BindHover(Button btn, string tooltipText)
+    {
+        if (btn == null) return;
+
+        var handler = btn.gameObject.GetComponent<SVNHoverHandler>();
+        if (handler == null) handler = btn.gameObject.AddComponent<SVNHoverHandler>();
+
+        handler.OnHoverEnter += () =>
+        {
+            SVN.Core.SVNLogBridge.LogTooltip(tooltipText);
+        };
+
+        handler.OnHoverExit += () =>
+        {
+            SVN.Core.SVNLogBridge.ClearTooltip();
+        };
     }
 }

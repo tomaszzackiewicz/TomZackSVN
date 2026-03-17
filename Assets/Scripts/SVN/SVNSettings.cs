@@ -21,7 +21,7 @@ namespace SVN.Core
             {
                 updateAction(project);
                 ProjectSettings.SaveProjects(projects);
-                Debug.Log($"[Settings] Updated JSON for project: {project.projectName}");
+                SVNLogBridge.LogLine($"[Settings] Updated JSON for project: {project.projectName}");
             }
         }
 
@@ -173,7 +173,7 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=red>Load Error:</color> {ex.Message}");
-                Debug.LogError($"[SVNSettings] LoadSettings failed: {ex}");
+                SVNLogBridge.LogError($"[SVNSettings] LoadSettings failed: {ex}");
             }
             finally
             {

@@ -22,7 +22,7 @@ namespace SVN.Core
 
             if (ui == null || manager == null)
             {
-                UnityEngine.Debug.LogError($"{this.GetType().Name}: UI or Manager is NULL!");
+                SVNLogBridge.LogError($"{this.GetType().Name}: UI or Manager is NULL!");
             }
         }
 

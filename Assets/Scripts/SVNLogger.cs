@@ -13,7 +13,7 @@ namespace SVN.Core
         {
             if (initialized) return;
 
-            //Log Path: C:\Users\[User]\AppData\LocalLow\[CompanyName]\[ProjectName]\svn_session.log
+            //SVNLogBridge.LogLine Path: C:\Users\[User]\AppData\LocalLow\[CompanyName]\[ProjectName]\svn_session.log
             string folderPath = Application.persistentDataPath;
             logFilePath = Path.Combine(folderPath, "svn_session.log");
 
@@ -26,11 +26,11 @@ namespace SVN.Core
                 Application.logMessageReceived += HandleUnityLog;
                 initialized = true;
 
-                Debug.Log($"[SVN] Logger initialized at: {logFilePath}");
+                SVNLogBridge.LogError($"[SVN] Logger initialized at: {logFilePath}");
             }
             catch (Exception e)
             {
-                Debug.LogError($"[SVN] Critical Logger Error: {e.Message}");
+                SVNLogBridge.LogError($"[SVN] Critical Logger Error: {e.Message}");
             }
         }
 

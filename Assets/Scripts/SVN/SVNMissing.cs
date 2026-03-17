@@ -38,7 +38,7 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=red>FixMissing Error:</color> {ex.Message}");
-                Debug.LogError($"[SVN] FixMissing: {ex}");
+                SVNLogBridge.LogError($"[SVN] FixMissing: {ex}");
             }
             finally
             {
@@ -72,7 +72,7 @@ namespace SVN.Core
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"[SVN] Batch delete partial failure: {ex.Message}");
+                        SVNLogBridge.LogError($"[SVN] Batch delete partial failure: {ex.Message}");
                     }
                 }
             }

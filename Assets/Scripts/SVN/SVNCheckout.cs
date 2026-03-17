@@ -55,7 +55,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogError($"UpdateProjectInfo failed: {ex.Message}");
+                SVNLogBridge.LogError($"UpdateProjectInfo failed: {ex.Message}");
                 SVNLogBridge.LogLine($"<color=red>Error:</color> {ex.Message}");
             }
         }
@@ -105,7 +105,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogWarning("Structure check failed (repo might be empty): " + ex.Message);
+                SVNLogBridge.LogError("Structure check failed (repo might be empty): " + ex.Message);
             }
         }
 
@@ -157,7 +157,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Resume failed: {ex.Message}");
+                SVNLogBridge.LogError($"Resume failed: {ex.Message}");
                 IsProcessing = false;
             }
         }

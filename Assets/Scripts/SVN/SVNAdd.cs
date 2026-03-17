@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -52,7 +50,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                UpdateLightLog($"\n<color=red>Error: {ex.Message}</color>");
+                SVNLogBridge.LogError($"\n<color=red>Error: {ex.Message}</color>");
                 IsProcessing = false;
             }
             finally
@@ -152,7 +150,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                UpdateLightLog($"<color=red>Add Error: {ex.Message}</color>");
+                SVNLogBridge.LogError($"<color=red>Add Error: {ex.Message}</color>");
 
                 IsProcessing = false;
             }

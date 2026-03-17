@@ -62,7 +62,7 @@ namespace SVN.Core
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[AssetLocator] XML Parse error: {e.Message}");
+                SVNLogBridge.LogError($"[AssetLocator] XML Parse error: {e.Message}");
             }
             return null;
         }

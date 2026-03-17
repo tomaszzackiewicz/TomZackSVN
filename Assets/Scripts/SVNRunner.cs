@@ -28,7 +28,11 @@ namespace SVN.Core
 
         public static async Task<string> RunAsync(string args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
         {
-            if (string.IsNullOrEmpty(workingDir)) throw new Exception("Working Directory is null!");
+            if (string.IsNullOrEmpty(workingDir))
+            {
+                SVNLogBridge.LogError("Working Directory is null!");
+                throw new Exception("Working Directory is null!");
+            }
 
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim().Where(c => !char.IsControl(c) && (int)c != 160).ToArray().Aggregate("", (s, c) => s + c));
 
@@ -85,14 +89,24 @@ namespace SVN.Core
                 {
                     if (token.IsCancellationRequested)
                     {
-                        try { if (!process.HasExited) process.Kill(); } catch { }
+                        try { if (!process.HasExited) process.Kill(); }
+                        catch { }
+
+                        SVNLogBridge.LogError("SVN operation cancelled by user.");
+
                         throw new OperationCanceledException("SVN operation cancelled by user.");
                     }
 
                     if (timeoutLimit > 0 && (DateTime.Now - startTime).TotalSeconds > timeoutLimit)
                     {
-                        try { if (!process.HasExited) process.Kill(); } catch { }
-                        throw new Exception($"SVN Timeout: Operation exceeded {timeoutLimit} seconds.");
+                        try { if (!process.HasExited) process.Kill(); }
+                        catch { }
+
+                        string timeoutMsg = $"SVN Timeout: Operation exceeded {timeoutLimit} seconds.";
+
+                        SVNLogBridge.LogError(timeoutMsg);
+
+                        throw new Exception(timeoutMsg);
                     }
 
                     await Task.Delay(100);
@@ -103,13 +117,19 @@ namespace SVN.Core
                     string err = errorBuilder.ToString();
                     if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
                     {
-                        UnityEngine.Debug.LogWarning("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
+                        SVNLogBridge.LogError("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
                         await RunAsync("cleanup", workingDir, false, token);
                         return await RunAsync(args, workingDir, false, token);
                     }
 
                     if (!string.IsNullOrEmpty(err))
-                        throw new Exception($"SVN Error (Code {process.ExitCode}): {err}");
+                    {
+                        string fullError = $"SVN Error (Code {process.ExitCode}): {err.Trim()}";
+
+                        SVNLogBridge.LogError(fullError);
+
+                        throw new Exception(fullError);
+                    }
                 }
 
                 return outputBuilder.ToString();
@@ -180,14 +200,21 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"Error while killing process: {ex.Message}");
+                    SVNLogBridge.LogError($"Error while killing process: {ex.Message}");
                 }
             }))
             {
                 process.EnableRaisingEvents = true;
                 process.Exited += (s, e) => processExitTcs.TrySetResult(true);
 
-                if (!process.Start()) throw new Exception("Failed to start SVN process.");
+                if (!process.Start())
+                {
+                    string startupError = "Critical Error: Failed to start SVN process. Make sure SVN is installed and added to PATH.";
+
+                    SVNLogBridge.LogError(startupError);
+
+                    throw new Exception(startupError);
+                }
 
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
@@ -198,6 +225,8 @@ namespace SVN.Core
                 }
                 catch (OperationCanceledException)
                 {
+                    SVNLogBridge.LogLine("<color=#FFD700>[CANCEL]</color> Task was successfully canceled.", append: true);
+
                     return "Canceled";
                 }
 
@@ -420,7 +449,7 @@ namespace SVN.Core
                 }
             }
 
-            UnityEngine.Debug.Log($"<color=green>[SVN]</color> Parser finished. Dictionary count: {statusDict.Count}");
+            SVNLogBridge.LogLine($"<color=green>[SVN]</color> Parser finished. Dictionary count: {statusDict.Count}");
             return statusDict;
         }
 
@@ -443,14 +472,18 @@ namespace SVN.Core
         {
             string output = await RunAsync("info --xml", workingDir);
 
-            if (output.Contains("<url>"))
+            if (!string.IsNullOrEmpty(output) && output.Contains("<url>"))
             {
                 int start = output.IndexOf("<url>") + 5;
                 int end = output.IndexOf("</url>");
                 return output.Substring(start, end - start).Trim();
             }
 
-            throw new Exception("Failed to retrieve repository URL.");
+            string errorMsg = "Failed to retrieve repository URL. Is this a valid SVN working copy?";
+
+            SVNLogBridge.LogError(errorMsg);
+
+            throw new Exception(errorMsg);
         }
 
         public static async Task<string[]> GetRepoListAsync(string workingDir, string subFolder)
@@ -533,7 +566,7 @@ namespace SVN.Core
                     }
                     else
                     {
-                        UnityEngine.Debug.LogWarning($"[SVN] File not found: {relPath} (Searched at: {standardPath})");
+                        SVNLogBridge.LogError($"[SVN] File not found: {relPath} (Searched at: {standardPath})");
                     }
                 }
             }

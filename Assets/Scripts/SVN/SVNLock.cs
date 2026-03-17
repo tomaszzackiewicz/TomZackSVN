@@ -55,12 +55,16 @@ namespace SVN.Core
 
                 if (filesToLock.Length > 0)
                 {
-                    SVNLogBridge.LogLine($"Locking {filesToLock.Length} new files (Skipped {alreadyLockedByMeOrOthers} already locked)...");
-
+                    SVNLogBridge.LogLine($"Locking {filesToLock.Length} new files...");
                     string allPathsJoined = string.Join(" ", filesToLock);
                     await SvnRunner.RunAsync($"lock {allPathsJoined}", root);
-
                     SVNLogBridge.LogLine("<color=green>Locking completed successfully.</color>");
+
+                    var statusModule = svnManager.GetModule<SVNStatus>();
+                    if (statusModule != null)
+                    {
+                        await statusModule.RefreshAfterAction();
+                    }
                 }
                 else
                 {
@@ -104,10 +108,14 @@ namespace SVN.Core
                 {
                     string allPathsJoined = string.Join(" ", myLocksPaths);
                     await SvnRunner.RunAsync($"unlock --force {allPathsJoined}", root);
-
                     SVNLogBridge.LogLine("<color=green>Locks released successfully.</color>");
 
-                    await svnManager.RefreshStatus();
+                    var statusModule = svnManager.GetModule<SVNStatus>();
+                    if (statusModule != null)
+                    {
+                        await statusModule.RefreshAfterAction();
+                    }
+
                     ShowAllLocks();
                 }
                 else
@@ -203,10 +211,41 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogError("SVN XML Parse Error: " + ex.Message);
+                SVNLogBridge.LogError("SVN XML Parse Error: " + ex.Message);
             }
 
             return locks;
+        }
+
+        public async void ToggleLockSingleItem(SvnTreeElement element)
+        {
+            if (IsProcessing || element == null) return;
+            IsProcessing = true;
+
+            try
+            {
+                bool isLocked = element.Status.Contains("K");
+                string cmd = isLocked ? "unlock" : "lock";
+
+                await SvnRunner.RunAsync($"{cmd} \"{element.FullPath}\"", svnManager.WorkingDir);
+
+                if (isLocked)
+                    element.Status = element.Status.Replace("K", "").Trim();
+                else
+                    if (!element.Status.Contains("K")) element.Status += "K";
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                statusModule?.NotifySelectionChanged();
+
+                IsProcessing = false;
+
+                _ = statusModule?.ExecuteRefreshWithAutoExpand();
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[SVN Lock Error]: {ex.Message}");
+                IsProcessing = false;
+            }
         }
 
         public async void BreakAllLocks()

@@ -125,7 +125,7 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
         {
-            Debug.LogError("Project name and path are required!");
+            SVNLogBridge.LogError("Project name and path are required!");
             return;
         }
 
@@ -164,7 +164,7 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
         catch (Exception e)
         {
-            Debug.LogWarning($"[SVN] URL Parse failed: {e.Message}");
+            SVNLogBridge.LogError($"[SVN] URL Parse failed: {e.Message}");
         }
         return "New Project";
     }

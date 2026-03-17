@@ -70,11 +70,11 @@ namespace SVN.Core
                     svnUI.LoadDestFolderInput.text = selectedPath;
 
                 _ = svnManager.SetWorkingDirectory(selectedPath);
-                Debug.Log($"SVN path selected: {selectedPath}");
+                SVNLogBridge.LogLine($"SVN path selected: {selectedPath}");
             }
             else
             {
-                Debug.Log("Folder selection canceled.");
+                SVNLogBridge.LogLine("Folder selection canceled.");
             }
         }
 
@@ -97,11 +97,11 @@ namespace SVN.Core
                     svnUI.LoadPrivateKeyInput.text = selectedPath;
                 }
 
-                Debug.Log($"Private Key path set to: {selectedPath}");
+                SVNLogBridge.LogLine($"Private Key path set to: {selectedPath}");
             }
             else
             {
-                Debug.Log("Private Key selection canceled by user.");
+                SVNLogBridge.LogLine("Private Key selection canceled by user.");
             }
         }
 
@@ -143,7 +143,7 @@ namespace SVN.Core
                     svnUI.CheckoutDestFolderInput.text = selectedPath;
                 }
 
-                Debug.Log($"[Checkout] Destination path set to: {selectedPath}");
+                SVNLogBridge.LogLine($"[Checkout] Destination path set to: {selectedPath}");
             }
         }
 
@@ -165,7 +165,7 @@ namespace SVN.Core
                     svnUI.CheckoutPrivateKeyInput.text = selectedPath;
                 }
 
-                Debug.Log($"[Checkout] SSH Key path set to: {selectedPath}");
+                SVNLogBridge.LogLine($"[Checkout] SSH Key path set to: {selectedPath}");
             }
         }
 
@@ -193,7 +193,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    Debug.LogWarning("[SVN] ResolveTargetFileInput is not assigned in SVNUI!");
+                    SVNLogBridge.LogError("[SVN] ResolveTargetFileInput is not assigned in SVNUI!");
                 }
             }
         }
@@ -227,7 +227,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    Debug.LogWarning("[SVN] DiffTargetFileInput is not assigned in SVNUI!");
+                    SVNLogBridge.LogError("[SVN] DiffTargetFileInput is not assigned in SVNUI!");
                 }
             }
         }
@@ -265,7 +265,7 @@ namespace SVN.Core
                     }
                     else
                     {
-                        Debug.LogWarning("[SVN] BlameTargetFileInput is not assigned in SVNUI!");
+                        SVNLogBridge.LogError("[SVN] BlameTargetFileInput is not assigned in SVNUI!");
                     }
                 }
                 else
@@ -286,7 +286,7 @@ namespace SVN.Core
 
             string args = $"/command:log /path:\"{root}\"";
             System.Diagnostics.Process.Start("TortoiseProc.exe", args);
-            SVNLogBridge.LogLine("<b>[External]</b> Opening TortoiseSVN Log...");
+            SVNLogBridge.LogLine("<b>[External]</b> Opening TortoiseSVN SVNLogBridge.LogLine...");
         }
 
         public void SaveHistoryToFile(string content)

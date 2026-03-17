@@ -82,14 +82,12 @@ namespace SVN.Core
 
         private static void EnsureInitialized()
         {
-            // Jeśli system jest wyłączony (bo wystąpił błąd), nie próbuj ponownie
             if (_disabled) return;
 
             if (_taskbarInstance == null)
             {
                 try
                 {
-                    // Sprawdzamy platformę
                     if (Application.platform != RuntimePlatform.WindowsEditor &&
                         Application.platform != RuntimePlatform.WindowsPlayer)
                     {
@@ -103,7 +101,7 @@ namespace SVN.Core
                 catch (Exception ex)
                 {
                     _disabled = true;
-                    UnityEngine.Debug.LogWarning($"[SVN] Windows Taskbar Feature is not available or class is not registered. Error: {ex.Message}");
+                    // SVNLogBridge.LogError($"[SVN] Windows Taskbar Feature is not available or class is not registered. Error: {ex.Message}");
                     return;
                 }
             }

@@ -21,7 +21,7 @@ namespace SVN.Core
             _cts = new CancellationTokenSource();
             _isPolling = true;
             Task.Run(() => PollLoop(_cts.Token));
-            if (showDebugLogs) Debug.Log("<color=blue>[SVN Polling]</color> Started.");
+            if (showDebugLogs) SVNLogBridge.LogLine("<color=blue>[SVN Polling]</color> Started.");
         }
 
         public void StopPolling()
@@ -79,7 +79,7 @@ namespace SVN.Core
                             }
                             else
                             {
-                                if (showDebugLogs) Debug.Log($"<color=green>[SVN Polling]</color> Local commit detected (Rev {remoteRev}). Skipping notification.");
+                                if (showDebugLogs) SVNLogBridge.LogLine($"<color=green>[SVN Polling]</color> Local commit detected (Rev {remoteRev}). Skipping notification.");
 
                                 UnityMainThreadDispatcher.Enqueue(async () =>
                                 {
@@ -90,7 +90,10 @@ namespace SVN.Core
                         }
                     }
                 }
-                catch (Exception e) { if (showDebugLogs) Debug.LogWarning($"[SVN Polling] {e.Message}"); }
+                catch (Exception e)
+                {
+                    if (showDebugLogs) SVNLogBridge.LogError($"[SVN Polling] {e.Message}");
+                }
 
                 await Task.Delay(TimeSpan.FromMinutes(pollIntervalMinutes), token);
             }

@@ -9,7 +9,7 @@ namespace SVN.Core
     {
         public static async Task<string> ExecuteAsync(string arguments, string workingDir)
         {
-            UnityEngine.Debug.Log($"[SVNRun] Executing: svn {arguments} | Directory: {workingDir}");
+            SVNLogBridge.LogLine($"[SVNRun] Executing: svn {arguments} | Directory: {workingDir}");
 
             return await Task.Run(() =>
             {
@@ -56,6 +56,7 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
+                    SVNLogBridge.LogError($"<color=red>Critical Exception: {ex.Message}</color>");
                     return $"<color=red>Critical Exception: {ex.Message}</color>";
                 }
 

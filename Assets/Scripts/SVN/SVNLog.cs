@@ -47,7 +47,7 @@ namespace SVN.Core
 
                     if (string.IsNullOrWhiteSpace(coloredOutput))
                     {
-                        SVNLogBridge.LogLine("<color=yellow>Log is empty after filtering.</color>");
+                        SVNLogBridge.LogLine("<color=yellow>SVNLogBridge.LogLine is empty after filtering.</color>");
                     }
                     else
                     {
@@ -61,8 +61,8 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Log Error:</color> {ex.Message}");
-                Debug.LogError($"[SVN Log] {ex}");
+                SVNLogBridge.LogLine($"<color=red>SVNLogBridge.LogLine Error:</color> {ex.Message}");
+                SVNLogBridge.LogError($"[SVN SVNLogBridge.LogLine] {ex}");
             }
             finally
             {
@@ -150,7 +150,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Log Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=red>SVNLogBridge.LogLine Error:</color> {ex.Message}");
             }
             finally
             {

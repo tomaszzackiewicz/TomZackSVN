@@ -83,12 +83,12 @@ namespace SVN.Core
                     result = await SvnRunner.RunAsync("revert -R .", cleanWorkingDir);
                 }
 
-                UnityEngine.Debug.Log("<color=green>[SVN]</color> Recursive revert completed successfully.");
+                SVNLogBridge.LogLine("<color=green>[SVN]</color> Recursive revert completed successfully.");
                 return result;
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogError($"[SVN Revert Error] Recursive revert failed: {ex.Message}");
+                SVNLogBridge.LogError($"[SVN Revert Error] Recursive revert failed: {ex.Message}");
                 throw;
             }
         }

@@ -72,7 +72,7 @@ namespace SVN.Core
             if (svnManager != null && !string.IsNullOrEmpty(svnManager.WorkingDir))
                 LoadIgnoreRulesFromFile(svnManager.WorkingDir);
             else
-                Debug.LogError("[SVN] Cannot reload: WorkingDir is null or empty.");
+                SVNLogBridge.LogError("[SVN] Cannot reload: WorkingDir is null or empty.");
         }
 
         public void LoadIgnoreRulesFromFile(string workingDir)
@@ -94,13 +94,13 @@ namespace SVN.Core
                                 _cachedIgnoreRules.Add(trimmed);
                         }
                     }
-                    Debug.Log($"<color=#00FFFF>[SVN]</color> Loaded {_cachedIgnoreRules.Count} rules from .svnignore");
+                    SVNLogBridge.LogLine($"<color=#00FFFF>[SVN]</color> Loaded {_cachedIgnoreRules.Count} rules from .svnignore");
                 }
-                catch (Exception e) { Debug.LogError($"[SVN] File read error: {e.Message}"); }
+                catch (Exception e) { SVNLogBridge.LogError($"[SVN] File read error: {e.Message}"); }
             }
             else
             {
-                Debug.LogWarning($"[SVN] .svnignore file not found at: {workingDir}");
+                SVNLogBridge.LogError($"[SVN] .svnignore file not found at: {workingDir}");
             }
         }
 
@@ -216,7 +216,7 @@ namespace SVN.Core
                     }
                 }
             }
-            catch (Exception e) { Debug.LogError(e.Message); }
+            catch (Exception e) { SVNLogBridge.LogError(e.Message); }
             return rules;
         }
 
@@ -261,7 +261,7 @@ namespace SVN.Core
 
             if (result.StartsWith("ERROR"))
             {
-                UnityEngine.Debug.LogError(result);
+                SVNLogBridge.LogError(result);
                 return false;
             }
             return true;

@@ -72,7 +72,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SVN] Update Error: {ex}");
+                SVNLogBridge.LogError($"[SVN] Update Error: {ex}");
                 SVNLogBridge.LogLine($"\n<color=red><b>Update Failed:</b></color> {ex.Message}");
             }
             finally
@@ -177,7 +177,7 @@ namespace SVN.Core
             catch (System.Exception ex)
             {
                 string errorMsg = $"<color=red>Remote Check Error:</color> {ex.Message}";
-                Debug.LogError($"[SVN] {errorMsg}");
+                SVNLogBridge.LogError($"[SVN] {errorMsg}");
                 SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, errorMsg, "REMOTE", true);
             }
             finally

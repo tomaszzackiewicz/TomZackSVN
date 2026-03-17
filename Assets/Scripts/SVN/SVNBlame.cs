@@ -110,15 +110,13 @@ namespace SVN.Core
                 }
                 else
                 {
-                    Debug.LogWarning("BlameDisplayArea is null! Outputting to console.");
+                    SVNLogBridge.LogError("BlameDisplayArea is null! Outputting to console.");
                     LogBoth(sb.ToString());
                 }
             }
             catch (Exception ex)
             {
-                // To nam powie dokładnie, co się wywaliło
-                LogBoth($"<color=red>Parsing Error:</color> {ex.Message}");
-                Debug.LogException(ex);
+                SVNLogBridge.LogError($"<color=red>Parsing Error:</color> {ex.Message}");
             }
         }
     }

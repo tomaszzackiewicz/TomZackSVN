@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using SVN.Core;
 
 public class Clipboard : MonoBehaviour
 {
@@ -19,6 +20,6 @@ public class Clipboard : MonoBehaviour
 
     private void ShowCopyFeedback()
     {
-        Debug.Log("Text copied!");
+        SVNLogBridge.LogLine("Text copied!");
     }
 }

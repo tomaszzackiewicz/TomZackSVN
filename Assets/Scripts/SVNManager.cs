@@ -60,7 +60,7 @@ namespace SVN.Core
 
                 workingDir = cleaned.Trim();
 
-                UnityEngine.Debug.Log($"[SVN Manager] WorkingDir sanitized to: '{workingDir}'");
+                SVNLogBridge.LogLine($"[SVN Manager] WorkingDir sanitized to: '{workingDir}'");
             }
         }
         public string CurrentKey { get => currentKey; set => currentKey = value; }
@@ -125,11 +125,11 @@ namespace SVN.Core
                 RegisterModule(new SVNBar(svnUI, this));
                 RegisterModule(new SVNIgnore(svnUI, this));
 
-                Debug.Log($"<color=green>[SVN]</color> Successfully initialized {_modules.Count} modules manually.");
+                SVNLogBridge.LogLine($"<color=green>[SVN]</color> Successfully initialized {_modules.Count} modules manually.");
             }
             catch (Exception e)
             {
-                Debug.LogError($"[SVN] Manual initialization failed: {e.Message}");
+                SVNLogBridge.LogError($"[SVN] Manual initialization failed: {e.Message}");
             }
         }
 
@@ -154,7 +154,7 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(path)) return;
             WorkingDir = SVNAssetLocator.NormalizePath(path);
-            Debug.Log($"[SVN] Working Directory set to: {WorkingDir}");
+            SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
             await RefreshRepositoryInfo();
         }
 
@@ -253,13 +253,13 @@ namespace SVN.Core
 
             System.Text.StringBuilder debugInfo = new System.Text.StringBuilder();
             debugInfo.AppendLine($"[SVN Path Debug] Original Path: '{path}'");
-            for (int i = 0; i < path.Length; i++)
-            {
-                char c = path[i];
-                int code = (int)c;
-                debugInfo.AppendLine($"[{i}] '{(char.IsControl(c) ? '?' : c)}' (Code: {code})");
-            }
-            UnityEngine.Debug.Log(debugInfo.ToString());
+            // for (int i = 0; i < path.Length; i++)
+            // {
+            //     char c = path[i];
+            //     int code = (int)c;
+            //     debugInfo.AppendLine($"[{i}] '{(char.IsControl(c) ? '?' : c)}' (Code: {code})");
+            // }
+            SVNLogBridge.LogLine(debugInfo.ToString());
 
             return new string(path.Where(c => !char.IsControl(c) && (int)c != 160 && (int)c != 8203).ToArray()).Trim();
         }
@@ -268,7 +268,7 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(WorkingDir))
             {
-                Debug.LogWarning("[SVN] Refresh aborted: WorkingDir is not set.");
+                SVNLogBridge.LogError("[SVN] Refresh aborted: WorkingDir is not set.");
                 return;
             }
 
@@ -305,7 +305,7 @@ namespace SVN.Core
             catch (Exception e)
             {
                 LogToUI($"[SVN] Refresh Error: {e.Message}", "red");
-                Debug.LogError($"[SVN] Refresh Exception: {e}");
+                SVNLogBridge.LogError($"[SVN] Refresh Exception: {e}");
             }
         }
 
@@ -393,7 +393,7 @@ namespace SVN.Core
                 }
                 catch (Exception e)
                 {
-                    Debug.LogError($"Focus refresh failed: {e.Message}");
+                    SVNLogBridge.LogError($"Focus refresh failed: {e.Message}");
                 }
             }
         }
@@ -402,7 +402,7 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(RepositoryUrl))
             {
-                Debug.LogError("[SVN] Repository URL is missing. Cannot perform 'cat'.");
+                SVNLogBridge.LogError("[SVN] Repository URL is missing. Cannot perform 'cat'.");
                 return;
             }
 
@@ -431,7 +431,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrEmpty(fileContent))
                 {
-                    Debug.LogError($"[SVN] Failed to fetch content for {relativePath}");
+                    SVNLogBridge.LogError($"[SVN] Failed to fetch content for {relativePath}");
                     return;
                 }
 
@@ -458,7 +458,7 @@ namespace SVN.Core
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"[SVN] Failed to open with MergeTool: {ex.Message}. Falling back to default.");
+                        SVNLogBridge.LogError($"[SVN] Failed to open with MergeTool: {ex.Message}. Falling back to default.");
                         Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
                     }
                 }
@@ -471,7 +471,7 @@ namespace SVN.Core
             }
             catch (Exception e)
             {
-                Debug.LogError($"[SVN] CatAndOpenFile error: {e.Message}");
+                SVNLogBridge.LogError($"[SVN] CatAndOpenFile error: {e.Message}");
             }
             finally
             {

@@ -42,17 +42,17 @@ public class LockPanel : MonoBehaviour
 
         isProcessing = true;
 
-        LogToPanel("<color=orange>[System]</color> Preparing to fetch lock data...");
+        SVNLogBridge.LogError("<color=orange>[System]</color> Preparing to fetch lock data...");
 
         ClearContainer();
 
         try
         {
-            LogToPanel("<color=#FFD700>[Process]</color> Querying SVN server (this may take a moment)...");
+            SVNLogBridge.LogError("<color=#FFD700>[Process]</color> Querying SVN server (this may take a moment)...");
 
             var allLocks = await svnManager.GetModule<SVNLock>().GetDetailedLocks(svnManager.WorkingDir);
 
-            LogToPanel($"<color=white>[Info]</color> Received {allLocks.Count} total locks from server.");
+            SVNLogBridge.LogError($"<color=white>[Info]</color> Received {allLocks.Count} total locks from server.");
 
             string currentUserName = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();
 
@@ -64,18 +64,18 @@ public class LockPanel : MonoBehaviour
 
             if (othersLocks.Count == 0)
             {
-                LogToPanel("<color=yellow>[Info]</color> No locks from other users found.");
+                SVNLogBridge.LogError("<color=yellow>[Info]</color> No locks from other users found.");
             }
             else
             {
-                LogToPanel($"<color=yellow>[UI]</color> Spawning {othersLocks.Count} entries...");
+                SVNLogBridge.LogError($"<color=yellow>[UI]</color> Spawning {othersLocks.Count} entries...");
                 Populate(othersLocks);
-                LogToPanel("<color=green>[Success]</color> List updated.");
+                SVNLogBridge.LogError("<color=green>[Success]</color> List updated.");
             }
         }
         catch (Exception ex)
         {
-            LogToPanel($"<color=red>[Error]</color> Sync failed: {ex.Message}");
+            SVNLogBridge.LogError($"<color=red>[Error]</color> Sync failed: {ex.Message}");
         }
         finally
         {
@@ -111,14 +111,14 @@ public class LockPanel : MonoBehaviour
         if (isProcessing || lockDetails == null || !Application.isPlaying) return;
 
         isProcessing = true;
-        LogToPanel($"<color=green>[Action]</color> Forcing break on: <b>{lockDetails.Path}</b>");
+        SVNLogBridge.LogError($"<color=green>[Action]</color> Forcing break on: <b>{lockDetails.Path}</b>");
 
         try
         {
             string cmd = $"lock --force -m \"Administrative takeover by {svnManager.CurrentUserName}\" \"{lockDetails.FullPath}\"";
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
-            LogToPanel($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
+            SVNLogBridge.LogError($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
 
             await System.Threading.Tasks.Task.Delay(600);
             await svnManager.RefreshStatus();
@@ -128,12 +128,12 @@ public class LockPanel : MonoBehaviour
         }
         catch (Exception ex)
         {
-            LogToPanel($"<color=red>[Error]</color> Operation failed: {ex.Message}");
+            SVNLogBridge.LogError($"<color=red>[Error]</color> Operation failed: {ex.Message}");
             isProcessing = false;
         }
     }
 
-    private void LogToPanel(string message)
+    private void LogError(string message)
     {
         if (svnUI.StealLocksConsole == null || !Application.isPlaying) return;
 

@@ -108,7 +108,7 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=red>Operation Failed:</color> {ex.Message}");
-                Debug.LogError($"[SVN] Load Error: {ex}");
+                SVNLogBridge.LogError($"[SVN] Load Error: {ex}");
             }
             finally
             {
