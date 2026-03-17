@@ -55,7 +55,22 @@ namespace SVN.Core
             int lastSlash = path.LastIndexOf('/');
             return lastSlash > 0 ? path.Substring(0, lastSlash) : "";
         }
-        public void ShowOnlyModified()
+
+        public async Task RefreshAfterAction()
+        {
+            svnManager.ExpandedPaths.Clear();
+            svnManager.ExpandedPaths.Add("");
+            ClearSVNTreeView();
+
+            await ExecuteRefreshWithAutoExpand(force: true);
+        }
+
+        public async void ShowOnlyModified()
+        {
+            await RefreshModifiedInternal();
+        }
+
+        public async Task RefreshModifiedInternal()
         {
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
@@ -63,23 +78,21 @@ namespace SVN.Core
             ClearSVNTreeView();
 
             if (svnUI.TreeDisplay != null)
-            {
                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
-            }
 
             if (svnUI.CommitTreeDisplay != null)
-            {
                 SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
-            }
 
             _isCurrentViewIgnored = false;
-            _ = ExecuteRefreshWithAutoExpand();
+
+            await ExecuteRefreshWithAutoExpand(force: true);
         }
 
-        public async Task ExecuteRefreshWithAutoExpand()
+        public async Task ExecuteRefreshWithAutoExpand(bool force = false)
         {
-            if (IsProcessing) return;
-            IsProcessing = true;
+            if (IsProcessing && !force) return;
+
+            if (!force) IsProcessing = true;
 
             try
             {
@@ -93,9 +106,24 @@ namespace SVN.Core
                 }
 
                 string root = svnManager.WorkingDir;
+
                 var statusDict = _isCurrentViewIgnored
                     ? await svnManager.GetModule<SVNIgnore>().GetIgnoredOnlyAsync(root)
                     : await GetChangesDictionaryAsync(root);
+
+                var lockDict = await GetLocksDictionaryAsync(root);
+
+                if (lockDict != null && lockDict.Count > 0)
+                {
+                    if (statusDict == null) statusDict = new Dictionary<string, (string status, string size)>();
+                    foreach (var l in lockDict)
+                    {
+                        if (!statusDict.ContainsKey(l.Key))
+                        {
+                            statusDict[l.Key] = (" ", "FILE");
+                        }
+                    }
+                }
 
                 if (statusDict == null || statusDict.Count == 0)
                 {
@@ -116,6 +144,33 @@ namespace SVN.Core
                 }
 
                 _flatTreeData = BuildFlatTreeStructureText(root, statusDict);
+
+                if (lockDict != null && lockDict.Count > 0)
+                {
+                    foreach (var e in _flatTreeData)
+                    {
+                        if (lockDict.TryGetValue(e.FullPath, out string lockStatus))
+                        {
+                            string baseColor = "#FFFFFF";
+                            if (e.Status.Contains("M")) baseColor = "#FFD700";
+                            else if (e.Status.Contains("A")) baseColor = "#00FF00";
+                            else if (e.Status.Contains("?")) baseColor = "#00E5FF";
+                            else if (e.Status.Contains("D") || e.Status.Contains("!")) baseColor = "#FF4444";
+
+                            string lockColor = lockStatus == "K" ? "#00FF00" : "#FF4444";
+                            string cleanBaseStatus = e.Status.Trim();
+
+                            if (string.IsNullOrEmpty(cleanBaseStatus) || cleanBaseStatus == "DIR")
+                            {
+                                e.Status = $"<color={lockColor}>{lockStatus}</color>";
+                            }
+                            else if (!cleanBaseStatus.Contains(lockStatus))
+                            {
+                                e.Status = $"<color={baseColor}>{cleanBaseStatus}</color><color={lockColor}>{lockStatus}</color>";
+                            }
+                        }
+                    }
+                }
 
                 if (svnUI.SvnTreeView != null)
                 {
@@ -144,9 +199,12 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[SVN] Refresh Error: {ex.Message}");
+                SVNLogBridge.LogError($"Refresh Error: {ex.Message}");
             }
-            finally { IsProcessing = false; }
+            finally
+            {
+                if (!force) IsProcessing = false;
+            }
         }
 
         public void ClearCurrentData()
@@ -256,7 +314,6 @@ namespace SVN.Core
             {
                 string normalizedPath = relPath.Replace('\\', '/');
 
-                // Obsługa ścieżek z trunk (specyficzne dla Twojego środowiska)
                 if (normalizedPath.Contains(":/"))
                 {
                     int trunkIdx = normalizedPath.LastIndexOf("trunk/");
@@ -275,19 +332,15 @@ namespace SVN.Core
 
                     string physicalPath = Path.Combine(root, currentPath).Replace("\\", "/");
 
-                    // --- POPRAWIONA LOGIKA FOLDERU ---
                     bool isLastPart = (i == parts.Length - 1);
                     bool isActuallyFolder = false;
 
                     if (!isLastPart)
                     {
-                        // Jeśli to nie jest ostatni element ścieżki (np. "Content" w "Content/Maps/Level.uasset"),
-                        // to na 100% jest to folder.
                         isActuallyFolder = true;
                     }
                     else
                     {
-                        // Jeśli to jest ostatni element, sprawdźmy fizycznie lub w statusie
                         if (Directory.Exists(physicalPath))
                         {
                             isActuallyFolder = true;
@@ -296,17 +349,14 @@ namespace SVN.Core
                         {
                             isActuallyFolder = true;
                         }
-                        // Jeśli plik nie istnieje i nie jest DIR w statusie, isActuallyFolder zostaje false.
                     }
 
-                    // Ustalanie statusu do wyświetlenia
                     string displayStatus = " ";
                     if (isLastPart && statusDict.ContainsKey(relPath))
                         displayStatus = statusDict[relPath].status;
                     else if (isActuallyFolder)
                         displayStatus = statusDict.ContainsKey(currentPath) ? statusDict[currentPath].status : "DIR";
 
-                    // Rozmiar tylko dla plików
                     string fileSize = "";
                     if (!isActuallyFolder && isLastPart)
                     {
@@ -323,7 +373,6 @@ namespace SVN.Core
                         }
                     }
 
-                    // Logika zaznaczania (Checkbox)
                     bool isChecked = !string.IsNullOrWhiteSpace(displayStatus) &&
                                      displayStatus != " " &&
                                      displayStatus != "?" &&
@@ -347,7 +396,6 @@ namespace SVN.Core
                 }
             }
 
-            // Aktualizacja zaznaczeń rodziców (jeśli dziecko zaznaczone, rodzic też)
             var reversedFolders = elements.Where(e => e.IsFolder).OrderByDescending(e => e.Depth).ToList();
             foreach (var folder in reversedFolders)
             {
@@ -406,8 +454,6 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(output)) return statusDict;
 
-            Debug.Log($"<color=green>[SVN]</color> Parsowanie zmian w: {workingDir}");
-
             string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var line in lines)
             {
@@ -416,7 +462,6 @@ namespace SVN.Core
                 char rawCode = line[0];
                 string stat = rawCode.ToString().ToUpper();
 
-                // SVN Status może zwracać różne znaki, sprawdzamy te najważniejsze
                 if ("MA?!DC~R".Contains(stat))
                 {
                     string rawPath = line.Substring(8).Trim();
@@ -425,7 +470,6 @@ namespace SVN.Core
 
                     string typeInfo = "FILE";
 
-                    // 1. Sprawdzamy fizycznie na dysku
                     if (Directory.Exists(fullPhysicalPath))
                     {
                         typeInfo = "DIR";
@@ -434,16 +478,8 @@ namespace SVN.Core
                     {
                         typeInfo = "FILE";
                     }
-                    // 2. Jeśli plik/folder nie istnieje (Status ! lub D)
                     else if (stat == "!" || stat == "D")
                     {
-                        // W SVN 'status' dla folderów usuniętych często nie ma rozszerzenia, 
-                        // ale najbezpieczniej jest sprawdzić, czy ścieżka kończy się slashem 
-                        // lub czy w metadanych SVN figurował jako katalog (opcjonalnie).
-                        // Tutaj usuwamy błędny warunek z kropką (Contains(".")).
-
-                        // Jeśli ścieżka występuje w hierarchii jako rodzic innych zmienionych plików,
-                        // zostanie i tak obsłużona jako DIR w metodzie BuildFlatTreeStructureText.
                         typeInfo = "FILE";
                     }
 
@@ -451,6 +487,35 @@ namespace SVN.Core
                 }
             }
             return statusDict;
+        }
+
+        public static async Task<Dictionary<string, string>> GetLocksDictionaryAsync(string workingDir)
+        {
+            var lockDict = new Dictionary<string, string>();
+            string output = await SvnRunner.RunAsync("status -u", workingDir);
+
+            if (string.IsNullOrEmpty(output)) return lockDict;
+
+            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                if (line.Length < 12) continue;
+
+                char lockCode = line[5]; // K or O
+                if (lockCode == 'K' || lockCode == 'O')
+                {
+                    string pathPart = line.Substring(8).Trim();
+                    string cleanPath = SvnRunner.CleanSvnPath(pathPart).Replace("\\", "/");
+                    if (char.IsDigit(cleanPath[0]))
+                    {
+                        int firstSpace = cleanPath.IndexOf(' ');
+                        if (firstSpace != -1) cleanPath = cleanPath.Substring(firstSpace).Trim();
+                    }
+
+                    lockDict[cleanPath] = lockCode.ToString();
+                }
+            }
+            return lockDict;
         }
 
         public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
