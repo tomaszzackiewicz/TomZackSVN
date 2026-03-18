@@ -23,6 +23,7 @@ public class SvnLineController : MonoBehaviour
     [SerializeField] private Button addBtn;
     [SerializeField] private Button lockBtn;
     [SerializeField] private TextMeshProUGUI lockBtnText;
+    [SerializeField] private Button blameBtn;
 
     private SvnTreeElement _element;
     private SVNStatus svnStatus;
@@ -169,6 +170,8 @@ public class SvnLineController : MonoBehaviour
         if (revertBtn != null) revertBtn.gameObject.SetActive(false);
         if (logBtn != null) logBtn.gameObject.SetActive(false);
         if (lockBtn != null) lockBtn.gameObject.SetActive(false);
+        if (blameBtn != null) blameBtn.gameObject.SetActive(false);
+        if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
 
         if (!_element.IsFolder && hasChanges)
         {
@@ -255,6 +258,33 @@ public class SvnLineController : MonoBehaviour
                         external?.OpenInExplorerAndSelect(_element.FullPath);
                 });
                 BindHover(explorerBtn, "Open file location in Windows Explorer.");
+            }
+
+            if (blameBtn != null)
+            {
+                blameBtn.onClick.RemoveAllListeners();
+
+                bool isFile = !_element.IsFolder;
+                bool hasHistory = _element.Status != "Added" && _element.Status != "?" && !string.IsNullOrEmpty(_element.Status);
+
+                bool canBlame = isFile && hasHistory;
+
+                blameBtn.gameObject.SetActive(canBlame);
+
+                if (canBlame)
+                {
+                    blameBtn.onClick.AddListener(() =>
+                    {
+                        var blameModule = SVNManager.Instance?.GetModule<SVNBlame>();
+                        if (blameModule != null)
+                        {
+                            _ = blameModule?.ShowBlameInMainConsole(_element.FullPath);
+
+                        }
+                    });
+
+                    BindHover(blameBtn, "See who last modified each line of this file.");
+                }
             }
         }
         else
