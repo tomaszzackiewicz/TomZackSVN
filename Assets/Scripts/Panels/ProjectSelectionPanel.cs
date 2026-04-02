@@ -57,31 +57,48 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private async void OnProjectSelected(SVNProject project)
     {
+        // 1. Pobierz moduły
         var statusModule = svnManager.GetModule<SVNStatus>();
+        var commitModule = svnManager.GetModule<SVNCommit>(); // Jeśli masz osobny moduł do commitowania
+
+        // 2. CAŁKOWITE CZYSZCZENIE STARYCH DANYCH
         if (statusModule != null)
         {
-            statusModule.ClearSVNTreeView();
-            statusModule.ClearCurrentData();
+            statusModule.ClearCurrentData();    // Czyści słowniki i listy
+            statusModule.ClearSVNTreeView();    // Czyści UI (Visual Elements/GameObjects)
         }
 
+        // Jeśli masz osobny moduł commita, go też trzeba zresetować
+        if (commitModule != null)
+        {
+            // commitModule.ClearMessage(); 
+        }
+
+        // 3. Resetuj parametry globalne biegacza SVN
+        // Ważne: Jeśli nowy projekt nie ma klucza, musimy wyczyścić stary klucz!
+        SvnRunner.KeyPath = !string.IsNullOrEmpty(project.privateKeyPath) ? project.privateKeyPath : "";
+
+        // 4. Załaduj nową konfigurację
         svnManager.LoadProject(project);
 
-        if (!string.IsNullOrEmpty(project.privateKeyPath))
-        {
-            SvnRunner.KeyPath = project.privateKeyPath;
-        }
-
+        // Wyłącz panel wyboru
         this.gameObject.SetActive(false);
 
+        // Aktualizuj UI ustawień
         if (svnManager.GetModule<SVNSettings>() != null)
         {
             svnManager.GetModule<SVNSettings>().UpdateUIFromManager();
         }
 
+        // Wyświetl info o projekcie na pasku
         await svnManager.GetModule<SVNBar>().ShowProjectInfo(project, project.workingDir);
+
+        // Zapisz ostatnio otwarty
         PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
         PlayerPrefs.Save();
 
+        // 5. WYMUSZENIE ŚWIEŻEGO STATUSU
+        // RefreshStatus powinien teraz budować drzewo od zera dla nowej ścieżki
         await svnManager.RefreshStatus();
     }
 

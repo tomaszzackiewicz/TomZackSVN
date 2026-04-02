@@ -14,25 +14,35 @@ namespace SVN.Core
 
         public SVNAdd(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        public async void AddAll()
+        public async Task AddAll()
         {
             if (IsProcessing) return;
+
             CancellationToken token = PrepareNewOperation();
 
             try
             {
                 string root = svnManager.WorkingDir;
-                ClearAndLog("<b>[Recursive Add]</b> Scanning...");
-
-                string rawStatus = await SvnRunner.RunAsync("status", root, true, token);
-                if (!rawStatus.Contains("?"))
+                if (string.IsNullOrEmpty(root))
                 {
-                    UpdateLightLog("<color=yellow>Nothing to add.</color>");
+                    SVNLogBridge.LogError("Working directory is null or empty.");
                     return;
                 }
 
-                UpdateLightLog("Adding files to SVN...");
-                await Task.Run(() => SvnRunner.RunAsync("add . --force --parents --depth infinity", root, true, token));
+                ClearAndLog("<b>[Recursive Add]</b> Scanning for unversioned items...");
+
+                string rawStatus = await SvnRunner.RunAsync("status", root, true, token);
+
+                if (string.IsNullOrWhiteSpace(rawStatus) || !rawStatus.Contains("?"))
+                {
+                    UpdateLightLog("<color=yellow>Nothing to add. All items are already tracked or ignored.</color>");
+                    return;
+                }
+
+                UpdateLightLog("Adding files to SVN (Local operation)...");
+
+                await SvnRunner.RunAsync("add * --force --parents --depth infinity", root, true, token);
+
 
                 IsProcessing = false;
 
@@ -43,14 +53,19 @@ namespace SVN.Core
                 {
                     statusModule.ClearSVNTreeView();
                     statusModule.ClearCurrentData();
-                    await statusModule.ExecuteRefreshWithAutoExpand();
+                    statusModule.ShowOnlyModified();
                 }
 
-                UpdateLightLog("\n<color=green><b>[SUCCESS]</b> Items added and UI refreshed.</color>");
+                UpdateLightLog("\n<color=green><b>[SUCCESS]</b> Items marked as 'Added'.</color>");
+                UpdateLightLog("<color=white>Note: You still need to <b>Commit</b> to upload them to the server.</color>");
+            }
+            catch (OperationCanceledException)
+            {
+                UpdateLightLog("<color=orange>Operation cancelled by user.</color>");
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"\n<color=red>Error: {ex.Message}</color>");
+                SVNLogBridge.LogError($"\n<color=red>Error during AddAll: {ex.Message}</color>");
                 IsProcessing = false;
             }
             finally

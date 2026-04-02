@@ -21,23 +21,33 @@ namespace SVN.Core
         {
             List<SvnTreeElement> targetData = folder.IsCommitDelegate ? _commitTreeData : _flatTreeData;
 
-            if (targetData == null) return;
+            if (targetData == null || targetData.Count == 0) return;
+
+            // 1. Tworzymy szybki słownik (Lookup), aby nie szukać rodzica przez FirstOrDefault w pętli.
+            // To zmienia złożoność z O(n^2) na O(n).
+            var pathLookup = targetData.ToDictionary(e => e.FullPath);
 
             foreach (var e in targetData)
             {
                 string parentPath = GetParentPath(e.FullPath);
+
+                // Pomijamy elementy bez rodzica (root) - zgodnie z Twoją logiką
                 if (string.IsNullOrEmpty(parentPath))
                 {
                     continue;
                 }
 
-                var parent = targetData.FirstOrDefault(x => x.FullPath == parentPath);
-                if (parent != null)
+                // Zamiast targetData.FirstOrDefault(x => x.FullPath == parentPath)
+                // używamy błyskawicznego dostępu przez klucz w słowniku.
+                if (pathLookup.TryGetValue(parentPath, out var parent))
                 {
+                    // Logika identyczna z Twoją: element jest widoczny tylko, 
+                    // gdy rodzic jest widoczny I rozwinięty.
                     e.IsVisible = parent.IsVisible && parent.IsExpanded;
                 }
             }
 
+            // 2. Odświeżanie UI - bez zmian w logice wywołań
             if (folder.IsCommitDelegate)
             {
                 if (svnUI.SVNCommitTreeDisplay != null)
@@ -91,11 +101,36 @@ namespace SVN.Core
         public async Task ExecuteRefreshWithAutoExpand(bool force = false)
         {
             if (IsProcessing && !force) return;
-
             if (!force) IsProcessing = true;
 
             try
             {
+                // --- 1. START: Pokazujemy napisy ładowania ---
+                if (svnUI != null)
+                {
+                    if (svnUI.TreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Scanning local changes...", "TREE", append: false);
+
+                    if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing commit list...", "COMMIT_TREE", append: false);
+                }
+
+                string root = svnManager.WorkingDir;
+
+                // --- 2. POBIERANIE DANYCH (Równolegle dla szybkości) ---
+                var statusTask = _isCurrentViewIgnored
+                    ? svnManager.GetModule<SVNIgnore>().GetIgnoredOnlyAsync(root)
+                    : GetChangesDictionaryAsync(root);
+                var locksTask = GetLocksDictionaryAsync(root);
+
+                await Task.WhenAll(statusTask, locksTask);
+
+                var statusDict = await statusTask;
+                var lockDict = await locksTask;
+
+                // --- 3. CZYSZCZENIE NAPISÓW "Refreshing..." ---
+                // Robimy to TUTAJ, bo zaraz potem RefreshUI wstawi prefaby plików.
+                // Jeśli zostawimy tam tekst, prefaby będą się na niego nakładać.
                 if (svnUI != null)
                 {
                     if (svnUI.TreeDisplay != null)
@@ -105,94 +140,44 @@ namespace SVN.Core
                         SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
                 }
 
-                string root = svnManager.WorkingDir;
+                // --- 4. SPRAWDZENIE PUSTEGO STANU ---
+                if ((statusDict == null || statusDict.Count == 0) && (lockDict == null || lockDict.Count == 0))
+                {
+                    ShowEmptyState(); // Wyświetla "No changes detected"
+                    return;
+                }
 
-                var statusDict = _isCurrentViewIgnored
-                    ? await svnManager.GetModule<SVNIgnore>().GetIgnoredOnlyAsync(root)
-                    : await GetChangesDictionaryAsync(root);
-
-                var lockDict = await GetLocksDictionaryAsync(root);
-
+                // --- 5. LOGIKA LOCKÓW I BUDOWANIE DRZEWA ---
                 if (lockDict != null && lockDict.Count > 0)
                 {
                     if (statusDict == null) statusDict = new Dictionary<string, (string status, string size)>();
                     foreach (var l in lockDict)
                     {
-                        if (!statusDict.ContainsKey(l.Key))
-                        {
-                            statusDict[l.Key] = (" ", "FILE");
-                        }
+                        if (!statusDict.ContainsKey(l.Key)) statusDict[l.Key] = (" ", "FILE");
                     }
-                }
-
-                if (statusDict == null || statusDict.Count == 0)
-                {
-                    ResetTreeView();
-                    _flatTreeData.Clear();
-                    _commitTreeData?.Clear();
-
-                    if (svnUI.TreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected. (Everything up to date)</i>", "TREE", append: false);
-
-                    if (svnUI.CommitTreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
-
-                    if (svnUI.CommitSizeText != null) svnUI.CommitSizeText.text = "Total Commit Size: <color=#FFFF00>0 B</color>";
-
-                    UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
-                    return;
                 }
 
                 _flatTreeData = BuildFlatTreeStructureText(root, statusDict);
+                ApplyLockColors(_flatTreeData, lockDict); // Nakłada kolory (wspomniane wcześniej)
 
-                if (lockDict != null && lockDict.Count > 0)
-                {
-                    foreach (var e in _flatTreeData)
-                    {
-                        if (lockDict.TryGetValue(e.FullPath, out string lockStatus))
-                        {
-                            string baseColor = "#FFFFFF";
-                            if (e.Status.Contains("M")) baseColor = "#FFD700";
-                            else if (e.Status.Contains("A")) baseColor = "#00FF00";
-                            else if (e.Status.Contains("?")) baseColor = "#00E5FF";
-                            else if (e.Status.Contains("D") || e.Status.Contains("!")) baseColor = "#FF4444";
+                // --- 6. ODŚWIEŻANIE UI (Prefaby plików) ---
 
-                            string lockColor = lockStatus == "K" ? "#00FF00" : "#FF4444";
-                            string cleanBaseStatus = e.Status.Trim();
-
-                            if (string.IsNullOrEmpty(cleanBaseStatus) || cleanBaseStatus == "DIR")
-                            {
-                                e.Status = $"<color={lockColor}>{lockStatus}</color>";
-                            }
-                            else if (!cleanBaseStatus.Contains(lockStatus))
-                            {
-                                e.Status = $"<color={baseColor}>{cleanBaseStatus}</color><color={lockColor}>{lockStatus}</color>";
-                            }
-                        }
-                    }
-                }
-
-                if (svnUI.SvnTreeView != null)
+                // Główne okno
+                if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
                 {
                     foreach (var e in _flatTreeData) e.IsCommitDelegate = false;
                     svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
                 }
 
-                if (svnUI.SVNCommitTreeDisplay != null || svnUI.CommitTreeDisplay != null)
+                // Okno commitu
+                bool isCommitVisible = (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy);
+                if (isCommitVisible)
                 {
                     _commitTreeData = PrepareCommitTree(_flatTreeData);
-
-                    if (svnUI.SVNCommitTreeDisplay != null)
-                        svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-
-                    if (svnUI.CommitTreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+                    svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
 
                     if (svnUI.CommitSizeText != null)
-                    {
-                        string totalSize = FormatSize(totalCommitBytes);
-                        svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{totalSize}</color>";
-                    }
+                        svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{FormatSize(totalCommitBytes)}</color>";
                 }
 
                 UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
@@ -207,17 +192,81 @@ namespace SVN.Core
             }
         }
 
+        // Metoda pomocnicza dla stanu pustego
+        private void ShowEmptyState()
+        {
+            ResetTreeView();
+            _flatTreeData.Clear();
+            _commitTreeData?.Clear();
+
+            if (svnUI.TreeDisplay != null)
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
+            if (svnUI.CommitTreeDisplay != null)
+                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
+
+            UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
+        }
+
+        // POMOCNICZA METODA: Odświeża oba widoki (Tree + Commit) jeśli są aktywne
+        private void RefreshAllUIComponents()
+        {
+            if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
+            {
+                foreach (var e in _flatTreeData) e.IsCommitDelegate = false;
+                svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
+            }
+
+            bool isCommitActive = (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy);
+            if (isCommitActive)
+            {
+                _commitTreeData = PrepareCommitTree(_flatTreeData);
+                svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
+
+                if (svnUI.CommitSizeText != null)
+                    svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{FormatSize(totalCommitBytes)}</color>";
+            }
+        }
+
+        // POMOCNICZA METODA: Twoja logika kolorowania locków wyciągnięta do metody dla czytelności
+        private void ApplyLockColors(List<SvnTreeElement> data, Dictionary<string, string> locks)
+        {
+            foreach (var e in data)
+            {
+                if (locks.TryGetValue(e.FullPath, out string lockStatus))
+                {
+                    string baseColor = "#FFFFFF";
+                    if (e.Status.Contains("M")) baseColor = "#FFD700";
+                    else if (e.Status.Contains("A")) baseColor = "#00FF00";
+                    else if (e.Status.Contains("?")) baseColor = "#00E5FF";
+                    else if (e.Status.Contains("D") || e.Status.Contains("!")) baseColor = "#FF4444";
+
+                    string lockColor = lockStatus == "K" ? "#00FF00" : "#FF4444";
+                    string cleanBaseStatus = e.Status.Trim();
+
+                    if (string.IsNullOrEmpty(cleanBaseStatus) || cleanBaseStatus == "DIR")
+                        e.Status = $"<color={lockColor}>{lockStatus}</color>";
+                    else if (!cleanBaseStatus.Contains(lockStatus))
+                        e.Status = $"<color={baseColor}>{cleanBaseStatus}</color><color={lockColor}>{lockStatus}</color>";
+                }
+            }
+        }
+
         public void ClearCurrentData()
         {
+            // 1. Czyszczenie danych logicznych
             _flatTreeData?.Clear();
             _commitTreeData?.Clear();
-            svnManager.CurrentStatusDict?.Clear();
+
+            if (svnManager != null && svnManager.CurrentStatusDict != null)
+                svnManager.CurrentStatusDict.Clear();
+
+            // 2. Zerowanie statystyk
+            totalCommitBytes = 0;
         }
 
         public void ClearSVNTreeView()
         {
-            SvnTreeView[] svnTreeViews = GameObject.FindObjectsByType<SvnTreeView>(FindObjectsSortMode.None);
-            foreach (var svnTreeView in svnTreeViews)
+            foreach (var svnTreeView in svnUI.SVNTreeViews)
             {
                 svnTreeView.ClearView();
             }
@@ -258,58 +307,70 @@ namespace SVN.Core
 
         private List<SvnTreeElement> PrepareCommitTree(List<SvnTreeElement> fullTree)
         {
+            // 1. Klonowanie listy (zgodnie z oryginałem)
             var commitTree = fullTree.Select(e =>
             {
                 var clone = e.Clone();
                 clone.IsChecked = e.IsChecked;
-                clone.IsVisible = false;
+                clone.IsVisible = false; // Domyślnie ukrywamy, by pokazać tylko zmienione
                 clone.IsCommitDelegate = true;
                 return clone;
             }).ToList();
 
+            // --- KLUCZOWA POPRAWKA ---
+            // Tworzymy słownik dla błyskawicznego wyszukiwania rodziców w rekurencji.
+            // Zmienia to wydajność z O(n^2) na O(n).
+            var commitLookup = commitTree.ToDictionary(e => e.FullPath);
+
             foreach (var element in commitTree)
             {
+                // Sprawdzamy status (Twoja oryginalna logika: niepusty, nie spacja, nie folder)
                 if (!string.IsNullOrEmpty(element.Status) && element.Status != " " && element.Status != "DIR")
                 {
-                    ShowElementAndParents(element, commitTree);
+                    // Przekazujemy słownik zamiast listy
+                    ShowElementAndParents(element, commitLookup);
                 }
             }
 
             return commitTree;
         }
 
-        private void ShowElementAndParents(SvnTreeElement element, List<SvnTreeElement> list)
+        private void ShowElementAndParents(SvnTreeElement element, Dictionary<string, SvnTreeElement> lookup)
         {
             element.IsVisible = true;
 
-            string[] pathParts = element.FullPath.Split('/');
-            if (pathParts.Length <= 1) return;
+            // Wydajniejsze pobieranie parentPath (bez Split/Take/Join)
+            string parentPath = GetParentPath(element.FullPath);
+            if (string.IsNullOrEmpty(parentPath)) return;
 
-            string parentPath = string.Join("/", pathParts.Take(pathParts.Length - 1));
-            var parent = list.Find(e => e.FullPath == parentPath);
-
-            if (parent != null && !parent.IsVisible)
+            // Błyskawiczne wyszukiwanie w słowniku zamiast list.Find
+            if (lookup.TryGetValue(parentPath, out var parent))
             {
-                ShowElementAndParents(parent, list);
+                // Rekurencja idzie w górę tylko, jeśli rodzic nie jest jeszcze widoczny
+                if (!parent.IsVisible)
+                {
+                    ShowElementAndParents(parent, lookup);
+                }
             }
         }
 
         private List<SvnTreeElement> BuildFlatTreeStructureText(string root, Dictionary<string, (string status, string size)> statusDict)
         {
+            // 1. Szybszy cache stanów zaznaczenia
             var previousSelectionStates = new Dictionary<string, bool>();
             if (_flatTreeData != null)
             {
                 foreach (var e in _flatTreeData)
-                {
-                    if (!previousSelectionStates.ContainsKey(e.FullPath))
-                        previousSelectionStates.Add(e.FullPath, e.IsChecked);
-                }
+                    if (!string.IsNullOrEmpty(e.FullPath)) previousSelectionStates[e.FullPath] = e.IsChecked;
             }
 
             var elements = new List<SvnTreeElement>();
+            var existingPaths = new HashSet<string>();
+
             var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
             totalCommitBytes = 0;
 
+            // 2. Budowanie struktury (Pętla główna)
             foreach (var relPath in sortedPaths)
             {
                 string normalizedPath = relPath.Replace('\\', '/');
@@ -328,10 +389,9 @@ namespace SVN.Core
                     string partName = parts[i];
                     currentPath = string.IsNullOrEmpty(currentPath) ? partName : $"{currentPath}/{partName}";
 
-                    if (elements.Any(e => e.FullPath == currentPath)) continue;
+                    if (existingPaths.Contains(currentPath)) continue;
 
                     string physicalPath = Path.Combine(root, currentPath).Replace("\\", "/");
-
                     bool isLastPart = (i == parts.Length - 1);
                     bool isActuallyFolder = false;
 
@@ -341,14 +401,10 @@ namespace SVN.Core
                     }
                     else
                     {
-                        if (Directory.Exists(physicalPath))
-                        {
+                        if (statusDict.TryGetValue(currentPath, out var info) && info.size == "DIR")
                             isActuallyFolder = true;
-                        }
-                        else if (statusDict.ContainsKey(currentPath) && statusDict[currentPath].size == "DIR")
-                        {
+                        else if (Directory.Exists(physicalPath))
                             isActuallyFolder = true;
-                        }
                     }
 
                     string displayStatus = " ";
@@ -360,23 +416,19 @@ namespace SVN.Core
                     string fileSize = "";
                     if (!isActuallyFolder && isLastPart)
                     {
-                        if (File.Exists(physicalPath))
+                        FileInfo fi = new FileInfo(physicalPath);
+                        if (fi.Exists)
                         {
-                            long bytes = new FileInfo(physicalPath).Length;
+                            long bytes = fi.Length;
                             fileSize = FormatSize(bytes);
                             if (displayStatus != " " && displayStatus != "DIR" && displayStatus != "?")
                                 totalCommitBytes += bytes;
                         }
-                        else
-                        {
-                            fileSize = "---";
-                        }
+                        else fileSize = "---";
                     }
 
                     bool isChecked = !string.IsNullOrWhiteSpace(displayStatus) &&
-                                     displayStatus != " " &&
-                                     displayStatus != "?" &&
-                                     displayStatus != "I";
+                                     displayStatus != " " && displayStatus != "?" && displayStatus != "I";
 
                     if (previousSelectionStates.TryGetValue(currentPath, out bool previousValue))
                         isChecked = previousValue;
@@ -393,15 +445,34 @@ namespace SVN.Core
                         IsVisible = true,
                         Size = fileSize
                     });
+                    existingPaths.Add(currentPath);
                 }
             }
 
+            // --- 3. ZOPTYMALIZOWANA LOGIKA PROPAGACJI (Zastępuje Any/StartsWith) ---
+            // Przetwarzamy foldery od najgłębszych, aby zaznaczenie "wędrowało" w górę do roota.
             var reversedFolders = elements.Where(e => e.IsFolder).OrderByDescending(e => e.Depth).ToList();
+
             foreach (var folder in reversedFolders)
             {
-                if (elements.Any(e => e.FullPath.StartsWith(folder.FullPath + "/") && e.IsChecked))
+                // Dzięki alfabetycznemu sortowaniu 'elements', dzieci folderu są tuż za nim.
+                int startIndex = elements.IndexOf(folder);
+                string childPrefix = folder.FullPath + "/";
+
+                for (int j = startIndex + 1; j < elements.Count; j++)
                 {
-                    folder.IsChecked = true;
+                    var potentialChild = elements[j];
+
+                    // Jeśli element nie zaczyna się od prefixu folderu, skończyły się jego dzieci.
+                    if (!potentialChild.FullPath.StartsWith(childPrefix))
+                        break;
+
+                    // Jeśli jakiekolwiek dziecko jest zaznaczone, zaznaczamy folder i kończymy sprawdzanie dzieci.
+                    if (potentialChild.IsChecked)
+                    {
+                        folder.IsChecked = true;
+                        break;
+                    }
                 }
             }
 
@@ -492,29 +563,50 @@ namespace SVN.Core
         public static async Task<Dictionary<string, string>> GetLocksDictionaryAsync(string workingDir)
         {
             var lockDict = new Dictionary<string, string>();
-            string output = await SvnRunner.RunAsync("status -u", workingDir);
 
-            if (string.IsNullOrEmpty(output)) return lockDict;
-
-            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
+            try
             {
-                if (line.Length < 12) continue;
+                // Wywołanie status -u kontaktuje się z serwerem
+                string output = await SvnRunner.RunAsync("status -u", workingDir);
 
-                char lockCode = line[5]; // K or O
-                if (lockCode == 'K' || lockCode == 'O')
+                if (string.IsNullOrEmpty(output)) return lockDict;
+
+                string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines)
                 {
-                    string pathPart = line.Substring(8).Trim();
-                    string cleanPath = SvnRunner.CleanSvnPath(pathPart).Replace("\\", "/");
-                    if (char.IsDigit(cleanPath[0]))
-                    {
-                        int firstSpace = cleanPath.IndexOf(' ');
-                        if (firstSpace != -1) cleanPath = cleanPath.Substring(firstSpace).Trim();
-                    }
+                    // Zachowujemy Twoją logikę sprawdzania długości linii
+                    if (line.Length < 12) continue;
 
-                    lockDict[cleanPath] = lockCode.ToString();
+                    // SVN status -u zwraca lock na 6. pozycji (indeks 5)
+                    // K = Lock lokalny, O = Lock przez kogoś innego
+                    char lockCode = line[5];
+                    if (lockCode == 'K' || lockCode == 'O')
+                    {
+                        // Wycinanie ścieżki - zachowujemy Twoje Substring(8)
+                        string pathPart = line.Substring(8).Trim();
+                        string cleanPath = SvnRunner.CleanSvnPath(pathPart).Replace("\\", "/");
+
+                        // Twoja logika usuwania numeru rewizji, jeśli ścieżka zaczyna się od cyfr
+                        if (cleanPath.Length > 0 && char.IsDigit(cleanPath[0]))
+                        {
+                            int firstSpace = cleanPath.IndexOf(' ');
+                            if (firstSpace != -1) cleanPath = cleanPath.Substring(firstSpace).Trim();
+                        }
+
+                        if (!string.IsNullOrEmpty(cleanPath))
+                        {
+                            lockDict[cleanPath] = lockCode.ToString();
+                        }
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                // Logujemy błąd, ale nie rzucamy go dalej, 
+                // aby ExecuteRefreshWithAutoExpand mógł dokończyć rysowanie drzewa
+                SVNLogBridge.LogError($"SVN Lock check failed (probably offline): {ex.Message}");
+            }
+
             return lockDict;
         }
 
@@ -527,17 +619,35 @@ namespace SVN.Core
 
         private void UpdateListSelection(List<SvnTreeElement> list, string path, bool isChecked)
         {
-            if (list == null) return;
+            if (list == null || list.Count == 0) return;
+
+            // 1. Znajdujemy indeks konkretnego folderu, który został kliknięty.
+            // Używamy FindIndex zamiast FirstOrDefault, aby od razu wiedzieć, gdzie zacząć pętlę dla dzieci.
+            int startIndex = list.FindIndex(e => e.FullPath == path);
+            if (startIndex == -1) return;
+
+            // 2. Aktualizujemy stan samego folderu.
+            list[startIndex].IsChecked = isChecked;
+
+            // 3. Przygotowujemy prefiks, aby zidentyfikować dzieci (np. "Folder/Subfolder/").
             string prefix = path + "/";
 
-            var folder = list.FirstOrDefault(e => e.FullPath == path);
-            if (folder != null) folder.IsChecked = isChecked;
-
-            foreach (var e in list)
+            // 4. Optymalizacja: Przeszukujemy listę TYLKO od miejsca znalezienia folderu w dół.
+            // Skoro lista jest posortowana, wszystkie dzieci MUSZĄ być bezpośrednio pod rodzicem.
+            for (int i = startIndex + 1; i < list.Count; i++)
             {
-                if (e.FullPath.StartsWith(prefix))
+                // Jeśli element zaczyna się od ścieżki rodzica, jest jego dzieckiem.
+                if (list[i].FullPath.StartsWith(prefix))
                 {
-                    e.IsChecked = isChecked;
+                    list[i].IsChecked = isChecked;
+                }
+                else
+                {
+                    // PRZEŁOMOWY MOMENT: Ponieważ lista jest posortowana A-Z, 
+                    // gdy tylko natrafimy na element, który NIE zaczyna się od prefiksu, 
+                    // wiemy na 100%, że nie ma już więcej dzieci tego folderu. 
+                    // Przerywamy pętlę (break), oszczędzając czas procesora.
+                    break;
                 }
             }
         }

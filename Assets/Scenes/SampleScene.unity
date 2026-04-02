@@ -3252,6 +3252,9 @@ MonoBehaviour:
   blameConsoleText: {fileID: 129525250}
   graphContainer: {fileID: 1500895345}
   graphItemPrefab: {fileID: 676361721842306418, guid: cecbb736ac5834e4096ffed9490ef7ba, type: 3}
+  svnTreeViews:
+  - {fileID: 586432109}
+  - {fileID: 2042118854}
 --- !u!114 &72008808
 MonoBehaviour:
   m_ObjectHideFlags: 0

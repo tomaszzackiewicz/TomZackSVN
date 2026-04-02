@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Threading.Tasks;
 using SVN.Core;
 using UnityEngine;
 
@@ -7,31 +8,22 @@ public class CommitPanel : MonoBehaviour
     private SVNUI svnUI;
     private SVNManager svnManager;
 
-    private void Start()
+    private void Awake()
     {
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
     }
 
-    private void OnEnable()
+    private async void OnEnable()
     {
-        RefreshCommitList();
+        _ = RefreshInBackground();
     }
 
-    public void RefreshCommitList()
+    private async Task RefreshInBackground()
     {
-        if (svnManager == null) return;
-
-        var statusModule = svnManager.GetModule<SVNStatus>();
-        var allData = statusModule.GetCurrentData();
-
-        var changedElements = allData
-            .Where(e => e.Status != "normal" && !string.IsNullOrEmpty(e.Status))
-            .ToList();
-
-        if (svnUI.SVNCommitTreeDisplay != null)
+        if (svnManager != null)
         {
-            svnUI.SVNCommitTreeDisplay.RefreshUI(changedElements, statusModule);
+            await svnManager.GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand();
         }
     }
 
@@ -39,7 +31,7 @@ public class CommitPanel : MonoBehaviour
     public void Button_Revert() => svnManager.GetModule<SVNRevert>().RevertAll();
     public void Button_Commit() => svnManager.GetModule<SVNCommit>().CommitAll();
     public void Button_CommitSelected() => svnManager.GetModule<SVNCommit>().CommitSelected();
-    public void Button_Add() => svnManager.GetModule<SVNAdd>().AddAll();
+    public void Button_Add() => _ = svnManager.GetModule<SVNAdd>().AddAll();
     public void Button_FixMissing() => svnManager.GetModule<SVNMissing>().FixMissingFiles();
 
     public void Button_CancelCommit() => svnManager.GetModule<SVNCommit>().CancelOperation();

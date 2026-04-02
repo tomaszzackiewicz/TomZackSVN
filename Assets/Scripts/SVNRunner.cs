@@ -34,18 +34,23 @@ namespace SVN.Core
                 throw new Exception("Working Directory is null!");
             }
 
+            // Czyszczenie ścieżki z niewidocznych znaków sterujących
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim().Where(c => !char.IsControl(c) && (int)c != 160).ToArray().Aggregate("", (s, c) => s + c));
 
+            // Przygotowanie bezpiecznej ścieżki do klucza SSH
             string safeKeyPath = "";
             if (!string.IsNullOrEmpty(KeyPath))
             {
                 safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
             }
 
+            // Dodajemy --non-interactive, aby SVN rzucał błąd zamiast czekać na wpisanie hasła/akceptację certyfikatu
+            string finalArgs = args.Contains("--non-interactive") ? args : args + " --non-interactive";
+
             var psi = new ProcessStartInfo
             {
                 FileName = "svn",
-                Arguments = args,
+                Arguments = finalArgs,
                 WorkingDirectory = workingDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -57,15 +62,36 @@ namespace SVN.Core
 
             if (!string.IsNullOrEmpty(safeKeyPath))
             {
-                psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+                // -v (verbose) w SSH pomoże zdiagnozować problemy z kluczem w strumieniu Error
+                psi.EnvironmentVariables["SVN_SSH"] = $"ssh -v -i \"{safeKeyPath}\" -v -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
             }
 
             using var process = new Process { StartInfo = psi };
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
+            string lastLoggedError = "";
 
-            DataReceivedEventHandler outHandler = (s, e) => { if (e.Data != null) outputBuilder.AppendLine(e.Data); };
-            DataReceivedEventHandler errHandler = (s, e) => { if (e.Data != null) errorBuilder.AppendLine(e.Data); };
+            // Handler wyjścia standardowego
+            DataReceivedEventHandler outHandler = (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data)) outputBuilder.AppendLine(e.Data);
+            };
+
+            // Handler błędów - NADPISYWANIE zamiast stackowania
+            DataReceivedEventHandler errHandler = (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    string currentError = e.Data.Trim();
+                    // Jeśli błąd jest inny niż poprzedni, czyścimy stary i zostawiamy tylko najświeższy
+                    if (currentError != lastLoggedError)
+                    {
+                        errorBuilder.Clear();
+                        errorBuilder.AppendLine(currentError);
+                        lastLoggedError = currentError;
+                    }
+                }
+            };
 
             process.OutputDataReceived += outHandler;
             process.ErrorDataReceived += errHandler;
@@ -81,7 +107,6 @@ namespace SVN.Core
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                //0 - inifinity
                 float timeoutLimit = IsLongRunningOperation(args) ? 0f : 60f;
                 DateTime startTime = DateTime.Now;
 
@@ -89,45 +114,45 @@ namespace SVN.Core
                 {
                     if (token.IsCancellationRequested)
                     {
-                        try { if (!process.HasExited) process.Kill(); }
-                        catch { }
-
-                        SVNLogBridge.LogError("SVN operation cancelled by user.");
-
+                        try { if (!process.HasExited) process.Kill(); } catch { }
                         throw new OperationCanceledException("SVN operation cancelled by user.");
                     }
 
                     if (timeoutLimit > 0 && (DateTime.Now - startTime).TotalSeconds > timeoutLimit)
                     {
-                        try { if (!process.HasExited) process.Kill(); }
-                        catch { }
-
-                        string timeoutMsg = $"SVN Timeout: Operation exceeded {timeoutLimit} seconds.";
-
+                        try { if (!process.HasExited) process.Kill(); } catch { }
+                        string timeoutMsg = $"SVN Timeout ({timeoutLimit}s). Ostatni błąd: {lastLoggedError}";
                         SVNLogBridge.LogError(timeoutMsg);
-
                         throw new Exception(timeoutMsg);
                     }
 
                     await Task.Delay(100);
                 }
 
+                // Dajemy procesowi ułamek sekundy na domknięcie strumieni tekstowych
+                process.WaitForExit(100);
+
                 if (process.ExitCode != 0)
                 {
-                    string err = errorBuilder.ToString();
+                    string err = errorBuilder.ToString().Trim();
+
+                    // Automatyczny Cleanup przy blokadzie (Retry)
                     if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
                     {
-                        SVNLogBridge.LogError("[SvnRunner] Database lock detected. Attempting automatic Cleanup...");
+                        SVNLogBridge.LogError("[SvnRunner] Lock detected. Running Cleanup...");
                         await RunAsync("cleanup", workingDir, false, token);
                         return await RunAsync(args, workingDir, false, token);
                     }
 
                     if (!string.IsNullOrEmpty(err))
                     {
-                        string fullError = $"SVN Error (Code {process.ExitCode}): {err.Trim()}";
+                        // Budujemy czytelny komunikat diagnostyczny
+                        string diagnostic = "";
+                        if (err.Contains("E170013") || err.Contains("can't connect")) diagnostic = " [Problem z połączeniem/URL]";
+                        if (err.Contains("E215004")) diagnostic = " [Błąd autoryzacji/Hasło]";
 
+                        string fullError = $"SVN Error (Code {process.ExitCode}): {err}{diagnostic}";
                         SVNLogBridge.LogError(fullError);
-
                         throw new Exception(fullError);
                     }
                 }

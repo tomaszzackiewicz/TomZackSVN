@@ -39,9 +39,22 @@ namespace SVN.Core
             {
                 try
                 {
-                    string wd = SVNManager.Instance != null ? SVNManager.Instance.WorkingDir : string.Empty;
-                    if (string.IsNullOrEmpty(wd)) { await Task.Delay(5000, token); continue; }
+                    // 1. POBIERANIE DANYCH Z UNITY MUSI BYĆ BEZPIECZNE
+                    // Najlepiej pobrać WorkingDir raz lub przez bezpieczną właściwość
+                    string wd = "";
 
+                    // Używamy Dispatchera lub sprawdzamy, czy możemy bezpiecznie pobrać ścieżkę
+                    // Jeśli SVNManager.Instance jest statyczny i nie dotyka MonoBehaviour w getterze, 
+                    // to zadziała, ale bezpieczniej jest to zrobić tak:
+                    wd = SVNManager.MainThreadWorkingDir; // Dodaj taką statyczną zmienną w SVNManager
+
+                    if (string.IsNullOrEmpty(wd))
+                    {
+                        await Task.Delay(5000, token);
+                        continue;
+                    }
+
+                    // 2. OPERACJA SIECIOWA (SVN) - To może być w tle
                     string revOutput = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", wd);
 
                     if (int.TryParse(revOutput.Trim(), out int remoteRev))
@@ -55,13 +68,14 @@ namespace SVN.Core
                             _lastKnownRemoteRevision = remoteRev;
 
                             string author = await FetchAuthor(wd);
-
-                            string localUser = SVNManager.Instance != null ? SVNManager.Instance.CurrentUserName : string.Empty;
+                            // Pobierz nazwę użytkownika z cache'u, nie z obiektu Unity bezpośrednio w tym wątku
+                            string localUser = SVNManager.CachedUserName;
 
                             if (!string.Equals(author.Trim(), localUser?.Trim(), StringComparison.OrdinalIgnoreCase))
                             {
                                 string commitMsg = await FetchCleanCommitMessage(wd, remoteRev);
 
+                                // 3. WSZYSTKO CO DOTYKA UI LUB KOMPONENTÓW UNITY WRACA DO GŁÓWNEGO WĄTKU
                                 UnityMainThreadDispatcher.Enqueue(async () =>
                                 {
                                     if (SVNNotificationAudio.Instance != null)
@@ -79,7 +93,7 @@ namespace SVN.Core
                             }
                             else
                             {
-                                if (showDebugLogs) SVNLogBridge.LogLine($"<color=green>[SVN Polling]</color> Local commit detected (Rev {remoteRev}). Skipping notification.");
+                                if (showDebugLogs) SVNLogBridge.LogLine($"<color=green>[SVN Polling]</color> Local commit detected (Rev {remoteRev}).");
 
                                 UnityMainThreadDispatcher.Enqueue(async () =>
                                 {
@@ -90,11 +104,15 @@ namespace SVN.Core
                         }
                     }
                 }
+                catch (OperationCanceledException) { /* Ignorujemy przy zamykaniu */ }
                 catch (Exception e)
                 {
-                    if (showDebugLogs) SVNLogBridge.LogError($"[SVN Polling] {e.Message}");
+                    // Tutaj nie używamy Debug.Log bezpośrednio, jeśli SVNLogBridge dotyka MonoBehaviour
+                    // Ale zwykły Debug.Log w nowszych wersjach Unity jest thread-safe.
+                    Debug.LogError($"[SVN Polling Error] {e.Message}");
                 }
 
+                // Czekamy przed następnym sprawdzeniem
                 await Task.Delay(TimeSpan.FromMinutes(pollIntervalMinutes), token);
             }
         }

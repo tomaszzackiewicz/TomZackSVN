@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -88,6 +89,7 @@ namespace SVN.Core
         [Header("Revision Graph")]
         [SerializeField] private Transform graphContainer;
         [SerializeField] public GameObject graphItemPrefab;
+        [SerializeField] private List<SvnTreeView> svnTreeViews = new List<SvnTreeView>();
 
         private Coroutine _notificationCoroutine;
 
@@ -158,6 +160,7 @@ namespace SVN.Core
         public TextMeshProUGUI BlameConsoleText => blameConsoleText;
         public Transform GraphContainer => graphContainer;
         public GameObject GraphItemPrefab => graphItemPrefab;
+        public List<SvnTreeView> SVNTreeViews => svnTreeViews;
 
         private void Awake()
         {
