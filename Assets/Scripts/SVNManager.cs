@@ -314,7 +314,7 @@ namespace SVN.Core
 
                 await UpdateStatus();
 
-                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>", append: true);
+                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>", append: false);
             }
             catch (Exception e)
             {

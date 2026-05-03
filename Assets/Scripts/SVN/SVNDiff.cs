@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
-using SFB; // StandaloneFileBrowser dla wersji EXE
+using SFB;
 
 namespace SVN.Core
 {
@@ -13,14 +13,11 @@ namespace SVN.Core
         private void LogBoth(string msg)
         {
             SVNLogBridge.LogLine(msg);
-            // Wykorzystujemy dedykowaną konsolę dla Diffa, jeśli istnieje
+
             var console = svnUI.DiffConsoleText != null ? svnUI.DiffConsoleText : svnUI.CommitConsoleContent;
             SVNLogBridge.UpdateUIField(console, msg, "DIFF", true);
         }
 
-        /// <summary>
-        /// Otwiera systemowe okno wyboru pliku (działa w EXE dzięki SFB)
-        /// </summary>
         public void Button_BrowseDiffFilePath()
         {
             string root = svnManager.WorkingDir;
@@ -33,7 +30,6 @@ namespace SVN.Core
 
             var extensions = new[] { new ExtensionFilter("All Files", "*") };
 
-            // Korzystamy z SFB zamiast EditorUtility
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select File to Diff", root, extensions, false);
 
             if (paths != null && paths.Length > 0 && !string.IsNullOrEmpty(paths[0]))
@@ -41,7 +37,6 @@ namespace SVN.Core
                 string selectedPath = paths[0].Replace('\\', '/');
                 string normalizedRoot = root.Replace('\\', '/');
 
-                // Przekształcanie na ścieżkę relatywną dla SVN
                 if (selectedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
                 {
                     selectedPath = selectedPath.Substring(normalizedRoot.Length).TrimStart('/');
@@ -59,9 +54,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Wywoływane przez przycisk "Execute Diff"
-        /// </summary>
         public async void ExecuteDiff()
         {
             if (IsProcessing) return;
@@ -84,9 +76,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Główna logika porównywania plików
-        /// </summary>
         public async Task ShowDiff(string relativePath)
         {
             if (string.IsNullOrEmpty(svnManager.WorkingDir))
@@ -95,21 +84,15 @@ namespace SVN.Core
                 return;
             }
 
-            // --- POBIERANIE ŚCIEŻKI DO EDYTORA ---
             string editorPath = svnManager.MergeToolPath;
-
-            // Ratunek: Pobranie z UI lub PlayerPrefs
             if (string.IsNullOrEmpty(editorPath) && svnUI.SettingsMergeToolPathInput != null)
                 editorPath = svnUI.SettingsMergeToolPathInput.text;
-
             if (string.IsNullOrEmpty(editorPath))
                 editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
 
-            // Czyszczenie ścieżki
             if (!string.IsNullOrEmpty(editorPath))
                 editorPath = editorPath.Trim().Replace("\"", "");
 
-            // Weryfikacja
             if (string.IsNullOrEmpty(editorPath) || !File.Exists(editorPath))
             {
                 LogBoth($"<color=red>Error:</color> Invalid Diff Tool path! (Found: '{editorPath}')");
@@ -120,7 +103,6 @@ namespace SVN.Core
 
             try
             {
-                // Wykonujemy svn diff przez SvnRunner
                 string diffContent = await SvnRunner.RunAsync($"diff \"{relativePath}\"", svnManager.WorkingDir, false);
 
                 if (string.IsNullOrWhiteSpace(diffContent))
@@ -129,30 +111,24 @@ namespace SVN.Core
                     return;
                 }
 
-                // Wykrywanie plików binarnych (.uasset, .png, .jpg itp.)
-                bool isBinary = diffContent.Contains("Cannot display: file marked as a binary type");
-
-                if (isBinary)
+                if (diffContent.Contains("Cannot display: file marked as a binary type"))
                 {
-                    LogBoth("<color=orange>Binary File:</color> Notepad++ cannot show visual changes for this type.");
+                    LogBoth("<color=orange>Binary File:</color> Opening Explorer...");
                     string fullPath = Path.Combine(svnManager.WorkingDir, relativePath).Replace("/", "\\");
-
-                    LogBoth("Opening folder and selecting file...");
-                    // Zaznaczamy plik w Explorerze, by użytkownik mógł go sprawdzić ręcznie
                     System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{fullPath}\"");
                     return;
                 }
 
-                // Logika otwierania w Notepad++ (tworzy plik .diff)
                 if (editorPath.ToLower().Contains("notepad++"))
                 {
                     string tempDiffPath = Path.Combine(Application.temporaryCachePath, "svn_preview.diff");
-                    await File.WriteAllTextAsync(tempDiffPath, diffContent);
+                    string enrichedContent = FormatDiffForExternalEditor(diffContent);
+
+                    await File.WriteAllTextAsync(tempDiffPath, enrichedContent);
                     System.Diagnostics.Process.Start(editorPath, $"\"{tempDiffPath}\"");
                 }
                 else
                 {
-                    // Dla TortoiseMerge / VS Code / WinMerge - otwieramy bezpośrednio plik
                     string fullPath = Path.Combine(svnManager.WorkingDir, relativePath);
                     System.Diagnostics.Process.Start(editorPath, $"\"{fullPath}\"");
                 }
@@ -163,6 +139,51 @@ namespace SVN.Core
             }
         }
 
+        private string FormatDiffForExternalEditor(string rawDiff)
+        {
+            string[] lines = rawDiff.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            System.Text.StringBuilder formattedBody = new System.Text.StringBuilder();
+
+            int oldLine = 0;
+            int newLine = 0;
+
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("@@"))
+                {
+                    var match = System.Text.RegularExpressions.Regex.Match(line, @"@@ -(\d+),?\d* \+(\d+),?\d* @@");
+                    if (match.Success)
+                    {
+                        oldLine = int.Parse(match.Groups[1].Value);
+                        newLine = int.Parse(match.Groups[2].Value);
+                    }
+                    formattedBody.AppendLine($"\n[ SEKCJA: Linia {oldLine} ]" + "\n" + line);
+                }
+                else if (line.StartsWith("-"))
+                {
+                    formattedBody.AppendLine($"{oldLine,-5} |       | {line}");
+                    oldLine++;
+                }
+                else if (line.StartsWith("+"))
+                {
+                    formattedBody.AppendLine($"      | {newLine,-5} | {line}");
+                    newLine++;
+                }
+                else if (line.StartsWith(" ") || string.IsNullOrEmpty(line))
+                {
+                    formattedBody.AppendLine($"{oldLine,-5} | {newLine,-5} | {line}");
+                    oldLine++;
+                    newLine++;
+                }
+                else
+                {
+                    formattedBody.AppendLine(line);
+                }
+            }
+
+            return formattedBody.ToString();
+        }
+
         public async Task ShowPreviewInUnity(string relativePath)
         {
             if (string.IsNullOrEmpty(svnManager.WorkingDir))
@@ -171,7 +192,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Clear the preview field before loading new content
             if (svnUI.LogText != null)
             {
                 svnUI.LogText.text = "Loading diff...";
@@ -188,7 +208,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // 2. Handle binary files
                 bool isBinary = diffContent.Contains("Cannot display: file marked as a binary type");
 
                 if (isBinary)
@@ -198,12 +217,10 @@ namespace SVN.Core
                     return;
                 }
 
-                // 3. Format and display in LogText
                 if (svnUI.LogText != null)
                 {
                     svnUI.LogText.text = FormatDiffForUnity(diffContent);
 
-                    // Reset scroll position to top
                     var scrollRect = svnUI.LogText.GetComponentInParent<UnityEngine.UI.ScrollRect>();
                     if (scrollRect != null)
                         scrollRect.verticalNormalizedPosition = 1f;
@@ -220,70 +237,139 @@ namespace SVN.Core
         private string FormatDiffForUnity(string rawDiff)
         {
             string[] lines = rawDiff.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            var sb = new System.Text.StringBuilder();
 
-            int addedCount = 0;
-            int removedCount = 0;
-            System.Text.StringBuilder formattedBody = new System.Text.StringBuilder();
+            int oldLine = 0;
+            int newLine = 0;
+            bool hasSection = false;
 
-            for (int i = 0; i < lines.Length; i++)
+            // Statistics
+            int added = 0;
+            int removed = 0;
+            int unchanged = 0;
+
+            // File names
+            string fileOld = "";
+            string fileNew = "";
+
+            // Colors
+            string colNum = "#FFFFFF";
+            string colRem = "#800020";
+            string colAdd = "#6AFF9E";
+            string colInfo = "#FFD800";
+
+            int wNum = 8;
+
+            string monoStart = "<mspace=0.6em>";
+            string monoEnd = "</mspace>";
+
+            string gapNum = "";
+            string gap = "  ";
+
+            // --- 1) COLLECT FILE INFORMATION ---
+            foreach (string raw in lines)
             {
-                string line = lines[i];
+                if (raw.StartsWith("--- "))
+                    fileOld = raw.Substring(4).Trim();
 
-                // Protection against TMP tags
-                line = line.Replace("<", "<noparse><</noparse>").Replace(">", "<noparse>></noparse>");
+                if (raw.StartsWith("+++ "))
+                    fileNew = raw.Substring(4).Trim();
+            }
 
-                // 1. Path headers (--- / +++)
-                if (line.StartsWith("---") || line.StartsWith("+++"))
+            // --- 2) PROCESS DIFF CONTENT ---
+            foreach (string raw in lines)
+            {
+                string line = raw.Replace("\t", "    ");
+
+                line = line.Replace("<", "<noparse><</noparse>")
+                           .Replace(">", "<noparse>></noparse>");
+
+                // HUNK HEADER
+                if (line.StartsWith("@@"))
                 {
-                    formattedBody.AppendLine($"<color=#00FFFF>{line}</color>");
+                    var match = System.Text.RegularExpressions.Regex.Match(
+                        line,
+                        @"@@ -(\d+),?\d* \+(\d+),?\d* @@"
+                    );
 
-                    // Add spacing after the header block
-                    if (line.StartsWith("+++"))
+                    if (match.Success)
                     {
-                        formattedBody.AppendLine("");
+                        oldLine = int.Parse(match.Groups[1].Value);
+                        newLine = int.Parse(match.Groups[2].Value);
+                        hasSection = true;
                     }
+
+                    sb.AppendLine(
+                        "\n<color=" + colInfo + ">──────── SECTION (line " + newLine + ") ────────</color>"
+                    );
+
+                    continue;
                 }
-                // 2. Added lines
+
+                if (!hasSection)
+                    continue;
+
+                string sOld = oldLine.ToString().PadLeft(wNum);
+                string sNew = newLine.ToString().PadLeft(wNum);
+
+                // REMOVED
+                if (line.StartsWith("-"))
+                {
+                    removed++;
+
+                    sb.AppendLine(
+                        monoStart + "<color=" + colNum + ">" + sOld + "</color>" + monoEnd + gapNum +
+                        monoStart + new string(' ', wNum) + monoEnd + gap +
+                        "<color=" + colRem + ">-</color>" + gap +
+                        "<color=" + colRem + ">" + line.Substring(1) + "</color>"
+                    );
+
+                    oldLine++;
+                }
+                // ADDED
                 else if (line.StartsWith("+"))
                 {
-                    addedCount++;
-                    formattedBody.AppendLine($"<color=#A6FFB5>{line}</color>");
+                    added++;
+
+                    sb.AppendLine(
+                        monoStart + new string(' ', wNum) + monoEnd + gapNum +
+                        monoStart + "<color=" + colNum + ">" + sNew + "</color>" + monoEnd + gap +
+                        "<color=" + colAdd + ">+</color>" + gap +
+                        "<color=" + colAdd + ">" + line.Substring(1) + "</color>"
+                    );
+
+                    newLine++;
                 }
-                // 3. Removed lines
-                else if (line.StartsWith("-"))
-                {
-                    removedCount++;
-                    // Deep Cherry (bolded for extra presence)
-                    formattedBody.AppendLine($"<color=#800000><b>{line}</b></color>");
-                }
-                // 4. Section metadata (@@)
-                else if (line.StartsWith("@@"))
-                {
-                    formattedBody.AppendLine($"<color=#00E5FF>{line}</color>");
-                }
-                // 5. SVN Headers (Index / ===)
-                else if (line.StartsWith("Index:") || line.StartsWith("==="))
-                {
-                    formattedBody.AppendLine($"<color=#00E5FF><b>{line}</b></color>");
-                }
-                // 6. Normal text
+                // UNCHANGED
                 else
                 {
-                    formattedBody.AppendLine($"<color=#DDDDDD>{line}</color>");
+                    unchanged++;
+
+                    sb.AppendLine(
+                        monoStart + "<color=" + colNum + ">" + sOld + "</color>" + monoEnd + gapNum +
+                        monoStart + "<color=" + colNum + ">" + sNew + "</color>" + monoEnd + gap +
+                        "   " + gap +
+                        line
+                    );
+
+                    oldLine++;
+                    newLine++;
                 }
             }
 
-            // Legend with MATCHING stats colors
-            // Added <b> to removed count to match the style of removed lines
-            string stats = $"<color=#A6FFB5>+{addedCount}</color>  <color=#800000><b>-{removedCount}</b></color>";
+            // --- 3) SUMMARY HEADER ---
+            var header = new System.Text.StringBuilder();
+            header.AppendLine("<color=#00D0FF><b>DIFF SUMMARY</b></color>");
+            header.AppendLine("<color=#DDDDDD>Original file:</color> " + fileOld);
+            header.AppendLine("<color=#DDDDDD>Modified file:</color> " + fileNew);
+            header.AppendLine("");
+            header.AppendLine("<color=#6AFF9E>Added lines:</color> " + added);
+            header.AppendLine("<color=#800020>Removed lines:</color> " + removed);
+            header.AppendLine("<color=#FFFFFF>Unchanged lines:</color> " + unchanged);
+            header.AppendLine("<color=#FFD800>Total changes:</color> " + (added + removed));
+            header.AppendLine("\n────────────────────────────────────────\n");
 
-            string legend = $@"<b>[ PREVIEW MODE ]</b>  {stats}
-<color=#50C8FF>Double-click file for External Editor</color>
-<color=#555555>__________________________________________________________________________</color>
-
-";
-
-            return legend + formattedBody.ToString();
+            return header.ToString() + sb.ToString();
         }
 
         public void OpenExternalDiff(SvnTreeElement element)
