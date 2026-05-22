@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using UnityEngine;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace SVN.Core
 {
@@ -12,7 +11,8 @@ namespace SVN.Core
 
         private void UpdateProjectInJson(string workingDir, Action<SVNProject> updateAction)
         {
-            if (string.IsNullOrEmpty(workingDir)) return;
+            if (string.IsNullOrEmpty(workingDir))
+                return;
 
             List<SVNProject> projects = ProjectSettings.LoadProjects();
             var project = projects.Find(p => p.workingDir == workingDir);
@@ -20,23 +20,27 @@ namespace SVN.Core
             if (project != null)
             {
                 updateAction(project);
+
+                project.repoUrl ??= "";
+                project.privateKeyPath ??= "";
+                project.mergeToolPath ??= "";
+
                 ProjectSettings.SaveProjects(projects);
-                SVNLogBridge.LogLine($"[Settings] Updated JSON for project: {project.projectName}");
             }
         }
 
         public void SaveRepoUrl()
         {
-            if (svnUI.SettingsRepoUrlInput == null) return;
             string newUrl = svnUI.SettingsRepoUrlInput.text.Trim();
 
             UpdateProjectInJson(svnManager.WorkingDir, p => p.repoUrl = newUrl);
 
             PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, newUrl);
             PlayerPrefs.Save();
+
             svnManager.RepositoryUrl = newUrl;
 
-            SVNLogBridge.LogLine($"<color=green>Saved:</color> Repository URL updated to: {newUrl}");
+            SVNLogBridge.LogLine($"Saved repo url = '{newUrl}'");
         }
 
         public void SaveSSHKeyPath()
@@ -47,24 +51,25 @@ namespace SVN.Core
 
             PlayerPrefs.SetString(SVNManager.KEY_SSH_PATH, path);
             PlayerPrefs.Save();
+
             svnManager.CurrentKey = path;
             SvnRunner.KeyPath = path;
 
-            SVNLogBridge.LogLine("<color=green>Saved:</color> SSH Key path updated.");
+            SVNLogBridge.LogLine($"Saved ssh key = '{path}'");
         }
 
         public void SaveMergeEditorPath()
         {
-            if (svnUI.SettingsMergeToolPathInput == null) return;
             string newPath = svnUI.SettingsMergeToolPathInput.text.Trim();
 
-            if (string.IsNullOrEmpty(newPath)) return;
+            UpdateProjectInJson(svnManager.WorkingDir, p => p.mergeToolPath = newPath);
 
             PlayerPrefs.SetString(SVNManager.KEY_MERGE_TOOL, newPath);
             PlayerPrefs.Save();
+
             svnManager.MergeToolPath = newPath;
 
-            SVNLogBridge.LogLine("<color=green>Saved:</color> Merge Tool updated.");
+            SVNLogBridge.LogLine($"Saved merge tool = '{newPath}'");
         }
 
         public async void SaveWorkingDir()
@@ -109,110 +114,35 @@ namespace SVN.Core
             }
         }
 
-        public async void LoadSettings()
+        public void LoadSettings()
         {
             if (svnManager == null) return;
 
-            svnManager.IsProcessing = true;
-            SVNLogBridge.LogLine("<b>[Settings]</b> Loading environment...", append: false);
+            string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
+            var projects = ProjectSettings.LoadProjects();
+            var current = projects.Find(p => p.workingDir == lastPath);
 
-            try
-            {
-                string globalMergeTool = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-                svnManager.MergeToolPath = globalMergeTool;
+            if (current == null)
+                return;
 
-                string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
-
-                if (string.IsNullOrEmpty(lastPath))
-                {
-                    SVNLogBridge.LogLine("<color=orange>Note:</color> No last project found. Please load or checkout a repository.");
-                    svnManager.IsProcessing = false;
-                    return;
-                }
-
-                var projects = ProjectSettings.LoadProjects();
-                var currentProj = projects.Find(p => p.workingDir == lastPath);
-
-                if (currentProj != null)
-                {
-                    svnManager.WorkingDir = currentProj.workingDir;
-                    svnManager.RepositoryUrl = currentProj.repoUrl;
-
-                    string keyToUse = currentProj.privateKeyPath;
-
-                    if (string.IsNullOrEmpty(keyToUse))
-                    {
-                        keyToUse = PlayerPrefs.GetString(SVNManager.KEY_SSH_PATH, "");
-                        if (!string.IsNullOrEmpty(keyToUse))
-                        {
-                            SVNLogBridge.LogLine("<color=#888888>Project has no specific key. Using global SSH key.</color>");
-                        }
-                    }
-
-                    svnManager.CurrentKey = keyToUse;
-                    SvnRunner.KeyPath = keyToUse;
-
-                    UpdateUIFromManager();
-
-                    if (Directory.Exists(currentProj.workingDir))
-                    {
-                        await svnManager.SetWorkingDirectory(currentProj.workingDir);
-                        await svnManager.RefreshStatus();
-                        SVNLogBridge.LogLine($"<color=green>Loaded:</color> {currentProj.projectName}");
-                    }
-                    else
-                    {
-                        SVNLogBridge.LogLine($"<color=red>Warning:</color> Working directory not found at {currentProj.workingDir}");
-                    }
-                }
-                else
-                {
-                    SVNLogBridge.LogLine("<color=orange>Note:</color> Last project not found in Selection List. It might have been deleted.");
-                }
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogLine($"<color=red>Load Error:</color> {ex.Message}");
-                SVNLogBridge.LogError($"[SVNSettings] LoadSettings failed: {ex}");
-            }
-            finally
-            {
-                svnManager.IsProcessing = false;
-            }
+            svnManager.LoadProject(current);
         }
 
         public void UpdateUIFromManager()
         {
-            if (svnUI == null) return;
+            if (svnUI == null || svnManager == null) return;
 
-            string savedMergePath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-            if (!string.IsNullOrEmpty(savedMergePath))
-            {
-                svnManager.MergeToolPath = savedMergePath;
-                svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(savedMergePath);
-            }
+            string merge = svnManager.MergeToolPath ?? "";
+            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(merge);
 
-            string effectiveKey = svnManager.CurrentKey;
+            string key = svnManager.CurrentKey ?? "";
+            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(key);
 
-            if (string.IsNullOrEmpty(effectiveKey))
-                effectiveKey = SvnRunner.KeyPath;
+            string wd = svnManager.WorkingDir ?? "";
+            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(wd);
 
-            if (string.IsNullOrEmpty(effectiveKey))
-                effectiveKey = PlayerPrefs.GetString(SVNManager.KEY_SSH_PATH, "");
-
-            if (!string.IsNullOrEmpty(effectiveKey))
-            {
-                svnManager.CurrentKey = effectiveKey;
-                SvnRunner.KeyPath = effectiveKey;
-                svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(effectiveKey);
-            }
-            else
-            {
-                svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify("");
-            }
-
-            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(svnManager.WorkingDir);
-            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(svnManager.RepositoryUrl);
+            string url = svnManager.RepositoryUrl ?? "";
+            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(url);
         }
     }
 }

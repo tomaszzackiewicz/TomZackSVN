@@ -34,17 +34,14 @@ namespace SVN.Core
                 throw new Exception("Working Directory is null!");
             }
 
-            // Czyszczenie ścieżki z niewidocznych znaków sterujących
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim().Where(c => !char.IsControl(c) && (int)c != 160).ToArray().Aggregate("", (s, c) => s + c));
 
-            // Przygotowanie bezpiecznej ścieżki do klucza SSH
             string safeKeyPath = "";
             if (!string.IsNullOrEmpty(KeyPath))
             {
                 safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
             }
 
-            // Dodajemy --non-interactive, aby SVN rzucał błąd zamiast czekać na wpisanie hasła/akceptację certyfikatu
             string finalArgs = args.Contains("--non-interactive") ? args : args + " --non-interactive";
 
             var psi = new ProcessStartInfo
@@ -62,7 +59,6 @@ namespace SVN.Core
 
             if (!string.IsNullOrEmpty(safeKeyPath))
             {
-                // -v (verbose) w SSH pomoże zdiagnozować problemy z kluczem w strumieniu Error
                 psi.EnvironmentVariables["SVN_SSH"] = $"ssh -v -i \"{safeKeyPath}\" -v -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
             }
 
@@ -71,19 +67,17 @@ namespace SVN.Core
             var errorBuilder = new StringBuilder();
             string lastLoggedError = "";
 
-            // Handler wyjścia standardowego
             DataReceivedEventHandler outHandler = (s, e) =>
             {
                 if (!string.IsNullOrEmpty(e.Data)) outputBuilder.AppendLine(e.Data);
             };
 
-            // Handler błędów - NADPISYWANIE zamiast stackowania
             DataReceivedEventHandler errHandler = (s, e) =>
             {
                 if (!string.IsNullOrEmpty(e.Data))
                 {
                     string currentError = e.Data.Trim();
-                    // Jeśli błąd jest inny niż poprzedni, czyścimy stary i zostawiamy tylko najświeższy
+
                     if (currentError != lastLoggedError)
                     {
                         errorBuilder.Clear();
@@ -129,14 +123,12 @@ namespace SVN.Core
                     await Task.Delay(100);
                 }
 
-                // Dajemy procesowi ułamek sekundy na domknięcie strumieni tekstowych
                 process.WaitForExit(100);
 
                 if (process.ExitCode != 0)
                 {
                     string err = errorBuilder.ToString().Trim();
 
-                    // Automatyczny Cleanup przy blokadzie (Retry)
                     if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
                     {
                         SVNLogBridge.LogError("[SvnRunner] Lock detected. Running Cleanup...");
@@ -146,7 +138,6 @@ namespace SVN.Core
 
                     if (!string.IsNullOrEmpty(err))
                     {
-                        // Budujemy czytelny komunikat diagnostyczny
                         string diagnostic = "";
                         if (err.Contains("E170013") || err.Contains("can't connect")) diagnostic = " [Problem z połączeniem/URL]";
                         if (err.Contains("E215004")) diagnostic = " [Błąd autoryzacji/Hasło]";

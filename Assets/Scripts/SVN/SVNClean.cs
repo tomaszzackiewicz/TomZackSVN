@@ -208,5 +208,36 @@ namespace SVN.Core
                 return await SvnRunner.RunAsync("cleanup", workingDir);
             }
         }
+
+        public async void HardReset()
+        {
+            if (IsProcessing) return;
+            string targetPath = GetTargetPath();
+            if (string.IsNullOrEmpty(targetPath)) return;
+
+            Debug.LogWarning("[SVN] Hard Reset started - deleting unversioned and reverting changes!");
+
+            IsProcessing = true;
+            LogToClean("<b>[HARD RESET]</b> Cleaning project to match HEAD...", append: false);
+
+            try
+            {
+                LogToClean("Step 1/2: Reverting all local modifications...");
+                await SvnRunner.RunAsync("revert -R .", targetPath);
+                LogToClean("Step 2/2: Removing unversioned and ignored files (Deep Clean)...");
+                await SvnRunner.RunAsync("cleanup . --remove-unversioned --remove-ignored --include-externals --clear-locks", targetPath);
+
+                LogToClean("<color=orange>Hard Reset Complete!</color> Project is now identical to HEAD.");
+            }
+            catch (Exception ex)
+            {
+                LogToClean($"<color=red>Hard Reset Failed:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+                await svnManager.RefreshStatus(force: true);
+            }
+        }
     }
 }

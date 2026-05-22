@@ -37,7 +37,7 @@ namespace SVN.Core
             }
 
             IsProcessing = true;
-            SvnRunner.KeyPath = keyPath;
+            svnManager.CurrentKey = keyPath;
 
             SVNLogBridge.LogLine($"<b>Processing path:</b> <color=green>{path}</color>", append: false);
 
@@ -118,34 +118,39 @@ namespace SVN.Core
 
         private void RegisterProjectInList(string path, string key, string url)
         {
-            var newProj = new SVNProject
-            {
-                projectName = System.IO.Path.GetFileName(path.TrimEnd('/')),
-                repoUrl = url,
-                workingDir = path,
-                privateKeyPath = key,
-                lastOpened = DateTime.Now
-            };
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+
+            string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
 
             var projects = ProjectSettings.LoadProjects();
-            int existingIndex = projects.FindIndex(p => p.workingDir == path);
 
-            if (existingIndex != -1)
+            int index = projects.FindIndex(p =>
+                !string.IsNullOrEmpty(p.workingDir) &&
+                p.workingDir.Replace("\\", "/").TrimEnd('/') == normalizedPath
+            );
+
+            if (index != -1)
             {
-                projects[existingIndex].repoUrl = url;
-                projects[existingIndex].privateKeyPath = key;
-                projects[existingIndex].lastOpened = DateTime.Now;
-                SVNLogBridge.LogLine("<color=#888888>Existing project entry updated in list.</color>");
+                projects[index].repoUrl = url ?? string.Empty;
+                projects[index].privateKeyPath = key ?? string.Empty;
+                projects[index].lastOpened = DateTime.Now;
             }
             else
             {
-                projects.Add(newProj);
-                SVNLogBridge.LogLine($"<color=green>New project '{newProj.projectName}' added to Selection List.</color>");
+                projects.Add(new SVNProject
+                {
+                    projectName = Path.GetFileName(normalizedPath),
+                    repoUrl = url ?? string.Empty,
+                    workingDir = normalizedPath,
+                    privateKeyPath = key ?? string.Empty,
+                    lastOpened = DateTime.Now
+                });
             }
 
             ProjectSettings.SaveProjects(projects);
 
-            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", path);
+            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
             PlayerPrefs.Save();
         }
 

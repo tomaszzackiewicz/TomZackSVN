@@ -67,10 +67,6 @@ namespace SVN.Core
         public void Button_Load() => svnManager.GetModule<SVNLoad>().LoadRepoPathAndRefresh();
         public void Button_Update() => svnManager.GetModule<SVNUpdate>().Update();
         public void Button_Refresh() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();
-        public void Button_Clean() => svnManager.GetModule<SVNClean>().LightCleanup();
-        public void Button_DiscardUntracked() => svnManager.GetModule<SVNClean>().DiscardUnversioned();
-        public void Button_Vacuum() => svnManager.GetModule<SVNClean>().VacuumCleanup();
-        public void Button_DeepRepair() => svnManager.GetModule<SVNClean>().DeepRepair();
         public void Button_Log() => svnManager.GetModule<SVNLog>().ShowLog();
         public void Button_RevertAllMissing() => svnManager.GetModule<SVNCommit>().ExecuteRevertAllMissing();
         public void Button_ShowOnlyIgnored() => svnManager.GetModule<SVNIgnore>().RefreshIgnoredPanel();

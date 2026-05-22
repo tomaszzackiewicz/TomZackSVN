@@ -57,49 +57,41 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private async void OnProjectSelected(SVNProject project)
     {
-        // 1. Pobierz moduły
-        var statusModule = svnManager.GetModule<SVNStatus>();
-        var commitModule = svnManager.GetModule<SVNCommit>(); // Jeśli masz osobny moduł do commitowania
+        if (project == null || svnManager == null)
+            return;
 
-        // 2. CAŁKOWITE CZYSZCZENIE STARYCH DANYCH
-        if (statusModule != null)
+        try
         {
-            statusModule.ClearCurrentData();    // Czyści słowniki i listy
-            statusModule.ClearSVNTreeView();    // Czyści UI (Visual Elements/GameObjects)
-        }
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            var commitModule = svnManager.GetModule<SVNCommit>();
+            var settingsModule = svnManager.GetModule<SVNSettings>();
+            var barModule = svnManager.GetModule<SVNBar>();
 
-        // Jeśli masz osobny moduł commita, go też trzeba zresetować
-        if (commitModule != null)
+            statusModule?.ClearCurrentData();
+            statusModule?.ClearSVNTreeView();
+
+
+            svnManager.CurrentKey = string.IsNullOrWhiteSpace(project.privateKeyPath)
+                ? ""
+                : project.privateKeyPath;
+
+            svnManager.LoadProject(project);
+
+            gameObject.SetActive(false);
+
+            settingsModule?.UpdateUIFromManager();
+
+            if (barModule != null)
+            {
+                await barModule.ShowProjectInfo(project, project.workingDir);
+            }
+
+            await svnManager.RefreshStatus();
+        }
+        catch (Exception ex)
         {
-            // commitModule.ClearMessage(); 
+            SVNLogBridge.LogError($"[ProjectSelection] OnProjectSelected failed: {ex}");
         }
-
-        // 3. Resetuj parametry globalne biegacza SVN
-        // Ważne: Jeśli nowy projekt nie ma klucza, musimy wyczyścić stary klucz!
-        SvnRunner.KeyPath = !string.IsNullOrEmpty(project.privateKeyPath) ? project.privateKeyPath : "";
-
-        // 4. Załaduj nową konfigurację
-        svnManager.LoadProject(project);
-
-        // Wyłącz panel wyboru
-        this.gameObject.SetActive(false);
-
-        // Aktualizuj UI ustawień
-        if (svnManager.GetModule<SVNSettings>() != null)
-        {
-            svnManager.GetModule<SVNSettings>().UpdateUIFromManager();
-        }
-
-        // Wyświetl info o projekcie na pasku
-        await svnManager.GetModule<SVNBar>().ShowProjectInfo(project, project.workingDir);
-
-        // Zapisz ostatnio otwarty
-        PlayerPrefs.SetString("SVN_LastOpenedProjectPath", project.workingDir);
-        PlayerPrefs.Save();
-
-        // 5. WYMUSZENIE ŚWIEŻEGO STATUSU
-        // RefreshStatus powinien teraz budować drzewo od zera dla nowej ścieżki
-        await svnManager.RefreshStatus();
     }
 
     public void Button_OpenAddProjectPanel()

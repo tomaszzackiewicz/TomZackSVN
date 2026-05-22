@@ -61,8 +61,6 @@ namespace SVN.Core
                 }
 
                 workingDir = cleaned.Trim();
-
-                //SVNLogBridge.LogLine($"[SVN Manager] WorkingDir sanitized to: '{workingDir}'");
             }
         }
 
@@ -167,21 +165,42 @@ namespace SVN.Core
         private async void Start()
         {
             if (svnUI == null) return;
+
             SetupInputListeners();
 
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
-            var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
 
-            if (lastProject != null)
+            if (!string.IsNullOrEmpty(lastPath))
             {
-                LoadProject(lastProject);
-                projectSelectionPanel?.gameObject.SetActive(false);
+                var projects = ProjectSettings.LoadProjects();
+                var lastProject = projects.Find(p => p.workingDir == lastPath);
+
+                if (lastProject != null && Directory.Exists(lastProject.workingDir))
+                {
+                    LoadProject(lastProject);
+
+                    projectSelectionPanel?.gameObject.SetActive(false);
+                }
+                else
+                {
+                    projectSelectionPanel?.gameObject.SetActive(true);
+                    projectSelectionPanel?.RefreshList();
+                }
             }
             else
             {
                 projectSelectionPanel?.gameObject.SetActive(true);
                 projectSelectionPanel?.RefreshList();
             }
+        }
+
+        public void SyncFromCheckoutUI()
+        {
+            RepositoryUrl = svnUI.CheckoutRepoUrlInput.text.Trim();
+            WorkingDir = svnUI.CheckoutDestFolderInput.text.Trim();
+            CurrentKey = svnUI.CheckoutPrivateKeyInput.text.Trim();
+
+            UpdateCurrentProjectData();
         }
 
         public async Task<string> AutoDetectSvnUser()
@@ -223,6 +242,8 @@ namespace SVN.Core
             PlayerPrefs.Save();
 
             if (Directory.Exists(WorkingDir)) InitializeActiveProject(project);
+
+            ApplySettingsSnapshot();
         }
 
         private async void InitializeActiveProject(SVNProject project)
@@ -261,18 +282,26 @@ namespace SVN.Core
             svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
         }
 
+        public void ApplySettingsSnapshot()
+        {
+            if (svnUI == null) return;
+
+            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
+            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
+            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
+            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
+
+            svnUI.CheckoutRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
+            svnUI.CheckoutDestFolderInput?.SetTextWithoutNotify(WorkingDir);
+            svnUI.CheckoutPrivateKeyInput?.SetTextWithoutNotify(CurrentKey);
+        }
+
         private string CleanPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return string.Empty;
 
             System.Text.StringBuilder debugInfo = new System.Text.StringBuilder();
-            //debugInfo.AppendLine($"[SVN Path Debug] Original Path: '{path}'");
-            // for (int i = 0; i < path.Length; i++)
-            // {
-            //     char c = path[i];
-            //     int code = (int)c;
-            //     debugInfo.AppendLine($"[{i}] '{(char.IsControl(c) ? '?' : c)}' (Code: {code})");
-            // }
+
             SVNLogBridge.LogLine(debugInfo.ToString());
 
             return new string(path.Where(c => !char.IsControl(c) && (int)c != 160 && (int)c != 8203).ToArray()).Trim();
@@ -376,12 +405,64 @@ namespace SVN.Core
             }
         }
 
+        private bool _ignoreSync;
+
         private void SetupInputListeners()
         {
-            svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(v => { BroadcastUrlChange(v); UpdateCurrentProjectData(); });
-            svnUI.SettingsSshKeyPathInput?.onValueChanged.AddListener(v => { BroadcastSshKeyChange(v); UpdateCurrentProjectData(); });
-            svnUI.SettingsWorkingDirInput?.onValueChanged.AddListener(v => { BroadcastWorkingDirChange(v); UpdateCurrentProjectData(); });
-            svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(v => { MergeToolPath = v.Trim(); UpdateCurrentProjectData(); });
+            svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync) return;
+                BroadcastUrlChange(v);
+                UpdateCurrentProjectData();
+            });
+
+            svnUI.SettingsSshKeyPathInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync) return;
+                BroadcastSshKeyChange(v);
+                UpdateCurrentProjectData();
+            });
+
+            svnUI.SettingsWorkingDirInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync) return;
+                BroadcastWorkingDirChange(v);
+                UpdateCurrentProjectData();
+            });
+
+            svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync) return;
+                MergeToolPath = v.Trim();
+                UpdateCurrentProjectData();
+            });
+
+            svnUI.CheckoutRepoUrlInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync) return;
+                SyncFromCheckoutUI();
+            });
+
+            svnUI.CheckoutDestFolderInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync) return;
+                SyncFromCheckoutUI();
+            });
+
+            svnUI.CheckoutPrivateKeyInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync) return;
+                SyncFromCheckoutUI();
+            });
+        }
+
+        public void ApplySettingsSnapshotSafe()
+        {
+            _ignoreSync = true;
+
+            ApplySettingsSnapshot();
+
+            _ignoreSync = false;
         }
 
         private void UpdateCurrentProjectData()
@@ -425,7 +506,6 @@ namespace SVN.Core
                 IsProcessing = true;
                 SVNLogBridge.LogLine($"<b>[SVN]</b> Fetching r{revision}: {relativePath}...", append: true);
 
-                // 1. Ścieżka tymczasowa
                 string fileName = Path.GetFileName(relativePath);
                 string tempFileName = $"r{revision}_{fileName}";
                 string cacheFolder = Path.Combine(Application.temporaryCachePath, "SVN_Cache");
@@ -435,11 +515,9 @@ namespace SVN.Core
 
                 string tempPath = Path.Combine(cacheFolder, tempFileName);
 
-                // 2. URL
                 string repoRoot = GetRepoRoot();
                 string fullUrl = repoRoot + (relativePath.StartsWith("/") ? "" : "/") + relativePath;
 
-                // 3. Pobieranie zawartości
                 string command = $"cat -r {revision} \"{fullUrl}\"";
                 string fileContent = await SvnRunner.RunAsync(command, WorkingDir, false);
 
@@ -449,23 +527,19 @@ namespace SVN.Core
                     return;
                 }
 
-                // 4. Zapis (używamy standardowego zapisu, jeśli File.WriteAllTextAsync nie jest dostępny w Twoim profilu .NET)
                 File.WriteAllText(tempPath, fileContent);
 
-                // 5. Inteligentne otwieranie
                 string absoluteTempPath = Path.GetFullPath(tempPath);
 
-                // Sprawdzamy, czy ścieżka do edytora (MergeToolPath) jest ustawiona i czy plik istnieje
                 if (!string.IsNullOrEmpty(MergeToolPath) && File.Exists(MergeToolPath))
                 {
                     try
                     {
-                        // Uruchamiamy wybrany w ustawieniach program z plikiem jako argumentem
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
                         {
                             FileName = MergeToolPath,
                             Arguments = $"\"{absoluteTempPath}\"",
-                            UseShellExecute = true // Pozwala na uruchomienie GUI
+                            UseShellExecute = true
                         });
 
                         SVNLogBridge.LogLine($"<color=green>Opened in editor:</color> {tempFileName}", append: true);
@@ -478,7 +552,6 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // Jeśli ścieżka do edytora jest pusta, używamy domyślnego programu systemowego
                     Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
                     SVNLogBridge.LogLine($"<color=yellow>Opened with default app:</color> {tempFileName} (No editor path set)", append: true);
                 }
