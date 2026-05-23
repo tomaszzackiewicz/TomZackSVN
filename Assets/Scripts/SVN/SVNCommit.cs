@@ -389,9 +389,7 @@ namespace SVN.Core
 
                 HashSet<string> commitTargetsRel = new HashSet<string>();
 
-                // -------------------------
                 // Handle deletions first
-                // -------------------------
                 var deletions = selectedItems
                     .Where(e => e.Status == "!" || e.Status == "D")
                     .OrderByDescending(x => x.FullPath.Split('/').Length);
@@ -413,9 +411,7 @@ namespace SVN.Core
                     commitTargetsRel.Add(relPath);
                 }
 
-                // -------------------------
                 // Handle normal files
-                // -------------------------
                 var others = selectedItems
                     .Where(e => e.Status != "!" && e.Status != "D");
 
@@ -510,14 +506,8 @@ namespace SVN.Core
                     if (svnUI.OperationProgressBar != null)
                         svnUI.OperationProgressBar.value = 1.0f;
 
-                    LogToConsole(
-                        $"\n<color=green><b>SUCCESS!</b></color> Revision: {revision}");
-
-                    // Optional: show raw SVN result
-                    if (!string.IsNullOrWhiteSpace(commitResult))
-                    {
-                        LogToConsole($"\n{commitResult}");
-                    }
+                    // Logujemy tylko czysty komunikat o sukcesie i numer rewizji
+                    LogToConsole($"\n<color=green><b>SUCCESS!</b></color> Revision: {revision}");
 
                     // Clear commit message
                     if (svnUI.CommitMessageInput != null)
@@ -569,13 +559,11 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToConsole(
-                    "\n<color=orange><b>[ABORTED]</b></color> User cancelled.");
+                LogToConsole("\n<color=orange><b>[ABORTED]</b></color> User cancelled.");
             }
             catch (Exception ex)
             {
-                LogToConsole(
-                    $"\n<color=red>Error:</color> {ex.Message}");
+                LogToConsole($"\n<color=red>Error:</color> {ex.Message}");
             }
             finally
             {
