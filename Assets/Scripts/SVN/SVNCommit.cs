@@ -13,7 +13,7 @@ namespace SVN.Core
     public class SVNCommit : SVNBase
     {
         private CancellationTokenSource _commitCTS;
-        private List<CommitItemData> _items = new List<CommitItemData>();
+        private List<SVNStatusElement> _items = new List<SVNStatusElement>();
 
         public SVNCommit(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
@@ -190,11 +190,11 @@ namespace SVN.Core
                 var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(svnManager.WorkingDir, false);
                 var commitables = statusDict
                     .Where(x => "MADC?".Contains(x.Value.status)) // Added '?' to include new files
-                    .Select(x => new CommitItemData
+                    .Select(x => new SVNStatusElement
                     {
-                        Path = x.Key,
+                        FullPath = x.Key,
                         Status = x.Value.status,
-                        IsSelected = true
+                        IsChecked = true
                     })
                     .ToList();
 
@@ -204,7 +204,7 @@ namespace SVN.Core
             finally { IsProcessing = false; }
         }
 
-        public void RenderCommitList(List<CommitItemData> items)
+        public void RenderCommitList(List<SVNStatusElement> items)
         {
             if (items.Count == 0)
             {
@@ -225,7 +225,7 @@ namespace SVN.Core
                     "D" => "red",
                     _ => "white"
                 };
-                sb.AppendLine($"<color={color}>[{item.Status}]</color> {item.Path}");
+                sb.AppendLine($"<color={color}>[{item.Status}]</color> {item.FullPath}");
             }
 
             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, sb.ToString(), append: false);
@@ -336,91 +336,259 @@ namespace SVN.Core
 
             var statusModule = svnManager.GetModule<SVNStatus>();
             var allElements = statusModule.GetCurrentData();
-            string root = svnManager.WorkingDir.Replace("\\", "/").TrimEnd('/');
 
-            var selectedItems = allElements.Where(e => e.IsChecked).ToList();
-            if (selectedItems.Count == 0) return;
+            string root = svnManager.WorkingDir
+                .Replace("\\", "/")
+                .TrimEnd('/');
+
+            var selectedItems = allElements
+                .Where(e => e.IsChecked)
+                .ToList();
+
+            if (selectedItems.Count == 0)
+            {
+                LogToConsole("\n<color=yellow>No items selected for commit.</color>");
+                return;
+            }
 
             IsProcessing = true;
             _commitCTS = new CancellationTokenSource();
 
+            // Escape quotes in commit message
+            message = message.Replace("\"", "\\\"");
+
+            // Progress bar start
+            if (svnUI.OperationProgressBar != null)
+            {
+                svnUI.OperationProgressBar.gameObject.SetActive(true);
+                svnUI.OperationProgressBar.value = 0.05f;
+            }
+
             try
             {
-                LogToConsole("\n<b>[0/3]</b> Resolving conflicts and cleanup...");
-                await SvnRunner.RunAsync("cleanup", root, true, _commitCTS.Token);
+                // =========================================================
+                // [0/4] Cleanup
+                // =========================================================
+                LogToConsole("\n<b>[0/4]</b> Resolving conflicts and cleanup...");
 
-                LogToConsole("\n<b>[1/3]</b> Registering items and hierarchy...");
+                await SvnRunner.RunAsync(
+                    "cleanup",
+                    root,
+                    true,
+                    _commitCTS.Token);
+
+                if (svnUI.OperationProgressBar != null)
+                    svnUI.OperationProgressBar.value = 0.2f;
+
+                _commitCTS.Token.ThrowIfCancellationRequested();
+
+                // =========================================================
+                // [1/4] Prepare targets
+                // =========================================================
+                LogToConsole("\n<b>[1/4]</b> Registering items and hierarchy...");
 
                 HashSet<string> commitTargetsRel = new HashSet<string>();
 
+                // -------------------------
+                // Handle deletions first
+                // -------------------------
                 var deletions = selectedItems
                     .Where(e => e.Status == "!" || e.Status == "D")
                     .OrderByDescending(x => x.FullPath.Split('/').Length);
 
                 foreach (var item in deletions)
                 {
-                    string relPath = item.FullPath.Replace("\\", "/").TrimStart('/');
-                    await SvnRunner.RunAsync($"delete \"{relPath}\" --force", root, true, _commitCTS.Token);
+                    _commitCTS.Token.ThrowIfCancellationRequested();
+
+                    string relPath = item.FullPath
+                        .Replace("\\", "/")
+                        .TrimStart('/');
+
+                    await SvnRunner.RunAsync(
+                        $"delete \"{relPath}\" --force",
+                        root,
+                        true,
+                        _commitCTS.Token);
+
                     commitTargetsRel.Add(relPath);
                 }
 
-                var others = selectedItems.Where(e => e.Status != "!" && e.Status != "D");
+                // -------------------------
+                // Handle normal files
+                // -------------------------
+                var others = selectedItems
+                    .Where(e => e.Status != "!" && e.Status != "D");
+
                 foreach (var item in others)
                 {
-                    string relPath = item.FullPath.Replace("\\", "/").TrimStart('/');
+                    _commitCTS.Token.ThrowIfCancellationRequested();
 
+                    string relPath = item.FullPath
+                        .Replace("\\", "/")
+                        .TrimStart('/');
+
+                    // Add new/unversioned files
                     if (item.Status == "?" || item.Status == "A")
                     {
-                        await SvnRunner.RunAsync($"add \"{relPath}\" --force --parents --no-ignore", root, true, _commitCTS.Token);
+                        await SvnRunner.RunAsync(
+                            $"add \"{relPath}\" --force --parents --no-ignore",
+                            root,
+                            true,
+                            _commitCTS.Token);
                     }
+
                     commitTargetsRel.Add(relPath);
 
-                    string parentDir = Path.GetDirectoryName(relPath).Replace("\\", "/");
-                    if (!string.IsNullOrEmpty(parentDir) && parentDir != ".")
+                    // Add parent folder to commit targets
+                    string parentDir = Path.GetDirectoryName(relPath);
+
+                    if (!string.IsNullOrEmpty(parentDir))
                     {
-                        commitTargetsRel.Add(parentDir);
+                        parentDir = parentDir.Replace("\\", "/");
+
+                        if (parentDir != ".")
+                        {
+                            commitTargetsRel.Add(parentDir);
+                        }
                     }
                 }
 
-                LogToConsole("\n<b>[3/3]</b> Sending to server...");
+                if (svnUI.OperationProgressBar != null)
+                    svnUI.OperationProgressBar.value = 0.5f;
 
-                string targetsPath = Path.Combine(Path.GetTempPath(), "svn_commit_list.txt");
-                var sortedTargets = commitTargetsRel.OrderBy(x => x.Length).Distinct().ToList();
-                File.WriteAllLines(targetsPath, sortedTargets, new UTF8Encoding(false));
+                // =========================================================
+                // [2/4] Build targets file
+                // =========================================================
+                LogToConsole("\n<b>[2/4]</b> Preparing commit package...");
 
-                string commitCmd = $"commit --targets \"{targetsPath}\" -m \"{message}\" --non-interactive";
-                string commitResult = await SvnRunner.RunAsync(commitCmd, root, true, _commitCTS.Token);
+                string targetsPath = Path.Combine(
+                    Path.GetTempPath(),
+                    "svn_commit_list.txt");
 
-                if (File.Exists(targetsPath)) File.Delete(targetsPath);
+                var sortedTargets = commitTargetsRel
+                    .OrderBy(x => x.Length)
+                    .Distinct()
+                    .ToList();
 
-                if (commitResult.Contains("Committed revision"))
+                File.WriteAllLines(
+                    targetsPath,
+                    sortedTargets,
+                    new UTF8Encoding(false));
+
+                if (svnUI.OperationProgressBar != null)
+                    svnUI.OperationProgressBar.value = 0.7f;
+
+                _commitCTS.Token.ThrowIfCancellationRequested();
+
+                // =========================================================
+                // [3/4] Commit
+                // =========================================================
+                LogToConsole("\n<b>[3/4]</b> Sending to server...");
+
+                string commitCmd =
+                    $"commit --targets \"{targetsPath}\" -m \"{message}\" --non-interactive";
+
+                string commitResult = await SvnRunner.RunAsync(
+                    commitCmd,
+                    root,
+                    true,
+                    _commitCTS.Token);
+
+                if (File.Exists(targetsPath))
+                {
+                    File.Delete(targetsPath);
+                }
+
+                bool success =
+                    commitResult.Contains("Committed revision") ||
+                    !string.IsNullOrWhiteSpace(svnManager.ParseRevision(commitResult));
+
+                if (success)
                 {
                     string revision = svnManager.ParseRevision(commitResult);
-                    LogToConsole($"\n<color=green><b>SUCCESS!</b></color> Revision: {revision}");
 
-                    if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
+                    if (svnUI.OperationProgressBar != null)
+                        svnUI.OperationProgressBar.value = 1.0f;
 
-                    statusModule.ClearCurrentData();
-                    IsProcessing = false;
+                    LogToConsole(
+                        $"\n<color=green><b>SUCCESS!</b></color> Revision: {revision}");
 
-                    await Task.Delay(1000);
-                    statusModule.ShowOnlyModified();
+                    // Optional: show raw SVN result
+                    if (!string.IsNullOrWhiteSpace(commitResult))
+                    {
+                        LogToConsole($"\n{commitResult}");
+                    }
+
+                    // Clear commit message
+                    if (svnUI.CommitMessageInput != null)
+                    {
+                        svnUI.CommitMessageInput.text = "";
+                    }
+
+                    // Clear tree views
+                    if (svnUI.SvnTreeView != null)
+                    {
+                        svnUI.SvnTreeView.ClearView();
+                    }
+
+                    if (svnUI.SVNCommitTreeDisplay != null)
+                    {
+                        svnUI.SVNCommitTreeDisplay.ClearView();
+                    }
+
+                    // Clear cached status data
+                    statusModule?.ClearCurrentData();
+
+                    // Clear UI trees
+                    if (svnUI.TreeDisplay != null)
+                    {
+                        SVNLogBridge.UpdateUIField(
+                            svnUI.TreeDisplay,
+                            "",
+                            "TREE",
+                            append: false);
+                    }
+
+                    if (svnUI.CommitTreeDisplay != null)
+                    {
+                        SVNLogBridge.UpdateUIField(
+                            svnUI.CommitTreeDisplay,
+                            "",
+                            "COMMIT_TREE",
+                            append: false);
+                    }
                 }
                 else
                 {
-                    LogToConsole($"\n<color=yellow>SVN Result:</color>\n{commitResult}");
-                    IsProcessing = false;
+                    string info = string.IsNullOrWhiteSpace(commitResult)
+                        ? "<i>Nothing to commit.</i>"
+                        : commitResult;
+
+                    LogToConsole($"\n<color=yellow>SVN Result:</color>\n{info}");
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                LogToConsole(
+                    "\n<color=orange><b>[ABORTED]</b></color> User cancelled.");
             }
             catch (Exception ex)
             {
-                LogToConsole($"\n<color=red>Error:</color> {ex.Message}");
-                IsProcessing = false;
+                LogToConsole(
+                    $"\n<color=red>Error:</color> {ex.Message}");
             }
             finally
             {
+                IsProcessing = false;
+
                 _commitCTS?.Dispose();
                 _commitCTS = null;
+
+                // Full refresh
+                await svnManager.RefreshStatus();
+
+                // Hide progress bar nicely
+                HideProgressBarAfterDelay(3.0f);
             }
         }
 
@@ -429,11 +597,18 @@ namespace SVN.Core
             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, msg, append: true);
         }
 
-        public class CommitItemData
+        public class SVNStatusElement
         {
-            public string Path;
+            public string FullPath;
             public string Status;
-            public bool IsSelected;
+
+            public bool IsChecked;
+
+            public bool IsExpanded;
+
+            public bool IsFolder;
+
+            public List<SVNStatusElement> Children;
         }
     }
 }

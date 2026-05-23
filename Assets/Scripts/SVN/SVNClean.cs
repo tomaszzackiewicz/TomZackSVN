@@ -239,5 +239,52 @@ namespace SVN.Core
                 await svnManager.RefreshStatus(force: true);
             }
         }
+
+        public async void RepairStructure()
+        {
+            if (IsProcessing) return;
+
+            string targetPath = GetTargetPath();
+            if (string.IsNullOrEmpty(targetPath)) return;
+
+            IsProcessing = true;
+            LogToClean("<b>[SVN]</b> Starting structure repair...", append: false);
+
+            try
+            {
+                // 1. Pobierz aktualny URL z metadanych (dynamicznie, bez hardcodowania)
+                string currentUrl = await SvnRunner.RunAsync("info --show-item url", targetPath);
+                currentUrl = currentUrl.Trim();
+
+                LogToClean($"Targeting URL: {currentUrl}");
+
+                // 2. Cleanup - odblokowanie bazy
+                await SvnRunner.RunAsync("cleanup --remove-unversioned --vacuum-pristines --non-interactive", targetPath);
+
+                // 3. Switch - to jest kluczowy moment: wymuszenie poprawnej struktury lokalnej
+                // względem tego, co jest na serwerze pod tym adresem URL.
+                LogToClean("Re-aligning working copy structure...");
+                await SvnRunner.RunAsync($"switch {currentUrl} .", targetPath);
+
+                // 4. Update - finalna synchronizacja (serwer wygrywa z lokalnymi różnicami)
+                LogToClean("Synchronizing with server...");
+                await SvnRunner.RunAsync("update --set-depth infinity --force --accept theirs-full --non-interactive", targetPath);
+
+                // 5. Resolve
+                await SvnRunner.RunAsync("resolve --accept working -R .", targetPath);
+
+                LogToClean("<color=green><b>[SVN]</b> Structure repaired successfully!</color>");
+            }
+            catch (Exception ex)
+            {
+                LogToClean($"<color=red>Repair failed:</color> {ex.Message}");
+                LogToClean("Suggestion: Perform a full Checkout.");
+            }
+            finally
+            {
+                IsProcessing = false;
+                await svnManager.RefreshStatus(force: true);
+            }
+        }
     }
 }

@@ -162,9 +162,7 @@ namespace SVN.Core
                 SVNLogBridge.LogLine("[SVN] Using fallback SSH key.");
             }
 
-            keyPath = keyPath
-                .Replace("\"", "")
-                .Replace("/", "\\");
+            keyPath = keyPath.Replace("\"", "").Replace("/", "\\");
 
             if (!File.Exists(keyPath))
             {
@@ -182,18 +180,10 @@ namespace SVN.Core
                     "SVN"
                 );
 
-                bool repoOk = await EnsureRepoStructure(baseUrl);
-
-                if (!repoOk)
-                {
-                    SVNLogBridge.LogError("[SVN] Repository validation failed.");
-                    return;
-                }
-
-                string trunkUrl = $"{baseUrl}/trunk";
+                string checkoutUrl = baseUrl.TrimEnd('/');
 
                 SVNLogBridge.LogLine(
-                    $"<b>[Checkout]</b> Target: {trunkUrl}"
+                    $"<b>[Checkout]</b> Target: {checkoutUrl}"
                 );
 
                 SVNLogBridge.UpdateUIField(
@@ -203,13 +193,11 @@ namespace SVN.Core
                 );
 
                 _cachedTotalSizeBytes =
-                    await GetRemoteRepositorySizeAsync(trunkUrl);
-
-                string checkoutArgs =
-                    $"checkout \"{trunkUrl}\" \"{path}\" --force --non-interactive";
+                    await GetRemoteRepositorySizeAsync(checkoutUrl);
+                string checkoutArgs = $"checkout \"{checkoutUrl}\" \"{path}\" --force --non-interactive";
 
                 await ExecuteSvnOperation(
-                    trunkUrl,
+                    checkoutUrl,
                     path,
                     checkoutArgs,
                     false
@@ -231,6 +219,31 @@ namespace SVN.Core
 
                 IsProcessing = false;
             }
+        }
+
+        private string GetRepoNameFromUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return "Repository";
+
+            url = url.TrimEnd('/');
+
+            // usuń /trunk /branches /tags jeśli istnieją
+            if (url.EndsWith("/trunk"))
+                url = url[..^"/trunk".Length];
+
+            if (url.EndsWith("/branches"))
+                url = url[..^"/branches".Length];
+
+            if (url.EndsWith("/tags"))
+                url = url[..^"/tags".Length];
+
+            // ostatni segment = nazwa repo
+            int lastSlash = url.LastIndexOf('/');
+            if (lastSlash >= 0 && lastSlash < url.Length - 1)
+                return url.Substring(lastSlash + 1);
+
+            return url;
         }
 
         private async Task<bool> EnsureRepoStructure(string repoRoot)
@@ -516,8 +529,7 @@ namespace SVN.Core
                         );
                     }
 
-                    command =
-                        "update --force --non-interactive --trust-server-cert";
+                    command = "update --force --non-interactive --trust-server-cert";
 
                     SVNLogBridge.LogLine(
                         "<color=yellow>[SVN]</color> Resuming via 'svn update'..."
@@ -719,7 +731,8 @@ namespace SVN.Core
 
                         lastActivity = DateTime.Now;
 
-                        SVNLogBridge.LogLine(line);
+                        //SVNLogBridge.LogLine(line, false);
+                        SVNLogBridge.LogCheckoutConsole(line);
                     },
                     token
                 );

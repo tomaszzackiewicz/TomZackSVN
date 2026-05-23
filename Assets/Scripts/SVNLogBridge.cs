@@ -80,5 +80,20 @@ namespace SVN.Core
             if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
             SVNUI.Instance.TooltipText.text = "";
         }
+
+        public static void LogCheckoutConsole(string message)
+        {
+            if (SVNUI.Instance == null || SVNUI.Instance.CheckoutedFilesText == null)
+                return;
+
+            // ZAMIANA zamiast doklejania
+            SVNUI.Instance.CheckoutedFilesText.text = message;
+
+            // if (SVNUI.Instance.LogScrollRect != null)
+            // {
+            //     Canvas.ForceUpdateCanvases();
+            //     SVNUI.Instance.LogScrollRect.verticalNormalizedPosition = 0f;
+            // }
+        }
     }
 }

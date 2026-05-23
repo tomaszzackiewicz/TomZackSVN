@@ -35,20 +35,14 @@ namespace SVN.Core
             }
 
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim().Where(c => !char.IsControl(c) && (int)c != 160).ToArray().Aggregate("", (s, c) => s + c));
-
-            string safeKeyPath = "";
-            if (!string.IsNullOrEmpty(KeyPath))
-            {
-                safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
-            }
-
+            string safeKeyPath = (!string.IsNullOrEmpty(KeyPath)) ? KeyPath.Trim().Replace("\"", "").Replace('\\', '/') : "";
             string finalArgs = args.Contains("--non-interactive") ? args : args + " --non-interactive";
 
             var psi = new ProcessStartInfo
             {
                 FileName = "svn",
                 Arguments = finalArgs,
-                WorkingDirectory = workingDir,
+                WorkingDirectory = cleanWorkingDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -62,22 +56,19 @@ namespace SVN.Core
                 psi.EnvironmentVariables["SVN_SSH"] = $"ssh -v -i \"{safeKeyPath}\" -v -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
             }
 
-            using var process = new Process { StartInfo = psi };
+            var process = new Process { StartInfo = psi };
+            SvnProcessTracker.Register(process);
+
             var outputBuilder = new StringBuilder();
             var errorBuilder = new StringBuilder();
             string lastLoggedError = "";
 
-            DataReceivedEventHandler outHandler = (s, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data)) outputBuilder.AppendLine(e.Data);
-            };
-
+            DataReceivedEventHandler outHandler = (s, e) => { if (!string.IsNullOrEmpty(e.Data)) outputBuilder.AppendLine(e.Data); };
             DataReceivedEventHandler errHandler = (s, e) =>
             {
                 if (!string.IsNullOrEmpty(e.Data))
                 {
                     string currentError = e.Data.Trim();
-
                     if (currentError != lastLoggedError)
                     {
                         errorBuilder.Clear();
@@ -89,11 +80,6 @@ namespace SVN.Core
 
             process.OutputDataReceived += outHandler;
             process.ErrorDataReceived += errHandler;
-
-            using var registration = token.Register(() =>
-            {
-                try { if (!process.HasExited) process.Kill(); } catch { }
-            });
 
             try
             {
@@ -108,18 +94,16 @@ namespace SVN.Core
                 {
                     if (token.IsCancellationRequested)
                     {
-                        try { if (!process.HasExited) process.Kill(); } catch { }
+                        SvnProcessTracker.Kill(process);
                         throw new OperationCanceledException("SVN operation cancelled by user.");
                     }
-
                     if (timeoutLimit > 0 && (DateTime.Now - startTime).TotalSeconds > timeoutLimit)
                     {
-                        try { if (!process.HasExited) process.Kill(); } catch { }
+                        SvnProcessTracker.Kill(process);
                         string timeoutMsg = $"SVN Timeout ({timeoutLimit}s). Ostatni błąd: {lastLoggedError}";
                         SVNLogBridge.LogError(timeoutMsg);
                         throw new Exception(timeoutMsg);
                     }
-
                     await Task.Delay(100);
                 }
 
@@ -128,34 +112,160 @@ namespace SVN.Core
                 if (process.ExitCode != 0)
                 {
                     string err = errorBuilder.ToString().Trim();
-
                     if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
                     {
                         SVNLogBridge.LogError("[SvnRunner] Lock detected. Running Cleanup...");
                         await RunAsync("cleanup", workingDir, false, token);
                         return await RunAsync(args, workingDir, false, token);
                     }
-
                     if (!string.IsNullOrEmpty(err))
                     {
-                        string diagnostic = "";
-                        if (err.Contains("E170013") || err.Contains("can't connect")) diagnostic = " [Problem z połączeniem/URL]";
-                        if (err.Contains("E215004")) diagnostic = " [Błąd autoryzacji/Hasło]";
-
+                        string diagnostic = err.Contains("E170013") || err.Contains("can't connect") ? " [Problem z połączeniem/URL]" : (err.Contains("E215004") ? " [Błąd autoryzacji/Hasło]" : "");
                         string fullError = $"SVN Error (Code {process.ExitCode}): {err}{diagnostic}";
                         SVNLogBridge.LogError(fullError);
                         throw new Exception(fullError);
                     }
                 }
-
                 return outputBuilder.ToString();
             }
             finally
             {
                 process.OutputDataReceived -= outHandler;
                 process.ErrorDataReceived -= errHandler;
+                process.Dispose();
             }
         }
+
+        // public static async Task<string> RunAsync(string args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
+        // {
+        //     if (string.IsNullOrEmpty(workingDir))
+        //     {
+        //         SVNLogBridge.LogError("Working Directory is null!");
+        //         throw new Exception("Working Directory is null!");
+        //     }
+
+        //     string cleanWorkingDir = Path.GetFullPath(workingDir.Trim().Where(c => !char.IsControl(c) && (int)c != 160).ToArray().Aggregate("", (s, c) => s + c));
+
+        //     string safeKeyPath = "";
+        //     if (!string.IsNullOrEmpty(KeyPath))
+        //     {
+        //         safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
+        //     }
+
+        //     string finalArgs = args.Contains("--non-interactive") ? args : args + " --non-interactive";
+
+        //     var psi = new ProcessStartInfo
+        //     {
+        //         FileName = "svn",
+        //         Arguments = finalArgs,
+        //         WorkingDirectory = workingDir,
+        //         RedirectStandardOutput = true,
+        //         RedirectStandardError = true,
+        //         UseShellExecute = false,
+        //         CreateNoWindow = true,
+        //         StandardOutputEncoding = Encoding.UTF8,
+        //         StandardErrorEncoding = Encoding.UTF8
+        //     };
+
+        //     if (!string.IsNullOrEmpty(safeKeyPath))
+        //     {
+        //         psi.EnvironmentVariables["SVN_SSH"] = $"ssh -v -i \"{safeKeyPath}\" -v -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes";
+        //     }
+
+        //     using var process = new Process { StartInfo = psi };
+        //     var outputBuilder = new StringBuilder();
+        //     var errorBuilder = new StringBuilder();
+        //     string lastLoggedError = "";
+
+        //     DataReceivedEventHandler outHandler = (s, e) =>
+        //     {
+        //         if (!string.IsNullOrEmpty(e.Data)) outputBuilder.AppendLine(e.Data);
+        //     };
+
+        //     DataReceivedEventHandler errHandler = (s, e) =>
+        //     {
+        //         if (!string.IsNullOrEmpty(e.Data))
+        //         {
+        //             string currentError = e.Data.Trim();
+
+        //             if (currentError != lastLoggedError)
+        //             {
+        //                 errorBuilder.Clear();
+        //                 errorBuilder.AppendLine(currentError);
+        //                 lastLoggedError = currentError;
+        //             }
+        //         }
+        //     };
+
+        //     process.OutputDataReceived += outHandler;
+        //     process.ErrorDataReceived += errHandler;
+
+        //     using var registration = token.Register(() =>
+        //     {
+        //         try { if (!process.HasExited) process.Kill(); } catch { }
+        //     });
+
+        //     try
+        //     {
+        //         process.Start();
+        //         process.BeginOutputReadLine();
+        //         process.BeginErrorReadLine();
+
+        //         float timeoutLimit = IsLongRunningOperation(args) ? 0f : 60f;
+        //         DateTime startTime = DateTime.Now;
+
+        //         while (!process.HasExited)
+        //         {
+        //             if (token.IsCancellationRequested)
+        //             {
+        //                 try { if (!process.HasExited) process.Kill(); } catch { }
+        //                 throw new OperationCanceledException("SVN operation cancelled by user.");
+        //             }
+
+        //             if (timeoutLimit > 0 && (DateTime.Now - startTime).TotalSeconds > timeoutLimit)
+        //             {
+        //                 try { if (!process.HasExited) process.Kill(); } catch { }
+        //                 string timeoutMsg = $"SVN Timeout ({timeoutLimit}s). Ostatni błąd: {lastLoggedError}";
+        //                 SVNLogBridge.LogError(timeoutMsg);
+        //                 throw new Exception(timeoutMsg);
+        //             }
+
+        //             await Task.Delay(100);
+        //         }
+
+        //         process.WaitForExit(100);
+
+        //         if (process.ExitCode != 0)
+        //         {
+        //             string err = errorBuilder.ToString().Trim();
+
+        //             if (retryOnLock && (err.Contains("locked") || err.Contains("cleanup")))
+        //             {
+        //                 SVNLogBridge.LogError("[SvnRunner] Lock detected. Running Cleanup...");
+        //                 await RunAsync("cleanup", workingDir, false, token);
+        //                 return await RunAsync(args, workingDir, false, token);
+        //             }
+
+        //             if (!string.IsNullOrEmpty(err))
+        //             {
+        //                 string diagnostic = "";
+        //                 if (err.Contains("E170013") || err.Contains("can't connect")) diagnostic = " [Problem z połączeniem/URL]";
+        //                 if (err.Contains("E215004")) diagnostic = " [Błąd autoryzacji/Hasło]";
+
+        //                 string fullError = $"SVN Error (Code {process.ExitCode}): {err}{diagnostic}";
+        //                 SVNLogBridge.LogError(fullError);
+        //                 throw new Exception(fullError);
+        //             }
+        //         }
+
+        //         return outputBuilder.ToString();
+        //     }
+        //     finally
+        //     {
+        //         process.OutputDataReceived -= outHandler;
+        //         process.ErrorDataReceived -= errHandler;
+        //     }
+        // }
 
         private static bool IsLongRunningOperation(string args)
         {
@@ -185,15 +295,13 @@ namespace SVN.Core
 
             psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
 
-            using var process = new Process { StartInfo = psi };
+            var process = new Process { StartInfo = psi };
+            SvnProcessTracker.Register(process);
+
             var processExitTcs = new TaskCompletionSource<bool>();
             bool hasError = false;
 
-            process.OutputDataReceived += (s, e) =>
-            {
-                if (e.Data != null) Task.Run(() => onLineReceived?.Invoke(e.Data));
-            };
-
+            process.OutputDataReceived += (s, e) => { if (e.Data != null) Task.Run(() => onLineReceived?.Invoke(e.Data)); };
             process.ErrorDataReceived += (s, e) =>
             {
                 if (e.Data != null)
@@ -203,53 +311,134 @@ namespace SVN.Core
                 }
             };
 
-            using (token.Register(() =>
-            {
-                try
-                {
-                    if (!process.HasExited)
-                    {
-                        process.Kill();
-
-                        processExitTcs.TrySetCanceled();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    SVNLogBridge.LogError($"Error while killing process: {ex.Message}");
-                }
-            }))
+            try
             {
                 process.EnableRaisingEvents = true;
                 process.Exited += (s, e) => processExitTcs.TrySetResult(true);
 
                 if (!process.Start())
                 {
-                    string startupError = "Critical Error: Failed to start SVN process. Make sure SVN is installed and added to PATH.";
-
+                    string startupError = "Critical Error: Failed to start SVN process.";
                     SVNLogBridge.LogError(startupError);
-
                     throw new Exception(startupError);
                 }
 
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                try
+                using (token.Register(() =>
+                {
+                    try
+                    {
+                        SvnProcessTracker.Kill(process);
+                        processExitTcs.TrySetCanceled();
+                    }
+                    catch (Exception ex)
+                    {
+                        SVNLogBridge.LogError($"Error while killing process: {ex.Message}");
+                    }
+                }))
                 {
                     await processExitTcs.Task;
-                }
-                catch (OperationCanceledException)
-                {
-                    SVNLogBridge.LogLine("<color=#FFD700>[CANCEL]</color> Task was successfully canceled.", append: true);
-
-                    return "Canceled";
                 }
 
                 process.WaitForExit();
                 return hasError ? "Error" : "Success";
             }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=#FFD700>[CANCEL]</color> Task was successfully canceled.", append: true);
+                return "Canceled";
+            }
+            finally
+            {
+                process.Dispose();
+            }
         }
+
+        // public static async Task<string> RunLiveAsync(string args, string workingDir, Action<string> onLineReceived, CancellationToken token = default)
+        // {
+        //     string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
+
+        //     var psi = new ProcessStartInfo
+        //     {
+        //         FileName = "svn",
+        //         Arguments = $"{args} --non-interactive --trust-server-cert",
+        //         WorkingDirectory = workingDir,
+        //         RedirectStandardOutput = true,
+        //         RedirectStandardError = true,
+        //         UseShellExecute = false,
+        //         CreateNoWindow = true,
+        //         StandardOutputEncoding = new UTF8Encoding(false)
+        //     };
+
+        //     psi.EnvironmentVariables["SVN_SSH"] = $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
+
+        //     using var process = new Process { StartInfo = psi };
+        //     var processExitTcs = new TaskCompletionSource<bool>();
+        //     bool hasError = false;
+
+        //     process.OutputDataReceived += (s, e) =>
+        //     {
+        //         if (e.Data != null) Task.Run(() => onLineReceived?.Invoke(e.Data));
+        //     };
+
+        //     process.ErrorDataReceived += (s, e) =>
+        //     {
+        //         if (e.Data != null)
+        //         {
+        //             if (e.Data.Contains("E:") || e.Data.ToLower().Contains("error")) hasError = true;
+        //             Task.Run(() => onLineReceived?.Invoke($"[SVN ERROR]: {e.Data}"));
+        //         }
+        //     };
+
+        //     using (token.Register(() =>
+        //     {
+        //         try
+        //         {
+        //             if (!process.HasExited)
+        //             {
+        //                 process.Kill();
+
+        //                 processExitTcs.TrySetCanceled();
+        //             }
+        //         }
+        //         catch (Exception ex)
+        //         {
+        //             SVNLogBridge.LogError($"Error while killing process: {ex.Message}");
+        //         }
+        //     }))
+        //     {
+        //         process.EnableRaisingEvents = true;
+        //         process.Exited += (s, e) => processExitTcs.TrySetResult(true);
+
+        //         if (!process.Start())
+        //         {
+        //             string startupError = "Critical Error: Failed to start SVN process. Make sure SVN is installed and added to PATH.";
+
+        //             SVNLogBridge.LogError(startupError);
+
+        //             throw new Exception(startupError);
+        //         }
+
+        //         process.BeginOutputReadLine();
+        //         process.BeginErrorReadLine();
+
+        //         try
+        //         {
+        //             await processExitTcs.Task;
+        //         }
+        //         catch (OperationCanceledException)
+        //         {
+        //             SVNLogBridge.LogLine("<color=#FFD700>[CANCEL]</color> Task was successfully canceled.", append: true);
+
+        //             return "Canceled";
+        //         }
+
+        //         process.WaitForExit();
+        //         return hasError ? "Error" : "Success";
+        //     }
+        // }
 
         public static async Task<string> GetInfoAsync(string workingDir)
         {
