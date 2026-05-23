@@ -66,6 +66,7 @@ namespace SVN.Core
 
         public void Button_Load() => svnManager.GetModule<SVNLoad>().LoadRepoPathAndRefresh();
         public void Button_Update() => svnManager.GetModule<SVNUpdate>().Update();
+        public void Button_CancelUpdate() => svnManager.GetModule<SVNUpdate>().CancelUpdate();
         public void Button_Refresh() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();
         public void Button_Log() => svnManager.GetModule<SVNLog>().ShowLog();
         public void Button_RevertAllMissing() => svnManager.GetModule<SVNCommit>().ExecuteRevertAllMissing();
