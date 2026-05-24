@@ -228,7 +228,6 @@ namespace SVN.Core
 
             url = url.TrimEnd('/');
 
-            // usuń /trunk /branches /tags jeśli istnieją
             if (url.EndsWith("/trunk"))
                 url = url[..^"/trunk".Length];
 
@@ -238,7 +237,6 @@ namespace SVN.Core
             if (url.EndsWith("/tags"))
                 url = url[..^"/tags".Length];
 
-            // ostatni segment = nazwa repo
             int lastSlash = url.LastIndexOf('/');
             if (lastSlash >= 0 && lastSlash < url.Length - 1)
                 return url.Substring(lastSlash + 1);
@@ -431,7 +429,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"[SVN] Nie udało się obliczyć rozmiaru repozytorium: {ex.Message}");
+                SVNLogBridge.LogError($"[SVN] Failed to calculate repository size: {ex.Message}");
                 return 0;
             }
         }
@@ -494,9 +492,6 @@ namespace SVN.Core
                     Directory.CreateDirectory(path);
                 }
 
-                // =========================
-                // RESUME LOGIC (UNCHANGED)
-                // =========================
                 if (isResume)
                 {
                     _mainThreadContext.Post(_ =>
@@ -534,9 +529,6 @@ namespace SVN.Core
                     );
                 }
 
-                // =========================
-                // MONITOR (UNCHANGED LOGIC)
-                // =========================
                 monitorTask = Task.Run(async () =>
                 {
                     while (!token.IsCancellationRequested &&
@@ -650,9 +642,6 @@ namespace SVN.Core
                     }
                 }, token);
 
-                // =========================
-                // WORKING DIR
-                // =========================
                 string workingDirectory = isResume
                     ? path
                     : Directory.GetParent(path)?.FullName ?? Path.GetTempPath();
@@ -661,9 +650,6 @@ namespace SVN.Core
                     $"<color=grey>[SVN]</color> Working Directory: {workingDirectory}"
                 );
 
-                // =========================
-                // RUN SVN
-                // =========================
                 string result = await SvnRunner.RunLiveAsync(
                     command,
                     workingDirectory,
@@ -706,9 +692,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // =========================
-                // ✅ SUCCESS
-                // =========================
                 _state = OperationState.Completed;
 
                 _mainThreadContext.Post(_ =>
@@ -720,9 +703,6 @@ namespace SVN.Core
                     );
                 }, null);
 
-                // ==========================================================
-                // 🔥 THIS IS THE FIX: ACTIVATE PROJECT AFTER CHECKOUT
-                // ==========================================================
                 var activeProject = new SVNProject
                 {
                     projectName = Path.GetFileName(path.TrimEnd('/', '\\')),
@@ -732,7 +712,6 @@ namespace SVN.Core
                     lastOpened = DateTime.Now
                 };
 
-                // event-driven switch
                 SVNManager.Instance.SetActiveProject(activeProject);
 
                 RegisterNewProjectAfterCheckout(path, url, SvnRunner.KeyPath);

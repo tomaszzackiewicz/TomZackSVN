@@ -17,6 +17,7 @@ namespace SVN.Core
         private bool _isCurrentViewIgnored = false;
         long totalCommitBytes = 0;
         private CancellationTokenSource _cts;
+        private const bool ENABLE_FILE_SIZES = false;
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -158,6 +159,13 @@ namespace SVN.Core
                     {
                         SVNLogBridge.UpdateUIField(
                             svnUI.TreeDisplay,
+                            "",
+                            "TREE",
+                            append: false
+                        );
+
+                        SVNLogBridge.UpdateUIField(
+                            svnUI.TreeDisplay,
                             "Scanning local changes...",
                             "TREE",
                             append: false
@@ -169,6 +177,13 @@ namespace SVN.Core
                     {
                         SVNLogBridge.UpdateUIField(
                             svnUI.CommitTreeDisplay,
+                            "",
+                            "COMMIT_TREE",
+                            append: false
+                        );
+
+                        SVNLogBridge.UpdateUIField(
+                            svnUI.CommitTreeDisplay,
                             "Refreshing commit list...",
                             "COMMIT_TREE",
                             append: false
@@ -176,22 +191,15 @@ namespace SVN.Core
                     }
                 }
 
-                // 🔥 PROFESSIONAL FRAME BOUNDARY (UI FLUSH)
                 await WaitForNextFrame();
 
                 string root = svnManager.WorkingDir;
 
                 token.ThrowIfCancellationRequested();
 
-                Task<Dictionary<string, SvnChangeInfo>> statusTask = GetChangesDictionaryAsync(root, token);
-                Task<Dictionary<string, string>> locksTask = GetLocksDictionaryAsync(root, token);
-
-                await Task.WhenAll(statusTask, locksTask);
+                var statusDict = await GetChangesDictionaryAsync(root, token);
 
                 token.ThrowIfCancellationRequested();
-
-                var statusDict = await statusTask;
-                var lockDict = await locksTask;
 
                 if (svnUI != null)
                 {
@@ -202,10 +210,22 @@ namespace SVN.Core
                         SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
                 }
 
-                if ((statusDict == null || statusDict.Count == 0) &&
-                    (lockDict == null || lockDict.Count == 0))
+                if (statusDict == null || statusDict.Count == 0)
                 {
                     ShowEmptyState();
+
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await GetLocksDictionaryAsync(root, token);
+                        }
+                        catch
+                        {
+                            // ignore
+                        }
+                    });
+
                     return;
                 }
 
@@ -213,36 +233,7 @@ namespace SVN.Core
                 {
                     token.ThrowIfCancellationRequested();
 
-                    if (lockDict != null && lockDict.Count > 0)
-                    {
-                        statusDict ??= new Dictionary<string, SvnChangeInfo>();
-
-                        foreach (var l in lockDict)
-                        {
-                            token.ThrowIfCancellationRequested();
-
-                            if (!statusDict.ContainsKey(l.Key))
-                            {
-                                statusDict[l.Key] = new SvnChangeInfo
-                                {
-                                    Status = " ",
-                                    Size = "FILE",
-                                    Bytes = 0,
-                                    Exists = false
-                                };
-                            }
-                        }
-                    }
-
-                    token.ThrowIfCancellationRequested();
-
-                    var (treeElements, calculatedBytes) = BuildFlatTreeStructureText(root, statusDict);
-
-                    token.ThrowIfCancellationRequested();
-
-                    ApplyLockColors(treeElements, lockDict);
-
-                    return (treeElements, calculatedBytes);
+                    return BuildFlatTreeStructureText(root, statusDict);
                 }, token);
 
                 token.ThrowIfCancellationRequested();
@@ -279,7 +270,43 @@ namespace SVN.Core
                     }
                 }
 
-                UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
+                UpdateAllStatisticsUI(
+                    CalculateStats(statusDict),
+                    _isCurrentViewIgnored
+                );
+
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var lockDict = await GetLocksDictionaryAsync(root, token);
+
+                        token.ThrowIfCancellationRequested();
+
+                        if (lockDict == null || lockDict.Count == 0)
+                            return;
+
+                        ApplyLockColors(_flatTreeData, lockDict);
+
+                        token.ThrowIfCancellationRequested();
+
+                        UnityMainThreadDispatcher.Enqueue(() =>
+                        {
+                            if (token.IsCancellationRequested)
+                                return;
+
+                            RefreshAllUIComponents();
+                        });
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // ignored
+                    }
+                    catch (Exception ex)
+                    {
+                        SVNLogBridge.LogError($"Background lock refresh failed: {ex.Message}");
+                    }
+                });
             }
             catch (OperationCanceledException)
             {
@@ -299,8 +326,6 @@ namespace SVN.Core
         private async Task WaitForNextFrame()
         {
             await Task.Yield();
-
-            // dodatkowy safety frame (Unity UI stabilization)
             await Task.Delay(1);
         }
 
@@ -461,19 +486,23 @@ namespace SVN.Core
     Dictionary<string, SvnChangeInfo> statusDict)
         {
             var previousSelectionStates = new Dictionary<string, bool>();
+
             if (_flatTreeData != null)
             {
                 foreach (var e in _flatTreeData)
                 {
                     if (!string.IsNullOrEmpty(e.FullPath))
+                    {
                         previousSelectionStates[e.FullPath] = e.IsChecked;
+                    }
                 }
             }
 
-            var elements = new List<SvnTreeElement>();
-            var existingPaths = new HashSet<string>();
+            var elements = new List<SvnTreeElement>(statusDict.Count * 2);
+            var existingPaths = new HashSet<string>(statusDict.Count * 2);
 
-            var sortedPaths = statusDict.Keys.OrderBy(p => p).ToList();
+            var sortedPaths = new List<string>(statusDict.Keys);
+            sortedPaths.Sort(StringComparer.Ordinal);
 
             long localTotalBytes = 0;
 
@@ -484,27 +513,34 @@ namespace SVN.Core
                 if (normalizedPath.Contains(":/"))
                 {
                     int trunkIdx = normalizedPath.LastIndexOf("trunk/");
+
                     if (trunkIdx != -1)
+                    {
                         normalizedPath = normalizedPath.Substring(trunkIdx);
+                    }
                 }
 
-                string[] parts = normalizedPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                string[] parts = normalizedPath.Split('/');
+
                 string currentPath = "";
 
                 for (int i = 0; i < parts.Length; i++)
                 {
                     string partName = parts[i];
-                    currentPath = string.IsNullOrEmpty(currentPath)
-                        ? partName
-                        : $"{currentPath}/{partName}";
 
-                    if (existingPaths.Contains(currentPath))
+                    if (string.IsNullOrEmpty(partName))
                         continue;
 
-                    string physicalPath = Path.Combine(root, currentPath).Replace('\\', '/');
+                    currentPath = string.IsNullOrEmpty(currentPath)
+                        ? partName
+                        : currentPath + "/" + partName;
+
+                    if (!existingPaths.Add(currentPath))
+                        continue;
+
                     bool isLastPart = (i == parts.Length - 1);
 
-                    bool isActuallyFolder = false;
+                    bool isActuallyFolder;
 
                     if (!isLastPart)
                     {
@@ -512,36 +548,61 @@ namespace SVN.Core
                     }
                     else
                     {
-                        if (statusDict.TryGetValue(currentPath, out var info) && info.Size == "DIR")
-                            isActuallyFolder = true;
-                        else if (Directory.Exists(physicalPath))
-                            isActuallyFolder = true;
+                        isActuallyFolder =
+                            statusDict.TryGetValue(currentPath, out var info) &&
+                            info.Size == "DIR";
                     }
 
                     string displayStatus = " ";
 
-                    if (isLastPart && statusDict.ContainsKey(relPath))
-                        displayStatus = statusDict[relPath].Status;
+                    if (isLastPart)
+                    {
+                        if (statusDict.TryGetValue(relPath, out var finalInfo))
+                        {
+                            displayStatus = finalInfo.Status;
+                        }
+                    }
                     else if (isActuallyFolder)
-                        displayStatus = statusDict.ContainsKey(currentPath)
-                            ? statusDict[currentPath].Status
-                            : "DIR";
+                    {
+                        if (statusDict.TryGetValue(currentPath, out var folderInfo))
+                        {
+                            displayStatus = folderInfo.Status;
+                        }
+                        else
+                        {
+                            displayStatus = "DIR";
+                        }
+                    }
 
                     string fileSize = "";
 
-                    if (!isActuallyFolder && isLastPart)
+                    if (ENABLE_FILE_SIZES && !isActuallyFolder && isLastPart)
                     {
-                        FileInfo fi = new FileInfo(physicalPath);
-
-                        if (fi.Exists)
+                        try
                         {
-                            long bytes = fi.Length;
-                            fileSize = FormatSize(bytes);
+                            string physicalPath = Path.Combine(root, currentPath)
+                                .Replace('\\', '/');
 
-                            if (displayStatus != " " && displayStatus != "DIR")
-                                localTotalBytes += bytes;
+                            var fileInfo = new FileInfo(physicalPath);
+
+                            if (fileInfo.Exists)
+                            {
+                                long bytes = fileInfo.Length;
+
+                                fileSize = FormatSize(bytes);
+
+                                if (displayStatus != " " &&
+                                    displayStatus != "DIR")
+                                {
+                                    localTotalBytes += bytes;
+                                }
+                            }
+                            else
+                            {
+                                fileSize = "---";
+                            }
                         }
-                        else
+                        catch
                         {
                             fileSize = "---";
                         }
@@ -554,7 +615,9 @@ namespace SVN.Core
                         displayStatus != "I";
 
                     if (previousSelectionStates.TryGetValue(currentPath, out bool prev))
+                    {
                         isChecked = prev;
+                    }
 
                     elements.Add(new SvnTreeElement
                     {
@@ -568,21 +631,27 @@ namespace SVN.Core
                         IsVisible = true,
                         Size = fileSize
                     });
-
-                    existingPaths.Add(currentPath);
                 }
             }
 
-            var reversedFolders = elements
-                .Select((e, idx) => new { Element = e, Index = idx })
-                .Where(x => x.Element.IsFolder)
-                .OrderByDescending(x => x.Element.Depth)
-                .ToList();
+            var reversedFolders = new List<(SvnTreeElement Element, int Index)>();
+
+            for (int i = 0; i < elements.Count; i++)
+            {
+                if (elements[i].IsFolder)
+                {
+                    reversedFolders.Add((elements[i], i));
+                }
+            }
+
+            reversedFolders.Sort((a, b) =>
+                b.Element.Depth.CompareTo(a.Element.Depth));
 
             foreach (var folderData in reversedFolders)
             {
                 var folder = folderData.Element;
                 int startIndex = folderData.Index;
+
                 string prefix = folder.FullPath + "/";
 
                 for (int j = startIndex + 1; j < elements.Count; j++)

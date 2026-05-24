@@ -332,25 +332,19 @@ namespace SVN.Core
 
                 if (statusModule != null)
                 {
-                    // 🔥 CANCEL PREVIOUS REFRESH VISUALLY
                     statusModule.ClearCurrentData();
 
-                    // 🔥 CLEAR TREE UI FIRST
                     statusModule.ClearSVNTreeView();
 
-                    // 🔥 RESET EMPTY STATE
                     statusModule.ResetTreeView();
 
-                    // 🔥 FORCE UNITY UI REBUILD FRAME
                     await Task.Yield();
 
-                    // 🔥 NOW SHOW REFRESH STATE
                     SVNLogBridge.LogLine(
                         "<b>[Refresh]</b> Fetching SVN status...",
                         append: true
                     );
 
-                    // 🔥 REAL REFRESH
                     await statusModule.ExecuteRefreshWithAutoExpand(force: true);
                 }
 
