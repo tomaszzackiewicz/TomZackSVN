@@ -18,7 +18,31 @@ namespace SVN.Core
         long totalCommitBytes = 0;
         private CancellationTokenSource _cts;
 
-        public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager) { }
+        public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
+        {
+            manager.OnProjectChanged += HandleProjectChanged;
+        }
+
+        private async void HandleProjectChanged(SVNProject project)
+        {
+            if (project == null) return;
+
+            try
+            {
+                ClearCurrentData();
+                ClearSVNTreeView();
+
+                svnManager.WorkingDir = project.workingDir;
+                svnManager.RepositoryUrl = project.repoUrl;
+                svnManager.CurrentKey = project.privateKeyPath;
+
+                await RefreshModifiedInternal();
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[SVNStatus] Project switch failed: {ex}");
+            }
+        }
 
         public void ToggleFolderVisibility(SvnTreeElement folder)
         {
@@ -131,7 +155,14 @@ namespace SVN.Core
                 if (svnUI != null)
                 {
                     if (svnUI.TreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Scanning local changes...", "TREE", append: false);
+                    {
+                        SVNLogBridge.UpdateUIField(
+                            svnUI.TreeDisplay,
+                            "Scanning local changes...",
+                            "TREE",
+                            append: false
+                        );
+                    }
 
                     if (svnUI.CommitTreeDisplay != null &&
                         svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
@@ -140,9 +171,13 @@ namespace SVN.Core
                             svnUI.CommitTreeDisplay,
                             "Refreshing commit list...",
                             "COMMIT_TREE",
-                            append: false);
+                            append: false
+                        );
                     }
                 }
+
+                // 🔥 PROFESSIONAL FRAME BOUNDARY (UI FLUSH)
+                await WaitForNextFrame();
 
                 string root = svnManager.WorkingDir;
 
@@ -259,6 +294,14 @@ namespace SVN.Core
                 if (!force)
                     IsProcessing = false;
             }
+        }
+
+        private async Task WaitForNextFrame()
+        {
+            await Task.Yield();
+
+            // dodatkowy safety frame (Unity UI stabilization)
+            await Task.Delay(1);
         }
 
         private void ShowEmptyState()

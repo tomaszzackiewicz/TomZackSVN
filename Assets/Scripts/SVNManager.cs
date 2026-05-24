@@ -11,6 +11,8 @@ namespace SVN.Core
     {
         public static SVNManager Instance { get; private set; }
 
+        public event Action<SVNProject> OnProjectChanged;
+
         public const string KEY_REPO_URL = "SVN_Persisted_RepositoryURL";
         public const string KEY_WORKING_DIR = "SVN_Persisted_WorkingDir";
         public const string KEY_SSH_PATH = "SVN_Persisted_SSHKeyPath";
@@ -274,6 +276,12 @@ namespace SVN.Core
             }
         }
 
+        public void SetActiveProject(SVNProject project)
+        {
+            LoadProject(project);
+            OnProjectChanged?.Invoke(project);
+        }
+
         private void SyncUIToCurrentState()
         {
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
@@ -315,25 +323,53 @@ namespace SVN.Core
                 return;
             }
 
-            if (isProcessing && !force) return;
+            if (isProcessing && !force)
+                return;
 
             try
             {
                 var statusModule = GetModule<SVNStatus>();
+
                 if (statusModule != null)
                 {
-                    SVNLogBridge.LogLine("<b>[Refresh]</b> Fetching SVN status...", append: true);
-                    await statusModule.ExecuteRefreshWithAutoExpand();
+                    // 🔥 CANCEL PREVIOUS REFRESH VISUALLY
+                    statusModule.ClearCurrentData();
+
+                    // 🔥 CLEAR TREE UI FIRST
+                    statusModule.ClearSVNTreeView();
+
+                    // 🔥 RESET EMPTY STATE
+                    statusModule.ResetTreeView();
+
+                    // 🔥 FORCE UNITY UI REBUILD FRAME
+                    await Task.Yield();
+
+                    // 🔥 NOW SHOW REFRESH STATE
+                    SVNLogBridge.LogLine(
+                        "<b>[Refresh]</b> Fetching SVN status...",
+                        append: true
+                    );
+
+                    // 🔥 REAL REFRESH
+                    await statusModule.ExecuteRefreshWithAutoExpand(force: true);
                 }
 
                 var statusDict = CurrentStatusDict;
+
                 if (statusDict != null)
                 {
-                    bool hasConflicts = statusDict.Values.Any(v => v.status != null && v.status.Contains("C"));
+                    bool hasConflicts = statusDict.Values.Any(
+                        v => v.status != null &&
+                        v.status.Contains("C")
+                    );
 
                     if (hasConflicts)
                     {
-                        LogToUI("[SVN] Conflicts detected! Opening Resolve panel.", "orange");
+                        LogToUI(
+                            "[SVN] Conflicts detected! Opening Resolve panel.",
+                            "orange"
+                        );
+
                         if (panelHandler != null)
                         {
                             _ = panelHandler.Button_OpenResolve();
@@ -343,12 +379,21 @@ namespace SVN.Core
 
                 await UpdateStatus();
 
-                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>", append: false);
+                SVNLogBridge.LogLine(
+                    "<color=green>Status updated successfully.</color>",
+                    append: false
+                );
             }
             catch (Exception e)
             {
-                LogToUI($"[SVN] Refresh Error: {e.Message}", "red");
-                SVNLogBridge.LogError($"[SVN] Refresh Exception: {e}");
+                LogToUI(
+                    $"[SVN] Refresh Error: {e.Message}",
+                    "red"
+                );
+
+                SVNLogBridge.LogError(
+                    $"[SVN] Refresh Exception: {e}"
+                );
             }
         }
 
@@ -477,19 +522,38 @@ namespace SVN.Core
                 ProjectSettings.SaveProjects(projects);
             }
         }
-
+        private bool _focusRefreshRunning;
         private async void OnApplicationFocus(bool focus)
         {
-            if (focus && !string.IsNullOrEmpty(workingDir) && !isProcessing)
+            if (!focus)
+                return;
+
+            if (_focusRefreshRunning)
+                return;
+
+            if (string.IsNullOrEmpty(workingDir))
+                return;
+
+            if (isProcessing)
+                return;
+
+            try
             {
-                try
-                {
-                    await RefreshStatus();
-                }
-                catch (Exception e)
-                {
-                    SVNLogBridge.LogError($"Focus refresh failed: {e.Message}");
-                }
+                _focusRefreshRunning = true;
+
+                await Task.Delay(150);
+
+                await RefreshStatus(force: true);
+            }
+            catch (Exception e)
+            {
+                SVNLogBridge.LogError(
+                    $"Focus refresh failed: {e.Message}"
+                );
+            }
+            finally
+            {
+                _focusRefreshRunning = false;
             }
         }
 
