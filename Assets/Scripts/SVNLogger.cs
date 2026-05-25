@@ -26,7 +26,7 @@ namespace SVN.Core
                 Application.logMessageReceived += HandleUnityLog;
                 initialized = true;
 
-                SVNLogBridge.LogError($"[SVN] Logger initialized at: {logFilePath}");
+                SVNLogBridge.LogLine($"[SVN] Logger initialized at: {logFilePath}");
             }
             catch (Exception e)
             {
