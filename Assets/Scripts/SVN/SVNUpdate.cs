@@ -158,10 +158,27 @@ namespace SVN.Core
             {
                 if (_hasNewLine)
                 {
-                    SVNLogBridge.LogLine($"<b>[SVN]</b> Updating: <color=orange>{_lastLiveLine}</color>", false);
+                    string line = _lastLiveLine;
+
                     _hasNewLine = false;
+
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                    {
+                        SVNLogBridge.LogLine(
+                            $"<b>[SVN]</b> Updating: <color=blue>{line}</color>",
+                            false
+                        );
+                    });
                 }
-                await Task.Yield();
+
+                try
+                {
+                    await Task.Delay(33, token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
             }
         }
 

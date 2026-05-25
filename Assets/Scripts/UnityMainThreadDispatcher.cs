@@ -8,6 +8,7 @@ namespace SVN.Core
     {
         private static readonly Queue<Action> ExecutionQueue = new Queue<Action>();
         private static UnityMainThreadDispatcher _instance;
+        private const int MAX_ACTIONS_PER_FRAME = 64;
 
         public static void Enqueue(Action action)
         {
@@ -19,12 +20,23 @@ namespace SVN.Core
 
         private void Update()
         {
-            lock (ExecutionQueue)
+            int processed = 0;
+
+            while (processed < MAX_ACTIONS_PER_FRAME)
             {
-                while (ExecutionQueue.Count > 0)
+                Action action = null;
+
+                lock (ExecutionQueue)
                 {
-                    ExecutionQueue.Dequeue().Invoke();
+                    if (ExecutionQueue.Count == 0)
+                        break;
+
+                    action = ExecutionQueue.Dequeue();
                 }
+
+                action?.Invoke();
+
+                processed++;
             }
         }
 

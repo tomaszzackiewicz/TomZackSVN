@@ -86,6 +86,8 @@ namespace SVN.Core
 
         private void Awake()
         {
+            Application.runInBackground = true;
+
             if (Instance != null && Instance != this)
             {
                 DestroyImmediate(gameObject);
