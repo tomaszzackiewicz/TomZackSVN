@@ -416,21 +416,22 @@ namespace SVN.Core
 
             foreach (var item in statusDict.Values)
             {
+                bool isFolder = item.Size == "DIR";
                 string s = item.Status;
+
+                if (isFolder)
+                {
+                    stats.FolderCount++;
+                    continue;
+                }
+
+                stats.FileCount++;
 
                 if (s.Contains("M")) stats.ModifiedCount++;
                 else if (s.Contains("A")) stats.AddedCount++;
                 else if (s.Contains("?")) stats.NewFilesCount++;
                 else if (s.Contains("D") || s.Contains("!")) stats.DeletedCount++;
                 else if (s.Contains("C")) stats.ConflictsCount++;
-                else if (s.Contains("I"))
-                {
-                    stats.IgnoredCount++;
-                    stats.IgnoredFileCount++;
-                }
-
-                if (item.Size == "DIR") stats.FolderCount++;
-                else stats.FileCount++;
             }
 
             return stats;
