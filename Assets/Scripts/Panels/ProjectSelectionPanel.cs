@@ -75,7 +75,7 @@ public class ProjectSelectionPanel : MonoBehaviour
                 ? ""
                 : project.privateKeyPath;
 
-            svnManager.LoadProject(project);
+            await svnManager.LoadProject(project);
 
             gameObject.SetActive(false);
 

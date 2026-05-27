@@ -23,6 +23,11 @@ public class SVNFileItem : MonoBehaviour
 
     public void Button_OpenFile()
     {
+        OpenFile();
+    }
+
+    public async void OpenFile()
+    {
         float timeSinceLastClick = Time.time - lastClickTime;
 
         if (timeSinceLastClick <= doubleClickThreshold)
@@ -30,7 +35,7 @@ public class SVNFileItem : MonoBehaviour
             // DOUBLE CLICK
             if (svnManager != null)
             {
-                svnManager.CatAndOpenFile(fullPath, revision);
+                await svnManager.CatAndOpenFile(fullPath, revision);
             }
 
             lastClickTime = 0f;

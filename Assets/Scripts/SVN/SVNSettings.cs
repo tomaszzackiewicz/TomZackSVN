@@ -116,6 +116,11 @@ namespace SVN.Core
 
         public void LoadSettings()
         {
+            LoadSettings();
+        }
+
+        public async void LoadSettingAsync()
+        {
             if (svnManager == null) return;
 
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
@@ -125,7 +130,7 @@ namespace SVN.Core
             if (current == null)
                 return;
 
-            svnManager.LoadProject(current);
+            await svnManager.LoadProject(current);
         }
 
         public void UpdateUIFromManager()

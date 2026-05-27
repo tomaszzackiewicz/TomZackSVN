@@ -29,9 +29,11 @@ namespace SVN.Core
         private string workingDir = string.Empty;
         private string currentKey = string.Empty;
         private string mergeToolPath = string.Empty;
+        private bool _focusRefreshRunning;
 
         public static string MainThreadWorkingDir;
         public static string CachedUserName;
+        private bool _isApplyingSnapshot;
         public SVNLockCache LockCache = new SVNLockCache();
 
         public HashSet<string> ExpandedPaths { get; set; } = new HashSet<string>();
@@ -42,27 +44,33 @@ namespace SVN.Core
         public GameObject MainUIPanel => mainUIPanel;
         public string CurrentUserName => currentUserName;
 
+        public void SetCurrentStatus(Dictionary<string, (string status, string size)> data)
+        {
+            CurrentStatusDict = data;
+        }
+
         public string WorkingDir
         {
             get => workingDir;
             set
             {
-                if (string.IsNullOrEmpty(value))
+                if (string.IsNullOrWhiteSpace(value))
                 {
                     workingDir = value;
                     return;
                 }
 
-                string cleaned = "";
+                var sb = new System.Text.StringBuilder();
+
                 foreach (char c in value)
                 {
-                    if (char.IsLetterOrDigit(c) || ":\\/._- ".Contains(c.ToString()))
+                    if (char.IsLetterOrDigit(c) || ":\\/._- ".Contains(c))
                     {
-                        cleaned += c;
+                        sb.Append(c);
                     }
                 }
 
-                workingDir = cleaned.Trim();
+                workingDir = sb.ToString().Trim();
             }
         }
 
@@ -102,11 +110,7 @@ namespace SVN.Core
 
             InitializeAllModules();
 
-            SVN.Core.SvnRunner.OnProcessingStateChanged += (isProcessing) =>
-    {
-        this.IsProcessing = isProcessing; // Upewnij się, że masz tu publiczny setter lub pole
-        this.OnProcessingStateChanged?.Invoke(isProcessing);
-    };
+            SVN.Core.SvnRunner.OnProcessingStateChanged += OnSvnProcessingChanged;
         }
 
         private void InitializeAllModules()
@@ -174,6 +178,11 @@ namespace SVN.Core
 
         private async void Start()
         {
+            await StartAsync();
+        }
+
+        private async Task StartAsync()
+        {
             if (svnUI == null) return;
 
             SetupInputListeners();
@@ -187,7 +196,7 @@ namespace SVN.Core
 
                 if (lastProject != null && Directory.Exists(lastProject.workingDir))
                 {
-                    LoadProject(lastProject);
+                    await LoadProject(lastProject);
 
                     projectSelectionPanel?.gameObject.SetActive(false);
                 }
@@ -236,7 +245,7 @@ namespace SVN.Core
             return currentUserName = Environment.UserName.ToLower();
         }
 
-        public void LoadProject(SVNProject project)
+        public async Task LoadProject(SVNProject project)
         {
             var statusModule = GetModule<SVNStatus>();
             statusModule.ClearCurrentData();
@@ -249,14 +258,18 @@ namespace SVN.Core
 
             SyncUIToCurrentState();
             PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
+            PlayerPrefs.SetString("SVN_LastOpenedProjectId", project.projectId);
             PlayerPrefs.Save();
 
-            if (Directory.Exists(WorkingDir)) InitializeActiveProject(project);
+            if (Directory.Exists(WorkingDir))
+            {
+                await InitializeActiveProject(project);
+            }
 
             ApplySettingsSnapshot();
         }
 
-        private async void InitializeActiveProject(SVNProject project)
+        private async Task InitializeActiveProject(SVNProject project)
         {
             await AutoDetectSvnUser();
 
@@ -279,9 +292,9 @@ namespace SVN.Core
             var poller = GetComponent<SVNPollingService>();
         }
 
-        public void SetActiveProject(SVNProject project)
+        public async void SetActiveProject(SVNProject project)
         {
-            LoadProject(project);
+            await LoadProject(project);
             OnProjectChanged?.Invoke(project);
         }
 
@@ -320,120 +333,90 @@ namespace SVN.Core
 
         public async Task RefreshStatus(bool force = false)
         {
-            if (string.IsNullOrEmpty(WorkingDir))
-            {
-                SVNLogBridge.LogError("[SVN] Refresh aborted: WorkingDir is not set.");
-                return;
-            }
-
-            // Zmiana: sprawdzamy właściwość IsProcessing (z wielkiej litery)
-            if (IsProcessing && !force)
-                return;
+            if (string.IsNullOrEmpty(WorkingDir)) return;
+            if (IsProcessing && !force) return;
 
             try
             {
                 var statusModule = GetModule<SVNStatus>();
+                if (statusModule == null) return;
 
-                if (statusModule != null)
-                {
-                    statusModule.ClearCurrentData();
-                    statusModule.ClearSVNTreeView();
-                    statusModule.ResetTreeView();
+                ClearStatusUI(statusModule);
 
-                    await Task.Yield();
+                await Task.Yield();
 
-                    SVNLogBridge.LogLine(
-                        "<b>[Refresh]</b> Fetching SVN status...",
-                        append: true
-                    );
+                await statusModule.ExecuteRefreshWithAutoExpand(force: true);
 
-                    await statusModule.ExecuteRefreshWithAutoExpand(force: true);
-                }
+                await PostProcessStatus();
 
-                var statusDict = CurrentStatusDict;
-
-                if (statusDict != null)
-                {
-                    bool hasConflicts = statusDict.Values.Any(
-                        v => v.status != null &&
-                        v.status.Contains("C")
-                    );
-
-                    if (hasConflicts)
-                    {
-                        LogToUI(
-                            "[SVN] Conflicts detected! Opening Resolve panel.",
-                            "orange"
-                        );
-
-                        if (panelHandler != null)
-                        {
-                            _ = panelHandler.Button_OpenResolve();
-                        }
-                    }
-                }
-
-                await UpdateStatus();
-
-                SVNLogBridge.LogLine(
-                    "<color=green>Status updated successfully.</color>",
-                    append: false
-                );
-
-
-                if (statusModule != null)
-                {
-                    await statusModule.SetLockAsync();
-                }
+                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>");
             }
             catch (Exception e)
             {
-                LogToUI(
-                    $"[SVN] Refresh Error: {e.Message}",
-                    "red"
-                );
-
-                SVNLogBridge.LogError(
-                    $"[SVN] Refresh Exception: {e}"
-                );
+                LogToUI($"[SVN] Refresh Error: {e.Message}", "red");
             }
+        }
+
+        private void OnSvnProcessingChanged(bool isProcessing)
+        {
+            IsProcessing = isProcessing;
+        }
+
+        private void ClearStatusUI(SVNStatus statusModule)
+        {
+            statusModule.ClearCurrentData();
+            statusModule.ClearSVNTreeView();
+            statusModule.ResetTreeView();
+        }
+
+        private async Task RefreshLocksSafe()
+        {
+            var statusModule = GetModule<SVNStatus>();
+            if (statusModule == null)
+                return;
+
+            await Task.Yield();
+
+            try
+            {
+                await RefreshLocksSafe();
+            }
+            catch (Exception e)
+            {
+                SVNLogBridge.LogError($"[SVN] SetLockAsync failed: {e.Message}");
+            }
+        }
+
+        private async Task PostProcessStatus()
+        {
+            var statusDict = CurrentStatusDict;
+
+            if (statusDict?.Values.Any(v => v.status?.Contains("C") == true) == true)
+            {
+                LogToUI("[SVN] Conflicts detected! Opening Resolve panel.", "orange");
+                _ = panelHandler?.Button_OpenResolve();
+            }
+
+            await UpdateStatus();
+
+            await RefreshLocksSafe();
         }
 
         private async void OnApplicationFocus(bool focus)
         {
-            const int focusDelayMs = 150;
-
-            if (!focus)
-                return;
-
-            if (_focusRefreshRunning)
-                return;
-
-            if (string.IsNullOrEmpty(workingDir))
-                return;
-
-            // Zmiana: używamy IsProcessing z wielkiej litery
-            if (IsProcessing)
-                return;
+            if (!focus) return;
+            if (_focusRefreshRunning) return;
+            if (string.IsNullOrEmpty(workingDir)) return;
+            if (IsProcessing) return;
 
             try
             {
                 _focusRefreshRunning = true;
+                await Task.Delay(150);
 
-                await Task.Delay(focusDelayMs);
+                if (IsProcessing) return;
 
-                // Zabezpieczenie przed race condition po odczekaniu
-                if (IsProcessing)
-                    return;
-
-                // Rezygnujemy z force: true, aby focus nie wpychał się na siłę
                 await RefreshStatus(force: false);
-            }
-            catch (Exception e)
-            {
-                SVNLogBridge.LogError(
-                    $"Focus refresh failed: {e.Message}"
-                );
             }
             finally
             {
@@ -500,58 +483,60 @@ namespace SVN.Core
         {
             svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(v =>
             {
-                if (_ignoreSync) return;
+                if (_ignoreSync || _isApplyingSnapshot) return;
                 BroadcastUrlChange(v);
                 UpdateCurrentProjectData();
             });
 
             svnUI.SettingsSshKeyPathInput?.onValueChanged.AddListener(v =>
             {
-                if (_ignoreSync) return;
+                if (_ignoreSync || _isApplyingSnapshot) return;
                 BroadcastSshKeyChange(v);
                 UpdateCurrentProjectData();
             });
 
             svnUI.SettingsWorkingDirInput?.onValueChanged.AddListener(v =>
             {
-                if (_ignoreSync) return;
+                if (_ignoreSync || _isApplyingSnapshot) return;
                 BroadcastWorkingDirChange(v);
                 UpdateCurrentProjectData();
             });
 
             svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(v =>
             {
-                if (_ignoreSync) return;
+                if (_ignoreSync || _isApplyingSnapshot) return;
                 MergeToolPath = v.Trim();
                 UpdateCurrentProjectData();
             });
 
             svnUI.CheckoutRepoUrlInput?.onValueChanged.AddListener(v =>
             {
-                if (_ignoreSync) return;
+                if (_ignoreSync || _isApplyingSnapshot) return;
                 SyncFromCheckoutUI();
             });
 
             svnUI.CheckoutDestFolderInput?.onValueChanged.AddListener(v =>
             {
-                if (_ignoreSync) return;
+                if (_ignoreSync || _isApplyingSnapshot) return;
                 SyncFromCheckoutUI();
             });
 
             svnUI.CheckoutPrivateKeyInput?.onValueChanged.AddListener(v =>
             {
-                if (_ignoreSync) return;
+                if (_ignoreSync || _isApplyingSnapshot) return;
                 SyncFromCheckoutUI();
             });
         }
 
         public void ApplySettingsSnapshotSafe()
         {
+            _isApplyingSnapshot = true;
             _ignoreSync = true;
 
             ApplySettingsSnapshot();
 
             _ignoreSync = false;
+            _isApplyingSnapshot = false;
         }
 
         private void UpdateCurrentProjectData()
@@ -566,42 +551,8 @@ namespace SVN.Core
                 ProjectSettings.SaveProjects(projects);
             }
         }
-        private bool _focusRefreshRunning;
-        // private async void OnApplicationFocus(bool focus)
-        // {
-        //     if (!focus)
-        //         return;
 
-        //     if (_focusRefreshRunning)
-        //         return;
-
-        //     if (string.IsNullOrEmpty(workingDir))
-        //         return;
-
-        //     if (isProcessing)
-        //         return;
-
-        //     try
-        //     {
-        //         _focusRefreshRunning = true;
-
-        //         await Task.Delay(150);
-
-        //         await RefreshStatus(force: true);
-        //     }
-        //     catch (Exception e)
-        //     {
-        //         SVNLogBridge.LogError(
-        //             $"Focus refresh failed: {e.Message}"
-        //         );
-        //     }
-        //     finally
-        //     {
-        //         _focusRefreshRunning = false;
-        //     }
-        // }
-
-        public async void CatAndOpenFile(string relativePath, long revision)
+        public async Task CatAndOpenFile(string relativePath, long revision)
         {
             if (string.IsNullOrEmpty(RepositoryUrl))
             {
@@ -673,11 +624,17 @@ namespace SVN.Core
                 IsProcessing = false;
             }
         }
+
+        private void OnDestroy()
+        {
+            SVN.Core.SvnRunner.OnProcessingStateChanged -= OnSvnProcessingChanged;
+        }
     }
 
     [Serializable]
     public class SVNProject
     {
+        public string projectId;
         public string projectName;
         public string repoUrl;
         public string workingDir;
