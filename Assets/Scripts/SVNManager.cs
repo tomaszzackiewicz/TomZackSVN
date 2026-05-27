@@ -29,7 +29,6 @@ namespace SVN.Core
         private string workingDir = string.Empty;
         private string currentKey = string.Empty;
         private string mergeToolPath = string.Empty;
-        private bool isProcessing = false;
 
         public static string MainThreadWorkingDir;
         public static string CachedUserName;
@@ -101,6 +100,12 @@ namespace SVN.Core
             SVNLogger.Initialize();
 
             InitializeAllModules();
+
+            SVN.Core.SvnRunner.OnProcessingStateChanged += (isProcessing) =>
+    {
+        this.IsProcessing = isProcessing; // Upewnij się, że masz tu publiczny setter lub pole
+        this.OnProcessingStateChanged?.Invoke(isProcessing);
+    };
         }
 
         private void InitializeAllModules()
@@ -271,11 +276,6 @@ namespace SVN.Core
 
             var statusModule = GetModule<SVNStatus>();
             var poller = GetComponent<SVNPollingService>();
-
-            if (poller != null && statusModule != null)
-            {
-                poller.StartPolling(statusModule);
-            }
         }
 
         public void SetActiveProject(SVNProject project)
@@ -325,7 +325,8 @@ namespace SVN.Core
                 return;
             }
 
-            if (isProcessing && !force)
+            // Zmiana: sprawdzamy właściwość IsProcessing (z wielkiej litery)
+            if (IsProcessing && !force)
                 return;
 
             try
@@ -335,9 +336,7 @@ namespace SVN.Core
                 if (statusModule != null)
                 {
                     statusModule.ClearCurrentData();
-
                     statusModule.ClearSVNTreeView();
-
                     statusModule.ResetTreeView();
 
                     await Task.Yield();
@@ -379,6 +378,12 @@ namespace SVN.Core
                     "<color=green>Status updated successfully.</color>",
                     append: false
                 );
+
+
+                if (statusModule != null)
+                {
+                    await statusModule.SetLockAsync();
+                }
             }
             catch (Exception e)
             {
@@ -390,6 +395,48 @@ namespace SVN.Core
                 SVNLogBridge.LogError(
                     $"[SVN] Refresh Exception: {e}"
                 );
+            }
+        }
+
+        private async void OnApplicationFocus(bool focus)
+        {
+            const int focusDelayMs = 150;
+
+            if (!focus)
+                return;
+
+            if (_focusRefreshRunning)
+                return;
+
+            if (string.IsNullOrEmpty(workingDir))
+                return;
+
+            // Zmiana: używamy IsProcessing z wielkiej litery
+            if (IsProcessing)
+                return;
+
+            try
+            {
+                _focusRefreshRunning = true;
+
+                await Task.Delay(focusDelayMs);
+
+                // Zabezpieczenie przed race condition po odczekaniu
+                if (IsProcessing)
+                    return;
+
+                // Rezygnujemy z force: true, aby focus nie wpychał się na siłę
+                await RefreshStatus(force: false);
+            }
+            catch (Exception e)
+            {
+                SVNLogBridge.LogError(
+                    $"Focus refresh failed: {e.Message}"
+                );
+            }
+            finally
+            {
+                _focusRefreshRunning = false;
             }
         }
 
@@ -519,39 +566,39 @@ namespace SVN.Core
             }
         }
         private bool _focusRefreshRunning;
-        private async void OnApplicationFocus(bool focus)
-        {
-            if (!focus)
-                return;
+        // private async void OnApplicationFocus(bool focus)
+        // {
+        //     if (!focus)
+        //         return;
 
-            if (_focusRefreshRunning)
-                return;
+        //     if (_focusRefreshRunning)
+        //         return;
 
-            if (string.IsNullOrEmpty(workingDir))
-                return;
+        //     if (string.IsNullOrEmpty(workingDir))
+        //         return;
 
-            if (isProcessing)
-                return;
+        //     if (isProcessing)
+        //         return;
 
-            try
-            {
-                _focusRefreshRunning = true;
+        //     try
+        //     {
+        //         _focusRefreshRunning = true;
 
-                await Task.Delay(150);
+        //         await Task.Delay(150);
 
-                await RefreshStatus(force: true);
-            }
-            catch (Exception e)
-            {
-                SVNLogBridge.LogError(
-                    $"Focus refresh failed: {e.Message}"
-                );
-            }
-            finally
-            {
-                _focusRefreshRunning = false;
-            }
-        }
+        //         await RefreshStatus(force: true);
+        //     }
+        //     catch (Exception e)
+        //     {
+        //         SVNLogBridge.LogError(
+        //             $"Focus refresh failed: {e.Message}"
+        //         );
+        //     }
+        //     finally
+        //     {
+        //         _focusRefreshRunning = false;
+        //     }
+        // }
 
         public async void CatAndOpenFile(string relativePath, long revision)
         {

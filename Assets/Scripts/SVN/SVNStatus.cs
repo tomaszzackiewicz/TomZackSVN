@@ -10,6 +10,8 @@ namespace SVN.Core
 {
     public class SVNStatus : SVNBase
     {
+        public event Action OnSelectionChanged;
+
         private List<SvnTreeElement> _flatTreeData = new List<SvnTreeElement>();
 
         private List<SvnTreeElement> _commitTreeData;
@@ -17,7 +19,7 @@ namespace SVN.Core
         private bool _isCurrentViewIgnored = false;
         long totalCommitBytes = 0;
         private CancellationTokenSource _cts;
-        private const bool ENABLE_FILE_SIZES = false;
+        private const bool ENABLE_FILE_SIZES = true;
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -219,6 +221,8 @@ namespace SVN.Core
                         try
                         {
                             await GetLocksDictionaryAsync(root, token);
+                            // var statusModule = svnManager.GetModule<SVNStatus>();
+                            // await statusModule.SetLockAsync();
                         }
                         catch
                         {
@@ -267,6 +271,7 @@ namespace SVN.Core
                     {
                         svnUI.CommitSizeText.text =
                             $"Total Commit Size: <color=#FFFF00>{FormatSize(totalCommitBytes)}</color>";
+                        UpdateSelectedSizeDisplay();
                     }
                 }
 
@@ -287,6 +292,8 @@ namespace SVN.Core
                             return;
 
                         ApplyLockColors(_flatTreeData, lockDict);
+                        // var statusModule = svnManager.GetModule<SVNStatus>();
+                        // await statusModule.SetLockAsync();
 
                         token.ThrowIfCancellationRequested();
 
@@ -323,6 +330,18 @@ namespace SVN.Core
             }
         }
 
+        public async Task SetLockAsync()
+        {
+            string root = svnManager.WorkingDir;
+
+            var lockDict = await GetLocksDictionaryAsync(root);
+
+            if (lockDict == null || lockDict.Count == 0)
+                return;
+
+            ApplyLockColors(_flatTreeData, lockDict);
+        }
+
         private async Task WaitForNextFrame()
         {
             await Task.Yield();
@@ -357,8 +376,7 @@ namespace SVN.Core
                 _commitTreeData = BuildCommitView(_flatTreeData);
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
 
-                if (svnUI.CommitSizeText != null)
-                    svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{FormatSize(totalCommitBytes)}</color>";
+                UpdateSelectedSizeDisplay();
             }
         }
 
@@ -522,7 +540,6 @@ namespace SVN.Core
                 }
 
                 string[] parts = normalizedPath.Split('/');
-
                 string currentPath = "";
 
                 for (int i = 0; i < parts.Length; i++)
@@ -540,7 +557,6 @@ namespace SVN.Core
                         continue;
 
                     bool isLastPart = (i == parts.Length - 1);
-
                     bool isActuallyFolder;
 
                     if (!isLastPart)
@@ -576,24 +592,26 @@ namespace SVN.Core
                     }
 
                     string fileSize = "";
+                    long bytes = 0; // <-- ROZWIĄZANIE: Deklaracja wyciągnięta przed blok try
 
                     if (ENABLE_FILE_SIZES && !isActuallyFolder && isLastPart)
                     {
                         try
                         {
-                            string physicalPath = Path.Combine(root, currentPath)
-                                .Replace('\\', '/');
-
+                            string physicalPath = Path.Combine(root, currentPath).Replace('\\', '/');
                             var fileInfo = new FileInfo(physicalPath);
 
                             if (fileInfo.Exists)
                             {
-                                long bytes = fileInfo.Length;
-
+                                bytes = fileInfo.Length;
                                 fileSize = FormatSize(bytes);
 
-                                if (displayStatus != " " &&
-                                    displayStatus != "DIR")
+                                if (
+                                    displayStatus != " " &&
+                                    displayStatus != "DIR" &&
+                                    displayStatus != "!" &&
+                                    displayStatus != "D"
+                                )
                                 {
                                     localTotalBytes += bytes;
                                 }
@@ -630,7 +648,8 @@ namespace SVN.Core
                         IsChecked = isChecked,
                         IsExpanded = true,
                         IsVisible = true,
-                        Size = fileSize
+                        Size = fileSize,
+                        Bytes = (isActuallyFolder || !ENABLE_FILE_SIZES || !isLastPart) ? 0 : bytes
                     });
                 }
             }
@@ -671,6 +690,43 @@ namespace SVN.Core
             }
 
             return (elements, localTotalBytes);
+        }
+
+        // Dokończenie uciętej metody na samym dole klasy SVNStatus:
+        // W pliku SVNStatus.cs
+        public void UpdateSelectedSizeDisplay()
+        {
+            if (svnUI == null || svnUI.CommitSizeText == null)
+                return;
+
+            if (_flatTreeData == null || _flatTreeData.Count == 0)
+            {
+                svnUI.CommitSizeText.text =
+                    "Total Commit Size: <color=#FFFF00>0 B</color>";
+                return;
+            }
+
+            long selectedBytes = 0;
+
+            foreach (var element in _flatTreeData)
+            {
+                if (!element.IsChecked)
+                    continue;
+
+                if (element.IsFolder)
+                    continue;
+
+                // deleted/missing nie mają payloadu
+                if (element.Status == "!" || element.Status == "D")
+                    continue;
+
+                selectedBytes += element.Bytes;
+            }
+
+            totalCommitBytes = selectedBytes;
+
+            svnUI.CommitSizeText.text =
+                $"Total Commit Size: <color=#FFFF00>{FormatSize(selectedBytes)}</color>";
         }
 
         private string FormatSize(long bytes)
@@ -863,52 +919,45 @@ namespace SVN.Core
             return _flatTreeData;
         }
 
+        // Nowa metoda dedykowana wyłącznie aktualizacji wyświetlanego rozmiaru
+        // public void UpdateSelectedSizeDisplay()
+        // {
+        //     if (svnUI.CommitSizeText == null || _flatTreeData == null) return;
+
+        //     totalCommitBytes = 0;
+
+        //     foreach (var element in _flatTreeData)
+        //     {
+        //         if (element.IsChecked && !element.IsFolder)
+        //         {
+        //             // Wymaga dodania pola 'public long Bytes;' do klasy SvnTreeElement
+        //             // i przypisania go podczas tworzenia elementu w BuildFlatTreeStructureText
+        //             totalCommitBytes += element.Bytes;
+        //         }
+        //     }
+
+        //     svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{FormatSize(totalCommitBytes)}</color>";
+        // }
+
         public void NotifySelectionChanged()
         {
             if (svnUI.SvnTreeView != null)
                 svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
 
-            if (_flatTreeData != null && _flatTreeData.Count > 0)
+            bool commitPanelVisible =
+                svnUI.SVNCommitTreeDisplay != null &&
+                svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
+
+            if (commitPanelVisible)
             {
-                _commitTreeData = PrepareCommitTree(_flatTreeData);
+                _commitTreeData = BuildCommitView(_flatTreeData);
+
+                svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
             }
 
-            var commitPanel = UnityEngine.Object.FindFirstObjectByType<CommitPanel>(
-                UnityEngine.FindObjectsInactive.Include);
+            UpdateSelectedSizeDisplay();
 
-            if (commitPanel != null && commitPanel.gameObject.activeInHierarchy)
-            {
-                if (svnUI.SVNCommitTreeDisplay != null)
-                {
-                    svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-                }
-            }
-        }
-
-        private List<SvnTreeElement> PrepareCommitTree(List<SvnTreeElement> fullTree)
-        {
-            var commitTree = fullTree.Select(e =>
-            {
-                var clone = e.Clone();
-                clone.IsChecked = e.IsChecked;
-                clone.IsVisible = false;
-                clone.IsCommitDelegate = true;
-                return clone;
-            }).ToList();
-
-            var lookup = commitTree.ToDictionary(e => e.FullPath);
-
-            foreach (var element in commitTree)
-            {
-                if (!string.IsNullOrEmpty(element.Status) &&
-                    element.Status != " " &&
-                    element.Status != "DIR")
-                {
-                    ShowElementAndParents(element, lookup);
-                }
-            }
-
-            return commitTree;
+            OnSelectionChanged?.Invoke();
         }
     }
 }

@@ -134,13 +134,14 @@ namespace SVN.Core
             }
             finally
             {
-                IsProcessing = false;
                 _hasNewLine = false;
 
                 _updateCTS?.Dispose();
                 _updateCTS = null;
 
                 await svnManager.RefreshStatus();
+
+                IsProcessing = false;
             }
         }
 
@@ -270,11 +271,11 @@ namespace SVN.Core
             }
         }
 
-        public void CheckRemoteModifications()
+        public async Task CheckRemoteModifications()
         {
             var updateModule = svnManager.GetModule<SVNUpdate>();
 
-            _ = updateModule.UpdateRemoteModifications();
+            await updateModule.UpdateRemoteModifications();
         }
 
         public async Task UpdateRemoteModifications()
@@ -351,8 +352,8 @@ namespace SVN.Core
             }
             finally
             {
-                IsProcessing = false;
                 await svnManager.RefreshStatus();
+                IsProcessing = false;
             }
         }
     }

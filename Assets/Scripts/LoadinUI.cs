@@ -15,8 +15,20 @@ namespace SVN.UI
         [SerializeField] private int dotCount = 50;
         [SerializeField] private float pulseSpeed = 5f;
         [SerializeField] private float waveTightness = 0.2f;
+        [SerializeField] private float waveAmplitude = 0.3f; // Amplituda fizycznej fali (góra/dół) w jednostkach em
 
         private StringBuilder _sb = new StringBuilder();
+        private string[] _hexCache;
+
+        private void Awake()
+        {
+            // Cache dla wartości Hex Alpha (00-FF), aby wyeliminować ToString() w Update
+            _hexCache = new string[256];
+            for (int i = 0; i < 256; i++)
+            {
+                _hexCache[i] = i.ToString("X2");
+            }
+        }
 
         private void Start()
         {
@@ -52,24 +64,31 @@ namespace SVN.UI
             if (svnManager == null || !svnManager.IsProcessing || animatedDots == null) return;
 
             _sb.Clear();
-            _sb.Append("<nobr><size=150%><voffset=50em>");
+            _sb.Append("<nobr><size=150%>");
+
+            float currentTime = Time.time;
 
             for (int i = 0; i < dotCount; i++)
             {
-                string alpha = GetPulseAlpha(i * waveTightness);
-                _sb.Append($"<alpha=#{alpha}>.");
+                float offset = i * waveTightness;
+                float angle = currentTime * pulseSpeed - offset;
+
+                // 1. Naprawa pozycji: voffset wewnątrz pętli tworzy prawdziwy ruch falowy
+                float vOffset = Mathf.Sin(angle) * waveAmplitude;
+
+                // 2. Pobieranie przezroczystości z bezśmieciowego cache
+                float alphaFactor = (Mathf.Sin(angle) + 1f) / 2f;
+                alphaFactor = Mathf.Pow(alphaFactor, 2);
+                int alphaInt = Mathf.RoundToInt(alphaFactor * 255);
+                string alphaHex = _hexCache[alphaInt];
+
+                // 3. Łączenie tagów bez alokacji nowych stringów za pomocą Append
+                _sb.Append("<voffset=").Append(vOffset.ToString("F2")).Append("em><alpha=#")
+                   .Append(alphaHex).Append(">.</voffset>");
             }
 
-            _sb.Append("</voffset></size></nobr>");
+            _sb.Append("</size></nobr>");
             animatedDots.text = _sb.ToString();
-        }
-
-        private string GetPulseAlpha(float offset)
-        {
-            float alpha = (Mathf.Sin(Time.time * pulseSpeed - offset) + 1f) / 2f;
-            alpha = Mathf.Pow(alpha, 2);
-            int alphaInt = Mathf.RoundToInt(alpha * 255);
-            return alphaInt.ToString("X2");
         }
     }
 }

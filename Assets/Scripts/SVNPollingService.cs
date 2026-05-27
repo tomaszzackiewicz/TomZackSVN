@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -7,113 +6,88 @@ namespace SVN.Core
 {
     public class SVNPollingService : MonoBehaviour
     {
-        private CancellationTokenSource _cts;
-        private bool _isPolling = false;
         private int _lastKnownRemoteRevision = -1;
 
-        [Header("Settings")]
-        public float pollIntervalMinutes = 1f;
+        [Header("Focus Settings")]
+        public float focusCheckCooldownSeconds = 3f;
+        private float _lastFocusCheckTime = -100f;
+
+        [Header("Logging")]
         public bool showDebugLogs = true;
 
-        public void StartPolling(SVNStatus statusModule)
+        private void OnApplicationFocus(bool hasFocus)
         {
-            if (_isPolling) return;
-            _cts = new CancellationTokenSource();
-            _isPolling = true;
-            Task.Run(() => PollLoop(_cts.Token));
-            if (showDebugLogs) SVNLogBridge.LogLine("<color=blue>[SVN Polling]</color> Started.");
-        }
-
-        public void StopPolling()
-        {
-            if (!_isPolling) return;
-            _isPolling = false;
-            _cts?.Cancel();
-            _cts?.Dispose();
-            _cts = null;
-        }
-
-        private async Task PollLoop(CancellationToken token)
-        {
-            while (!token.IsCancellationRequested && _isPolling)
+            if (hasFocus)
             {
-                try
+                float currentTime = Time.realtimeSinceStartup;
+                if (currentTime - _lastFocusCheckTime >= focusCheckCooldownSeconds)
                 {
-                    // 1. POBIERANIE DANYCH Z UNITY MUSI BYĆ BEZPIECZNE
-                    // Najlepiej pobrać WorkingDir raz lub przez bezpieczną właściwość
-                    string wd = "";
+                    _lastFocusCheckTime = currentTime;
+                    _ = CheckForRemoteCommitsAsync();
+                }
+            }
+        }
 
-                    // Używamy Dispatchera lub sprawdzamy, czy możemy bezpiecznie pobrać ścieżkę
-                    // Jeśli SVNManager.Instance jest statyczny i nie dotyka MonoBehaviour w getterze, 
-                    // to zadziała, ale bezpieczniej jest to zrobić tak:
-                    wd = SVNManager.MainThreadWorkingDir; // Dodaj taką statyczną zmienną w SVNManager
+        private async Task CheckForRemoteCommitsAsync()
+        {
+            try
+            {
+                string wd = SVNManager.MainThreadWorkingDir;
 
-                    if (string.IsNullOrEmpty(wd))
+                if (string.IsNullOrEmpty(wd)) return;
+
+                string revOutput = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", wd);
+
+                if (int.TryParse(revOutput.Trim(), out int remoteRev))
+                {
+                    if (_lastKnownRemoteRevision == -1)
                     {
-                        await Task.Delay(5000, token);
-                        continue;
+                        _lastKnownRemoteRevision = remoteRev;
+                        return;
                     }
 
-                    // 2. OPERACJA SIECIOWA (SVN) - To może być w tle
-                    string revOutput = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", wd);
-
-                    if (int.TryParse(revOutput.Trim(), out int remoteRev))
+                    if (remoteRev > _lastKnownRemoteRevision)
                     {
-                        if (_lastKnownRemoteRevision == -1)
+                        _lastKnownRemoteRevision = remoteRev;
+
+                        string author = await FetchAuthor(wd);
+                        string localUser = SVNManager.CachedUserName;
+
+                        if (!string.Equals(author.Trim(), localUser?.Trim(), StringComparison.OrdinalIgnoreCase))
                         {
-                            _lastKnownRemoteRevision = remoteRev;
+                            string commitMsg = await FetchCleanCommitMessage(wd, remoteRev);
+
+                            UnityMainThreadDispatcher.Enqueue(async () =>
+                            {
+                                if (SVNNotificationAudio.Instance != null)
+                                    SVNNotificationAudio.Instance.PlayCommitSound();
+
+                                string message = $"<b>{author}</b> committed changes!\n" +
+                                                 $"Revision: <color=yellow>{remoteRev}</color>\n" +
+                                                 $"<i>\"{commitMsg}\"</i>";
+
+                                SVNLogBridge.ShowNotification(message);
+
+                                if (SVNManager.Instance != null)
+                                    await SVNManager.Instance.RefreshStatus();
+                            });
                         }
-                        else if (remoteRev > _lastKnownRemoteRevision)
+                        else
                         {
-                            _lastKnownRemoteRevision = remoteRev;
+                            if (showDebugLogs) SVNLogBridge.LogLine($"<color=green>[SVN Focus Check]</color> Local commit detected (Rev {remoteRev}).");
 
-                            string author = await FetchAuthor(wd);
-                            // Pobierz nazwę użytkownika z cache'u, nie z obiektu Unity bezpośrednio w tym wątku
-                            string localUser = SVNManager.CachedUserName;
-
-                            if (!string.Equals(author.Trim(), localUser?.Trim(), StringComparison.OrdinalIgnoreCase))
+                            UnityMainThreadDispatcher.Enqueue(async () =>
                             {
-                                string commitMsg = await FetchCleanCommitMessage(wd, remoteRev);
-
-                                // 3. WSZYSTKO CO DOTYKA UI LUB KOMPONENTÓW UNITY WRACA DO GŁÓWNEGO WĄTKU
-                                UnityMainThreadDispatcher.Enqueue(async () =>
-                                {
-                                    if (SVNNotificationAudio.Instance != null)
-                                        SVNNotificationAudio.Instance.PlayCommitSound();
-
-                                    string message = $"<b>{author}</b> committed changes!\n" +
-                                                     $"Revision: <color=yellow>{remoteRev}</color>\n" +
-                                                     $"<i>\"{commitMsg}\"</i>";
-
-                                    SVNLogBridge.ShowNotification(message);
-
-                                    if (SVNManager.Instance != null)
-                                        await SVNManager.Instance.RefreshStatus();
-                                });
-                            }
-                            else
-                            {
-                                if (showDebugLogs) SVNLogBridge.LogLine($"<color=green>[SVN Polling]</color> Local commit detected (Rev {remoteRev}).");
-
-                                UnityMainThreadDispatcher.Enqueue(async () =>
-                                {
-                                    if (SVNManager.Instance != null)
-                                        await SVNManager.Instance.RefreshStatus();
-                                });
-                            }
+                                if (SVNManager.Instance != null)
+                                    await SVNManager.Instance.RefreshStatus();
+                            });
                         }
                     }
                 }
-                catch (OperationCanceledException) { /* Ignorujemy przy zamykaniu */ }
-                catch (Exception e)
-                {
-                    // Tutaj nie używamy Debug.Log bezpośrednio, jeśli SVNLogBridge dotyka MonoBehaviour
-                    // Ale zwykły Debug.Log w nowszych wersjach Unity jest thread-safe.
-                    Debug.LogError($"[SVN Polling Error] {e.Message}");
-                }
-
-                // Czekamy przed następnym sprawdzeniem
-                await Task.Delay(TimeSpan.FromMinutes(pollIntervalMinutes), token);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[SVN Focus Check Error] {e.Message}");
             }
         }
 
@@ -141,7 +115,5 @@ namespace SVN.Core
             }
             catch { return "No message."; }
         }
-
-        private void OnDestroy() => StopPolling();
     }
 }

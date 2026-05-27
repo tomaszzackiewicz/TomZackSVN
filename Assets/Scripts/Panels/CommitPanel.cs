@@ -14,16 +14,38 @@ public class CommitPanel : MonoBehaviour
         svnManager = SVNManager.Instance;
     }
 
-    private async void OnEnable()
+    private void OnEnable()
     {
         _ = RefreshInBackground();
     }
 
+    private void OnDisable()
+    {
+    }
+
     private async Task RefreshInBackground()
     {
-        if (svnManager != null)
+        if (svnManager == null)
+            return;
+
+        var statusModule = svnManager.GetModule<SVNStatus>();
+
+        await statusModule.ExecuteRefreshWithAutoExpand();
+
+        statusModule.UpdateSelectedSizeDisplay();
+    }
+
+    private void UpdateSelectedSizeDisplay()
+    {
+        if (svnManager == null) return;
+
+        // Pobierz moduł statusu i wywołaj metodę aktualizacji UI
+        var statusModule = svnManager.GetModule<SVNStatus>();
+        if (statusModule != null)
         {
-            await svnManager.GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand();
+            // Wywołujemy metodę, która tylko odświeża widok, 
+            // nie ma prawa wywoływać z powrotem CommitPanelu
+            statusModule.UpdateSelectedSizeDisplay();
         }
     }
 

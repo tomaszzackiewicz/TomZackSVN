@@ -194,28 +194,40 @@ public class SvnLineController : MonoBehaviour
                 lockBtn.gameObject.SetActive(true);
                 lockBtn.onClick.RemoveAllListeners();
 
+                // 🔥 NIE ROBIMY TOGGLE UI "na ślepo"
+                lockBtn.interactable = true;
+
+                lockBtn.onClick.AddListener(async () =>
+                {
+                    var lockModule = SVNManager.Instance.GetModule<SVNLock>();
+                    if (lockModule == null) return;
+
+                    // 🔥 NIE zmieniamy UI tutaj
+                    lockModule.ToggleLockSingleItem(_element);
+
+                    // 🔥 KLUCZ: zawsze synchronizacja po operacji
+                    //_ = SVNManager.Instance.RefreshStatus(force: true);
+
+                    //lockModule.ShowAllLocks();
+
+                    // var statusModule = SVNManager.Instance.GetModule<SVNStatus>();
+                    // await statusModule.SetLockAsync();
+                });
+
                 if (isLockedByOthers)
                 {
-                    lockBtn.interactable = false;
                     lockBtnText.text = "<color=#FF4444>O</color>";
-                    lockBtnText.fontStyle = FontStyles.Bold;
-                    BindHover(lockBtn, "File is LOCKED by another user.");
+                    BindHover(lockBtn, "Locked by another user.");
                 }
                 else if (isLockedByMe)
                 {
-                    lockBtn.interactable = true;
-                    lockBtn.onClick.AddListener(() => SVNManager.Instance.GetModule<SVNLock>()?.ToggleLockSingleItem(_element));
                     lockBtnText.text = "<color=#00FF00>K</color>";
-                    lockBtnText.fontStyle = FontStyles.Bold;
-                    BindHover(lockBtn, "You have the lock. Click to release it.");
+                    BindHover(lockBtn, "Click to unlock.");
                 }
                 else
                 {
-                    lockBtn.interactable = true;
-                    lockBtn.onClick.AddListener(() => SVNManager.Instance.GetModule<SVNLock>()?.ToggleLockSingleItem(_element));
                     lockBtnText.text = "<color=#E6E6E6>U</color>";
-                    lockBtnText.fontStyle = FontStyles.Bold;
-                    BindHover(lockBtn, "File is unlocked. Click to lock it for exclusive editing.");
+                    BindHover(lockBtn, "Click to lock.");
                 }
             }
             else if (lockBtn != null)

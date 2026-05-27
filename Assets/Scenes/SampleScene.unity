@@ -3334,7 +3334,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c63d2a9aef3aca84f9d79a8ee69d1b33, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVN.Core.SVNPollingService
-  pollIntervalMinutes: 1
+  focusCheckCooldownSeconds: 3
   showDebugLogs: 1
 --- !u!114 &72008809
 MonoBehaviour:
@@ -3476,6 +3476,7 @@ MonoBehaviour:
   dotCount: 125
   pulseSpeed: 5
   waveTightness: 0.2
+  waveAmplitude: 0.01
 --- !u!1 &75739075
 GameObject:
   m_ObjectHideFlags: 0

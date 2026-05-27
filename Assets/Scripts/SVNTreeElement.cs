@@ -10,6 +10,7 @@ namespace SVN.Core
         public int Depth;
         public string Status;
         public string Size;
+        public long Bytes;
         public bool IsFolder;
         public bool IsExpanded = true;
         public bool IsVisible = true;

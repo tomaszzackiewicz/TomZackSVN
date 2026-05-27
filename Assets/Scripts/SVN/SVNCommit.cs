@@ -15,6 +15,8 @@ namespace SVN.Core
         private CancellationTokenSource _commitCTS;
         private List<SVNStatusElement> _items = new List<SVNStatusElement>();
 
+        private const double BytesConversionFactor = 1024.0;
+
         public SVNCommit(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
         public void CancelOperation()
@@ -212,8 +214,26 @@ namespace SVN.Core
                 return;
             }
 
+            // 1. Obliczanie wagi przygotowanych plików
+            long totalSizeBytes = 0;
+            string root = svnManager.WorkingDir.Replace("\\", "/").TrimEnd('/');
+
+            foreach (var item in items)
+            {
+                // Pomijamy pliki odznaczone oraz te usunięte/brakujące (nie zajmują miejsca przy wysyłce)
+                if (!item.IsChecked || item.Status == "!" || item.Status == "D")
+                    continue;
+
+                string absolutePath = System.IO.Path.Combine(root, item.FullPath);
+                if (System.IO.File.Exists(absolutePath))
+                {
+                    totalSizeBytes += new System.IO.FileInfo(absolutePath).Length;
+                }
+            }
+
+            // 2. Budowanie widoku w konsoli
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("<b>Files to be committed:</b>");
+            sb.AppendLine($"<b>Files to be committed</b> (Payload size: <color=blue>{FormatCommitSize(totalSizeBytes)}</color>):");
 
             foreach (var item in items)
             {
@@ -229,6 +249,35 @@ namespace SVN.Core
             }
 
             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, sb.ToString(), append: false);
+        }
+
+        public List<SvnTreeElement> GetSelectedFiles()
+        {
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            if (statusModule != null)
+            {
+                return statusModule.GetCurrentData()
+                    .Where(e => e.IsChecked && !e.IsFolder)
+                    .ToList();
+            }
+            return new List<SvnTreeElement>();
+        }
+
+        private string FormatCommitSize(long bytes)
+        {
+            if (bytes == 0) return "0 B";
+
+            string[] sizeSuffixes = { "B", "KB", "MB", "GB", "TB" };
+            double length = bytes;
+            int order = 0;
+
+            while (length >= BytesConversionFactor && order < sizeSuffixes.Length - 1)
+            {
+                order++;
+                length /= BytesConversionFactor;
+            }
+
+            return $"{length:0.##} {sizeSuffixes[order]}";
         }
 
         public async void ExecuteRevertAllMissing()
