@@ -117,7 +117,6 @@ namespace SVN.Core
                         "<color=green>Locking completed successfully.</color>"
                     );
 
-                    // refresh cache po udanym locku
                     await RefreshLockCacheAsync(true);
 
                     var statusModule =
@@ -353,9 +352,6 @@ namespace SVN.Core
                 SVNLogBridge.LogError(
                     $"[SVN Lock Error]: {ex.Message}"
                 );
-
-                // IMPORTANT:
-                // pobierz PRAWDZIWY stan locków z serwera
 
                 await RefreshLockCacheAsync(true);
 

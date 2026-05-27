@@ -194,7 +194,6 @@ public class SvnLineController : MonoBehaviour
                 lockBtn.gameObject.SetActive(true);
                 lockBtn.onClick.RemoveAllListeners();
 
-                // 🔥 NIE ROBIMY TOGGLE UI "na ślepo"
                 lockBtn.interactable = true;
 
                 lockBtn.onClick.AddListener(async () =>

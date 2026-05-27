@@ -202,18 +202,10 @@ namespace SVN.Core
 
                 token.ThrowIfCancellationRequested();
 
-                // =========================
-                // STATUS
-                // =========================
-
                 var statusDict =
                     await GetChangesDictionaryAsync(root, token);
 
                 token.ThrowIfCancellationRequested();
-
-                // =========================
-                // LOCKS
-                // =========================
 
                 var lockDict =
                     await GetLocksDictionaryAsync(root, token);
@@ -262,18 +254,10 @@ namespace SVN.Core
 
                 totalCommitBytes = finalBytes;
 
-                // =========================
-                // APPLY LOCKS BEFORE UI
-                // =========================
-
                 if (lockDict != null && lockDict.Count > 0)
                 {
                     ApplyLockColors(_flatTreeData, lockDict);
                 }
-
-                // =========================
-                // MAIN TREE
-                // =========================
 
                 if (svnUI.SvnTreeView != null &&
                     svnUI.SvnTreeView.gameObject.activeInHierarchy)
@@ -286,10 +270,6 @@ namespace SVN.Core
                         this
                     );
                 }
-
-                // =========================
-                // COMMIT TREE
-                // =========================
 
                 if (svnUI.SVNCommitTreeDisplay != null &&
                     svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
@@ -600,7 +580,7 @@ namespace SVN.Core
                     }
 
                     string fileSize = "";
-                    long bytes = 0; // <-- ROZWIĄZANIE: Deklaracja wyciągnięta przed blok try
+                    long bytes = 0;
 
                     if (ENABLE_FILE_SIZES && !isActuallyFolder && isLastPart)
                     {
@@ -702,8 +682,6 @@ namespace SVN.Core
             return (elements, localTotalBytes);
         }
 
-        // Dokończenie uciętej metody na samym dole klasy SVNStatus:
-        // W pliku SVNStatus.cs
         public void UpdateSelectedSizeDisplay()
         {
             if (svnUI == null || svnUI.CommitSizeText == null)
@@ -726,7 +704,6 @@ namespace SVN.Core
                 if (element.IsFolder)
                     continue;
 
-                // deleted/missing nie mają payloadu
                 if (element.Status == "!" || element.Status == "D")
                     continue;
 
@@ -939,10 +916,6 @@ namespace SVN.Core
 
                 if (string.IsNullOrEmpty(e.FullPath))
                     continue;
-
-                // =========================
-                // NORMALIZE RELATIVE PATH
-                // =========================
 
                 string normalized =
                     NormalizeLockPath(e.FullPath);
