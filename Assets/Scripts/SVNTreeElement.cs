@@ -16,6 +16,8 @@ namespace SVN.Core
         public bool IsVisible = true;
         public bool IsChecked = false;
         public bool IsCommitDelegate;
+        public bool LockedByMe;
+        public bool LockedByOther;
 
         public SvnTreeElement Clone()
         {

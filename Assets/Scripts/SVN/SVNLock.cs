@@ -11,56 +11,118 @@ namespace SVN.Core
     {
         public SVNLock(SVNUI svnUI, SVNManager svnManager) : base(svnUI, svnManager) { }
 
-        public void LockAllModified() => LockModified();
-        public void RefreshStealPanel(LockPanel panel) => ShowAllLocks();
+        public void LockAllModified() => LockModifiedButton();
+        public void RefreshStealPanel(LockPanel panel) => ShowAllLocksButton();
 
-        public async void LockModified()
+        private bool _isRefreshingLocks;
+
+        public async void LockModifiedButton()
         {
-            if (IsProcessing) return;
+            await LockModified();
+        }
+
+        public async void ShowAllLocksButton()
+        {
+            await ShowAllLocks();
+        }
+
+        public async void UnlockAllButton()
+        {
+            await UnlockAll();
+        }
+
+        public async void BreakAllLocksButton()
+        {
+            await BreakAllLocks();
+        }
+
+        public async Task LockModified()
+        {
+            if (IsProcessing)
+                return;
+
             string root = svnManager.WorkingDir;
+
             IsProcessing = true;
 
-            SVNLogBridge.LogLine("<b>[Lock]</b> Scanning for modified files (M)...", append: false);
+            SVNLogBridge.LogLine(
+                "<b>[Lock]</b> Scanning for modified files (M)...",
+                append: false
+            );
 
             try
             {
-                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
-                var modifiedFiles = statusDict
+                var statusDict =
+                    await SvnRunner.GetFullStatusDictionaryAsync(
+                        root,
+                        false
+                    );
+
+                var modifiedFiles =
+                    statusDict
                     .Where(x => x.Value.status == "M")
                     .Select(x => x.Key)
                     .ToList();
 
                 if (modifiedFiles.Count == 0)
                 {
-                    SVNLogBridge.LogLine("<color=yellow>No modified files (M) found to lock.</color>");
+                    SVNLogBridge.LogLine(
+                        "<color=yellow>No modified files (M) found to lock.</color>"
+                    );
+
                     return;
                 }
 
-                var currentServerLocks = await GetDetailedLocks(root);
+                var currentServerLocks =
+                    await GetDetailedLocks(root);
 
-                var alreadyLockedPaths = new HashSet<string>(
-                    currentServerLocks.Select(l => l.Path.Replace("\\", "/").ToLower())
-                );
+                var alreadyLockedPaths =
+                    new HashSet<string>(
+                        currentServerLocks.Select(
+                            l => NormalizePath(l.FullPath)
+                        ),
+                        StringComparer.OrdinalIgnoreCase
+                    );
 
-                var filesToLock = modifiedFiles
+                var filesToLock =
+                    modifiedFiles
                     .Where(f =>
                     {
-                        string normalizedPath = f.Replace("\\", "/").ToLower();
-                        return !alreadyLockedPaths.Any(lp => normalizedPath.EndsWith(lp));
+                        string normalized =
+                            NormalizePath(f);
+
+                        return !alreadyLockedPaths.Contains(normalized);
                     })
                     .Select(f => $"\"{f}\"")
                     .ToArray();
 
-                int alreadyLockedByMeOrOthers = modifiedFiles.Count - filesToLock.Length;
+                int alreadyLockedCount =
+                    modifiedFiles.Count - filesToLock.Length;
 
                 if (filesToLock.Length > 0)
                 {
-                    SVNLogBridge.LogLine($"Locking {filesToLock.Length} new files...");
-                    string allPathsJoined = string.Join(" ", filesToLock);
-                    await SvnRunner.RunAsync($"lock {allPathsJoined}", root);
-                    SVNLogBridge.LogLine("<color=green>Locking completed successfully.</color>");
+                    SVNLogBridge.LogLine(
+                        $"Locking {filesToLock.Length} new files..."
+                    );
 
-                    var statusModule = svnManager.GetModule<SVNStatus>();
+                    string allPathsJoined =
+                        string.Join(" ", filesToLock);
+
+                    await SvnRunner.RunAsync(
+                        $"lock {allPathsJoined}",
+                        root
+                    );
+
+                    SVNLogBridge.LogLine(
+                        "<color=green>Locking completed successfully.</color>"
+                    );
+
+                    // refresh cache po udanym locku
+                    await RefreshLockCacheAsync(true);
+
+                    var statusModule =
+                        svnManager.GetModule<SVNStatus>();
+
                     if (statusModule != null)
                     {
                         await statusModule.RefreshAfterAction();
@@ -68,26 +130,48 @@ namespace SVN.Core
                 }
                 else
                 {
-                    SVNLogBridge.LogLine("<color=yellow>All modified files are already locked.</color>");
+                    SVNLogBridge.LogLine(
+                        "<color=yellow>All modified files are already locked.</color>"
+                    );
+
+                    await RefreshLockCacheAsync(true);
+
+                    svnManager
+                        .GetModule<SVNStatus>()
+                        ?.RefreshVisibleUIOnly();
                 }
 
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                if (ex.Message.Contains("W160035"))
+                if (ex.Message.Contains("W160035") ||
+                    ex.Message.Contains("E200009"))
                 {
-                    SVNLogBridge.LogLine("<color=green>Files were already locked.</color>");
+                    SVNLogBridge.LogLine(
+                        "<color=yellow>Some files are already locked.</color>"
+                    );
+
+                    await RefreshLockCacheAsync(true);
+
+                    svnManager
+                        .GetModule<SVNStatus>()
+                        ?.RefreshVisibleUIOnly();
                 }
                 else
                 {
-                    SVNLogBridge.LogLine($"<color=red>Lock Error:</color> {ex.Message}");
+                    SVNLogBridge.LogLine(
+                        $"<color=red>Lock Error:</color> {ex.Message}"
+                    );
                 }
             }
-            finally { IsProcessing = false; }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
-        public async void UnlockAll()
+        public async Task UnlockAll()
         {
             if (IsProcessing) return;
             string root = svnManager.WorkingDir;
@@ -116,7 +200,7 @@ namespace SVN.Core
                         await statusModule.RefreshAfterAction();
                     }
 
-                    ShowAllLocks();
+                    ShowAllLocksButton();
                 }
                 else
                 {
@@ -133,7 +217,7 @@ namespace SVN.Core
             }
         }
 
-        public async void ShowAllLocks()
+        public async Task ShowAllLocks()
         {
             if (IsProcessing) return;
             IsProcessing = true;
@@ -217,43 +301,175 @@ namespace SVN.Core
             return locks;
         }
 
-        public async void ToggleLockSingleItem(SvnTreeElement element)
+        public async Task ToggleLockSingleItem(SvnTreeElement element)
         {
-            if (IsProcessing || element == null) return;
-            IsProcessing = true;
+            if (element == null)
+                return;
+
+            bool isLocked = element.LockedByMe;
+
+            string cmd =
+                isLocked
+                ? $"unlock \"{element.FullPath}\""
+                : $"lock \"{element.FullPath}\"";
 
             try
             {
-                bool isLocked = element.Status.Contains("K");
-                string cmd = isLocked ? "unlock" : "lock";
-
-                await SvnRunner.RunAsync($"{cmd} \"{element.FullPath}\"", svnManager.WorkingDir);
+                await SvnRunner.RunAsync(
+                    cmd,
+                    svnManager.WorkingDir
+                );
 
                 if (isLocked)
-                    element.Status = element.Status.Replace("K", "").Trim();
+                {
+                    element.LockedByMe = false;
+
+                    svnManager.LockCache.Locks.Remove(
+                        NormalizePath(element.FullPath));
+                }
                 else
-                    if (!element.Status.Contains("K")) element.Status += "K";
+                {
+                    element.LockedByMe = true;
+                    element.LockedByOther = false;
 
-                var statusModule = svnManager.GetModule<SVNStatus>();
-                statusModule?.NotifySelectionChanged();
+                    svnManager.LockCache.Locks[
+                        NormalizePath(element.FullPath)] =
+                        new SVNLockDetails
+                        {
+                            FullPath = element.FullPath,
+                            Owner = svnManager.CurrentUserName
+                        };
+                }
 
-                IsProcessing = false;
+                var status =
+                    svnManager.GetModule<SVNStatus>();
 
-                _ = statusModule?.ExecuteRefreshWithAutoExpand();
+                status?.RefreshVisibleUIOnly();
+
+                _ = RefreshLockCacheAsync(true);
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"[SVN Lock Error]: {ex.Message}");
-                IsProcessing = false;
+                SVNLogBridge.LogError(
+                    $"[SVN Lock Error]: {ex.Message}"
+                );
+
+                // IMPORTANT:
+                // pobierz PRAWDZIWY stan locków z serwera
+
+                await RefreshLockCacheAsync(true);
+
+                var status =
+                    svnManager.GetModule<SVNStatus>();
+
+                status?.RefreshVisibleUIOnly();
             }
         }
 
-        public async void BreakAllLocks()
+        private string NormalizePath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                return "";
+
+            path = path.Replace("\\", "/");
+
+            string root =
+                svnManager.WorkingDir
+                .Replace("\\", "/")
+                .TrimEnd('/');
+
+            if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                path = path.Substring(root.Length);
+            }
+
+            return path.TrimStart('/');
+        }
+
+        public async Task BreakAllLocks()
         {
             string root = svnManager.WorkingDir;
             SVNLogBridge.LogLine("<color=orange><b>[System]</b> Cleaning local database locks...</color>");
             await SvnRunner.RunAsync("cleanup --remove-locks", root);
             SVNLogBridge.LogLine("Local locks removed.");
+        }
+
+        public async Task RefreshLockCacheAsync(bool force = false)
+        {
+            if (_isRefreshingLocks)
+                return;
+
+            _isRefreshingLocks = true;
+
+            try
+            {
+                if (!force && svnManager.LockCache.IsValid())
+                    return;
+
+                string root = svnManager.WorkingDir;
+
+                var locks = await GetDetailedLocks(root);
+
+                svnManager.LockCache.Clear();
+
+                foreach (var l in locks)
+                {
+                    string normalized = NormalizePath(l.FullPath);
+
+                    svnManager.LockCache.Locks[normalized] = l;
+                }
+
+                svnManager.LockCache.LastRefreshUtc = DateTime.UtcNow;
+
+                ApplyLocksToTree();
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"Lock cache refresh failed: {ex.Message}");
+            }
+            finally
+            {
+                _isRefreshingLocks = false;
+            }
+        }
+
+        private void ApplyLocksToTree(bool refreshUI = true)
+        {
+            var status = svnManager.GetModule<SVNStatus>();
+
+            if (status == null)
+                return;
+
+            var data = status.GetCurrentData();
+
+            if (data == null)
+                return;
+
+            string currentUser =
+                svnManager.CurrentUserName?.Trim().ToLower();
+
+            foreach (var e in data)
+            {
+                e.LockedByMe = false;
+                e.LockedByOther = false;
+
+                string normalized =
+                    NormalizePath(e.FullPath);
+
+                if (svnManager.LockCache.Locks.TryGetValue(normalized, out var lockInfo))
+                {
+                    bool isMine =
+                        lockInfo.Owner.Trim().ToLower() == currentUser;
+
+                    e.LockedByMe = isMine;
+                    e.LockedByOther = !isMine;
+                }
+            }
+
+            if (refreshUI)
+            {
+                status.RefreshVisibleUIOnly();
+            }
         }
     }
 }

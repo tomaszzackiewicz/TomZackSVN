@@ -186,8 +186,8 @@ public class SvnLineController : MonoBehaviour
                 BindHover(addBtn, "Add this unversioned file to SVN control.");
             }
 
-            bool isLockedByMe = status.Contains("K");
-            bool isLockedByOthers = status.Contains("O");
+            bool isLockedByMe = _element.LockedByMe;
+            bool isLockedByOthers = _element.LockedByOther;
 
             if (!_element.IsFolder && !isUnversioned && !isMissingOrDeleted && lockBtn != null)
             {
@@ -199,19 +199,19 @@ public class SvnLineController : MonoBehaviour
 
                 lockBtn.onClick.AddListener(async () =>
                 {
-                    var lockModule = SVNManager.Instance.GetModule<SVNLock>();
-                    if (lockModule == null) return;
+                    var lockModule =
+                        SVNManager.Instance.GetModule<SVNLock>();
 
-                    // 🔥 NIE zmieniamy UI tutaj
-                    lockModule.ToggleLockSingleItem(_element);
+                    if (lockModule == null)
+                        return;
 
-                    // 🔥 KLUCZ: zawsze synchronizacja po operacji
-                    //_ = SVNManager.Instance.RefreshStatus(force: true);
+                    lockBtn.interactable = false;
 
-                    //lockModule.ShowAllLocks();
+                    await lockModule.ToggleLockSingleItem(_element);
 
-                    // var statusModule = SVNManager.Instance.GetModule<SVNStatus>();
-                    // await statusModule.SetLockAsync();
+                    RefreshLockButton();
+
+                    lockBtn.interactable = true;
                 });
 
                 if (isLockedByOthers)
@@ -311,6 +311,25 @@ public class SvnLineController : MonoBehaviour
                 });
                 BindHover(explorerBtn, "Open location in Windows Explorer.");
             }
+        }
+    }
+
+    private void RefreshLockButton()
+    {
+        bool isLockedByMe = _element.LockedByMe;
+        bool isLockedByOthers = _element.LockedByOther;
+
+        if (isLockedByOthers)
+        {
+            lockBtnText.text = "<color=#FF4444>O</color>";
+        }
+        else if (isLockedByMe)
+        {
+            lockBtnText.text = "<color=#00FF00>K</color>";
+        }
+        else
+        {
+            lockBtnText.text = "<color=#E6E6E6>U</color>";
         }
     }
 
