@@ -14,49 +14,98 @@ namespace SVN.Core
             if (IsProcessing) return;
 
             string root = svnManager.WorkingDir;
+
             if (string.IsNullOrEmpty(root))
             {
-                SVNLogBridge.LogLine("<color=red>Error:</color> Working directory not set.");
+                SVNLogBridge.LogLine(
+                    "<color=red>Error:</color> Working directory not set.");
                 return;
             }
 
             IsProcessing = true;
-            SVNLogBridge.LogLine("<b>Starting Revert process...</b>", append: false);
+
+            SVNLogBridge.LogLine(
+                "<b>Starting Revert process...</b>",
+                append: false);
 
             try
             {
-                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+                var statusDict =
+                    await SvnRunner.GetFullStatusDictionaryAsync(root, false);
 
                 var filesToRevert = statusDict
-                    .Where(x => !string.IsNullOrEmpty(x.Value.status) && "MADRC".Contains(x.Value.status))
+                    .Where(x =>
+                        !string.IsNullOrEmpty(x.Value.status) &&
+                        "MADRC".Contains(x.Value.status))
                     .Select(x =>
                     {
-                        string fullPath = Path.Combine(root, x.Key).Replace("/", "\\");
+                        string fullPath =
+                            Path.Combine(root, x.Key).Replace("/", "\\");
+
                         return Path.GetFullPath(fullPath);
                     })
                     .ToArray();
 
                 if (filesToRevert.Length == 0)
                 {
-                    SVNLogBridge.LogLine("<color=yellow>No local changes detected to revert.</color>");
+                    SVNLogBridge.LogLine(
+                        "<color=yellow>No local changes detected to revert.</color>");
                     return;
                 }
 
-                await RevertAsync(root, filesToRevert, (msg) =>
+                await RevertAsync(
+                    root,
+                    filesToRevert,
+                    (msg) =>
+                    {
+                        SVNLogBridge.LogLine(
+                            $"<color=green>[Progress]</color> {msg}");
+                    });
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+
+                if (statusModule != null)
                 {
-                    SVNLogBridge.LogLine($"<color=green>[Progress]</color> {msg}");
-                });
+                    statusModule.ClearSVNTreeView();
+                    statusModule.ClearCurrentData();
+                }
 
-                if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
-                if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
-                svnManager.GetModule<SVNStatus>().ClearCurrentData();
+                if (svnUI.SvnTreeView != null)
+                    svnUI.SvnTreeView.ClearView();
 
-                SVNLogBridge.LogLine($"<color=green><b>SUCCESS!</b></color> Reverted <b>{filesToRevert.Length}</b> files.");
+                if (svnUI.SVNCommitTreeDisplay != null)
+                    svnUI.SVNCommitTreeDisplay.ClearView();
+
+                if (svnUI.TreeDisplay != null)
+                {
+                    SVNLogBridge.UpdateUIField(
+                        svnUI.TreeDisplay,
+                        "",
+                        "TREE",
+                        append: false);
+                }
+
+                if (svnUI.CommitTreeDisplay != null)
+                {
+                    SVNLogBridge.UpdateUIField(
+                        svnUI.CommitTreeDisplay,
+                        "",
+                        "COMMIT_TREE",
+                        append: false);
+                }
+
+                SVNLogBridge.LogLine(
+                    $"<color=green><b>SUCCESS!</b></color> Reverted <b>{filesToRevert.Length}</b> files.");
+
+                SVNLogBridge.LogLine(
+                    "<color=#4FC3F7>Refreshing SVN status...</color>");
+
                 await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Revert Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine(
+                    $"<color=red>Revert Error:</color> {ex.Message}");
             }
             finally
             {
@@ -95,30 +144,69 @@ namespace SVN.Core
 
         public async void RevertSingleItem(SvnTreeElement element)
         {
-            if (IsProcessing || element == null) return;
+            if (IsProcessing || element == null)
+                return;
 
             string root = svnManager.WorkingDir;
-            if (string.IsNullOrEmpty(root)) return;
+
+            if (string.IsNullOrEmpty(root))
+                return;
 
             IsProcessing = true;
-            SVNLogBridge.LogLine($"<b>Reverting:</b> {element.Name}...");
+
+            SVNLogBridge.LogLine(
+                $"<b>Reverting:</b> {element.Name}...");
 
             try
             {
-                await SvnRunner.RunAsync($"revert \"{element.FullPath}\"", root);
-                SVNLogBridge.LogLine($"<color=green>Successfully reverted:</color> {element.Name}");
+                await SvnRunner.RunAsync(
+                    $"revert \"{element.FullPath}\"",
+                    root);
 
-                IsProcessing = false;
+                SVNLogBridge.LogLine(
+                    $"<color=green>Successfully reverted:</color> {element.Name}");
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
+
                 if (statusModule != null)
                 {
-                    statusModule.ShowOnlyModified();
+                    statusModule.ClearSVNTreeView();
+                    statusModule.ClearCurrentData();
                 }
+
+                if (svnUI.SvnTreeView != null)
+                    svnUI.SvnTreeView.ClearView();
+
+                if (svnUI.SVNCommitTreeDisplay != null)
+                    svnUI.SVNCommitTreeDisplay.ClearView();
+
+                if (svnUI.TreeDisplay != null)
+                {
+                    SVNLogBridge.UpdateUIField(
+                        svnUI.TreeDisplay,
+                        "",
+                        "TREE",
+                        append: false);
+                }
+
+                if (svnUI.CommitTreeDisplay != null)
+                {
+                    SVNLogBridge.UpdateUIField(
+                        svnUI.CommitTreeDisplay,
+                        "",
+                        "COMMIT_TREE",
+                        append: false);
+                }
+
+                await svnManager.RefreshStatus();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Revert Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine(
+                    $"<color=red>Revert Error:</color> {ex.Message}");
+            }
+            finally
+            {
                 IsProcessing = false;
             }
         }

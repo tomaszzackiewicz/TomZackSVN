@@ -160,6 +160,12 @@ namespace SVN.Core
             {
                 if (svnUI != null)
                 {
+                    if (svnUI.SvnTreeView != null)
+                        svnUI.SvnTreeView.ClearView();
+
+                    if (svnUI.SVNCommitTreeDisplay != null)
+                        svnUI.SVNCommitTreeDisplay.ClearView();
+
                     if (svnUI.TreeDisplay != null)
                     {
                         SVNLogBridge.UpdateUIField(
@@ -168,7 +174,23 @@ namespace SVN.Core
                             "TREE",
                             append: false
                         );
+                    }
 
+                    if (svnUI.CommitTreeDisplay != null)
+                    {
+                        SVNLogBridge.UpdateUIField(
+                            svnUI.CommitTreeDisplay,
+                            "",
+                            "COMMIT_TREE",
+                            append: false
+                        );
+                    }
+
+                    Canvas.ForceUpdateCanvases();
+
+                    await Task.Yield();
+                    if (svnUI.TreeDisplay != null)
+                    {
                         SVNLogBridge.UpdateUIField(
                             svnUI.TreeDisplay,
                             "Scanning local changes...",
@@ -182,13 +204,6 @@ namespace SVN.Core
                     {
                         SVNLogBridge.UpdateUIField(
                             svnUI.CommitTreeDisplay,
-                            "",
-                            "COMMIT_TREE",
-                            append: false
-                        );
-
-                        SVNLogBridge.UpdateUIField(
-                            svnUI.CommitTreeDisplay,
                             "Refreshing commit list...",
                             "COMMIT_TREE",
                             append: false
@@ -196,7 +211,9 @@ namespace SVN.Core
                     }
                 }
 
+
                 await WaitForNextFrame();
+                Canvas.ForceUpdateCanvases();
 
                 string root = svnManager.WorkingDir;
 
@@ -345,13 +362,29 @@ namespace SVN.Core
         private void ShowEmptyState()
         {
             ResetTreeView();
+
             _flatTreeData.Clear();
             _commitTreeData?.Clear();
 
+            if (svnUI.SvnTreeView != null)
+                svnUI.SvnTreeView.ClearView();
+
+            if (svnUI.SVNCommitTreeDisplay != null)
+                svnUI.SVNCommitTreeDisplay.ClearView();
+
             if (svnUI.TreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
+                SVNLogBridge.UpdateUIField(
+                    svnUI.TreeDisplay,
+                    "<i>No changes detected.</i>",
+                    "TREE",
+                    append: false);
+
             if (svnUI.CommitTreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
+                SVNLogBridge.UpdateUIField(
+                    svnUI.CommitTreeDisplay,
+                    "<i>Nothing to commit.</i>",
+                    "COMMIT_TREE",
+                    append: false);
 
             UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
         }

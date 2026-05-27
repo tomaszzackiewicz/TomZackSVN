@@ -21,6 +21,11 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(path)) return;
             if (svnUI == null) return;
 
+            if (forceOutdatedCheck)
+            {
+                _lastKnownProjectName = "";
+            }
+
             if (svnProject != null && !string.IsNullOrEmpty(svnProject.projectName))
                 _lastKnownProjectName = svnProject.projectName;
 

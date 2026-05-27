@@ -531,46 +531,86 @@ namespace SVN.Core
             return $"{dblSByte:0.##}{Suffix[i]}";
         }
 
-        public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(string workingDir, bool includeIgnored = true)
+        public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(
+    string workingDir,
+    bool includeIgnored = true)
         {
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
+
             string output = await RunAsync("status --no-ignore", cleanWorkingDir);
 
             var statusDict = new Dictionary<string, (string status, string size)>();
 
-            if (string.IsNullOrEmpty(output)) return statusDict;
+            if (string.IsNullOrEmpty(output))
+                return statusDict;
 
             string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
 
-            foreach (var line in lines)
+            foreach (var rawLine in lines)
             {
-                if (line.Length < 9) continue;
+                if (string.IsNullOrWhiteSpace(rawLine))
+                    continue;
+
+                string line = rawLine;
+
+                if (line.Length < 9)
+                    continue;
 
                 char contentStatus = line[0];
                 char propStatus = line[1];
 
-                string stat = contentStatus.ToString().ToUpper();
+                string stat = contentStatus.ToString();
 
-                if (stat == " " && propStatus == 'C') stat = "C";
+                if (stat == " " && propStatus == 'C')
+                    stat = "C";
 
-                string pathPart = line.Substring(8).TrimStart();
+                string pathPart = line.Length >= 9 ? line.Substring(8) : "";
+
+                if (string.IsNullOrWhiteSpace(pathPart))
+                    continue;
 
                 string rawPath = new string(pathPart
-                    .Where(c => !char.IsControl(c) && (int)c != 160)
-                    .ToArray()).TrimEnd();
+                    .Where(c =>
+                        !char.IsControl(c) &&
+                        c != '\t' &&
+                        c != '\u00A0')
+                    .ToArray())
+                    .Trim();
 
-                string cleanPath = rawPath.Replace('\\', '/');
+                if (string.IsNullOrWhiteSpace(rawPath))
+                    continue;
 
-                bool isRelevant = "MA?!DC".Contains(stat) || (includeIgnored && stat == "I");
+                string cleanPath = rawPath
+                    .Replace('\\', '/')
+                    .Trim('/');
 
-                if (isRelevant)
+                bool isRelevant =
+                    "MA?!DC".Contains(stat) ||
+                    (includeIgnored && stat == "I");
+
+                if (!isRelevant)
+                    continue;
+
+                string fullPath = Path.Combine(cleanWorkingDir, rawPath);
+
+                if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
                 {
-                    string fullPathForSize = Path.Combine(cleanWorkingDir, rawPath).Replace('/', '\\');
-
-                    string size = GetFileSizeSafe(fullPathForSize);
-
-                    statusDict[cleanPath] = (stat, size);
+                    statusDict[cleanPath] = (stat, "");
+                    continue;
                 }
+
+                string size = "";
+
+                try
+                {
+                    size = GetFileSizeSafe(fullPath);
+                }
+                catch
+                {
+                    size = "";
+                }
+
+                statusDict[cleanPath] = (stat, size);
             }
 
             SVNLogBridge.LogLine($"<color=green>[SVN]</color> Parser finished. Dictionary count: {statusDict.Count}");

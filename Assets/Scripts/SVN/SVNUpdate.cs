@@ -12,10 +12,18 @@ namespace SVN.Core
         private bool _hasNewLine = false;
         private CancellationTokenSource _updateCTS;
 
+        private Task _runningTask;
+
         public SVNUpdate(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
         public void Update()
         {
+            if (IsProcessing)
+            {
+                SVNLogBridge.LogLine("<color=orange>Update already running...</color>", false);
+                return;
+            }
+
             _ = ExecuteUpdateAsync();
         }
 
@@ -23,19 +31,20 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
+            IsProcessing = true;
+
             string targetPath = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(targetPath))
             {
                 SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory not set.", false);
+                IsProcessing = false;
                 return;
             }
 
-            IsProcessing = true;
             _lastLiveLine = "Connecting to repository...";
             _hasNewLine = true;
 
             _updateCTS = new CancellationTokenSource();
-            var uiUpdateTask = UpdateUILive(_updateCTS.Token);
 
             System.Diagnostics.Stopwatch stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
@@ -70,7 +79,8 @@ namespace SVN.Core
 
                 stopwatch.Stop();
 
-                int uCount = 0; int gCount = 0; int aCount = 0; int dCount = 0; int cCount = 0; int rCount = 0;
+                int uCount = 0, gCount = 0, aCount = 0, dCount = 0, cCount = 0, rCount = 0;
+
                 var detailedMatches = Regex.Matches(output, @"^([UGADCR])\s", RegexOptions.Multiline);
                 foreach (Match match in detailedMatches)
                 {
@@ -90,13 +100,6 @@ namespace SVN.Core
                 if (updatedCount > 0)
                 {
                     summary += $"<color=green>Success!</color> Updated <b>{updatedCount}</b> items.\n";
-
-                    summary += "-----------------------------------\n";
-                    if (uCount > 0) summary += $"  <color=#4FC3F7>• Updated (U):</color> <b>{uCount}</b>\n";
-                    if (gCount > 0) summary += $"  <color=#81C784>• Merged (G):</color> <b>{gCount}</b>\n";
-                    if (aCount > 0) summary += $"  <color=#AED581>• Added (A):</color> <b>{aCount}</b>\n";
-                    if (dCount > 0) summary += $"  <color=#E57373>• Deleted (D):</color> <b>{dCount}</b>\n";
-                    if (rCount > 0) summary += $"  <color=#FFB74D>• Replaced (R):</color> <b>{rCount}</b>\n";
                 }
                 else
                 {
@@ -105,11 +108,9 @@ namespace SVN.Core
 
                 if (cCount > 0)
                 {
-                    summary += "-----------------------------------\n";
-                    summary += $"  <color=#FF5252><b>⚠ CONFLICTS (C): {cCount}</b></color>\n";
+                    summary += $"<color=#FF5252><b>⚠ CONFLICTS (C): {cCount}</b></color>\n";
                 }
 
-                summary += "-----------------------------------\n";
                 summary += $"Current Revision: <color=#FFD700><b>{revision}</b></color>\n";
 
                 string formattedTime = stopwatch.Elapsed.TotalSeconds >= 60
@@ -117,20 +118,33 @@ namespace SVN.Core
                     : $"{stopwatch.Elapsed.TotalSeconds:F1}s";
 
                 summary += $"Time Elapsed: <b>{formattedTime}</b>\n";
-                summary += "-----------------------------------";
 
                 SVNLogBridge.LogLine(summary, false);
+
+                await svnManager.RefreshStatus();
+
+                var bar = svnManager.GetModule<SVNBar>();
+                if (bar != null)
+                {
+                    await bar.ShowProjectInfo(
+                        null,
+                        targetPath,
+                        forceOutdatedCheck: true,
+                        isRefreshing: true
+                    );
+                }
             }
             catch (OperationCanceledException)
             {
                 stopwatch.Stop();
-                SVNLogBridge.LogLine($"\n<color=orange><b>[ABORTED]</b></color> Update cancelled by user after <b>{stopwatch.Elapsed.TotalSeconds:F1}s</b>. Next update will auto-cleanup.", false);
+                SVNLogBridge.LogLine(
+                    $"\n<color=orange><b>[ABORTED]</b></color> Update cancelled after {stopwatch.Elapsed.TotalSeconds:F1}s.",
+                    false);
             }
             catch (Exception ex)
             {
                 stopwatch.Stop();
-                SVNLogBridge.LogError($"[SVN] Update Error after {stopwatch.Elapsed.TotalSeconds:F1}s: {ex}");
-                SVNLogBridge.LogLine($"\n<color=red><b>Update Failed:</b></color> {ex.Message} (Time: <b>{stopwatch.Elapsed.TotalSeconds:F1}s</b>)");
+                SVNLogBridge.LogError($"[SVN] Update Error: {ex}");
             }
             finally
             {
@@ -139,18 +153,16 @@ namespace SVN.Core
                 _updateCTS?.Dispose();
                 _updateCTS = null;
 
-                await svnManager.RefreshStatus();
-
                 IsProcessing = false;
             }
         }
 
         public void CancelUpdate()
         {
-            if (IsProcessing && _updateCTS != null)
-            {
-                _updateCTS.Cancel();
-            }
+            if (!IsProcessing) return;
+
+            _updateCTS?.Cancel();
+            SVNLogBridge.LogLine("<color=orange>Cancel requested...</color>", false);
         }
 
         private async Task UpdateUILive(CancellationToken token)
@@ -183,75 +195,6 @@ namespace SVN.Core
             }
         }
 
-        // public async void Update()
-        // {
-        //     if (IsProcessing) return;
-
-        //     string targetPath = svnManager.WorkingDir;
-        //     if (string.IsNullOrEmpty(targetPath))
-        //     {
-        //         SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory not set.", false);
-        //         return;
-        //     }
-
-        //     IsProcessing = true;
-        //     _lastLiveLine = "Connecting to repository...";
-        //     _hasNewLine = true;
-
-        //     var uiUpdateTask = UpdateUILive();
-
-        //     try
-        //     {
-        //         SVNLogBridge.LogLine("<b>[SVN]</b> Pre-update cleanup...", false);
-        //         await SVNClean.CleanupAsync(targetPath);
-
-        //         string output = await SvnRunner.RunLiveAsync(
-        //             "update --accept postpone",
-        //             targetPath,
-        //             (line) =>
-        //             {
-        //                 _lastLiveLine = line;
-        //                 _hasNewLine = true;
-        //             }
-        //         );
-
-        //         _hasNewLine = false;
-
-        //         int updatedCount = Regex.Matches(output, @"^[UGADR]\s", RegexOptions.Multiline).Count;
-
-        //         string revision = svnManager.ParseRevision(output);
-
-        //         if (string.IsNullOrEmpty(revision) || revision == "Unknown")
-        //         {
-        //             string infoOutput = await SvnRunner.GetInfoAsync(targetPath);
-        //             revision = ParseRevisionFromInfo(infoOutput);
-        //         }
-
-        //         string summary = "<b>[SVN UPDATE COMPLETED]</b>\n";
-        //         if (updatedCount > 0)
-        //             summary += $"<color=green>Success!</color> Updated <b>{updatedCount}</b> items.\n";
-        //         else
-        //             summary += "<color=blue>No changes found.</color> Project is up to date.\n";
-
-        //         summary += $"Current Revision: <color=#FFD700><b>{revision}</b></color>\n";
-        //         summary += "-----------------------------------";
-        //         SVNLogBridge.LogLine(summary, false);
-
-        //         IsProcessing = false;
-        //         await svnManager.RefreshStatus();
-        //     }
-        //     catch (Exception ex)
-        //     {
-        //         SVNLogBridge.LogError($"[SVN] Update Error: {ex}");
-        //         SVNLogBridge.LogLine($"\n<color=red><b>Update Failed:</b></color> {ex.Message}");
-        //     }
-        //     finally
-        //     {
-        //         IsProcessing = false;
-        //         _hasNewLine = false;
-        //     }
-        // }
-
         public string ParseRevisionFromInfo(string infoOutput)
         {
             var match = System.Text.RegularExpressions.Regex.Match(infoOutput, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
@@ -269,6 +212,11 @@ namespace SVN.Core
                 }
                 await Task.Yield();
             }
+        }
+
+        public async void CheckRemoteModificationsButton()
+        {
+            await CheckRemoteModifications();
         }
 
         public async Task CheckRemoteModifications()
@@ -352,7 +300,6 @@ namespace SVN.Core
             }
             finally
             {
-                await svnManager.RefreshStatus();
                 IsProcessing = false;
             }
         }
