@@ -211,19 +211,22 @@ namespace SVN.Core
         }
 
         public static async Task<string> RunLiveAsync(
-            string args,
-            string workingDir,
-            Action<string> onLineReceived,
-            CancellationToken token = default)
+    string args,
+    string workingDir,
+    Action<string> onLineReceived,
+    CancellationToken token = default)
         {
             SVNLogBridge.LogLine($"[SVN QUEUE] Waiting LIVE: svn {args}");
 
+            IncrementOperations();
+
             await _svnSemaphore.WaitAsync(token);
+
+            Process process = null;
 
             try
             {
                 SVNLogBridge.LogLine($"[SVN QUEUE] Acquired LIVE: svn {args}");
-                SVNLogBridge.LogLine($"[SvnRunner Live] Preparing stream operation for: {args}");
 
                 string cleanWorkingDir = Path.GetFullPath(new string(
                     (workingDir ?? "")
@@ -260,103 +263,154 @@ namespace SVN.Core
                         "-o IPQoS=throughput";
                 }
 
-                var process = new Process { StartInfo = psi };
+                process = new Process
+                {
+                    StartInfo = psi,
+                    EnableRaisingEvents = true
+                };
+
                 SvnProcessTracker.Register(process);
 
                 var processExitTcs = new TaskCompletionSource<bool>();
-                bool hasError = false;
+
+                var outputBuilder = new StringBuilder();
+                var errorBuilder = new StringBuilder();
 
                 process.OutputDataReceived += (s, e) =>
                 {
-                    if (e.Data != null)
-                    {
-                        SVNLogger.LogToFile(e.Data, "DEBUG");
-                        onLineReceived?.Invoke(e.Data);
-                    }
+                    if (string.IsNullOrWhiteSpace(e.Data))
+                        return;
+
+                    outputBuilder.AppendLine(e.Data);
+
+                    SVNLogger.LogToFile(e.Data, "DEBUG");
+
+                    onLineReceived?.Invoke(e.Data);
                 };
 
                 process.ErrorDataReceived += (s, e) =>
                 {
-                    if (e.Data != null)
-                    {
-                        SVNLogger.LogToFile(e.Data, "ERROR");
+                    if (string.IsNullOrWhiteSpace(e.Data))
+                        return;
 
-                        if (e.Data.Contains("E:") || e.Data.ToLower().Contains("error"))
-                        {
-                            hasError = true;
-                        }
+                    errorBuilder.AppendLine(e.Data);
 
-                        onLineReceived?.Invoke($"[SVN ERROR]: {e.Data}");
-                    }
+                    SVNLogger.LogToFile(e.Data, "ERROR");
+
+                    onLineReceived?.Invoke($"[SVN ERROR] {e.Data}");
                 };
 
-                try
+                process.Exited += (_, __) =>
                 {
-                    process.EnableRaisingEvents = true;
-                    process.Exited += (s, e) => processExitTcs.TrySetResult(true);
+                    processExitTcs.TrySetResult(true);
+                };
 
-                    SVNLogBridge.LogLine("[SvnRunner Live] Opening SVN process stream...");
+                SVNLogBridge.LogLine("[SvnRunner Live] Starting process...");
 
-                    DateTime startTime = DateTime.Now;
+                if (!process.Start())
+                {
+                    throw new Exception("Failed to start SVN process.");
+                }
 
-                    if (!process.Start())
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                using var cancelReg = token.Register(() =>
+                {
+                    try
                     {
-                        string startupError = "Critical Error: Failed to start SVN process.";
-                        SVNLogBridge.LogError(startupError);
-                        throw new Exception(startupError);
+                        SVNLogBridge.LogLine("[SvnRunner Live] CANCEL requested");
+
+                        SvnProcessTracker.Kill(process);
+
+                        processExitTcs.TrySetCanceled();
                     }
-
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-
-                    using (token.Register(() =>
+                    catch (Exception ex)
                     {
-                        try
-                        {
-                            SvnProcessTracker.Kill(process);
-                            processExitTcs.TrySetCanceled();
-                        }
-                        catch (Exception ex)
-                        {
-                            SVNLogBridge.LogError($"Error while killing process: {ex.Message}");
-                        }
-                    }))
-                    {
-                        await processExitTcs.Task;
+                        SVNLogBridge.LogError($"Cancel error: {ex.Message}");
                     }
+                });
 
-                    const int processExitWaitTimeMs = 100;
-                    process.WaitForExit(processExitWaitTimeMs);
+                await processExitTcs.Task;
 
-                    double elapsed = (DateTime.Now - startTime).TotalSeconds;
-                    SVNLogBridge.LogLine($"[SvnRunner Live] Stream closed after {elapsed:F2}s. Final status: {(hasError ? "Errors detected" : "Success")}");
+                process.WaitForExit();
 
-                    return hasError ? "Error" : "Success";
-                }
-                catch (OperationCanceledException)
+                token.ThrowIfCancellationRequested();
+
+                string output = outputBuilder.ToString();
+                string errors = errorBuilder.ToString();
+
+                if (process.ExitCode != 0)
                 {
-                    SVNLogBridge.LogLine("<color=#FFD700>[CANCEL]</color> Task was successfully canceled.", append: true);
-                    return "Canceled";
+                    string finalError =
+                        $"SVN Error (Code {process.ExitCode})\n{errors}";
+
+                    SVNLogBridge.LogError(finalError);
+
+                    throw new Exception(finalError);
                 }
-                finally
+
+                SVNLogBridge.LogLine("[SvnRunner Live] Completed successfully.");
+
+                return output;
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine(
+                    "<color=#FFD700>[CANCEL]</color> SVN operation canceled.",
+                    false
+                );
+
+                if (process != null)
                 {
-                    process.Dispose();
+                    try
+                    {
+                        SvnProcessTracker.Kill(process);
+                    }
+                    catch { }
                 }
+
+                throw;
             }
             finally
             {
+                if (process != null)
+                {
+                    try
+                    {
+                        process.CancelOutputRead();
+                    }
+                    catch { }
+
+                    try
+                    {
+                        process.CancelErrorRead();
+                    }
+                    catch { }
+
+                    try
+                    {
+                        process.Dispose();
+                    }
+                    catch { }
+                }
+
                 _svnSemaphore.Release();
+
+                DecrementOperations();
             }
         }
 
-        private static bool IsLongRunningOperation(string args)
+        public static async Task<string> GetInfoAsync(
+    string workingDir,
+    CancellationToken token = default)
         {
-            if (string.IsNullOrEmpty(args)) return false;
-            string low = args.ToLower();
-
-            string[] longOps = { "commit", "update", "checkout", "switch", "export", "upgrade" };
-
-            return longOps.Any(op => low.Contains(op)) || low.Contains("--targets");
+            return await RunAsync(
+                "info",
+                workingDir,
+                true,
+                token
+            );
         }
 
         public static async Task<string> GetInfoAsync(string workingDir)

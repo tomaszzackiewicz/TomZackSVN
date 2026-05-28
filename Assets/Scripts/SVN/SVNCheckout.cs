@@ -642,22 +642,16 @@ namespace SVN.Core
                     }
                 }, token);
 
-                string workingDirectory = isResume
-                    ? path
-                    : Directory.GetParent(path)?.FullName ?? Path.GetTempPath();
+                string workingDirectory = isResume ? path : Directory.GetParent(path)?.FullName ?? Path.GetTempPath();
 
-                SVNLogBridge.LogLine(
-                    $"<color=grey>[SVN]</color> Working Directory: {workingDirectory}"
-                );
+                SVNLogBridge.LogLine($"<color=grey>[SVN]</color> Working Directory: {workingDirectory}");
 
                 string result = await SvnRunner.RunLiveAsync(
-                    command,
+                    $"{command} --trust-server-cert",
                     workingDirectory,
                     (line) =>
                     {
-                        if (string.IsNullOrWhiteSpace(line))
-                            return;
-
+                        if (string.IsNullOrWhiteSpace(line)) return;
                         lastActivity = DateTime.Now;
                         SVNLogBridge.LogCheckoutConsole(line);
                     },
@@ -667,14 +661,12 @@ namespace SVN.Core
                 if (token.IsCancellationRequested)
                     throw new OperationCanceledException(token);
 
-                bool isSuccess =
-                    !string.IsNullOrWhiteSpace(result) &&
-                    !result.ToLower().Contains("error") &&
-                    !result.ToLower().Contains("exception") &&
-                    !result.ToLower().Contains("failed");
+                bool isSuccess = !string.IsNullOrWhiteSpace(result) &&
+                                 !result.ToLower().Contains("error") &&
+                                 !result.ToLower().Contains("exception") &&
+                                 !result.ToLower().Contains("failed");
 
-                bool hasSvnMetadata =
-                    Directory.Exists(Path.Combine(path, ".svn"));
+                bool hasSvnMetadata = Directory.Exists(Path.Combine(path, ".svn"));
 
                 if (!isSuccess || !hasSvnMetadata)
                 {
@@ -693,6 +685,7 @@ namespace SVN.Core
                 }
 
                 _state = OperationState.Completed;
+                SVNLogBridge.LogLine("<color=green><b>[Checkout]</b> Finished successfully.</color>");
 
                 _mainThreadContext.Post(_ =>
                 {
@@ -701,6 +694,9 @@ namespace SVN.Core
                         "<color=green><b>Checkout completed successfully</b></color>",
                         "SVN"
                     );
+
+                    var selectionPanel = UnityEngine.Object.FindAnyObjectByType<ProjectSelectionPanel>();
+                    if (selectionPanel != null) selectionPanel.RefreshList();
                 }, null);
 
                 var activeProject = new SVNProject
@@ -711,10 +707,9 @@ namespace SVN.Core
                     privateKeyPath = SvnRunner.KeyPath,
                     lastOpened = DateTime.Now
                 };
-
                 SVNManager.Instance.SetActiveProject(activeProject);
 
-                RegisterNewProjectAfterCheckout(path, url, SvnRunner.KeyPath);
+                RegisterProjectInList(path, url);
             }
             catch (OperationCanceledException)
             {
@@ -775,6 +770,47 @@ namespace SVN.Core
                 if (_state != OperationState.Paused)
                     _state = OperationState.Idle;
             }
+        }
+
+        private void RegisterProjectInList(string path, string url)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
+            var projects = ProjectSettings.LoadProjects();
+
+            // Sprawdź czy projekt już istnieje na liście
+            int index = projects.FindIndex(p =>
+                !string.IsNullOrEmpty(p.workingDir) &&
+                p.workingDir.Replace("\\", "/").TrimEnd('/') == normalizedPath
+            );
+
+            string projectName = GetRepoNameFromUrl(url);
+
+            if (index != -1)
+            {
+                projects[index].repoUrl = url;
+                projects[index].lastOpened = DateTime.Now;
+                // Opcjonalnie aktualizujemy klucz jeśli jest dostępny w managerze
+                projects[index].privateKeyPath = SVNManager.Instance.CurrentKey;
+            }
+            else
+            {
+                projects.Add(new SVNProject
+                {
+                    projectName = projectName,
+                    repoUrl = url,
+                    workingDir = normalizedPath,
+                    privateKeyPath = SVNManager.Instance.CurrentKey,
+                    lastOpened = DateTime.Now
+                });
+            }
+
+            ProjectSettings.SaveProjects(projects);
+
+            // Ustawiamy jako ostatnio otwarty
+            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
+            PlayerPrefs.Save();
         }
 
         private long GetDirectorySize(string folderPath)

@@ -10,145 +10,44 @@ namespace SVN.Core
 {
     public class SVNBar : SVNBase
     {
-
         private string _lastKnownProjectName = "";
         private string _svnVersionCached = "";
 
         public SVNBar(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        public async Task ShowProjectInfo(SVNProject svnProject, string path, bool forceOutdatedCheck = false, bool isRefreshing = false)
+        public async Task ShowProjectInfo(
+    SVNProject svnProject,
+    string path,
+    bool forceOutdatedCheck = false,
+    bool isRefreshing = false)
         {
-            if (string.IsNullOrEmpty(path)) return;
-            if (svnUI == null) return;
-
-            if (forceOutdatedCheck)
+            if (svnManager.IsUpdateRunning)
             {
-                _lastKnownProjectName = "";
-            }
+                string projectName =
+                    svnProject?.projectName ?? "Project";
 
-            if (svnProject != null && !string.IsNullOrEmpty(svnProject.projectName))
-                _lastKnownProjectName = svnProject.projectName;
+                SVNLogBridge.UpdateUIField(
+                    svnUI.StatusInfoText,
+                    $"<size=150%><color=#FFFF00>●</color></size> " +
+                    $"<color=orange><b>{projectName}</b></color> | " +
+                    $"<color=#FFFF00>Updating working copy...</color>",
+                    "INFO",
+                    append: false);
 
-            string displayName = !string.IsNullOrEmpty(_lastKnownProjectName)
-                ? _lastKnownProjectName
-                : Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-
-            string initialColor = isRefreshing ? "#FFFF00" : "#FFFF00"; // Yellow dot
-            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color={initialColor}>●</color></size> <color=#555555>Initializing {displayName}...</color>", "INFO", append: false);
-
-            string sizeText = "---";
-            string rawInfo = "";
-            int retryCount = 0;
-            int maxRetries = 8;
-
-            while (retryCount < maxRetries)
-            {
-                try
-                {
-                    if (!Directory.Exists(Path.Combine(path, ".svn")))
-                    {
-                        retryCount++;
-                        SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color=#FFFF00>●</color></size> <color=#555555>Waiting for .svn metadata... ({retryCount}/{maxRetries})</color>"); //Yellow dot
-                        await Task.Delay(1000);
-                        continue;
-                    }
-
-                    var infoTask = SvnRunner.GetInfoAsync(path);
-                    var sizeTask = GetFolderSizeAsync(path);
-                    await Task.WhenAll(infoTask, sizeTask);
-
-                    rawInfo = infoTask.Result;
-                    sizeText = sizeTask.Result;
-
-                    if (!string.IsNullOrEmpty(rawInfo) && rawInfo != "unknown") break;
-                }
-                catch (Exception)
-                {
-                    retryCount++;
-                    await Task.Delay(1000);
-                }
-            }
-
-            if (string.IsNullOrEmpty(rawInfo) || rawInfo == "unknown")
-            {
-                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, $"<size=150%><color=black>●</color></size> <b>{displayName}</b> | <color=#FF8888>Not a working copy yet</color>", "INFO", append: false); //Black dot
                 return;
             }
 
-            string revision = ExtractValue(rawInfo, "Revision:");
-            string author = ExtractValue(rawInfo, "Last Changed Author:");
-            string fullDate = ExtractValue(rawInfo, "Last Changed Date:");
-            string relUrl = ExtractValue(rawInfo, "Relative URL:");
-            string absUrl = ExtractValue(rawInfo, "URL:");
-            string repoRootUrl = ExtractValue(rawInfo, "Repository Root:");
+            var snapshot =
+                await BuildSnapshotAsync(
+                    svnProject,
+                    path);
 
-            bool isOutdated = false;
-            string remoteRevision = revision;
+            svnManager.CurrentSnapshot =
+                snapshot;
 
-            try
-            {
-                string remoteRevRaw = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", path);
-                if (!string.IsNullOrEmpty(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
-                {
-                    remoteRevision = remoteRevRaw.Trim();
-                    if (int.TryParse(revision, out int localRev) && int.TryParse(remoteRevision, out int remRev))
-                    {
-                        isOutdated = remRev > localRev;
-                    }
-                }
-            }
-            catch { }
-
-            string statusColor = "#4ca74c"; // Green dot
-            if (isRefreshing) statusColor = "#FFFF00"; // Yellow dot
-            else if (isOutdated) statusColor = "#FF1A1A"; // red dot
-
-            if (string.IsNullOrEmpty(_lastKnownProjectName) || _lastKnownProjectName == displayName)
-            {
-                if (repoRootUrl != "unknown")
-                {
-                    _lastKnownProjectName = repoRootUrl.Split('/').Last(s => !string.IsNullOrEmpty(s));
-                    displayName = _lastKnownProjectName;
-                }
-            }
-
-            string branchName = "trunk";
-            string source = (relUrl != "unknown") ? relUrl : absUrl;
-            if (source != "unknown")
-            {
-                branchName = source.Replace("^/", "").Trim();
-                if (branchName.Contains("/"))
-                    branchName = Path.GetFileName(branchName.TrimEnd('/'));
-                if (string.IsNullOrEmpty(branchName) || branchName == "/") branchName = "trunk";
-            }
-
-            string serverHost = "local";
-            if (absUrl != "unknown")
-            {
-                try { serverHost = new Uri(absUrl).Host; } catch { }
-            }
-
-            string shortDate = (fullDate != "unknown") ? fullDate.Split('(')[0].Trim() : "no commits";
-            string appVersion = Application.version;
-            if (string.IsNullOrEmpty(_svnVersionCached)) await EnsureVersionCached();
-
-            string currentUser = svnManager.CurrentUserName ?? "Unknown";
-
-            string revDisplay = isOutdated
-                ? $"<color=#FF5555>{revision}</color> <color=#FF8888>(HEAD: {remoteRevision})</color>"
-                : revision;
-
-            string statusLine = $"<size=150%><color={statusColor}>●</color></size> <color=orange> <b>{displayName}</b> ({sizeText})</color> | " +
-                                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{currentUser}</color> | " +
-                                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{branchName}</color> | " +
-                                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revDisplay}</color> | " +
-                                $"<color=#00E5FF>By:</color> <color=#E6E6E6>{author}</color> | " +
-                                $"<color=#E6E6E6> {shortDate}</color> | " +
-                                $"<color=#E6E6E6>Srv: {serverHost}</color> | " +
-                                $"<color=#E6E6E6>App: {appVersion}</color> | " +
-                                $"<color=#E6E6E6>SVN: {_svnVersionCached}</color>";
-
-            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, statusLine, "INFO", append: false);
+            RenderSnapshot(
+                snapshot,
+                isRefreshing);
         }
 
         public async Task<string> GetFolderSizeAsync(string path)
@@ -193,6 +92,238 @@ namespace SVN.Core
                 }
                 catch { _svnVersionCached = "?.?.?"; }
             }
+        }
+
+        public async Task<SVNProjectInfoSnapshot> BuildSnapshotAsync(
+    SVNProject svnProject,
+    string path)
+        {
+            var snapshot = new SVNProjectInfoSnapshot();
+
+            try
+            {
+                if (string.IsNullOrEmpty(path))
+                    return snapshot;
+
+                if (!Directory.Exists(Path.Combine(path, ".svn")))
+                    return snapshot;
+
+                string projectName =
+                    svnProject != null &&
+                    !string.IsNullOrEmpty(svnProject.projectName)
+                        ? svnProject.projectName
+                        : Path.GetFileName(path);
+
+                var infoTask = SvnRunner.GetInfoAsync(path);
+                var sizeTask = GetFolderSizeAsync(path);
+
+                await Task.WhenAll(infoTask, sizeTask);
+
+                string rawInfo = infoTask.Result;
+
+                if (string.IsNullOrWhiteSpace(rawInfo) ||
+                    rawInfo == "unknown")
+                {
+                    return snapshot;
+                }
+
+                snapshot.ProjectName = projectName;
+
+                snapshot.WorkingCopySize = sizeTask.Result;
+
+                snapshot.Revision =
+                    ExtractValue(rawInfo, "Revision:");
+
+                snapshot.Author =
+                    ExtractValue(rawInfo, "Last Changed Author:");
+
+                snapshot.Date =
+                    ExtractValue(rawInfo, "Last Changed Date:");
+
+                snapshot.RelativeUrl =
+                    ExtractValue(rawInfo, "Relative URL:");
+
+                snapshot.Url =
+                    ExtractValue(rawInfo, "URL:");
+
+                snapshot.RepoRoot =
+                    ExtractValue(rawInfo, "Repository Root:");
+
+                snapshot.RemoteRevision =
+                    snapshot.Revision;
+
+                try
+                {
+                    string remoteRevRaw =
+                        await SvnRunner.RunAsync(
+                            "info -r HEAD --show-item last-changed-revision",
+                            path);
+
+                    if (!string.IsNullOrWhiteSpace(remoteRevRaw) &&
+                        !remoteRevRaw.Contains("Error"))
+                    {
+                        snapshot.RemoteRevision =
+                            remoteRevRaw.Trim();
+
+                        if (int.TryParse(snapshot.Revision, out int localRev) &&
+                            int.TryParse(snapshot.RemoteRevision, out int remoteRev))
+                        {
+                            snapshot.IsOutdated = remoteRev > localRev;
+                        }
+                    }
+                }
+                catch { }
+
+                string source =
+                    snapshot.RelativeUrl != "unknown"
+                        ? snapshot.RelativeUrl
+                        : snapshot.Url;
+
+                snapshot.Branch = "trunk";
+
+                if (!string.IsNullOrEmpty(source) &&
+                    source != "unknown")
+                {
+                    string branch =
+                        source.Replace("^/", "").Trim();
+
+                    if (branch.Contains("/"))
+                    {
+                        branch =
+                            Path.GetFileName(
+                                branch.TrimEnd('/'));
+                    }
+
+                    if (!string.IsNullOrEmpty(branch))
+                    {
+                        snapshot.Branch = branch;
+                    }
+                }
+
+                snapshot.Server = "local";
+
+                if (!string.IsNullOrEmpty(snapshot.Url) &&
+                    snapshot.Url != "unknown")
+                {
+                    try
+                    {
+                        snapshot.Server =
+                            new Uri(snapshot.Url).Host;
+                    }
+                    catch { }
+                }
+
+                snapshot.AppVersion =
+                    Application.version;
+
+                if (string.IsNullOrEmpty(_svnVersionCached))
+                {
+                    await EnsureVersionCached();
+                }
+
+                snapshot.SvnVersion =
+                    _svnVersionCached;
+
+                snapshot.CurrentUser =
+                    svnManager.CurrentUserName ?? "Unknown";
+
+                snapshot.IsValid = true;
+
+                return snapshot;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError(
+                    $"BuildSnapshotAsync failed: {ex.Message}");
+
+                return snapshot;
+            }
+        }
+
+        public void RenderSnapshot(
+    SVNProjectInfoSnapshot snapshot,
+    bool isRefreshing = false)
+        {
+            if (snapshot == null || !snapshot.IsValid)
+            {
+                SVNLogBridge.UpdateUIField(
+                    svnUI.StatusInfoText,
+                    "<size=150%><color=black>●</color></size> Invalid working copy",
+                    "INFO",
+                    append: false);
+
+                return;
+            }
+
+            string statusColor = "#4ca74c";
+
+            if (isRefreshing)
+                statusColor = "#FFFF00";
+            else if (snapshot.IsOutdated)
+                statusColor = "#FF1A1A";
+
+            string shortDate =
+                snapshot.Date != "unknown"
+                    ? snapshot.Date.Split('(')[0].Trim()
+                    : "no commits";
+
+            string revDisplay =
+                snapshot.IsOutdated
+                    ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
+                    : snapshot.Revision;
+
+            string line =
+                $"<size=150%><color={statusColor}>●</color></size> " +
+                $"<color=orange><b>{snapshot.ProjectName}</b> ({snapshot.WorkingCopySize})</color> | " +
+                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{snapshot.CurrentUser}</color> | " +
+                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{snapshot.Branch}</color> | " +
+                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revDisplay}</color> | " +
+                $"<color=#00E5FF>By:</color> <color=#E6E6E6>{snapshot.Author}</color> | " +
+                $"<color=#E6E6E6>{shortDate}</color> | " +
+                $"<color=#E6E6E6>Srv: {snapshot.Server}</color> | " +
+                $"<color=#E6E6E6>App: {snapshot.AppVersion}</color> | " +
+                $"<color=#E6E6E6>SVN: {snapshot.SvnVersion}</color>";
+
+            SVNLogBridge.UpdateUIField(
+                svnUI.StatusInfoText,
+                line,
+                "INFO",
+                append: false);
+        }
+
+        public async Task<SVNProjectInfoSnapshot> BuildSnapshot(
+    SVNProject project,
+    string workingDir)
+        {
+            string info = await SvnRunner.GetInfoAsync(workingDir);
+
+            return new SVNProjectInfoSnapshot
+            {
+                Revision = SVNAssetLocator.ParseRevision(info),
+                RemoteRevision = "Unknown",
+                Author = ExtractAuthor(info),
+                Date = ExtractDate(info),
+                Branch = ExtractBranch(info),
+                Server = project.repoUrl
+            };
+        }
+
+        private string ExtractAuthor(string info)
+        {
+            var m = Regex.Match(info, @"^Last Changed Author:\s*(.+)$", RegexOptions.Multiline);
+            return m.Success ? m.Groups[1].Value.Trim() : "Unknown";
+        }
+
+        private string ExtractDate(string info)
+        {
+            var m = Regex.Match(info, @"^Last Changed Date:\s*(.+)$", RegexOptions.Multiline);
+            return m.Success ? m.Groups[1].Value.Trim() : "Unknown";
+        }
+
+        private string ExtractBranch(string info)
+        {
+            var m = Regex.Match(info, @"URL:\s*(.+)$", RegexOptions.Multiline);
+            return m.Success ? m.Groups[1].Value.Trim() : "Unknown";
         }
     }
 }

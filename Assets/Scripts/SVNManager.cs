@@ -36,6 +36,11 @@ namespace SVN.Core
         private bool _isApplyingSnapshot;
         public SVNLockCache LockCache = new SVNLockCache();
 
+        public SVNProject CurrentProject { get; private set; }
+        public bool WasUpdateCanceled { get; set; }
+        public SVNProjectInfoSnapshot CurrentSnapshot { get; set; }
+        public bool IsUpdateRunning { get; set; }
+        public bool LastUpdateSucceeded { get; set; }
         public HashSet<string> ExpandedPaths { get; set; } = new HashSet<string>();
         public Dictionary<string, (string status, string size)> CurrentStatusDict { get; set; } = new Dictionary<string, (string status, string size)>();
         public string RepositoryUrl { get; set; } = string.Empty;
@@ -170,7 +175,11 @@ namespace SVN.Core
 
         public async Task SetWorkingDirectory(string path)
         {
-            if (string.IsNullOrEmpty(path)) return;
+            if (string.IsNullOrEmpty(path))
+            {
+                CurrentProject = null;
+                return;
+            }
             WorkingDir = SVNAssetLocator.NormalizePath(path);
             SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
             await RefreshRepositoryInfo();
@@ -210,6 +219,7 @@ namespace SVN.Core
             {
                 projectSelectionPanel?.gameObject.SetActive(true);
                 projectSelectionPanel?.RefreshList();
+                CurrentProject = null;
             }
         }
 
@@ -247,6 +257,7 @@ namespace SVN.Core
 
         public async Task LoadProject(SVNProject project)
         {
+            CurrentProject = project;
             var statusModule = GetModule<SVNStatus>();
             statusModule.ClearCurrentData();
 
@@ -294,7 +305,10 @@ namespace SVN.Core
 
         public async void SetActiveProject(SVNProject project)
         {
+            CurrentProject = project;
+
             await LoadProject(project);
+
             OnProjectChanged?.Invoke(project);
         }
 

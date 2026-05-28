@@ -24,7 +24,6 @@ namespace SVN.Core
         private static void InitEditorQuitHook()
         {
             EditorApplication.quitting += KillAll;
-
             AppDomain.CurrentDomain.DomainUnload += (_, __) => KillAll();
         }
 #else
@@ -51,6 +50,7 @@ namespace SVN.Core
             try
             {
                 process.EnableRaisingEvents = true;
+
                 process.Exited += (_, __) =>
                 {
                     Unregister(process);
@@ -77,58 +77,102 @@ namespace SVN.Core
         }
 
         /// <summary>
-        /// Kill single process safely.
+        /// Kill single process safely (FULL TREE KILL).
         /// </summary>
         public static void Kill(Process process)
         {
-            if (process == null) return;
+            if (process == null)
+                return;
 
             try
             {
-                if (!process.HasExited)
-                {
-                    process.Kill();
-                }
+                KillTree(process);
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"[SvnProcessTracker] Wyjątek podczas Kill: {ex.Message}");
+                SVNLogBridge.LogError($"[SvnProcessTracker] Kill error: {ex.Message}");
             }
+            finally
+            {
+                Unregister(process);
 
-            Unregister(process);
+                try
+                {
+                    process.Dispose();
+                }
+                catch { }
+            }
         }
 
+        /// <summary>
+        /// Hard kill process + children (Windows-safe).
+        /// </summary>
+        private static void KillTree(Process process)
+        {
+            try
+            {
+                if (process == null)
+                    return;
+
+                if (process.HasExited)
+                    return;
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "taskkill",
+                    Arguments = $"/PID {process.Id} /T /F",
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                })?.WaitForExit(500);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[SvnProcessTracker] KillTree error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Kill ALL tracked processes (safe shutdown).
+        /// </summary>
         public static void KillAll()
         {
             Process[] processesToKill;
 
             lock (LockObject)
             {
-                if (ActiveProcesses == null || ActiveProcesses.Count == 0) return;
+                if (ActiveProcesses.Count == 0)
+                    return;
+
                 processesToKill = ActiveProcesses.ToArray();
                 ActiveProcesses.Clear();
             }
 
-            SVNLogBridge.LogLine($"[SvnProcessTracker] Zamykanie aplikacji. Zabijanie {processesToKill.Length} aktywnych procesów SVN...");
+            SVNLogBridge.LogLine(
+                $"[SvnProcessTracker] Shutdown → killing {processesToKill.Length} SVN processes..."
+            );
 
             foreach (var process in processesToKill)
             {
-                if (process == null) continue;
+                if (process == null)
+                    continue;
 
                 try
                 {
-                    if (!process.HasExited)
-                    {
-                        process.Kill();
-                    }
+                    KillTree(process);
                 }
                 catch (Exception ex)
                 {
-                    SVNLogBridge.LogError($"[SvnProcessTracker] Błąd podczas zabijania procesu: {ex.Message}");
+                    SVNLogBridge.LogError(
+                        $"[SvnProcessTracker] KillAll error: {ex.Message}"
+                    );
                 }
                 finally
                 {
-                    process.Dispose();
+                    try
+                    {
+                        process.Dispose();
+                    }
+                    catch { }
                 }
             }
         }

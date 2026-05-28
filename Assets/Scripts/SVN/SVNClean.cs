@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using UnityEngine;
+using System.Threading;
 
 namespace SVN.Core
 {
@@ -184,16 +185,35 @@ namespace SVN.Core
             return path;
         }
 
-        public static async Task<string> CleanupAsync(string workingDir)
+        public static async Task<string> CleanupAsync(
+     string workingDir,
+     CancellationToken token = default)
         {
             try
             {
-                return await SvnRunner.RunAsync("cleanup", workingDir);
+                return await SvnRunner.RunAsync(
+                    "cleanup",
+                    workingDir,
+                    false,
+                    token
+                );
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"[SvnCommands] Standard cleanup failed, trying extended: {ex.Message}");
-                return await SvnRunner.RunAsync("cleanup --include-externals", workingDir);
+                SVNLogBridge.LogError(
+                    $"[SvnCommands] Standard cleanup failed, trying extended: {ex.Message}"
+                );
+
+                return await SvnRunner.RunAsync(
+                    "cleanup --include-externals",
+                    workingDir,
+                    false,
+                    token
+                );
             }
         }
 
