@@ -12,6 +12,7 @@ namespace SVN.Core
         public static SVNManager Instance { get; private set; }
 
         public event Action<SVNProject> OnProjectChanged;
+        public event Action<SVNProjectInfoSnapshot> OnSnapshotChanged;
 
         public const string KEY_REPO_URL = "SVN_Persisted_RepositoryURL";
         public const string KEY_WORKING_DIR = "SVN_Persisted_WorkingDir";
@@ -30,7 +31,7 @@ namespace SVN.Core
         private string currentKey = string.Empty;
         private string mergeToolPath = string.Empty;
         private bool _focusRefreshRunning;
-
+        public SVNOperationInfo OperationInfo;
         public static string MainThreadWorkingDir;
         public static string CachedUserName;
         private bool _isApplyingSnapshot;
@@ -187,7 +188,20 @@ namespace SVN.Core
 
         private async void Start()
         {
+            OperationInfo = new SVNOperationInfo
+            {
+                State = SVNOperationState.Idle,
+                Message = "Idle",
+                Duration = 0,
+                Repo = ""
+            };
+
             await StartAsync();
+        }
+
+        public void RaiseSnapshotChanged(SVNProjectInfoSnapshot snapshot)
+        {
+            OnSnapshotChanged?.Invoke(snapshot);
         }
 
         private async Task StartAsync()
@@ -253,6 +267,12 @@ namespace SVN.Core
             catch { }
 
             return currentUserName = Environment.UserName.ToLower();
+        }
+
+        public void UpdateSnapshot(SVNProjectInfoSnapshot snapshot)
+        {
+            CurrentSnapshot = snapshot;
+            OnSnapshotChanged?.Invoke(snapshot);
         }
 
         public async Task LoadProject(SVNProject project)

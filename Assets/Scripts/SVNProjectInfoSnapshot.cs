@@ -27,5 +27,13 @@ namespace SVN.Core
         public string SvnVersion;
 
         public string CurrentUser;
+
+        public bool IsUpdating;
+        public bool IsCanceled;
+        public bool HasChanges;
+
+        public bool WasCanceled;
+        public string LastOperation;
+        public double DurationSeconds;
     }
 }

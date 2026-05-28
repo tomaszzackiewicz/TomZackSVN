@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UnityEngine;
+using System.Threading;
 
 namespace SVN.Core
 {
@@ -13,7 +14,10 @@ namespace SVN.Core
         private string _lastKnownProjectName = "";
         private string _svnVersionCached = "";
 
-        public SVNBar(SVNUI ui, SVNManager manager) : base(ui, manager) { }
+        public SVNBar(SVNUI ui, SVNManager manager) : base(ui, manager)
+        {
+            manager.OnSnapshotChanged += RenderFromSnapshot;
+        }
 
         public async Task ShowProjectInfo(
     SVNProject svnProject,
@@ -131,14 +135,21 @@ namespace SVN.Core
 
                 snapshot.WorkingCopySize = sizeTask.Result;
 
-                snapshot.Revision =
-                    ExtractValue(rawInfo, "Revision:");
+                snapshot.Revision = ExtractValue(rawInfo, "Revision:");
 
-                snapshot.Author =
-                    ExtractValue(rawInfo, "Last Changed Author:");
+                // Pobieramy domyślne (katalogowe) dane jako fallback
+                snapshot.Author = ExtractValue(rawInfo, "Last Changed Author:");
+                snapshot.Date = ExtractValue(rawInfo, "Last Changed Date:");
 
-                snapshot.Date =
-                    ExtractValue(rawInfo, "Last Changed Date:");
+                // 🔥 NAPRAWA: Nadpisujemy prawdziwymi danymi z logów dla tej konkretnej rewizji
+                if (int.TryParse(snapshot.Revision, out _))
+                {
+                    var realInfo = await GetRealCommitInfoAsync(path, snapshot.Revision);
+                    if (!string.IsNullOrEmpty(realInfo.author))
+                        snapshot.Author = realInfo.author;
+                    if (!string.IsNullOrEmpty(realInfo.date))
+                        snapshot.Date = realInfo.date;
+                }
 
                 snapshot.RelativeUrl =
                     ExtractValue(rawInfo, "Relative URL:");
@@ -244,6 +255,7 @@ namespace SVN.Core
     SVNProjectInfoSnapshot snapshot,
     bool isRefreshing = false)
         {
+            // ❌ invalid working copy
             if (snapshot == null || !snapshot.IsValid)
             {
                 SVNLogBridge.UpdateUIField(
@@ -255,23 +267,54 @@ namespace SVN.Core
                 return;
             }
 
+            // 🔥 GLOBAL STATE (update/cancel/fail/success)
+            var state = svnManager.OperationInfo;
+
+            // 🎯 PRIORITY STATUS (operation overrides snapshot if active)
+            bool isBusy =
+                state.State == SVNOperationState.Updating;
+
+            bool isCanceled =
+                state.State == SVNOperationState.Canceled;
+
+            bool isFailed =
+                state.State == SVNOperationState.Failed;
+
+            // 🎨 BASE COLOR (snapshot-driven)
             string statusColor = "#4ca74c";
 
-            if (isRefreshing)
+            if (isRefreshing || isBusy)
                 statusColor = "#FFFF00";
+            else if (isCanceled)
+                statusColor = "#FFAA00";
+            else if (isFailed)
+                statusColor = "#FF1A1A";
             else if (snapshot.IsOutdated)
                 statusColor = "#FF1A1A";
 
+            // 📅 DATE
             string shortDate =
                 snapshot.Date != "unknown"
                     ? snapshot.Date.Split('(')[0].Trim()
                     : "no commits";
 
+            // 🔢 REVISION DISPLAY
             string revDisplay =
                 snapshot.IsOutdated
                     ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
                     : snapshot.Revision;
 
+            // 🧠 STATUS TEXT (operation-aware)
+            string statusSuffix = "";
+
+            if (isBusy)
+                statusSuffix = " | Updating...";
+            else if (isCanceled)
+                statusSuffix = " | Update Canceled";
+            else if (isFailed)
+                statusSuffix = $" | Update Interrupted";
+
+            // 🧱 FINAL LINE
             string line =
                 $"<size=150%><color={statusColor}>●</color></size> " +
                 $"<color=orange><b>{snapshot.ProjectName}</b> ({snapshot.WorkingCopySize})</color> | " +
@@ -282,8 +325,10 @@ namespace SVN.Core
                 $"<color=#E6E6E6>{shortDate}</color> | " +
                 $"<color=#E6E6E6>Srv: {snapshot.Server}</color> | " +
                 $"<color=#E6E6E6>App: {snapshot.AppVersion}</color> | " +
-                $"<color=#E6E6E6>SVN: {snapshot.SvnVersion}</color>";
+                $"<color=#E6E6E6>SVN: {snapshot.SvnVersion}</color>" +
+                statusSuffix;
 
+            // 🖥 UI UPDATE
             SVNLogBridge.UpdateUIField(
                 svnUI.StatusInfoText,
                 line,
@@ -296,13 +341,25 @@ namespace SVN.Core
     string workingDir)
         {
             string info = await SvnRunner.GetInfoAsync(workingDir);
+            string revision = SVNAssetLocator.ParseRevision(info);
+
+            string author = ExtractAuthor(info);
+            string date = ExtractDate(info);
+
+            // 🔥 Nadpisujemy prawdziwymi danymi
+            if (int.TryParse(revision, out _))
+            {
+                var realInfo = await GetRealCommitInfoAsync(workingDir, revision);
+                if (!string.IsNullOrEmpty(realInfo.author)) author = realInfo.author;
+                if (!string.IsNullOrEmpty(realInfo.date)) date = realInfo.date;
+            }
 
             return new SVNProjectInfoSnapshot
             {
-                Revision = SVNAssetLocator.ParseRevision(info),
+                Revision = revision,
                 RemoteRevision = "Unknown",
-                Author = ExtractAuthor(info),
-                Date = ExtractDate(info),
+                Author = author,
+                Date = date,
                 Branch = ExtractBranch(info),
                 Server = project.repoUrl
             };
@@ -324,6 +381,168 @@ namespace SVN.Core
         {
             var m = Regex.Match(info, @"URL:\s*(.+)$", RegexOptions.Multiline);
             return m.Success ? m.Groups[1].Value.Trim() : "Unknown";
+        }
+
+        public void RenderFromSnapshot(SVNProjectInfoSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return;
+
+            var state = svnManager.OperationInfo;
+
+            bool isBusy =
+                state.State == SVNOperationState.Updating;
+
+            bool isCanceled =
+                state.State == SVNOperationState.Canceled;
+
+            bool isFailed =
+                state.State == SVNOperationState.Failed;
+
+            // 🎨 EXACT COLOR LOGIC LIKE RenderSnapshot
+            string statusColor = "#4ca74c";
+
+            if (isBusy)
+                statusColor = "#FFFF00";
+            else if (isCanceled)
+                statusColor = "#FFAA00";
+            else if (isFailed)
+                statusColor = "#FF1A1A";
+            else if (snapshot.IsOutdated)
+                statusColor = "#FF1A1A";
+
+            string shortDate =
+                snapshot.Date != "unknown"
+                    ? snapshot.Date.Split('(')[0].Trim()
+                    : "no commits";
+
+            string revDisplay =
+                snapshot.IsOutdated
+                    ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
+                    : snapshot.Revision;
+
+            string statusSuffix = "";
+
+            if (isBusy)
+                statusSuffix = " | Updating...";
+            else if (isCanceled)
+                statusSuffix = $" | Update Canceled";
+            else if (isFailed)
+                statusSuffix = $" | Update Failed";
+
+            // 🧱 EXACT SAME ORDER + COLORS AS REQUESTED
+            string line =
+                $"<size=150%><color={statusColor}>●</color></size> " +
+                $"<color=orange><b>{snapshot.ProjectName}</b> ({snapshot.WorkingCopySize})</color> | " +
+                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{snapshot.CurrentUser}</color> | " +
+                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{snapshot.Branch}</color> | " +
+                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revDisplay}</color> | " +
+                $"<color=#00E5FF>By:</color> <color=#E6E6E6>{snapshot.Author}</color> | " +
+                $"<color=#E6E6E6>{shortDate}</color> | " +
+                $"<color=#E6E6E6>Srv: {snapshot.Server}</color> | " +
+                $"<color=#E6E6E6>App: {snapshot.AppVersion}</color> | " +
+                $"<color=#E6E6E6>SVN: {snapshot.SvnVersion}</color>" +
+                statusSuffix;
+
+            SVNLogBridge.UpdateUIField(
+                svnUI.StatusInfoText,
+                line,
+                "INFO",
+                false
+            );
+        }
+
+        public void Dispose()
+        {
+            if (svnManager != null)
+            {
+                svnManager.OnSnapshotChanged -= RenderFromSnapshot;
+            }
+        }
+
+        public async Task StartLiveSizeMonitor(string path, CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                long bytes = await CalculateWorkingCopySizeBytes(path, token);
+
+                double gb = bytes / (1024d * 1024d * 1024d);
+
+                string formatted =
+                    gb > 1
+                        ? $"{gb:F2} GB"
+                        : $"{bytes / (1024d * 1024d):F2} MB";
+
+                // 🔥 UPDATE SNAPSHOT (UI trigger)
+                if (svnManager.CurrentSnapshot != null)
+                {
+                    svnManager.CurrentSnapshot.WorkingCopySize = formatted;
+
+                    svnManager.RaiseSnapshotChanged(svnManager.CurrentSnapshot);
+                }
+
+                await Task.Delay(1000, token);
+            }
+        }
+
+        public async Task<long> CalculateWorkingCopySizeBytes(string path, CancellationToken token)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(path))
+                        return 0;
+
+                    var dir = new DirectoryInfo(path);
+                    if (!dir.Exists)
+                        return 0;
+
+                    long bytes = 0;
+
+                    foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories))
+                    {
+                        if (token.IsCancellationRequested)
+                            break;
+
+                        try
+                        {
+                            bytes += file.Length;
+                        }
+                        catch { }
+                    }
+
+                    return bytes;
+                }
+                catch
+                {
+                    return 0;
+                }
+            }, token);
+        }
+
+        private async Task<(string author, string date)> GetRealCommitInfoAsync(string path, string revision)
+        {
+            try
+            {
+                string logOutput = await SvnRunner.RunAsync($"log -r {revision} --limit 1", path);
+                if (!string.IsNullOrWhiteSpace(logOutput))
+                {
+                    // SVN log zwraca format: r123 | autor | data | ...
+                    // Łapiemy autora i datę z pierwszych dwóch sekcji po numerze rewizji
+                    var match = Regex.Match(logOutput, @"^r\d+\s*\|\s*([^|]+)\s*\|\s*([^|]+)", RegexOptions.Multiline);
+                    if (match.Success)
+                    {
+                        return (match.Groups[1].Value.Trim(), match.Groups[2].Value.Trim());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"Failed to fetch real author/date from log: {ex.Message}");
+            }
+
+            return (null, null);
         }
     }
 }
