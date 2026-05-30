@@ -19,19 +19,20 @@ namespace SVN.Core
 
             try
             {
-                File.WriteAllText(logFilePath, $"=== SVN SESSION LOG START: {DateTime.Now} ===\n");
-                File.AppendAllText(logFilePath, $"OS: {SystemInfo.operatingSystem}\n");
-                File.AppendAllText(logFilePath, $"Path: {Application.dataPath}\n\n");
+                File.WriteAllText(logFilePath, $"<color=green>=== SVN SESSION LOG START: {DateTime.Now} ===</color>\n");
+                File.AppendAllText(logFilePath, $"<color=green>OS: {SystemInfo.operatingSystem}</color>\n");
+                File.AppendAllText(logFilePath, $"<color=green>Path: {Application.dataPath}</color>\n\n");
 
                 Application.logMessageReceived += HandleUnityLog;
                 initialized = true;
 
-                SVNLogBridge.LogLine($"[SVN] Logger initialized at: {logFilePath}");
+                SVNLogBridge.LogLine("<color=green>[SVN] Logger initialized successfully.</color>");
             }
             catch (Exception e)
             {
-                SVNLogBridge.LogError($"[SVN] Critical Logger Error: {e.Message}");
+                SVNLogBridge.LogError($"<color=#8B0000>[SVN] Critical Logger Error:</color> <color=#8B0000>{e.Message}</color>");
             }
+
         }
 
         private static void HandleUnityLog(string logString, string stackTrace, LogType type)

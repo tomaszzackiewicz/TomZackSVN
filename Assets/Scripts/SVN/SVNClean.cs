@@ -23,26 +23,45 @@ namespace SVN.Core
 
         public async void LightCleanup()
         {
-            if (IsProcessing) return;
+            try
+            {
+                await LightCleanupAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+        }
+
+        public async Task LightCleanupAsync(CancellationToken token = default)
+        {
+            if (!TryBeginOperation())
+                return;
 
             string targetPath = GetTargetPath();
+
             if (string.IsNullOrEmpty(targetPath))
             {
-                LogToClean("<color=red>Error:</color> No valid path found for Cleanup.", append: false);
+                EndOperation();
                 return;
             }
 
-            IsProcessing = true;
-            LogToClean("<b>Attempting to release SVN database locks...</b>", append: false);
+            LogToClean("<b>Attempting to release SVN database locks...</b>", false);
 
             try
             {
-                string output = await CleanupAsync(targetPath);
+                string output = await CleanupAsync(targetPath, token);
 
                 LogToClean("<color=green>Cleanup Successful!</color>");
-                if (!string.IsNullOrWhiteSpace(output)) LogToClean(output);
+
+                if (!string.IsNullOrWhiteSpace(output))
+                    LogToClean(output);
 
                 await svnManager.RefreshStatus();
+            }
+            catch (OperationCanceledException)
+            {
+                LogToClean("<color=yellow>Cleanup cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -51,143 +70,13 @@ namespace SVN.Core
             }
             finally
             {
-                IsProcessing = false;
+                EndOperation();
             }
-        }
-
-        public async void VacuumCleanup()
-        {
-            if (IsProcessing) return;
-
-            string targetPath = GetTargetPath();
-            if (string.IsNullOrEmpty(targetPath)) return;
-
-            IsProcessing = true;
-            LogToClean("<b>Starting Deep Vacuum Cleanup (Optimization)...</b>", append: false);
-            LogToClean("<color=yellow>This may take a while for large projects.</color>");
-
-            try
-            {
-                string output = await VacuumCleanupAsync(targetPath);
-
-                LogToClean("<color=green>Vacuum Cleanup Successful!</color>");
-                if (!string.IsNullOrWhiteSpace(output)) LogToClean(output);
-
-                await svnManager.RefreshStatus();
-            }
-            catch (Exception ex)
-            {
-                if (ex.Message.Contains("invalid option"))
-                {
-                    LogToClean("<color=red>Error:</color> Your SVN version is too old for Vacuum Cleanup (requires 1.9+).");
-                }
-                else
-                {
-                    LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
-                }
-            }
-            finally
-            {
-                IsProcessing = false;
-            }
-        }
-
-        public async void DeepRepair()
-        {
-            if (IsProcessing) return;
-            string targetPath = GetTargetPath();
-            IsProcessing = true;
-
-            LogToClean("<b>[Deep Repair]</b> Running full diagnostic...", append: false);
-            LogToClean("<color=orange>Warning: Auto-resolving conflicts using YOUR version.</color>");
-
-            try
-            {
-                LogToClean("Step 1/3: Basic Cleanup...");
-                await SvnRunner.RunAsync("cleanup", targetPath);
-
-                LogToClean("Step 2/3: Repairing timestamps...");
-                try
-                {
-                    await SvnRunner.RunAsync("cleanup --fix-recorded-timestamps", targetPath);
-                }
-                catch (Exception ex) when (ex.Message.Contains("invalid option"))
-                {
-                    LogToClean("<color=yellow>Note:</color> Timestamp repair skipped (version not supported).");
-                }
-
-                LogToClean("Step 3/3: Resolving conflicts...");
-                await SvnRunner.RunAsync("resolve --accept working -R .", targetPath);
-
-                LogToClean("<color=green>Deep Repair Finished!</color> Project is now stable.");
-            }
-            catch (Exception ex)
-            {
-                LogToClean($"<color=red>Repair Error:</color> {ex.Message}");
-            }
-            finally
-            {
-                IsProcessing = false;
-                await svnManager.RefreshStatus(force: true);
-            }
-        }
-
-        public async void DiscardUnversioned()
-        {
-            if (IsProcessing) return;
-
-            string targetPath = GetTargetPath();
-            if (string.IsNullOrEmpty(targetPath)) return;
-
-            IsProcessing = true;
-            LogToClean("<b>Cleaning up unversioned files [?]...</b>", append: false);
-
-            try
-            {
-                await SvnRunner.RunAsync("cleanup . --remove-unversioned", targetPath);
-
-                if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
-                if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
-                if (svnUI.TreeDisplay != null)
-                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-
-                var statusModule = svnManager.GetModule<SVNStatus>();
-                if (statusModule != null)
-                {
-                    statusModule.ClearCurrentData();
-                }
-
-                LogToClean("<color=green>Unversioned files removed successfully!</color>");
-
-                await Task.Delay(300);
-            }
-            catch (Exception ex)
-            {
-                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
-            }
-            finally
-            {
-                IsProcessing = false;
-
-                await svnManager.RefreshStatus(force: true);
-            }
-        }
-
-        private string GetTargetPath()
-        {
-            string path = svnManager.WorkingDir;
-
-            if (string.IsNullOrEmpty(path))
-            {
-                SVNLogBridge.LogError("[SVN] Target path is empty! Make sure WorkingDir is set in SVNManager.");
-            }
-
-            return path;
         }
 
         public static async Task<string> CleanupAsync(
-     string workingDir,
-     CancellationToken token = default)
+    string workingDir,
+    CancellationToken token = default)
         {
             try
             {
@@ -195,8 +84,7 @@ namespace SVN.Core
                     "cleanup",
                     workingDir,
                     false,
-                    token
-                );
+                    token);
             }
             catch (OperationCanceledException)
             {
@@ -205,49 +93,315 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 SVNLogBridge.LogError(
-                    $"[SvnCommands] Standard cleanup failed, trying extended: {ex.Message}"
-                );
+                    $"[SVN] Standard cleanup failed, trying extended cleanup: {ex.Message}");
 
                 return await SvnRunner.RunAsync(
                     "cleanup --include-externals",
                     workingDir,
                     false,
-                    token
-                );
+                    token);
             }
         }
 
-        public static async Task<string> VacuumCleanupAsync(string workingDir)
+        public async void VacuumCleanup()
         {
             try
             {
-                return await SvnRunner.RunAsync("cleanup --vacuum-pristines --include-externals", workingDir);
+                await VacuumCleanupAsync();
             }
-            catch
+            catch (Exception ex)
             {
-                return await SvnRunner.RunAsync("cleanup", workingDir);
+                Debug.LogException(ex);
             }
+        }
+
+        public async Task VacuumCleanupAsync(CancellationToken token = default)
+        {
+            if (!TryBeginOperation())
+                return;
+
+            try
+            {
+                string targetPath = GetTargetPath();
+
+                if (string.IsNullOrEmpty(targetPath))
+                    return;
+
+                LogToClean("<b>Starting Deep Vacuum Cleanup (Optimization)...</b>", false);
+                LogToClean("<color=yellow>This may take a while for large projects.</color>");
+
+                string output = await ExecuteVacuumCleanupAsync(targetPath, token);
+
+                LogToClean("<color=green>Vacuum Cleanup Successful!</color>");
+
+                if (!string.IsNullOrWhiteSpace(output))
+                    LogToClean(output);
+
+                await svnManager.RefreshStatus();
+            }
+            catch (OperationCanceledException)
+            {
+                LogToClean("<color=yellow>Vacuum cleanup cancelled.</color>");
+            }
+            catch (Exception ex)
+            {
+                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
+            }
+            finally
+            {
+                EndOperation();
+            }
+        }
+
+        public static async Task<string> ExecuteVacuumCleanupAsync(
+            string workingDir,
+            CancellationToken token = default)
+        {
+            try
+            {
+                return await SvnRunner.RunAsync(
+                    "cleanup --vacuum-pristines --include-externals",
+                    workingDir,
+                    false,
+                    token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex.Message.Contains("invalid option"))
+            {
+                SVNLogBridge.LogError(
+                    "[SVN] Vacuum cleanup unsupported. Falling back to normal cleanup.");
+
+                return await SvnRunner.RunAsync(
+                    "cleanup",
+                    workingDir,
+                    false,
+                    token);
+            }
+        }
+
+        public async void DeepRepair()
+        {
+            try
+            {
+                await DeepRepairAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+        }
+
+        public async Task DeepRepairAsync(CancellationToken token = default)
+        {
+            if (!TryBeginOperation())
+                return;
+
+            try
+            {
+                string targetPath = GetTargetPath();
+
+                if (string.IsNullOrEmpty(targetPath))
+                    return;
+
+                LogToClean("<b>[Deep Repair]</b> Running full diagnostic...", false);
+                LogToClean("<color=orange>Warning: Auto-resolving conflicts using SERVER version.</color>");
+
+                LogToClean("Step 1/3: Basic Cleanup...");
+
+                await SvnRunner.RunAsync(
+                    "cleanup",
+                    targetPath,
+                    false,
+                    token);
+
+                LogToClean("Step 2/3: Repairing timestamps...");
+
+                try
+                {
+                    await SvnRunner.RunAsync(
+                        "update --force",
+                        targetPath,
+                        false,
+                        token);
+                }
+                catch (Exception ex)
+                {
+                    LogToClean("<color=yellow>Timestamp repair skipped (using SVN fallback behavior).</color>");
+                }
+
+                LogToClean("Step 3/3: Resolving conflicts...");
+
+                await SvnRunner.RunAsync(
+                    "resolve --accept theirs-full -R .",
+                    targetPath,
+                    false,
+                    token);
+
+                LogToClean("<color=green>Deep Repair Finished!</color> Project is now stable.");
+            }
+            catch (OperationCanceledException)
+            {
+                LogToClean("<color=yellow>Repair cancelled.</color>");
+            }
+            catch (Exception ex)
+            {
+                LogToClean($"<color=red>Repair Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                EndOperation();
+                await svnManager.RefreshStatus(force: true);
+            }
+        }
+
+        public async void DiscardUnversioned()
+        {
+            try
+            {
+                await DiscardUnversionedAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+        }
+
+        public async Task DiscardUnversionedAsync(CancellationToken token = default)
+        {
+            if (!TryBeginOperation())
+                return;
+
+            try
+            {
+                string targetPath = GetTargetPath();
+
+                if (string.IsNullOrEmpty(targetPath))
+                    return;
+
+                LogToClean("<b>Cleaning up unversioned files [?]...</b>", false);
+
+                await SvnRunner.RunAsync(
+                    "cleanup . --remove-unversioned",
+                    targetPath,
+                    false,
+                    token);
+
+                svnUI.SvnTreeView?.ClearView();
+                svnUI.SVNCommitTreeDisplay?.ClearView();
+
+                if (svnUI.TreeDisplay != null)
+                {
+                    SVNLogBridge.UpdateUIField(
+                        svnUI.TreeDisplay,
+                        "",
+                        "TREE",
+                        false);
+                }
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+
+                statusModule?.ClearCurrentData();
+
+                LogToClean("<color=green>Unversioned files removed successfully!</color>");
+            }
+            catch (OperationCanceledException)
+            {
+                LogToClean("<color=yellow>Cleanup cancelled.</color>");
+            }
+            catch (Exception ex)
+            {
+                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
+            }
+            finally
+            {
+                EndOperation();
+                await svnManager.RefreshStatus(force: true);
+            }
+        }
+
+        private string GetTargetPath()
+        {
+            string path = svnManager.WorkingDir;
+
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                SVNLogBridge.LogError("[SVN] Working directory is null or empty.");
+                return null;
+            }
+
+            if (!System.IO.Directory.Exists(path))
+            {
+                SVNLogBridge.LogError($"[SVN] Directory does not exist: {path}");
+                return null;
+            }
+
+            return path;
         }
 
         public async void HardReset()
         {
-            if (IsProcessing) return;
-            string targetPath = GetTargetPath();
-            if (string.IsNullOrEmpty(targetPath)) return;
+            try
+            {
+                await HardResetAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+        }
 
-            Debug.LogWarning("[SVN] Hard Reset started - deleting unversioned and reverting changes!");
-
-            IsProcessing = true;
-            LogToClean("<b>[HARD RESET]</b> Cleaning project to match HEAD...", append: false);
+        public async Task HardResetAsync(CancellationToken token = default)
+        {
+            if (!TryBeginOperation())
+                return;
 
             try
             {
+                string targetPath = GetTargetPath();
+
+                if (string.IsNullOrEmpty(targetPath))
+                    return;
+
+                Debug.LogWarning("[SVN] Hard Reset started - deleting unversioned and reverting changes!");
+
+                LogToClean("<b>[HARD RESET]</b> Cleaning project to match HEAD...", false);
+
                 LogToClean("Step 1/2: Reverting all local modifications...");
-                await SvnRunner.RunAsync("revert -R .", targetPath);
+
+                await SvnRunner.RunAsync(
+                    "revert -R .",
+                    targetPath,
+                    false,
+                    token);
+
                 LogToClean("Step 2/2: Removing unversioned and ignored files (Deep Clean)...");
-                await SvnRunner.RunAsync("cleanup . --remove-unversioned --remove-ignored --include-externals --clear-locks", targetPath);
+
+                await SvnRunner.RunAsync(
+                    "revert -R .",
+                    targetPath,
+                    false,
+                    token);
+
+                await SvnRunner.RunAsync(
+                    "cleanup --remove-unversioned --remove-ignored --include-externals",
+                    targetPath,
+                    false,
+                    token);
+
+                await SvnRunner.RunAsync(
+                    "update --force --accept theirs-full",
+                    targetPath,
+                    false,
+                    token);
 
                 LogToClean("<color=orange>Hard Reset Complete!</color> Project is now identical to HEAD.");
+            }
+            catch (OperationCanceledException)
+            {
+                LogToClean("<color=yellow>Hard reset cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -255,56 +409,122 @@ namespace SVN.Core
             }
             finally
             {
-                IsProcessing = false;
+                EndOperation();
                 await svnManager.RefreshStatus(force: true);
             }
         }
 
         public async void RepairStructure()
         {
-            if (IsProcessing) return;
+            try
+            {
+                await RepairStructureAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
+        }
 
-            string targetPath = GetTargetPath();
-            if (string.IsNullOrEmpty(targetPath)) return;
-
-            IsProcessing = true;
-            LogToClean("<b>[SVN]</b> Starting structure repair...", append: false);
+        public async Task RepairStructureAsync(CancellationToken token = default)
+        {
+            if (!TryBeginOperation())
+                return;
 
             try
             {
-                // 1. Pobierz aktualny URL z metadanych (dynamicznie, bez hardcodowania)
-                string currentUrl = await SvnRunner.RunAsync("info --show-item url", targetPath);
+                string targetPath = GetTargetPath();
+
+                if (string.IsNullOrEmpty(targetPath))
+                    return;
+
+                LogToClean("<b>[SVN]</b> Starting structure repair...", false);
+
+                LogToClean("Reading repository information...");
+
+                string currentUrl = await SvnRunner.RunAsync(
+                    "info --show-item url",
+                    targetPath,
+                    false,
+                    token);
+
                 currentUrl = currentUrl.Trim();
+
+                if (string.IsNullOrWhiteSpace(currentUrl))
+                {
+                    throw new Exception("Failed to retrieve repository URL.");
+                }
 
                 LogToClean($"Targeting URL: {currentUrl}");
 
-                // 2. Cleanup - odblokowanie bazy
-                await SvnRunner.RunAsync("cleanup --remove-unversioned --vacuum-pristines --non-interactive", targetPath);
+                LogToClean("Cleaning working copy...");
 
-                // 3. Switch - to jest kluczowy moment: wymuszenie poprawnej struktury lokalnej
-                // względem tego, co jest na serwerze pod tym adresem URL.
+                await SvnRunner.RunAsync(
+                    "cleanup --remove-unversioned --vacuum-pristines --non-interactive",
+                    targetPath,
+                    false,
+                    token);
+
                 LogToClean("Re-aligning working copy structure...");
-                await SvnRunner.RunAsync($"switch {currentUrl} .", targetPath);
 
-                // 4. Update - finalna synchronizacja (serwer wygrywa z lokalnymi różnicami)
-                LogToClean("Synchronizing with server...");
-                await SvnRunner.RunAsync("update --set-depth infinity --force --accept theirs-full --non-interactive", targetPath);
+                await SvnRunner.RunAsync(
+                    $"switch \"{currentUrl}\" . --ignore-ancestry",
+                    targetPath,
+                    false,
+                    token);
 
-                // 5. Resolve
-                await SvnRunner.RunAsync("resolve --accept working -R .", targetPath);
+                LogToClean("Synchronizing with repository...");
+
+                await SvnRunner.RunAsync(
+                    "update --set-depth infinity --force --accept theirs-full --non-interactive",
+                    targetPath,
+                    false,
+                    token);
+
+                LogToClean("Resolving remaining conflicts...");
+
+                await SvnRunner.RunAsync(
+                    "resolve --accept theirs-full -R .",
+                    targetPath,
+                    false,
+                    token);
 
                 LogToClean("<color=green><b>[SVN]</b> Structure repaired successfully!</color>");
+            }
+            catch (OperationCanceledException)
+            {
+                LogToClean("<color=yellow>Repair cancelled.</color>");
             }
             catch (Exception ex)
             {
                 LogToClean($"<color=red>Repair failed:</color> {ex.Message}");
-                LogToClean("Suggestion: Perform a full Checkout.");
+                LogToClean("<color=yellow>Suggestion:</color> Perform a full fresh checkout.");
             }
             finally
             {
-                IsProcessing = false;
+                EndOperation();
                 await svnManager.RefreshStatus(force: true);
             }
+        }
+
+        private int _operationRunning;
+
+        private bool TryBeginOperation()
+        {
+            if (Interlocked.Exchange(ref _operationRunning, 1) == 1)
+            {
+                LogToClean("[SVN] Operation already running...");
+                return false;
+            }
+
+            IsProcessing = true;
+            return true;
+        }
+
+        private void EndOperation()
+        {
+            IsProcessing = false;
+            Interlocked.Exchange(ref _operationRunning, 0);
         }
     }
 }

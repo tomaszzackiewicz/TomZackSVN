@@ -984,7 +984,7 @@ namespace SVN.Core
             return _flatTreeData;
         }
 
-        private async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(
+        public async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(
     string root,
     CancellationToken token = default)
         {
@@ -1026,7 +1026,7 @@ namespace SVN.Core
             return result;
         }
 
-        private void ApplyLockColors(
+        public void ApplyLockColors(
     List<SvnTreeElement> elements,
     Dictionary<string, SVNLockDetails> lockDict)
         {

@@ -1,225 +1,339 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace SVN.Core
 {
     public class SVNBranchTag : SVNBase
     {
+
+
         public SVNBranchTag(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        public async void CreateRemoteCopy()
+        // =====================================================
+        // 🌿 CREATE
+        // =====================================================
+        public async Task CreateRemoteCopy()
         {
-            if (IsProcessing) return;
-
-            string name = svnUI.BranchNameInput.text.Trim();
-            if (string.IsNullOrEmpty(name))
-            {
-                SVNLogBridge.LogError("<color=red>[Error]</color> Please enter a valid name.");
-                return;
-            }
-
-            string subFolder = (svnUI.TypeSelector.value == 0) ? "branches" : "tags";
-            IsProcessing = true;
+            if (!TryStart()) return;
 
             try
             {
-                string sourceUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
+                string name = svnUI.BranchNameInput.text.Trim();
 
-                string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
+                if (string.IsNullOrEmpty(name))
+                {
+                    LogErrorLocal("[Error] Please enter a valid name.");
+                    return;
+                }
+
+                string subFolder = (svnUI.TypeSelector.value == 0) ? "branches" : "tags";
+
+                string repoRoot = svnManager.GetRepoRoot()?.TrimEnd('/');
+                if (string.IsNullOrWhiteSpace(repoRoot))
+                {
+                    LogErrorLocal("[Error] Repo root missing.");
+                    return;
+                }
+
+                // 🔥 KLUCZ: zawsze twórz z TRUNK URL (nie WorkingDir)
+                string sourceUrl = $"{repoRoot}/trunk";
+
                 string targetUrl = $"{repoRoot}/{subFolder}/{name}";
 
-                SVNLogBridge.LogError($"<b>[Create]</b> Copying current working copy to {subFolder}...");
+                LogInfo($"[Create] Copying from TRUNK → {subFolder}");
+                LogInfo($"Source: {sourceUrl}");
+                LogInfo($"Target: {targetUrl}");
 
-                string cmd = $"copy \"{svnManager.WorkingDir}\" \"{targetUrl}\" -m \"Created {subFolder}/{name} from local workspace\" --parents";
+                string cmd =
+                    $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"Created {subFolder}/{name}\" --parents";
+
                 await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
-                SVNLogBridge.LogError($"<color=green>Success!</color> Created: {name}");
-                RefreshUnifiedList();
+                LogSuccess($"Created: {name}");
+
+                await RefreshUnifiedList();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"<color=red>[Create Error]</color> {ex.Message}");
+                LogErrorLocal($"[Create Error] {ex.Message}");
             }
-            finally { IsProcessing = false; }
+            finally
+            {
+                End();
+            }
         }
 
-        public async void RefreshUnifiedList()
+        // =====================================================
+        // 🔄 REFRESH
+        // =====================================================
+        public async Task RefreshUnifiedList()
         {
-            if (svnUI == null || (svnUI.BranchesDropdown == null && svnUI.TagsDropdown == null)) return;
-
-            SVNLogBridge.LogError("<b><color=#4FC3F7>[Refresh]</color> Syncing lists with server...</b>");
+            if (svnUI == null || (svnUI.BranchesDropdown == null && svnUI.TagsDropdown == null))
+                return;
 
             try
             {
+                LogInfo("[Refresh] Syncing lists with server...");
+
                 string repoRoot = svnManager.GetRepoRoot().TrimEnd('/');
                 string branchesUrl = $"{repoRoot}/branches";
                 string tagsUrl = $"{repoRoot}/tags";
 
-                var branches = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, branchesUrl);
-                var tags = await SvnRunner.GetRepoListAsync(svnManager.WorkingDir, tagsUrl);
+                var branchesTask = SvnRunner.GetRepoListAsync(svnManager.WorkingDir, branchesUrl);
+                var tagsTask = SvnRunner.GetRepoListAsync(svnManager.WorkingDir, tagsUrl);
 
-                UpdateDropdown(svnUI.BranchesDropdown, branches, "No branches", true);
-                UpdateDropdown(svnUI.TagsDropdown, tags, "No tags", false);
+                await Task.WhenAll(branchesTask, tagsTask);
 
-                SVNLogBridge.LogError("<b><color=green>[Refresh Complete]</color> UI synchronized.</b>");
+                UpdateDropdown(svnUI.BranchesDropdown, branchesTask.Result, "No branches", true);
+                UpdateDropdown(svnUI.TagsDropdown, tagsTask.Result, "No tags", false);
+
+                LogSuccess("[Refresh Complete] UI synchronized.");
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"<color=red>[Refresh Error]</color> {ex.Message}");
+                LogErrorLocal($"[Refresh Error] {ex.Message}");
                 UpdateDropdown(svnUI.BranchesDropdown, null, "Error", true);
             }
         }
 
-        public async void SwitchToSelectedBranch()
+        // =====================================================
+        // 🌿 SWITCH
+        // =====================================================
+        public async Task SwitchToSelectedBranch()
         {
-            if (IsProcessing) return;
-            if (svnUI.BranchesDropdown == null || svnUI.BranchesDropdown.options.Count == 0) return;
+            if (!TryStart()) return;
 
-            string selectedBranch = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text;
-            if (IsPlaceholder(selectedBranch)) return;
+            try
+            {
+                if (svnUI.BranchesDropdown == null || svnUI.BranchesDropdown.options.Count == 0)
+                    return;
 
-            if (!await CanPerformSwitch()) return;
-            await ExecuteUnifiedSwitch(selectedBranch, "branches");
+                string selected = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text;
+
+                if (IsPlaceholder(selected)) return;
+                if (!await CanPerformSwitch()) return;
+
+                await ExecuteUnifiedSwitch(selected, "branches");
+            }
+            finally { End(); }
         }
 
-        public async void SwitchToSelectedTag()
+        public async Task SwitchToSelectedTag()
         {
-            if (IsProcessing) return;
-            if (svnUI.TagsDropdown == null || svnUI.TagsDropdown.options.Count == 0) return;
+            if (!TryStart()) return;
 
-            string selectedTag = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
-            if (IsPlaceholder(selectedTag)) return;
+            try
+            {
+                if (svnUI.TagsDropdown == null || svnUI.TagsDropdown.options.Count == 0)
+                    return;
 
-            if (!await CanPerformSwitch()) return;
-            await ExecuteUnifiedSwitch(selectedTag, "tags");
+                string selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
+
+                if (IsPlaceholder(selected)) return;
+                if (!await CanPerformSwitch()) return;
+
+                await ExecuteUnifiedSwitch(selected, "tags");
+            }
+            finally { End(); }
         }
 
         private async Task ExecuteUnifiedSwitch(string targetName, string subFolder)
         {
-            if (IsProcessing) return;
-            IsProcessing = true;
-
             try
             {
-                SVNLogBridge.LogError($"<b><color=#4FC3F7>[Switch]</color> Switching to {targetName}...</b>", false);
+                LogInfo($"[Switch] Switching to {targetName}...");
 
                 string repoRoot = svnManager.GetRepoRoot();
-                string targetUrl = (targetName.ToLower() == "trunk")
-                    ? $"{repoRoot}/trunk"
-                    : $"{repoRoot}/{subFolder}/{targetName}";
 
-                SVNLogBridge.LogError($"<color=#444444>... Target: {targetUrl}</color>");
+                string targetUrl =
+                    (targetName.ToLower() == "trunk")
+                        ? $"{repoRoot}/trunk"
+                        : $"{repoRoot}/{subFolder}/{targetName}";
+
+                LogInfo($"... Target: {targetUrl}");
 
                 string result = await SwitchAsync(svnManager.WorkingDir, targetUrl);
 
-                if (!result.ToLower().Contains("error") && !result.ToLower().Contains("failed"))
+                if (!result.ToLower().Contains("error") &&
+                    !result.ToLower().Contains("failed"))
                 {
-                    SVNLogBridge.LogError($"<b><color=green>[Switch Complete]</color> Now on {targetName}.</b>");
-                    await svnManager.GetModule<SVNBar>().ShowProjectInfo(null, svnManager.WorkingDir);
+                    LogSuccess($"Switch Complete: {targetName}");
+
+                    await svnManager.GetModule<SVNBar>()
+                        .ShowProjectInfo(null, svnManager.WorkingDir);
+
                     await svnManager.RefreshStatus();
                 }
                 else
                 {
-                    SVNLogBridge.LogError($"<color=red>[Switch Failed]</color>\n{result}");
+                    LogErrorLocal($"[Switch Failed]\n{result}");
                 }
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"<color=red>[Switch Error]</color> {ex.Message}");
+                LogErrorLocal($"[Switch Error] {ex.Message}");
             }
-            finally { IsProcessing = false; }
         }
 
+        // =====================================================
+        // 🔎 VALIDATION
+        // =====================================================
         private async Task<bool> CanPerformSwitch()
         {
-            SVNLogBridge.LogError("<color=#444444>... Validating safety</color>");
+            LogInfo("Validating safety...");
+
             var stats = await GetStatsAsync(svnManager.WorkingDir);
 
             if (stats.ConflictsCount > 0)
             {
-                SVNLogBridge.LogError("<color=red><b>ERROR:</b> Unresolved conflicts!</color>");
+                LogErrorLocal("ERROR: Unresolved conflicts!");
                 return false;
             }
 
-            if (stats.ModifiedCount > 0 || stats.AddedCount > 0 || stats.DeletedCount > 0)
+            if (stats.ModifiedCount > 0 ||
+                stats.AddedCount > 0 ||
+                stats.DeletedCount > 0)
             {
-                SVNLogBridge.LogError("<color=yellow>[Warning]</color> Uncommitted changes detected.");
+                LogWarning("Uncommitted changes detected.");
             }
 
             return true;
         }
 
-        public async void DeleteSelectedBranch()
+        // =====================================================
+        // 🗑 DELETE
+        // =====================================================
+        public async Task DeleteSelectedBranch()
         {
-            if (IsProcessing) return;
-            if (svnUI.BranchesDropdown == null || svnUI.BranchesDropdown.options.Count == 0) return;
+            if (!TryStart()) return;
 
-            string selectedBranch = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text;
-            if (IsPlaceholder(selectedBranch)) return;
-
-            if (selectedBranch.ToLower().Contains("trunk"))
+            try
             {
-                SVNLogBridge.LogError("<color=red><b>SECURITY:</b> Cannot delete Trunk!</color>");
-                return;
-            }
+                if (svnUI?.BranchesDropdown == null ||
+                    svnUI.BranchesDropdown.options.Count == 0)
+                {
+                    LogErrorLocal("Delete aborted: invalid dropdown state.");
+                    return;
+                }
 
-            await ExecuteRemoteDeleteTask(selectedBranch, "branches");
+                string selectedBranch =
+                    svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text?.Trim();
+
+                if (string.IsNullOrEmpty(selectedBranch))
+                {
+                    LogErrorLocal("Delete aborted: empty selection.");
+                    return;
+                }
+
+                // =====================================================
+                // 🔒 HARD PROTECTION LAYER (ABSOLUTE SAFETY)
+                // =====================================================
+                if (IsProtectedBranch(selectedBranch))
+                {
+                    LogErrorLocal("SECURITY BLOCK: 'trunk' is protected and cannot be deleted.");
+                    return;
+                }
+
+                // dodatkowy safety net (UI manipulation / fake entries)
+                if (selectedBranch.Equals("trunk", StringComparison.OrdinalIgnoreCase))
+                {
+                    LogErrorLocal("SECURITY BLOCK: direct trunk match detected.");
+                    return;
+                }
+
+                // sanity check (SVN path injection / malformed entries)
+                if (selectedBranch.Contains("..") ||
+                    selectedBranch.Contains("/") && !selectedBranch.StartsWith("branches"))
+                {
+                    LogErrorLocal("SECURITY BLOCK: invalid branch path detected.");
+                    return;
+                }
+
+                LogWarning($"[Delete] Requested branch removal: {selectedBranch}");
+
+                await ExecuteRemoteDeleteTask(selectedBranch, "branches");
+            }
+            catch (Exception ex)
+            {
+                LogErrorLocal($"[Delete Error] {ex.Message}");
+            }
+            finally
+            {
+                End();
+            }
         }
 
-        public async void DeleteSelectedTag()
+        private bool IsProtectedBranch(string name)
         {
-            if (IsProcessing) return;
-            if (svnUI.TagsDropdown == null || svnUI.TagsDropdown.options.Count == 0) return;
+            return string.Equals(name?.Trim(), "trunk", StringComparison.OrdinalIgnoreCase);
+        }
 
-            string selectedTag = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
-            if (IsPlaceholder(selectedTag)) return;
+        public async Task DeleteSelectedTag()
+        {
+            if (!TryStart()) return;
 
-            await ExecuteRemoteDeleteTask(selectedTag, "tags");
+            try
+            {
+                string selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
+
+                if (IsPlaceholder(selected)) return;
+
+                await ExecuteRemoteDeleteTask(selected, "tags");
+            }
+            finally { End(); }
         }
 
         private async Task ExecuteRemoteDeleteTask(string targetName, string subFolder)
         {
-            IsProcessing = true;
             try
             {
-                SVNLogBridge.LogError($"<b><color=#4FC3F7>[Delete]</color> Deleting {subFolder}: {targetName}</b>", false);
+                LogInfo($"[Delete] Removing {subFolder}: {targetName}");
 
                 string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
+
                 string repoRoot = svnManager.GetRepoRoot();
                 string targetUrl = $"{repoRoot}/{subFolder}/{targetName}";
 
                 if (currentUrl.TrimEnd('/') == targetUrl.TrimEnd('/'))
                 {
-                    SVNLogBridge.LogError("<color=red><b>ABORTED:</b> Active branch cannot be deleted!</color>");
+                    LogErrorLocal("ABORTED: Active branch cannot be deleted!");
                     return;
                 }
 
                 string msg = $"Deleted {subFolder}: {targetName} via Unity SVN Tool";
+
                 await DeleteRemotePathAsync(svnManager.WorkingDir, targetUrl, msg);
 
-                SVNLogBridge.LogError($"<b><color=green>[Success]</color> {targetName} removed from server.</b>");
-                RefreshUnifiedList();
+                LogSuccess($"Deleted: {targetName}");
+
+                await RefreshUnifiedList();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"<color=red>[Delete Error]</color> {ex.Message}");
+                LogErrorLocal($"[Delete Error] {ex.Message}");
             }
-            finally { IsProcessing = false; }
         }
 
+        // =====================================================
+        // 📊 STATUS
+        // =====================================================
         public static async Task<SvnStats> GetStatsAsync(string workingDir)
         {
             string output = await SvnRunner.RunAsync("status", workingDir);
+
             SvnStats stats = new SvnStats();
-            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+            string[] lines = output.Split(
+                new[] { '\n', '\r' },
+                StringSplitOptions.RemoveEmptyEntries);
 
             foreach (string line in lines)
             {
                 if (line.Length < 1) continue;
-                char statusChar = line[0];
-                switch (statusChar)
+
+                switch (line[0])
                 {
                     case 'M': stats.ModifiedCount++; break;
                     case 'A': stats.AddedCount++; break;
@@ -229,56 +343,99 @@ namespace SVN.Core
                     case 'I': stats.IgnoredCount++; break;
                 }
             }
+
             return stats;
         }
 
-        private bool IsPlaceholder(string text) => text.Contains("Loading") || text.Contains("No ") || text.Contains("None");
+        // =====================================================
+        // 🧩 HELPERS
+        // =====================================================
+        private bool IsPlaceholder(string text)
+            => text.Contains("Loading") ||
+               text.Contains("No ") ||
+               text.Contains("None");
 
-        private void UpdateDropdown(TMPro.TMP_Dropdown dropdown, string[] items, string emptyMsg, bool includeTrunk)
+        private void UpdateDropdown(
+            TMPro.TMP_Dropdown dropdown,
+            string[] items,
+            string emptyMsg,
+            bool includeTrunk)
         {
             if (dropdown == null) return;
-            dropdown.Hide();
+
             dropdown.ClearOptions();
+
             List<string> options = new List<string>();
 
-            if (includeTrunk) options.Add("trunk");
+            if (includeTrunk)
+                options.Add("trunk");
+
             if (items != null)
             {
                 foreach (var item in items)
                 {
                     string clean = item.Trim().TrimEnd('/');
-                    if (!string.IsNullOrEmpty(clean) && clean.ToLower() != "trunk")
+
+                    if (!string.IsNullOrEmpty(clean) &&
+                        clean.ToLower() != "trunk")
+                    {
                         options.Add(clean);
+                    }
                 }
             }
-            if (options.Count == 0) options.Add(emptyMsg);
+
+            if (options.Count == 0)
+                options.Add(emptyMsg);
+
             dropdown.AddOptions(options);
             dropdown.RefreshShownValue();
         }
 
-        public static async Task<string> SwitchAsync(string workingDir, string targetUrl, CancellationToken token = default)
+        // =====================================================
+        // 🌐 SVN CORE
+        // =====================================================
+        public static async Task<string> SwitchAsync(
+            string workingDir,
+            string targetUrl,
+            CancellationToken token = default)
         {
             string currentKey = SvnRunner.KeyPath;
-            string sshArgs = "-o BatchMode=yes -o StrictHostKeyChecking=no";
-            if (!string.IsNullOrEmpty(currentKey)) sshArgs = $"-i \"{currentKey}\" {sshArgs}";
 
-            string command = $"--config-option config:tunnels:ssh=\"ssh {sshArgs}\" " +
-                             $"switch \"{targetUrl}\" \"{workingDir}\" " +
-                             $"--ignore-ancestry --accept theirs-full --non-interactive";
+            string sshArgs = "-o BatchMode=yes -o StrictHostKeyChecking=no";
+
+            if (!string.IsNullOrEmpty(currentKey))
+                sshArgs = $"-i \"{currentKey}\" {sshArgs}";
+
+            string command =
+                $"--config-option config:tunnels:ssh=\"ssh {sshArgs}\" " +
+                $"switch \"{targetUrl}\" \"{workingDir}\" " +
+                $"--ignore-ancestry --accept theirs-full --non-interactive";
 
             return await SvnRunner.RunAsync(command, workingDir, true, token);
         }
 
-        public static async Task<string> CopyAsync(string workingDir, string sourceUrl, string destUrl, string message)
+        public static async Task<string> CopyAsync(
+            string workingDir,
+            string sourceUrl,
+            string destUrl,
+            string message)
         {
             string cmd = $"copy \"{sourceUrl}\" \"{destUrl}\" -m \"{message}\"";
             return await SvnRunner.RunAsync(cmd, workingDir);
         }
 
-        public static async Task<string> DeleteRemotePathAsync(string workingDir, string remoteUrl, string message)
+        public static async Task<string> DeleteRemotePathAsync(
+            string workingDir,
+            string remoteUrl,
+            string message)
         {
             string args = $"rm \"{remoteUrl}\" -m \"{message}\"";
             return await SvnRunner.RunAsync(args, workingDir);
+        }
+
+        protected override TMPro.TMP_Text GetConsole()
+        {
+            return svnUI?.BranchTagConsoleText;
         }
     }
 }

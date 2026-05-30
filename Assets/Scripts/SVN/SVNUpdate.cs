@@ -73,6 +73,18 @@ namespace SVN.Core
                 return;
             }
 
+            // Zapamiętujemy rewizję PRZED aktualizacją, żeby pokazać dokładny stan "jak było przedtem"
+            string oldRevision = svnManager.CurrentSnapshot?.Revision ?? "Unknown";
+            if (oldRevision == "Unknown")
+            {
+                try
+                {
+                    string infoBefore = await SvnRunner.GetInfoAsync(targetPath);
+                    oldRevision = ParseRevisionFromInfo(infoBefore);
+                }
+                catch { oldRevision = "Unknown"; }
+            }
+
             _lastLiveLine = "Connecting to repository...";
             _hasNewLine = true;
 
@@ -132,7 +144,7 @@ namespace SVN.Core
                             if (session != _sessionId) return;
 
                             SVNLogBridge.LogLine(
-                                $"<b>[SVN]</b> Updating: <color=#4FC3F7>{line}</color>",
+                                $"<b>[SVN]</b> Updating: <color=blue>{line}</color>",
                                 false
                             );
                         });
@@ -195,6 +207,49 @@ namespace SVN.Core
 
                 svnManager.LastUpdateSucceeded = true;
 
+                // 🔥 ROZBUDOWANY, CZYSTY RAPORT KOŃCOWY (BEZ ZNAKÓW PIPE)
+                StringBuilder report = new StringBuilder();
+                report.AppendLine("\n<color=blue><b>=========================================</b></color>");
+                report.AppendLine("<color=blue><b>          SVN UPDATE REPORT              </b></color>");
+                report.AppendLine("<color=blue><b>=========================================</b></color>");
+
+                if (oldRevision == revision || oldRevision == "Unknown")
+                {
+                    report.AppendLine($"  Revision:   <b>{revision}</b> (No incoming changes)");
+                }
+                else
+                {
+                    report.AppendLine($"  Revision:   <b>{oldRevision}</b> ➔ <b>{revision}</b>");
+                }
+
+                report.AppendLine($"  Duration:   <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>");
+                report.AppendLine();
+
+                if (uCount == 0 && aCount == 0 && dCount == 0 && cCount == 0 && gCount == 0 && rCount == 0)
+                {
+                    report.AppendLine("  <color=green>Working copy was already fully up-to-date.</color>");
+                }
+                else
+                {
+                    report.AppendLine("  <b>[File Modifications]</b>");
+                    if (uCount > 0) report.AppendLine($"    Updated:   <b>{uCount}</b>");
+                    if (aCount > 0) report.AppendLine($"    Added:     <b>{aCount}</b>");
+                    if (dCount > 0) report.AppendLine($"    Deleted:   <b><color=#B22222>{dCount}</color></b>"); // Wiśniowy kontrast
+                    if (gCount > 0) report.AppendLine($"    Merged:    <b>{gCount}</b>");
+                    if (rCount > 0) report.AppendLine($"    Replaced:  <b>{rCount}</b>");
+
+                    if (cCount > 0)
+                    {
+                        report.AppendLine();
+                        report.AppendLine("  <color=red><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
+                        report.AppendLine($"    Conflicts: <b><color=red>{cCount}</color></b>");
+                        report.AppendLine("    Please resolve conflicts in working copy before compiling.");
+                    }
+                }
+                report.AppendLine("<color=yellow><b>=========================================</b></color>");
+
+                SVNLogBridge.LogLine(report.ToString(), false);
+
                 var statusModule = svnManager.GetModule<SVNStatus>();
 
                 if (!svnManager.WasUpdateCanceled && statusModule != null)
@@ -202,8 +257,6 @@ namespace SVN.Core
                     await statusModule.RefreshModifiedInternal();
                 }
 
-                // 🔥 FIX: SINGLE SNAPSHOT SOURCE OF TRUTH
-                // 🔥 FIX: SINGLE SNAPSHOT SOURCE OF TRUTH
                 if (!svnManager.WasUpdateCanceled && svnBar != null)
                 {
                     var newSnapshot = await svnBar.BuildSnapshotAsync(
@@ -211,16 +264,14 @@ namespace SVN.Core
                         svnManager.WorkingDir
                     );
 
-                    // Pobierz rzeczywistego autora dla zaktualizowanej rewizji
                     string newAuthor = await GetAuthorForRevision(svnManager.WorkingDir, revision);
 
-                    // Nadpisz OBA parametry
                     newSnapshot.Revision = revision;
 
                     if (!string.IsNullOrEmpty(newAuthor))
                     {
-                        newSnapshot.Author = newAuthor; // <-- Dodane: Aktualizujemy autora!
-                        newSnapshot.CurrentUser = newAuthor; // Opcjonalnie, w zależności od tego, jakiej właściwości używa Twój UI
+                        newSnapshot.Author = newAuthor;
+                        newSnapshot.CurrentUser = newAuthor;
                     }
 
                     svnManager.CurrentSnapshot = newSnapshot;
@@ -244,6 +295,16 @@ namespace SVN.Core
                     Duration = stopwatch.Elapsed.TotalSeconds,
                     Repo = svnManager.RepositoryUrl
                 };
+
+                StringBuilder cancelReport = new StringBuilder();
+                cancelReport.AppendLine("\n<color=#FFAA00><b>=========================================</b></color>");
+                cancelReport.AppendLine("<color=#FFAA00><b>          UPDATE INTERRUPTED             </b></color>");
+                cancelReport.AppendLine("<color=#FFAA00><b>=========================================</b></color>");
+                cancelReport.AppendLine($"  Process aborted after <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>.");
+                cancelReport.AppendLine("  Working copy state might be incomplete.");
+                cancelReport.AppendLine("<color=#FFAA00><b>=========================================</b></color>");
+
+                SVNLogBridge.LogLine(cancelReport.ToString(), false);
             }
             catch (Exception ex)
             {
@@ -252,10 +313,20 @@ namespace SVN.Core
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
                     State = SVNOperationState.Failed,
-                    Message = ex.Message, // ❌ FIX: usuwa NormalizeError crash
+                    Message = ex.Message,
                     Duration = stopwatch.Elapsed.TotalSeconds,
                     Repo = svnManager.RepositoryUrl
                 };
+
+                StringBuilder failureReport = new StringBuilder();
+                failureReport.AppendLine("\n<color=#B22222><b>=========================================</b></color>");
+                failureReport.AppendLine("<color=#B22222><b>            UPDATE FAILED                </b></color>");
+                failureReport.AppendLine("<color=#B22222><b>=========================================</b></color>");
+                failureReport.AppendLine($"  Execution crashed after <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>.");
+                failureReport.AppendLine($"  Error message: <color=#E6E6E6>{ex.Message}</color>");
+                failureReport.AppendLine("<color=#B22222><b>=========================================</b></color>");
+
+                SVNLogBridge.LogLine(failureReport.ToString(), false);
             }
             finally
             {
@@ -266,11 +337,6 @@ namespace SVN.Core
                 _hasNewLine = false;
 
                 _runningTask = null;
-
-                SVNLogBridge.LogLine(
-                    "<color=#888888>[SVN]</color> Update session finished.",
-                    false
-                );
             }
         }
 

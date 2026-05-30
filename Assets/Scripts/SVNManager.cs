@@ -149,7 +149,7 @@ namespace SVN.Core
                 RegisterModule(new SVNBar(svnUI, this));
                 RegisterModule(new SVNIgnore(svnUI, this));
 
-                SVNLogBridge.LogLine($"<color=green>[SVN]</color> Successfully initialized {_modules.Count} modules manually.");
+                SVNLogBridge.LogLine($"<color=green>[SVN] Successfully initialized {_modules.Count} modules manually.</color>");
             }
             catch (Exception e)
             {
@@ -409,15 +409,29 @@ namespace SVN.Core
             if (statusModule == null)
                 return;
 
-            await Task.Yield();
-
             try
             {
-                await RefreshLocksSafe();
+                await Task.Yield();
+
+                string root = WorkingDir;
+                if (string.IsNullOrEmpty(root))
+                    return;
+
+                var lockDict = await statusModule.GetLocksDictionaryAsync(root);
+
+                if (lockDict == null || lockDict.Count == 0)
+                    return;
+
+                statusModule.ApplyLockColors(
+                    statusModule.GetCurrentData(),
+                    lockDict
+                );
+
+                statusModule.RefreshVisibleUIOnly();
             }
             catch (Exception e)
             {
-                SVNLogBridge.LogError($"[SVN] SetLockAsync failed: {e.Message}");
+                SVNLogBridge.LogError($"[SVN] RefreshLocksSafe failed: {e.Message}");
             }
         }
 
