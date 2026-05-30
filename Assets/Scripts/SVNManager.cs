@@ -26,6 +26,8 @@ namespace SVN.Core
         [SerializeField] private GameObject mainUIPanel;
         [SerializeField] private ProjectSelectionPanel projectSelectionPanel;
 
+        private bool _ignoreSync;
+        private float _lastFocusRefreshTime;
         private string currentUserName = "Unknown";
         private string workingDir = string.Empty;
         private string currentKey = string.Empty;
@@ -269,12 +271,6 @@ namespace SVN.Core
             return currentUserName = Environment.UserName.ToLower();
         }
 
-        public void UpdateSnapshot(SVNProjectInfoSnapshot snapshot)
-        {
-            CurrentSnapshot = snapshot;
-            OnSnapshotChanged?.Invoke(snapshot);
-        }
-
         public async Task LoadProject(SVNProject project)
         {
             CurrentProject = project;
@@ -450,21 +446,32 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
-        private async void OnApplicationFocus(bool focus)
+        private async void OnApplicationFocus(bool hasFocus)
         {
-            if (!focus) return;
-            if (_focusRefreshRunning) return;
-            if (string.IsNullOrEmpty(workingDir)) return;
-            if (IsProcessing) return;
+            if (!hasFocus)
+                return;
+
+            if (_focusRefreshRunning)
+                return;
+
+            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
+                return;
+
+            _lastFocusRefreshTime = Time.realtimeSinceStartup;
+
+            _focusRefreshRunning = true;
 
             try
             {
-                _focusRefreshRunning = true;
-                await Task.Delay(150);
+                await Task.Delay(500);
 
-                if (IsProcessing) return;
-
-                await RefreshStatus(force: false);
+                await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(true);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError(
+                    $"Focus refresh failed: {ex.Message}"
+                );
             }
             finally
             {
@@ -525,8 +532,6 @@ namespace SVN.Core
             }
         }
 
-        private bool _ignoreSync;
-
         private void SetupInputListeners()
         {
             svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(v =>
@@ -574,17 +579,6 @@ namespace SVN.Core
                 if (_ignoreSync || _isApplyingSnapshot) return;
                 SyncFromCheckoutUI();
             });
-        }
-
-        public void ApplySettingsSnapshotSafe()
-        {
-            _isApplyingSnapshot = true;
-            _ignoreSync = true;
-
-            ApplySettingsSnapshot();
-
-            _ignoreSync = false;
-            _isApplyingSnapshot = false;
         }
 
         private void UpdateCurrentProjectData()

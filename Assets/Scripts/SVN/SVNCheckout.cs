@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using System.Xml.Linq;
+using System.Linq;
 
 namespace SVN.Core
 {
@@ -39,8 +40,6 @@ namespace SVN.Core
             Cancelled
         }
 
-        private CheckoutState _currentStatus = CheckoutState.Idle;
-
         private const double BytesInGB = 1024d * 1024d * 1024d;
         private const double BytesInMB = 1024d * 1024d;
         private const double MinSpeedThresholdMB = 0.01d;
@@ -73,6 +72,8 @@ namespace SVN.Core
             {
                 _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url);
 
+                string structureText = await GetRepositoryStructureAsync(url);
+
                 double repoDataGB = _cachedTotalSizeBytes / BytesInGB;
                 double requiredSpaceGB = repoDataGB * SvnOverheadMultiplier;
 
@@ -86,6 +87,7 @@ namespace SVN.Core
                     $"<b>Repository Size (Raw):</b> {repoDataGB:F2} GB\n" +
                     $"<b>Required Space (with .svn):</b> {requiredSpaceGB:F2} GB\n" +
                     $"<b>Available Space ({driveLabel}):</b> <color={spaceColor}>{freeSpaceGB:F2} GB</color>\n\n" +
+                    $"<b>Repository Structure:</b>\n{structureText}\n\n" +
                     (freeSpaceGB < requiredSpaceGB
                         ? $"<color=red><b>ERROR:</b> Not enough space! SVN needs ~{requiredSpaceGB:F2} GB.</color>"
                         : "<color=green>Ready to download.</color>"), "Info");
@@ -97,32 +99,71 @@ namespace SVN.Core
             }
         }
 
-        public static async Task<long> GetRepositorySizeAsync(string url, Action<string> onStatusUpdate)
+        private async Task<string> GetRepositoryStructureAsync(string baseUrl)
         {
-            long totalBytes = 0;
-            string args = $"list \"{url}\" --recursive --xml --non-interactive --trust-server-cert";
+            var resultLines = new List<string>();
+            baseUrl = baseUrl.TrimEnd('/');
 
-            onStatusUpdate?.Invoke("Calculating total size from server...");
-
-            await SvnRunner.RunLiveAsync(args, Path.GetTempPath(), (line) =>
+            try
             {
-                if (line.Contains("<size>"))
-                {
-                    try
-                    {
-                        int start = line.IndexOf("<size>") + 6;
-                        int end = line.IndexOf("</size>");
-                        string sizeStr = line.Substring(start, end - start);
-                        if (long.TryParse(sizeStr, out long fileSize))
-                        {
-                            totalBytes += fileSize;
-                        }
-                    }
-                    catch { /* Skip malformed lines */ }
-                }
-            });
+                string rootOutput = await SvnRunner.RunAsync($"list \"{baseUrl}\" --non-interactive --trust-server-cert", Path.GetTempPath());
 
-            return totalBytes;
+                if (string.IsNullOrWhiteSpace(rootOutput))
+                    return "<color=yellow>No standard SVN structure found (Repository empty?)</color>";
+
+                var originalDirs = rootOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                                             .Select(l => l.Trim().TrimEnd('/'))
+                                             .ToList();
+
+                var dirMap = originalDirs.ToDictionary(d => d.ToLower(), d => d);
+
+                if (!dirMap.ContainsKey("trunk") && !dirMap.ContainsKey("branches") && !dirMap.ContainsKey("tags"))
+                    return "<color=yellow>No standard SVN structure found.</color>";
+
+                if (dirMap.TryGetValue("trunk", out string trunkName))
+                {
+                    resultLines.Add($" {trunkName}");
+                }
+
+                if (dirMap.TryGetValue("branches", out string branchesName))
+                {
+                    int branchCount = await GetDirectoryCountAsync($"{baseUrl}/{branchesName}");
+
+                    resultLines.Add($" {branchesName} ({branchCount})");
+                }
+
+                if (dirMap.TryGetValue("tags", out string tagsName))
+                {
+                    int tagCount = await GetDirectoryCountAsync($"{baseUrl}/{tagsName}");
+                    resultLines.Add($" {tagsName} ({tagCount})");
+                }
+
+                return string.Join("\n", resultLines);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"Error loading repository structure: {ex.Message}");
+                return "<color=red>Error loading repository structure.</color>";
+            }
+        }
+
+        private async Task<int> GetDirectoryCountAsync(string targetUrl)
+        {
+            try
+            {
+                string output = await SvnRunner.RunAsync($"list \"{targetUrl}\" --xml --non-interactive --trust-server-cert", Path.GetTempPath());
+
+                if (string.IsNullOrWhiteSpace(output))
+                    return 0;
+
+                int count = output.Split(new string[] { "kind=\"dir\"" }, StringSplitOptions.None).Length - 1;
+
+                return count;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         public async void StartCheckout()
@@ -242,34 +283,6 @@ namespace SVN.Core
                 return url.Substring(lastSlash + 1);
 
             return url;
-        }
-
-        private async Task<bool> EnsureRepoStructure(string repoRoot)
-        {
-            try
-            {
-                string safeWorkingDir = Path.GetTempPath();
-                string result = await SvnRunner.RunAsync($"ls \"{repoRoot}\"", safeWorkingDir);
-
-                if (string.IsNullOrEmpty(result) || result.StartsWith("SVN Exception:"))
-                {
-                    SVNLogBridge.LogError($"Structure check failed or access denied. Connection logs: {result}");
-                    return false;
-                }
-
-                if (!result.Contains("trunk"))
-                {
-                    SVNLogBridge.LogLine("<b>[Server]</b> Creating trunk/branches/tags structure...");
-                    string cmd = $"mkdir \"{repoRoot}/trunk\" \"{repoRoot}/branches\" \"{repoRoot}/tags\" -m \"Initial structure\" --parents --non-interactive";
-                    await SvnRunner.RunAsync(cmd, safeWorkingDir);
-                }
-                return true;
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError("Structure check failed: " + ex.Message);
-                return false;
-            }
         }
 
         public async void ResumeCheckout()
@@ -835,29 +848,6 @@ namespace SVN.Core
             catch { }
 
             return size;
-        }
-
-        private void RegisterNewProjectAfterCheckout(string path, string repoUrl, string keyPath)
-        {
-            var newProj = new SVNProject
-            {
-                projectName = Path.GetFileName(path.TrimEnd('/', '\\')),
-                repoUrl = repoUrl,
-                workingDir = path,
-                privateKeyPath = keyPath,
-                lastOpened = DateTime.Now
-            };
-
-            List<SVNProject> projects = ProjectSettings.LoadProjects();
-            if (!projects.Exists(p => p.workingDir == path))
-            {
-                projects.Add(newProj);
-                ProjectSettings.SaveProjects(projects);
-                SVNLogBridge.LogLine($"<color=green>Project '{newProj.projectName}' added to Selection List.</color>");
-            }
-
-            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", path);
-            PlayerPrefs.Save();
         }
     }
 }
