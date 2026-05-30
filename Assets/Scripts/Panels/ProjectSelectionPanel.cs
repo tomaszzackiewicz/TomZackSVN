@@ -60,6 +60,9 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (project == null || svnManager == null)
             return;
 
+        svnManager.CurrentSnapshot = null;
+        svnManager.IsUpdateRunning = false;
+
         try
         {
             var statusModule = svnManager.GetModule<SVNStatus>();
