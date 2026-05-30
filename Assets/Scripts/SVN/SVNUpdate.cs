@@ -340,30 +340,6 @@ namespace SVN.Core
             }
         }
 
-        public static async Task<string> GetActualCommitAuthorAsync(string targetPath, string revision)
-        {
-            try
-            {
-                // Pobieramy log tylko dla tej jednej konkretnej rewizji
-                string logOutput = await SvnRunner.RunAsync($"log -r {revision} --limit 1", targetPath);
-
-                if (string.IsNullOrWhiteSpace(logOutput)) return "Unknown";
-
-                // SVN log zwraca format: r45 | autor | data | ...
-                // Wyciągamy tekst pomiędzy pierwszym a drugim znakiem '|'
-                var match = Regex.Match(logOutput, @"^r\d+\s*\|\s*([^|]+)", RegexOptions.Multiline);
-                if (match.Success)
-                {
-                    return match.Groups[1].Value.Trim();
-                }
-            }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogError($"[SVN] Failed to get log author: {ex.Message}");
-            }
-            return "Unknown";
-        }
-
         private async Task<string> GetAuthorForRevision(string targetPath, string revision)
         {
             try
@@ -377,62 +353,6 @@ namespace SVN.Core
             {
                 return null;
             }
-        }
-
-        private string NormalizeError(Exception ex)
-        {
-            if (ex is OperationCanceledException)
-                return "Canceled";
-
-            if (ex.Message.Contains("No process is associated"))
-                return "Internal process already closed";
-
-            if (ex.Message.Contains("Object is null"))
-                return "Internal null reference";
-
-            if (ex.Message.Contains("timed out") || ex.Message.Contains("timeout"))
-                return "SVN timeout";
-
-            return "Update failed";
-        }
-
-        private string NormalizeBranch(string url)
-        {
-            if (string.IsNullOrEmpty(url))
-                return "unknown";
-
-            url = url.TrimEnd('/');
-
-            if (url.Contains("/trunk"))
-                return "trunk";
-
-            if (url.Contains("/branches/"))
-                return url.Split("/branches/")[1].Split('/')[0];
-
-            if (url.Contains("/tags/"))
-                return "tag:" + url.Split("/tags/")[1].Split('/')[0];
-
-            return url.Substring(url.LastIndexOf('/') + 1);
-        }
-
-        private string ExtractRepoUrl(string infoOutput)
-        {
-            var match = Regex.Match(infoOutput, @"^URL:\s*(.+)$", RegexOptions.Multiline);
-            return match.Success ? match.Groups[1].Value.Trim() : "";
-        }
-
-        private string ExtractBranchFromUrl(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url))
-                return "unknown";
-
-            url = url.TrimEnd('/');
-
-            int lastSlash = url.LastIndexOf('/');
-            if (lastSlash < 0 || lastSlash == url.Length - 1)
-                return "unknown";
-
-            return url.Substring(lastSlash + 1);
         }
 
         public void CancelUpdate()
@@ -516,19 +436,6 @@ namespace SVN.Core
         {
             var match = System.Text.RegularExpressions.Regex.Match(infoOutput, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
             return match.Success ? match.Groups[1].Value : "Unknown";
-        }
-
-        private async Task UpdateUILive()
-        {
-            while (IsProcessing)
-            {
-                if (_hasNewLine)
-                {
-                    SVNLogBridge.LogLine($"<b>[SVN]</b> Updating: <color=orange>{_lastLiveLine}</color>", false);
-                    _hasNewLine = false;
-                }
-                await Task.Yield();
-            }
         }
 
         public async void CheckRemoteModificationsButton()
@@ -619,29 +526,6 @@ namespace SVN.Core
             {
                 IsProcessing = false;
             }
-        }
-
-        private SVNProjectInfoSnapshot BuildSnapshot(
-    string revision,
-    string author,
-    string date,
-    string branch,
-    string server,
-    bool isUpdating,
-    bool isCanceled,
-    bool hasChanges)
-        {
-            return new SVNProjectInfoSnapshot
-            {
-                Revision = revision,
-                Author = author,
-                Date = date,
-                Branch = branch,
-                Server = server,
-                IsUpdating = isUpdating,
-                IsCanceled = isCanceled,
-                HasChanges = hasChanges
-            };
         }
     }
 }
