@@ -438,7 +438,8 @@ namespace SVN.Core
             if (statusDict?.Values.Any(v => v.status?.Contains("C") == true) == true)
             {
                 LogToUI("[SVN] Conflicts detected! Opening Resolve panel.", "orange");
-                _ = panelHandler?.Button_OpenResolve();
+                panelHandler?.Button_OpenResolve();
+                await GetModule<SVNResolve>().RefreshConflictUI();
             }
 
             await UpdateStatus();
@@ -477,6 +478,16 @@ namespace SVN.Core
             {
                 _focusRefreshRunning = false;
             }
+        }
+
+        public async Task<string> RunSvn(string args)
+        {
+            string output = await SVNRun.ExecuteAsync(args, workingDir);
+
+            if (!string.IsNullOrEmpty(output))
+                SVNLogBridge.LogLine(output);
+
+            return output;
         }
 
         public async Task UpdateStatus()

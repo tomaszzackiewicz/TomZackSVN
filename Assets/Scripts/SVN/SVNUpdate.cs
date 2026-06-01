@@ -244,6 +244,8 @@ namespace SVN.Core
                         report.AppendLine("  <color=red><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
                         report.AppendLine($"    Conflicts: <b><color=red>{cCount}</color></b>");
                         report.AppendLine("    Please resolve conflicts in working copy before compiling.");
+
+                        await svnManager.GetModule<SVNResolve>().RefreshConflictUI();
                     }
                 }
                 report.AppendLine("<color=yellow><b>=========================================</b></color>");

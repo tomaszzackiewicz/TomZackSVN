@@ -19,9 +19,9 @@ public class ResolvePanel : MonoBehaviour
         svnManager.GetModule<SVNLoad>().UpdateUIFromManager();
     }
 
-    public void Button_OpenInEditor() => svnManager.GetModule<SVNResolve>().Button_OpenInEditor();
-    public void Button_MarkAsResolved() => svnManager.GetModule<SVNResolve>().Button_MarkAsResolved();
-    public void Button_ResolveTheirs() => svnManager.GetModule<SVNResolve>().Button_ResolveTheirs();
-    public void Button_ResolveMine() => svnManager.GetModule<SVNResolve>().Button_ResolveMine();
+    public void Button_OpenInEditor() => svnManager.GetModule<SVNResolve>().OpenInEditor();
+    public void Button_MarkAsResolved() => svnManager.GetModule<SVNResolve>().MarkAsResolved();
+    public void Button_ResolveTheirs() => svnManager.GetModule<SVNResolve>().ResolveTheirs();
+    public void Button_ResolveMine() => svnManager.GetModule<SVNResolve>().ResolveMine();
     public void Button_ResolveFilePath() => svnManager.GetModule<SVNExternal>().BrowseResolveFilePath();
 }

@@ -860,9 +860,7 @@ namespace SVN.Core
             const string directoryLabel = "DIR";
             const string fileLabel = "FILE";
 
-            workingDir = workingDir
-                .Replace("\\", "/")
-                .TrimEnd('/');
+            workingDir = workingDir.Replace("\\", "/").TrimEnd('/');
 
             // 🔥 FAST STATUS
             string output = await SvnRunner.RunAsync(
@@ -871,8 +869,7 @@ namespace SVN.Core
                 token: cancellationToken
             );
 
-            var statusDict =
-                new Dictionary<string, SvnChangeInfo>(2048);
+            var statusDict = new Dictionary<string, SvnChangeInfo>(2048);
 
             if (string.IsNullOrWhiteSpace(output))
                 return statusDict;
@@ -889,53 +886,52 @@ namespace SVN.Core
                 if (line.Length < svnStatusPrefixLength)
                     continue;
 
-                string stat =
-                    line[statusCharIndex]
-                        .ToString()
-                        .ToUpper();
+                string stat = line[statusCharIndex].ToString().ToUpper();
 
                 if (!allowedSvnStatuses.Contains(stat))
                     continue;
 
-                string rawPath =
-                    line.Substring(svnStatusPrefixLength).Trim();
+                string rawPath = line.Substring(svnStatusPrefixLength).Trim();
+                string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
+                string fullPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
 
-                string cleanPath =
-                    SvnRunner.CleanSvnPath(rawPath)
-                        .Replace("\\", "/");
+                // --- POPRAWIONA LOGIKA IDENTYFIKACJI ---
 
-                string fullPath =
-                    Path.Combine(workingDir, cleanPath)
-                        .Replace("\\", "/");
+                bool isActuallyFile = File.Exists(fullPath);
+                bool isActuallyDir = !isActuallyFile && Directory.Exists(fullPath);
+                bool existsOnDisk = isActuallyFile || isActuallyDir;
 
-                // 🔥 SINGLE IO CALL ONLY
-                bool exists = File.Exists(fullPath);
-
+                string sizeLabel;
                 long bytes = 0;
 
-                if (exists)
+                if (existsOnDisk)
                 {
-                    try
-                    {
-                        var fileInfo = new FileInfo(fullPath);
+                    // Jeśli istnieje, sprawdzamy czy to plik czy folder
+                    sizeLabel = isActuallyFile ? fileLabel : directoryLabel;
 
-                        if (fileInfo.Exists)
+                    if (isActuallyFile)
+                    {
+                        try
                         {
+                            var fileInfo = new FileInfo(fullPath);
                             bytes = fileInfo.Length;
                         }
+                        catch { bytes = 0; }
                     }
-                    catch
-                    {
-                        bytes = 0;
-                    }
+                }
+                else
+                {
+                    // 🔥 KLUCZOWA POPRAWKA: Element usunięty/brakujący (Status 'D' lub '!')
+                    // Używamy heurystyki rozszerzenia pliku, aby odróżnić plik od folderu
+                    sizeLabel = Path.HasExtension(cleanPath) ? fileLabel : directoryLabel;
                 }
 
                 statusDict[cleanPath] = new SvnChangeInfo
                 {
                     Status = stat,
-                    Size = exists ? fileLabel : directoryLabel,
+                    Size = sizeLabel,
                     Bytes = bytes,
-                    Exists = exists
+                    Exists = existsOnDisk
                 };
             }
 

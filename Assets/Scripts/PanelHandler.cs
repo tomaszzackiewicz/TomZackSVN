@@ -72,14 +72,14 @@ namespace SVN.Core
             }
         }
 
-        public async Task Button_OpenResolve()
+        public void Button_OpenResolve()
         {
             ResetAllPanels();
 
             if (resolvePanel != null)
             {
                 resolvePanel.SetActive(true);
-                await SVNManager.Instance.GetModule<SVNResolve>().AutoRefreshConflictList();
+                SVNManager.Instance.GetModule<SVNResolve>().AutoRefreshConflictList();
             }
         }
 

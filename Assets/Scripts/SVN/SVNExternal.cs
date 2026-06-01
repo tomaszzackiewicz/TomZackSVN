@@ -1,6 +1,9 @@
 using System;
 using UnityEngine;
 using SFB;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.IO;
 
 namespace SVN.Core
 {
@@ -341,6 +344,47 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogLine($"<color=red>Explorer Error:</color> {ex.Message}");
             }
+        }
+
+        // Place this inside your class
+        [DllImport("shell32.dll", CharSet = CharSet.Auto)]
+        private static extern void SHChangeNotify(long wEventId, uint uFlags, string dwItem1, string dwItem2);
+
+        private const long SHCNE_UPDATEDIR = 0x00001000L;
+        private const uint SHCNF_PATHW = 0x0005;
+
+        public void RefreshWindowsShellIcons(string targetPath)
+        {
+            try
+            {
+                // 1. Force kill TSVNCache.exe so TortoiseSVN is forced to reload metadata immediately
+                Process[] cacheProcesses = Process.GetProcessesByName("TSVNCache");
+                foreach (var process in cacheProcesses)
+                {
+                    process.Kill();
+                }
+
+                // 2. Notify Windows Shell that the directory has changed to redraw overlay icons
+                string fullPath = Path.Combine(svnManager.WorkingDir, targetPath);
+                string directoryToRefresh = File.Exists(fullPath) ? Path.GetDirectoryName(fullPath) : fullPath;
+
+                if (!string.IsNullOrEmpty(directoryToRefresh))
+                {
+                    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, directoryToRefresh, null);
+                }
+
+                LogBoth("[Shell] Triggered Windows Explorer icon cache update.");
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"[Shell Error] Failed to refresh icons: {ex.Message}");
+            }
+        }
+
+        private void LogBoth(string msg)
+        {
+            SVNLogBridge.LogLine(msg);
+            SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, msg, "RESOLVE", true);
         }
     }
 }

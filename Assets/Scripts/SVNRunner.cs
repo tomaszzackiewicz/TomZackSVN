@@ -157,7 +157,7 @@ namespace SVN.Core
                     if (!string.IsNullOrEmpty(safeKeyPath))
                     {
                         psi.EnvironmentVariables["SVN_SSH"] =
-                            $"ssh -v -i \"{safeKeyPath}\" " +
+                            $"ssh -i \"{safeKeyPath}\" " +
                             "-o IdentitiesOnly=yes " +
                             "-o StrictHostKeyChecking=no " +
                             "-o BatchMode=yes " +

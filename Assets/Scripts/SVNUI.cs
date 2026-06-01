@@ -78,6 +78,9 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI NotificationText;
         [Header("Resolve")]
         [SerializeField] private TMP_InputField resolveTargetFileInput;
+        [SerializeField] private TextMeshProUGUI resolveConsoleContent;
+        [SerializeField] private TextMeshProUGUI resolveLogConsole;
+        [SerializeField] private GameObject conflictPrefab = null;
         [Header("Clean")]
         [SerializeField] private TextMeshProUGUI cleanText;
         [Header("Diff Panel References")]
@@ -154,6 +157,9 @@ namespace SVN.Core
         public Transform LocksContainer => locksContainer;
         public TextMeshProUGUI StealLocksConsole => stealLocksConsole;
         public TMP_InputField ResolveTargetFileInput => resolveTargetFileInput;
+        public TextMeshProUGUI ResolveConsoleContent => resolveConsoleContent;
+        public TextMeshProUGUI ResolveLogConsole => resolveLogConsole;
+        public GameObject ConflictPrefab => conflictPrefab;
         public TextMeshProUGUI CleanText => cleanText;
         public TMP_InputField DiffTargetFileInput => diffTargetFileInput;
         public TextMeshProUGUI DiffConsoleText => diffConsoleText;
