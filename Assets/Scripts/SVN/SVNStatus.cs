@@ -270,7 +270,6 @@ namespace SVN.Core
 
                     token.ThrowIfCancellationRequested();
 
-                    // 🔥 FIX: Czyszczenie overlay'a commitów również PRZED odświeżeniem UI
                     if (svnUI.CommitTreeDisplay != null)
                     {
                         SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
@@ -487,7 +486,6 @@ namespace SVN.Core
             {
                 if (visible.Contains(e.FullPath))
                 {
-                    // TWORZYMY NOWĄ INSTANCJĘ, odcinając referencje od głównego drzewa
                     result.Add(new SvnTreeElement
                     {
                         FullPath = e.FullPath,
@@ -502,7 +500,7 @@ namespace SVN.Core
                         LockedByMe = e.LockedByMe,
                         LockedByOther = e.LockedByOther,
                         Bytes = e.Bytes,
-                        IsCommitDelegate = true // Wymuszamy true, bo to element z okna commitu
+                        IsCommitDelegate = true
                     });
                 }
             }
@@ -814,7 +812,6 @@ namespace SVN.Core
     string workingDir,
     CancellationToken cancellationToken = default)
         {
-            const int statusCharIndex = 0;
             const int svnStatusPrefixLength = 8;
             const string allowedSvnStatuses = "MA?!DC~R";
             const string directoryLabel = "DIR";
@@ -846,9 +843,8 @@ namespace SVN.Core
                     continue;
 
                 char itemStatus = line[0];
-                char propStatus = line[1]; // Bezpieczne, bo wyżej sprawdzasz line.Length < svnStatusPrefixLength (8)
+                char propStatus = line[1];
 
-                // Pobierz Item Status. Jeśli go nie ma (spacja), weź Property Status.
                 string stat = itemStatus != ' ' ? itemStatus.ToString().ToUpper() : propStatus.ToString().ToUpper();
 
                 if (!allowedSvnStatuses.Contains(stat))

@@ -55,7 +55,6 @@ public class SvnLineController : MonoBehaviour
         }
         indentText.text = indent;
 
-        // Zabezpieczenie: sprawdzamy oba warianty nazewnictwa roota (tak jak robisz to w linii 126)
         bool isRoot = element.FullPath == ".svn-root" || element.FullPath == "__ROOT__";
 
         string statusClean = (element.Status == "DIR" || string.IsNullOrEmpty(element.Status))
@@ -71,12 +70,10 @@ public class SvnLineController : MonoBehaviour
 
             if (isRoot)
             {
-                // Jeśli to ROOT, wypisujemy tylko [ROOT]. Dodajemy status (np. [M]), jeśli root ma jakieś modyfikacje
                 statusText.text = $"<b><color={dirHex}>[ROOT]</color></b>{statusClean}";
             }
             else
             {
-                // Zwykły folder
                 statusText.text = $"<b><color={dirHex}>[DIR]</color></b>{statusClean}";
             }
 
@@ -174,16 +171,12 @@ public class SvnLineController : MonoBehaviour
                 isFile &&
                 hasStatus;
 
-            // =========================
-            // 🔥 ROOT CHANGE HANDLING
-            // =========================
             if (isRootMeta)
             {
                 fullRowButton.interactable = true;
 
                 fullRowButton.onClick.AddListener(() =>
                 {
-                    // możesz tu odpalić np. diff root / log repo root
                     var log = SVNManager.Instance?.GetModule<SVNLog>();
                     log?.ShowLogForPath(".");
                 });
@@ -192,21 +185,13 @@ public class SvnLineController : MonoBehaviour
                 statusText.text = "[ROOT]";
                 return;
             }
-
-            // =========================
-            // FILE DIFF MODE
-            // =========================
             if (canDiff)
             {
                 fullRowButton.interactable = true;
                 fullRowButton.onClick.AddListener(OnFullRowClick);
 
-                //statusText.text = statusClean;
                 BindHover(fullRowButton, "Click: Preview | Double-Click: External Diff");
             }
-            // =========================
-            // FOLDER MODE
-            // =========================
             else if (isFolder)
             {
                 fullRowButton.interactable = true;
@@ -216,9 +201,6 @@ public class SvnLineController : MonoBehaviour
                     ? "Click to collapse"
                     : "Click to expand");
             }
-            // =========================
-            // EMPTY / NO ACTION
-            // =========================
             else
             {
                 fullRowButton.interactable = false;
