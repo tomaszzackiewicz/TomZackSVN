@@ -845,7 +845,11 @@ namespace SVN.Core
                 if (line.Length < svnStatusPrefixLength)
                     continue;
 
-                string stat = line[statusCharIndex].ToString().ToUpper();
+                char itemStatus = line[0];
+                char propStatus = line[1]; // Bezpieczne, bo wyżej sprawdzasz line.Length < svnStatusPrefixLength (8)
+
+                // Pobierz Item Status. Jeśli go nie ma (spacja), weź Property Status.
+                string stat = itemStatus != ' ' ? itemStatus.ToString().ToUpper() : propStatus.ToString().ToUpper();
 
                 if (!allowedSvnStatuses.Contains(stat))
                     continue;

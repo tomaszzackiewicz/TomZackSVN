@@ -31,10 +31,22 @@ public class SvnLineController : MonoBehaviour
     private float lastClickTime;
     private const float doubleClickThreshold = 0.3f;
 
+    private void ResetActionButtons()
+    {
+        if (addBtn != null) addBtn.gameObject.SetActive(false);
+        if (revertBtn != null) revertBtn.gameObject.SetActive(false);
+        if (logBtn != null) logBtn.gameObject.SetActive(false);
+        if (lockBtn != null) lockBtn.gameObject.SetActive(false);
+        if (blameBtn != null) blameBtn.gameObject.SetActive(false);
+        if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
+    }
+
     public void Setup(SvnTreeElement element, SVNStatus manager)
     {
         _element = element;
         svnStatus = manager;
+
+        ResetActionButtons();
 
         string indent = "";
         for (int i = 0; i < element.Depth; i++)
@@ -47,7 +59,7 @@ public class SvnLineController : MonoBehaviour
 
         string statusClean =
             isRoot
-            ? $" [ROOT CHANGE]"
+            ? $" [ROOT]"
             : (element.Status == "DIR" || string.IsNullOrEmpty(element.Status)
                 ? ""
                 : $" [{element.Status}]");
@@ -168,7 +180,7 @@ public class SvnLineController : MonoBehaviour
                 });
 
                 BindHover(fullRowButton, "Repository root change (M .)");
-                statusText.text = "[ROOT CHANGE]";
+                statusText.text = "[ROOT]";
                 return;
             }
 
@@ -210,12 +222,12 @@ public class SvnLineController : MonoBehaviour
         bool isMissingOrDeleted = status == "!" || status == "D";
         bool hasChanges = !string.IsNullOrEmpty(status) && status != " ";
 
-        if (addBtn != null) addBtn.gameObject.SetActive(false);
-        if (revertBtn != null) revertBtn.gameObject.SetActive(false);
-        if (logBtn != null) logBtn.gameObject.SetActive(false);
-        if (lockBtn != null) lockBtn.gameObject.SetActive(false);
-        if (blameBtn != null) blameBtn.gameObject.SetActive(false);
-        if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
+        // if (addBtn != null) addBtn.gameObject.SetActive(false);
+        // if (revertBtn != null) revertBtn.gameObject.SetActive(false);
+        // if (logBtn != null) logBtn.gameObject.SetActive(false);
+        // if (lockBtn != null) lockBtn.gameObject.SetActive(false);
+        // if (blameBtn != null) blameBtn.gameObject.SetActive(false);
+        // if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
 
         if (!_element.IsFolder && hasChanges)
         {
