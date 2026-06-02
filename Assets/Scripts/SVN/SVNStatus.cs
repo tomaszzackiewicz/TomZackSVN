@@ -468,23 +468,12 @@ namespace SVN.Core
 
             foreach (var element in source)
             {
-                bool isRoot =
-                    element.FullPath == ".svn-root" ||
-                    element.FullPath == ".";
+                bool isRoot = element.FullPath == ".svn-root" || element.FullPath == ".";
+                bool isCommitable = isRoot || (!string.IsNullOrWhiteSpace(element.Status) && element.Status != " " && element.Status != "DIR");
 
-                bool isCommitable =
-                    isRoot ||
-                    (
-                        !string.IsNullOrWhiteSpace(element.Status) &&
-                        element.Status != " " &&
-                        element.Status != "DIR"
-                    );
-
-                if (!isCommitable)
-                    continue;
+                if (!isCommitable) continue;
 
                 string current = element.FullPath;
-
                 while (!string.IsNullOrEmpty(current))
                 {
                     visible.Add(current);
@@ -498,7 +487,23 @@ namespace SVN.Core
             {
                 if (visible.Contains(e.FullPath))
                 {
-                    result.Add(e);
+                    // TWORZYMY NOWĄ INSTANCJĘ, odcinając referencje od głównego drzewa
+                    result.Add(new SvnTreeElement
+                    {
+                        FullPath = e.FullPath,
+                        Name = e.Name,
+                        Depth = e.Depth,
+                        Status = e.Status,
+                        IsFolder = e.IsFolder,
+                        IsChecked = e.IsChecked,
+                        IsExpanded = e.IsExpanded,
+                        IsVisible = e.IsVisible,
+                        Size = e.Size,
+                        LockedByMe = e.LockedByMe,
+                        LockedByOther = e.LockedByOther,
+                        Bytes = e.Bytes,
+                        IsCommitDelegate = true // Wymuszamy true, bo to element z okna commitu
+                    });
                 }
             }
 
@@ -913,6 +918,11 @@ namespace SVN.Core
         public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
         {
             UpdateListSelection(_flatTreeData, parentFolder.FullPath, isChecked);
+
+            if (_commitTreeData != null)
+            {
+                UpdateListSelection(_commitTreeData, parentFolder.FullPath, isChecked);
+            }
 
             NotifySelectionChanged();
         }

@@ -453,38 +453,38 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
-        private async void OnApplicationFocus(bool hasFocus)
-        {
-            if (!hasFocus)
-                return;
+        // private async void OnApplicationFocus(bool hasFocus)
+        // {
+        //     if (!hasFocus)
+        //         return;
 
-            if (_focusRefreshRunning)
-                return;
+        //     if (_focusRefreshRunning)
+        //         return;
 
-            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
-                return;
+        //     if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
+        //         return;
 
-            _lastFocusRefreshTime = Time.realtimeSinceStartup;
+        //     _lastFocusRefreshTime = Time.realtimeSinceStartup;
 
-            _focusRefreshRunning = true;
+        //     _focusRefreshRunning = true;
 
-            try
-            {
-                await Task.Delay(500);
+        //     try
+        //     {
+        //         await Task.Delay(500);
 
-                await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(true);
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError(
-                    $"Focus refresh failed: {ex.Message}"
-                );
-            }
-            finally
-            {
-                _focusRefreshRunning = false;
-            }
-        }
+        //         await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(true);
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         SVNLogBridge.LogError(
+        //             $"Focus refresh failed: {ex.Message}"
+        //         );
+        //     }
+        //     finally
+        //     {
+        //         _focusRefreshRunning = false;
+        //     }
+        // }
 
         public async Task<string> RunSvn(string args)
         {
