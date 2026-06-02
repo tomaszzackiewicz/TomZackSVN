@@ -38,6 +38,8 @@ namespace SVN.Core
         public static string CachedUserName;
         private bool _isApplyingSnapshot;
         public SVNLockCache LockCache = new SVNLockCache();
+        private FileSystemWatcher _folderWatcher;
+        private volatile bool _diskChangesDetected = false; // volatile for multithreading
 
         public SVNProject CurrentProject { get; private set; }
         public bool WasUpdateCanceled { get; set; }
@@ -185,6 +187,8 @@ namespace SVN.Core
             }
             WorkingDir = SVNAssetLocator.NormalizePath(path);
             SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
+
+            InitFileSystemWatcher();
             await RefreshRepositoryInfo();
         }
 
@@ -296,6 +300,7 @@ namespace SVN.Core
 
             if (Directory.Exists(WorkingDir))
             {
+                InitFileSystemWatcher();
                 await InitializeActiveProject(project);
             }
 
@@ -453,38 +458,42 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
-        // private async void OnApplicationFocus(bool hasFocus)
-        // {
-        //     if (!hasFocus)
-        //         return;
+        private async void OnApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus) return;
+            if (_focusRefreshRunning) return;
 
-        //     if (_focusRefreshRunning)
-        //         return;
+            // 1. Pierwsza zapora: Czy cokolwiek zmieniło się na dysku?
+            // Jeśli tylko klikałeś w przeglądarkę, żeby coś sprawdzić i wracasz -> wychodzimy bez odpalania svn.exe!
+            if (!_diskChangesDetected)
+                return;
 
-        //     if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
-        //         return;
+            // 2. Druga zapora: Cooldown czasowy (np. 2 sekundy)
+            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
+                return;
 
-        //     _lastFocusRefreshTime = Time.realtimeSinceStartup;
+            _lastFocusRefreshTime = Time.realtimeSinceStartup;
+            _focusRefreshRunning = true;
 
-        //     _focusRefreshRunning = true;
+            try
+            {
+                await Task.Delay(300); // Mały buffer na dokończenie zapisów przez IDE
 
-        //     try
-        //     {
-        //         await Task.Delay(500);
+                // Czyścimy flagę PRZED wykonaniem operacji, żeby nie zgubić zmian w trakcie
+                _diskChangesDetected = false;
 
-        //         await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(true);
-        //     }
-        //     catch (Exception ex)
-        //     {
-        //         SVNLogBridge.LogError(
-        //             $"Focus refresh failed: {ex.Message}"
-        //         );
-        //     }
-        //     finally
-        //     {
-        //         _focusRefreshRunning = false;
-        //     }
-        // }
+                // 3. Wywołujemy ODŚWIEŻENIE (Zwróć uwagę na flagę AutoExpand!)
+                await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(false);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"Focus refresh failed: {ex.Message}");
+            }
+            finally
+            {
+                _focusRefreshRunning = false;
+            }
+        }
 
         public async Task<string> RunSvn(string args)
         {
@@ -684,9 +693,56 @@ namespace SVN.Core
             }
         }
 
+        private void InitFileSystemWatcher()
+        {
+            try
+            {
+                // Usuń starego watchera, jeśli np. zmieniasz projekt
+                if (_folderWatcher != null)
+                {
+                    _folderWatcher.EnableRaisingEvents = false;
+                    _folderWatcher.Dispose();
+                    _folderWatcher = null;
+                }
+
+                string path = WorkingDir;
+                if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
+
+                _folderWatcher = new FileSystemWatcher(path);
+                _folderWatcher.IncludeSubdirectories = true;
+
+                _folderWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName;
+
+                _folderWatcher.Changed += OnDiskEvent;
+                _folderWatcher.Created += OnDiskEvent;
+                _folderWatcher.Deleted += OnDiskEvent;
+                _folderWatcher.Renamed += OnDiskEvent;
+
+                _folderWatcher.EnableRaisingEvents = true;
+                SVNLogBridge.LogLine($"[SVN Watcher] Started watching: {path}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[SVN Watcher] Failed to start: {ex.Message}");
+            }
+        }
+
+        private void OnDiskEvent(object sender, FileSystemEventArgs e)
+        {
+            // Ignorujemy zmiany wewnątrz samego katalogu metadanych SVN
+            if (e.FullPath.Contains(".svn")) return;
+
+            _diskChangesDetected = true;
+        }
+
         private void OnDestroy()
         {
             SVN.Core.SvnRunner.OnProcessingStateChanged -= OnSvnProcessingChanged;
+            if (_folderWatcher != null)
+            {
+                _folderWatcher.EnableRaisingEvents = false;
+                _folderWatcher.Dispose();
+            }
         }
     }
 

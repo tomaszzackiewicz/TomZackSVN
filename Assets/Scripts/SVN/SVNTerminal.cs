@@ -56,7 +56,7 @@ namespace SVN.Core
                 if (!string.IsNullOrEmpty(result))
                     SVNLogBridge.LogLine(result, append: true);
                 else
-                    SVNLogBridge.LogLine("<color=#777777>Command completed with no output.</color>", append: true);
+                    SVNLogBridge.LogLine("<color=green>Command completed with no output.</color>", append: true);
 
                 // Odświeżanie UI po zmianach
                 if (cmdToExecute.Contains("update") || cmdToExecute.Contains("commit") ||

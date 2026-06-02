@@ -314,38 +314,16 @@ namespace SVN.Core
 
             try
             {
+                // 1. Czekamy na wykonanie operacji blokady/odblokowania w SVN
                 await SvnRunner.RunAsync(
                     cmd,
                     svnManager.WorkingDir
                 );
 
-                if (isLocked)
-                {
-                    element.LockedByMe = false;
-
-                    svnManager.LockCache.Locks.Remove(
-                        NormalizePath(element.FullPath));
-                }
-                else
-                {
-                    element.LockedByMe = true;
-                    element.LockedByOther = false;
-
-                    svnManager.LockCache.Locks[
-                        NormalizePath(element.FullPath)] =
-                        new SVNLockDetails
-                        {
-                            FullPath = element.FullPath,
-                            Owner = svnManager.CurrentUserName
-                        };
-                }
-
-                var status =
-                    svnManager.GetModule<SVNStatus>();
-
-                status?.RefreshVisibleUIOnly();
-
-                _ = RefreshLockCacheAsync(true);
+                // 2. 🔥 KLUCZOWA ZMIANA: Czekamy aż cache pobierze nowy stan z serwera.
+                // Metoda RefreshLockCacheAsync na samym końcu sama wywoła ApplyLocksToTree(),
+                // które bezpiecznie i finalnie zaktualizuje flagi oraz odświeży UI.
+                await RefreshLockCacheAsync(true);
             }
             catch (Exception ex)
             {
@@ -353,12 +331,8 @@ namespace SVN.Core
                     $"[SVN Lock Error]: {ex.Message}"
                 );
 
+                // W razie błędu również czekamy na odświeżenie stanu faktycznego
                 await RefreshLockCacheAsync(true);
-
-                var status =
-                    svnManager.GetModule<SVNStatus>();
-
-                status?.RefreshVisibleUIOnly();
             }
         }
 

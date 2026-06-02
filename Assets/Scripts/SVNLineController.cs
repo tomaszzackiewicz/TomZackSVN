@@ -55,14 +55,12 @@ public class SvnLineController : MonoBehaviour
         }
         indentText.text = indent;
 
-        bool isRoot = element.FullPath == ".svn-root";
+        // Zabezpieczenie: sprawdzamy oba warianty nazewnictwa roota (tak jak robisz to w linii 126)
+        bool isRoot = element.FullPath == ".svn-root" || element.FullPath == "__ROOT__";
 
-        string statusClean =
-            isRoot
-            ? $" [ROOT]"
-            : (element.Status == "DIR" || string.IsNullOrEmpty(element.Status)
+        string statusClean = (element.Status == "DIR" || string.IsNullOrEmpty(element.Status))
                 ? ""
-                : $" [{element.Status}]");
+                : $" [{element.Status}]";
 
         nameText.fontStyle = FontStyles.Normal;
         nameText.color = Color.white;
@@ -70,7 +68,18 @@ public class SvnLineController : MonoBehaviour
         if (element.IsFolder)
         {
             string dirHex = "#003366";
-            statusText.text = $"<b><color={dirHex}>[DIR]</color></b>{statusClean}";
+
+            if (isRoot)
+            {
+                // Jeśli to ROOT, wypisujemy tylko [ROOT]. Dodajemy status (np. [M]), jeśli root ma jakieś modyfikacje
+                statusText.text = $"<b><color={dirHex}>[ROOT]</color></b>{statusClean}";
+            }
+            else
+            {
+                // Zwykły folder
+                statusText.text = $"<b><color={dirHex}>[DIR]</color></b>{statusClean}";
+            }
+
             statusText.color = Color.black;
 
             nameText.text = element.Name;
@@ -222,12 +231,12 @@ public class SvnLineController : MonoBehaviour
         bool isMissingOrDeleted = status == "!" || status == "D";
         bool hasChanges = !string.IsNullOrEmpty(status) && status != " ";
 
-        // if (addBtn != null) addBtn.gameObject.SetActive(false);
-        // if (revertBtn != null) revertBtn.gameObject.SetActive(false);
-        // if (logBtn != null) logBtn.gameObject.SetActive(false);
-        // if (lockBtn != null) lockBtn.gameObject.SetActive(false);
-        // if (blameBtn != null) blameBtn.gameObject.SetActive(false);
-        // if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
+        if (addBtn != null) addBtn.gameObject.SetActive(false);
+        if (revertBtn != null) revertBtn.gameObject.SetActive(false);
+        if (logBtn != null) logBtn.gameObject.SetActive(false);
+        if (lockBtn != null) lockBtn.gameObject.SetActive(false);
+        if (blameBtn != null) blameBtn.gameObject.SetActive(false);
+        if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
 
         if (!_element.IsFolder && hasChanges)
         {

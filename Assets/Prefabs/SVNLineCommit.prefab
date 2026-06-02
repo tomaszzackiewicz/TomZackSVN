@@ -201,6 +201,9 @@ MonoBehaviour:
   logBtn: {fileID: 0}
   explorerBtn: {fileID: 0}
   addBtn: {fileID: 0}
+  lockBtn: {fileID: 0}
+  lockBtnText: {fileID: 0}
+  blameBtn: {fileID: 0}
 --- !u!114 &2778263038349220294
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1355,9 +1358,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.LayoutElement
   m_IgnoreLayout: 0
-  m_MinWidth: 100
+  m_MinWidth: 120
   m_MinHeight: -1
-  m_PreferredWidth: 100
+  m_PreferredWidth: 120
   m_PreferredHeight: -1
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1

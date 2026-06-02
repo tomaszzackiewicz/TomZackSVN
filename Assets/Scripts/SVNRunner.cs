@@ -79,7 +79,7 @@ namespace SVN.Core
 
                     SVNLogBridge.LogLine(
                         "<color=#FFCC00>[SVN]</color> Processing END",
-                        false
+                        true
                     );
 
                     OnProcessingStateChanged?.Invoke(false);
