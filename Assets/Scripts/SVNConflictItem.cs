@@ -7,7 +7,9 @@ public class SVNConflictItem : MonoBehaviour
 {
     [Header("UI")]
     [SerializeField] private TMP_Text fileNameText;
+    [SerializeField] private TMP_Text conflictTypeText;
 
+    [Header("Buttons")]
     [SerializeField] private Button mineButton;
     [SerializeField] private Button theirsButton;
     [SerializeField] private Button resolvedButton;
@@ -16,51 +18,158 @@ public class SVNConflictItem : MonoBehaviour
 
     private string _path;
 
-    public void Setup(string path)
+    // =====================================================
+    // TYPES
+    // =====================================================
+
+    public enum ConflictType
+    {
+        Text,
+        Manual,
+        Tree
+    }
+
+    // =====================================================
+    // SETUP
+    // =====================================================
+
+    public void Setup(
+        string path,
+        ConflictType type,
+        bool hasMarkers)
     {
         _path = path;
+        //_conflictCache = type;
 
-        fileNameText.text = path;
-
-        mineButton.onClick.RemoveAllListeners();
-        theirsButton.onClick.RemoveAllListeners();
-        resolvedButton.onClick.RemoveAllListeners();
-        openButton.onClick.RemoveAllListeners();
-        deleteButton.onClick.RemoveAllListeners();
-
-        mineButton.onClick.AddListener(() =>
+        if (conflictTypeText != null)
         {
-            SVNManager.Instance
-                .GetModule<SVNResolve>()
-                .ResolveSingleMine(_path);
-        });
+            conflictTypeText.text = type switch
+            {
+                ConflictType.Text => "Text conflict",
+                ConflictType.Manual => "Manual conflict",
+                ConflictType.Tree => "Tree conflict",
+                _ => "Unknown"
+            };
+        }
 
-        theirsButton.onClick.AddListener(() =>
-        {
-            SVNManager.Instance
-                .GetModule<SVNResolve>()
-                .ResolveSingleTheirs(_path);
-        });
+        if (fileNameText != null)
+            fileNameText.text = path;
 
-        resolvedButton.onClick.AddListener(() =>
-        {
-            SVNManager.Instance
-                .GetModule<SVNResolve>()
-                .MarkSingleResolved(_path);
-        });
+        // =====================================================
+        // CLEAR OLD EVENTS
+        // =====================================================
 
-        openButton.onClick.AddListener(() =>
-        {
-            SVNManager.Instance
-                .GetModule<SVNResolve>()
-                .OpenSingle(_path);
-        });
+        ClearButton(mineButton);
+        ClearButton(theirsButton);
+        ClearButton(resolvedButton);
+        ClearButton(openButton);
+        ClearButton(deleteButton);
 
-        deleteButton.onClick.AddListener(() =>
+        // =====================================================
+        // HIDE EVERYTHING FIRST
+        // =====================================================
+
+        SetButton(mineButton, false);
+        SetButton(theirsButton, false);
+        SetButton(resolvedButton, false);
+        SetButton(openButton, false);
+        SetButton(deleteButton, false);
+
+        // =====================================================
+        // TEXT CONFLICT
+        // [Mine] [Theirs] [Open]
+        // =====================================================
+
+        if (type == ConflictType.Text)
         {
-            SVNManager.Instance
-                .GetModule<SVNResolve>()
-                .DeleteObstruction(_path);
-        });
+            SetButton(mineButton, true);
+            SetButton(theirsButton, true);
+            SetButton(openButton, true);
+
+            mineButton.onClick.AddListener(async () =>
+            {
+                await SVNManager.Instance
+                    .GetModule<SVNResolve>()
+                    .ResolveSingleMine(_path);
+            });
+
+            theirsButton.onClick.AddListener(async () =>
+            {
+                await SVNManager.Instance
+                    .GetModule<SVNResolve>()
+                    .ResolveSingleTheirs(_path);
+            });
+
+            openButton.onClick.AddListener(async () =>
+            {
+                await SVNManager.Instance
+                     .GetModule<SVNResolve>()
+                     .OpenSingle(_path);
+            });
+        }
+
+        // =====================================================
+        // MANUAL CONFLICT
+        // [Open] [Resolved]
+        // =====================================================
+
+        else if (type == ConflictType.Manual)
+        {
+            SetButton(openButton, true);
+            SetButton(resolvedButton, true);
+
+            openButton.onClick.AddListener(async () =>
+            {
+                await SVNManager.Instance
+                    .GetModule<SVNResolve>()
+                    .OpenSingle(_path);
+            });
+
+            resolvedButton.interactable = !hasMarkers;
+
+            resolvedButton.onClick.AddListener(async () =>
+            {
+                await SVNManager.Instance
+                    .GetModule<SVNResolve>()
+                    .MarkSingleResolved(_path);
+            });
+        }
+
+        // =====================================================
+        // TREE CONFLICT
+        // [Delete Obstruction]
+        // =====================================================
+
+        else if (type == ConflictType.Tree)
+        {
+            SetButton(deleteButton, true);
+
+            deleteButton.onClick.AddListener(async () =>
+            {
+                await SVNManager.Instance
+                    .GetModule<SVNResolve>()
+                    .DeleteObstruction(_path);
+            });
+        }
+    }
+
+    // =====================================================
+    // HELPERS
+    // =====================================================
+
+    private void ClearButton(Button button)
+    {
+        if (button == null)
+            return;
+
+        button.onClick.RemoveAllListeners();
+    }
+
+    private void SetButton(Button button, bool state)
+    {
+        if (button == null)
+            return;
+
+        button.gameObject.SetActive(state);
     }
 }

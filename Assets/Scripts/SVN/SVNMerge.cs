@@ -16,13 +16,92 @@ namespace SVN.Core
         private bool _lastMergeWasDryRun;
         private bool _hasRollbackPoint;
         private bool _isMerging;
-        private int added = 0;
-        private int updated = 0;
-        private int deleted = 0;
-        private int conflicted = 0;
+        private int _lastIncomingCount = -1; // -1 no branch comparison
 
         private string _lastMergeRevisionBefore;
         private string _lastMergeRevisionAfter;
+
+        private enum MergeSnapshotState
+        {
+            Error,
+            FirstMerge,
+            ExistingMerge
+        }
+
+        private async Task<MergeSnapshotState> TryCaptureMergeSnapshot(string sourceUrl)
+        {
+            try
+            {
+                string eligible =
+     await SvnRunner.RunAsync(
+         $"mergeinfo \"{sourceUrl}\" . --show-revs eligible",
+         svnManager.WorkingDir);
+
+                if (string.IsNullOrWhiteSpace(eligible))
+                {
+                    LogInfo("[Snapshot] No merge history found.");
+
+                    string currentRevision =
+                        await GetWorkingCopyRevision();
+
+                    _lastMergeSource = sourceUrl;
+                    _lastMergeRevisionBefore = currentRevision;
+                    _lastMergeRevisionAfter = currentRevision;
+
+                    _hasRollbackPoint = true;
+
+                    LogInfo("====================================");
+                    LogInfo("[FIRST MERGE SNAPSHOT CREATED]");
+                    LogInfo($"Base Revision : r{currentRevision}");
+                    LogInfo("====================================");
+
+                    return MergeSnapshotState.FirstMerge;
+                }
+
+                var revisions = eligible
+                    .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(x => x.Trim())
+                    .Where(x => x.StartsWith("r"))
+                    .Select(x => x.TrimStart('r'))
+                    .Select(x =>
+                    {
+                        bool ok = long.TryParse(x, out long rev);
+                        return (ok, rev);
+                    })
+                    .Where(x => x.ok)
+                    .Select(x => x.rev)
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .ToList();
+
+                if (revisions.Count == 0)
+                {
+                    LogWarning("[Snapshot] Mergeinfo exists but revisions are invalid.");
+
+                    return MergeSnapshotState.Error;
+                }
+
+                _lastMergeSource = sourceUrl;
+                _lastMergeRevisionBefore = (revisions.First() - 1).ToString();
+                _lastMergeRevisionAfter = revisions.Last().ToString();
+                _hasRollbackPoint = true;
+
+                LogInfo("====================================");
+                LogInfo("[MERGE SNAPSHOT CREATED]");
+                LogInfo($"Source Revision Range : r{_lastMergeRevisionBefore} -> r{_lastMergeRevisionAfter}");
+                LogInfo("====================================");
+
+                return MergeSnapshotState.ExistingMerge;
+            }
+            catch (Exception ex)
+            {
+                LogWarning($"[Snapshot Error] {ex.Message}");
+
+                _hasRollbackPoint = false;
+
+                return MergeSnapshotState.Error;
+            }
+        }
 
         public async Task CompareWithTrunk()
         {
@@ -62,6 +141,9 @@ namespace SVN.Core
                 int missingCount = CountRevisions(missingInBranch);
                 int localCount = CountRevisions(branchOnlyChanges);
 
+                // Zapisujemy stan wewnątrz logiki SVNMerge
+                _lastIncomingCount = missingCount;
+
                 LogInfo("--------------------------------------");
                 LogInfo($"Incoming (Trunk -> Branch): {missingCount}");
                 LogInfo($"Outgoing (Branch -> Trunk): {localCount}");
@@ -69,12 +151,15 @@ namespace SVN.Core
                 if (missingCount > 0 || localCount > 0)
                 {
                     LogWarning("DIVERGENCE DETECTED: trunk and branch are out of sync.");
+                    if (missingCount == 0)
+                    {
+                        LogSuccess("No incoming changes. You only have local commits to push back.");
+                    }
                 }
                 else
                 {
-                    LogSuccess("Fully synchronized with Trunk.");
+                    LogSuccess("Fully synchronized with Trunk. No merge needed.");
                 }
-
             }
             catch (Exception ex)
             {
@@ -88,7 +173,6 @@ namespace SVN.Core
 
         public async Task ExecuteMerge(string sourceInput, bool isDryRun)
         {
-
             // =====================================================
             // 🔒 BLOCK DIRTY WORKING COPY
             // =====================================================
@@ -103,6 +187,15 @@ namespace SVN.Core
                 LogWarning("Commit, revert or cleanup before merging again.");
                 LogWarning("====================================");
 
+                return;
+            }
+
+            if (sourceInput.Equals("trunk", StringComparison.OrdinalIgnoreCase) && _lastIncomingCount == 0)
+            {
+                LogInfo("====================================");
+                LogSuccess("[Merge Blocked] Branch is already fully synchronized with Trunk.");
+                LogSuccess("No incoming revisions to pull. Operation aborted safely.");
+                LogInfo("====================================");
                 return;
             }
 
@@ -128,7 +221,7 @@ namespace SVN.Core
                 LogInfo($"Mode: {(isDryRun ? "DRY RUN" : "LIVE MERGE")}");
                 LogInfo("====================================");
 
-                string repoRoot = svnManager.GetRepoRoot()?.TrimEnd('/');
+                string repoRoot = svnManager.GetRepoRoot()?.Trim().TrimEnd('/');
 
                 if (string.IsNullOrWhiteSpace(repoRoot))
                 {
@@ -216,71 +309,59 @@ namespace SVN.Core
                 // 🔥 SNAPSHOT
                 // =====================================================
 
-                bool snapshotCreated = false;
+                MergeSnapshotState snapshotState = MergeSnapshotState.Error;
 
                 if (!isDryRun)
                 {
-                    snapshotCreated = await TryCaptureMergeSnapshot(sourceUrl);
+                    snapshotState =
+                        await TryCaptureMergeSnapshot(sourceUrl);
 
-                    if (!snapshotCreated)
+                    if (snapshotState == MergeSnapshotState.Error)
                     {
-                        LogInfo("[Merge] First merge detected.");
+                        LogWarning("[Merge] Snapshot capture failed.");
                     }
                 }
 
-                // =====================================================
-                // 🔥 DETECT FIRST MERGE
-                // =====================================================
-
-                bool firstMerge = !snapshotCreated;
+                bool firstMerge =
+                    snapshotState == MergeSnapshotState.FirstMerge;
 
                 // =====================================================
-                // 🔥 BUILD MERGE COMMAND
+                // 🔥 BUILD MERGE COMMAND (POPRAWIONE)
                 // =====================================================
 
+                string dryRunFlag = isDryRun ? "--dry-run " : "";
                 string args;
 
                 if (sourceIsTrunk && !currentIsTrunk)
                 {
                     // trunk → branch
-
                     if (firstMerge)
                     {
-                        LogWarning("[Merge Strategy] FIRST MERGE from trunk detected.");
-                        LogWarning("[Merge Strategy] Using full replay merge.");
-
-                        args =
-                            $"merge -r 0:HEAD \"{sourceUrl}\" " +
-                            $"--ignore-ancestry " +
-                            $"--non-interactive " +
-                            $"--accept postpone";
+                        LogInfo("[Merge Strategy] FIRST MERGE from trunk. Using SVN automatic tracking.");
                     }
                     else
                     {
-                        args =
-                            $"merge \"{sourceUrl}\" " +
-                            $"--non-interactive " +
-                            $"--accept postpone";
+                        LogInfo("[Merge Strategy] Subsequent catch-up merge. Merging missing revisions.");
                     }
+
+                    // Dodajemy {dryRunFlag} w środku stringa
+                    args = $"merge {dryRunFlag}\"{sourceUrl}\" --non-interactive --accept postpone";
                 }
                 else if (!sourceIsTrunk && currentIsTrunk)
                 {
-                    // branch → trunk
+                    // branch → trunk (Reintegrate / Feature Branch Merge)
+                    LogInfo("[Merge Strategy] Merging branch feature-set back into Trunk.");
 
-                    args =
-                        $"merge --reintegrate \"{sourceUrl}\" " +
-                        $"--non-interactive " +
-                        $"--accept postpone";
+                    // Dodajemy {dryRunFlag} w środku stringa
+                    args = $"merge {dryRunFlag}\"{sourceUrl}\" --non-interactive --accept postpone";
                 }
                 else
                 {
                     // branch → branch
+                    LogInfo("[Merge Strategy] Inter-branch merge.");
 
-                    args =
-                        $"merge \"{sourceUrl}\" " +
-                        $"--ignore-ancestry " +
-                        $"--non-interactive " +
-                        $"--accept postpone";
+                    // Dodajemy {dryRunFlag} w środku stringa
+                    args = $"merge {dryRunFlag}\"{sourceUrl}\" --non-interactive --accept postpone";
                 }
 
                 // =====================================================
@@ -339,7 +420,7 @@ namespace SVN.Core
                 // 🔥 RESULT
                 // =====================================================
 
-                ParseMergeOutput(output, isDryRun);
+                await ParseMergeOutput(output, isDryRun);
 
                 // =====================================================
                 // 🔥 REFRESH
@@ -365,7 +446,7 @@ namespace SVN.Core
             }
         }
 
-        private void ParseMergeOutput(string output, bool isDryRun)
+        private async Task ParseMergeOutput(string output, bool isDryRun)
         {
             if (string.IsNullOrWhiteSpace(output))
             {
@@ -404,9 +485,10 @@ namespace SVN.Core
                     continue;
 
                 // =====================================================
-                // 🔥 MERGEINFO DETECTION
+                // 🔥 MERGEINFO DETECTION (bardziej odporne)
                 // =====================================================
-                if (line.Contains("Recording mergeinfo"))
+                if (line.Contains("Recording mergeinfo", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("recorded mergeinfo", StringComparison.OrdinalIgnoreCase))
                 {
                     mergeInfoUpdated = true;
                     continue;
@@ -423,6 +505,24 @@ namespace SVN.Core
 
                 char state = line[0];
 
+                // =====================================================
+                // 🔥 IMPROVED CONFLICT DETECTION (NO DOUBLE COUNTING)
+                // =====================================================
+                bool isConflictLine =
+                    state == 'C' ||
+                    line.StartsWith("C") ||
+                    line.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("tree conflict", StringComparison.OrdinalIgnoreCase);
+
+                if (isConflictLine)
+                {
+                    conflicts++;
+                    continue; // 🔥 ważne: nie licz jako update/added/etc
+                }
+
+                // =====================================================
+                // 🔥 CHANGE CLASSIFICATION
+                // =====================================================
                 switch (state)
                 {
                     case 'A':
@@ -437,18 +537,24 @@ namespace SVN.Core
                     case 'D':
                         deleted++;
                         break;
-
-                    case 'C':
-                        conflicts++;
-                        break;
                 }
 
+                // =====================================================
+                // 🔥 VALID ENTRY COUNTER
+                // =====================================================
                 if (validStates.Contains(state))
                 {
                     changed++;
 
-                    // "." = tylko mergeinfo
-                    if (!line.EndsWith("."))
+                    // =====================================================
+                    // 🔥 MERGEINFO-ONLY FILTER (bardziej stabilny)
+                    // =====================================================
+                    bool isMergeInfoOnly =
+                        line.Trim() == "." ||
+                        line.EndsWith(" .") ||
+                        line.EndsWith(".") && line.Length <= 3;
+
+                    if (!isMergeInfoOnly)
                         realChanges++;
                 }
             }
@@ -477,13 +583,19 @@ namespace SVN.Core
                 return;
             }
 
+            // =====================================================
+            // 🔥 FINAL RESULT
+            // =====================================================
             LogSuccess("====================================");
             LogSuccess("MERGE COMPLETED SUCCESSFULLY");
             LogSuccess("====================================");
 
-            LogInfo($"Added files      : {added}");
-            LogInfo($"Updated files    : {updated}");
-            LogInfo($"Deleted files    : {deleted}");
+            var realStats = await GetRealDiffStats();
+
+            LogInfo($"Total change entries : {changed}");
+            LogInfo($"Added files      : {realStats.added}");
+            LogInfo($"Updated files    : {realStats.updated}");
+            LogInfo($"Deleted files    : {realStats.deleted}");
 
             if (mergeInfoUpdated)
             {
@@ -498,6 +610,14 @@ namespace SVN.Core
             if (skipped > 0)
             {
                 LogWarning($"Skipped items : {skipped}");
+            }
+
+            // =====================================================
+            // 🔥 EDGE CASE: NO-OP MERGE
+            // =====================================================
+            if (realChanges == 0 && conflicts == 0)
+            {
+                LogSuccess("Merge executed but no real file changes were applied.");
             }
 
             LogWarning("Review changes before commit.");
@@ -521,29 +641,43 @@ namespace SVN.Core
 
                 foreach (string raw in lines)
                 {
-                    string line = raw.TrimStart();
+                    if (string.IsNullOrWhiteSpace(raw))
+                        continue;
 
-                    if (string.IsNullOrWhiteSpace(line))
+                    // SVN status może mieć leading spaces
+                    string line = raw.TrimEnd();
+
+                    if (line.Length == 0)
                         continue;
 
                     char state = line[0];
 
-                    // modified / added / deleted / conflicted
-                    if (state == 'A' ||
-                        state == 'M' ||
-                        state == 'D' ||
-                        state == 'C' ||
-                        state == 'R' ||
-                        state == '!')
+                    // =====================================================
+                    // 🔥 ANY REAL SVN CHANGE BLOCKS NEXT MERGE
+                    // INCLUDING:
+                    // M .
+                    // which is usually svn:mergeinfo
+                    // =====================================================
+
+                    switch (state)
                     {
-                        return true;
+                        case 'A':
+                        case 'M':
+                        case 'D':
+                        case 'C':
+                        case 'R':
+                        case 'G':
+                        case '!':
+                            return true;
                     }
                 }
 
                 return false;
             }
-            catch
+            catch (Exception ex)
             {
+                LogWarning($"[Merge Check Failed] {ex.Message}");
+
                 return true;
             }
         }
@@ -582,7 +716,7 @@ namespace SVN.Core
                     // =====================================================
                     // 🌍 REPO ROOT (SAFE FALLBACK)
                     // =====================================================
-                    string repoRoot = svnManager.GetRepoRoot()?.TrimEnd('/');
+                    string repoRoot = svnManager.GetRepoRoot()?.Trim().TrimEnd('/');
 
                     if (string.IsNullOrWhiteSpace(repoRoot))
                     {
@@ -711,39 +845,69 @@ namespace SVN.Core
                 // 🔒 VALIDATION
                 // =====================================================
 
+                bool hasPendingChanges = await HasPendingMergeChanges();
+
+                if (hasPendingChanges)
+                {
+                    LogWarning("====================================");
+                    LogWarning("[Undo Blocked] Uncommitted changes detected (dirty working copy).");
+                    LogWarning("• Use 'Cancel Local Merge' to discard local merge state.");
+                    LogWarning("• 'Undo Last Merge' only works for already applied/committed merges.");
+                    LogWarning("Commit or cancel current changes before using this function.");
+                    LogWarning("====================================");
+                    return;
+                }
+
+                // =====================================================
+                // 🔒 SNAPSHOT VALIDATION
+                // =====================================================
+
                 if (!_hasRollbackPoint ||
                     string.IsNullOrWhiteSpace(_lastMergeSource) ||
-                    string.IsNullOrWhiteSpace(_lastMergeRevisionBefore))
+                    string.IsNullOrWhiteSpace(_lastMergeRevisionBefore) ||
+                    string.IsNullOrWhiteSpace(_lastMergeRevisionAfter))
                 {
-                    LogWarning("[Undo] No merge snapshot available (merge not tracked or overwritten).");
+                    LogWarning("[Undo] No rollback point available (merge not tracked or session lost).");
                     return;
                 }
 
                 if (!long.TryParse(_lastMergeRevisionBefore, out long baseRevision))
                 {
-                    LogErrorLocal("[Undo] Invalid base revision snapshot.");
+                    LogErrorLocal("[Undo] Invalid base revision in snapshot.");
                     return;
                 }
+
+                if (!long.TryParse(_lastMergeRevisionAfter, out long lastRevision))
+                {
+                    LogErrorLocal("[Undo] Invalid last revision in snapshot.");
+                    return;
+                }
+
+                // =====================================================
+                // 🔒 SAFETY CHECK
+                // =====================================================
 
                 string wcStatus = await SvnRunner.RunAsync("status", svnManager.WorkingDir);
                 if (!string.IsNullOrWhiteSpace(wcStatus))
                 {
-                    LogWarning("[Undo] Working copy not clean — risky revert.");
+                    LogWarning("[Undo] Working copy not clean — proceeding is risky.");
                 }
 
                 LogWarning("====================================");
                 LogWarning("[UNDO MERGE]");
                 LogWarning($"Source: {_lastMergeSource}");
-                LogWarning($"Reverting to BASE r{baseRevision}");
+                LogWarning($"Range: r{baseRevision} -> r{lastRevision}");
                 LogWarning("====================================");
 
                 // =====================================================
-                // 🔄 ROBUST REVERSE MERGE (SAFE SVN PATTERN)
+                // 🔄 SAFE REVERSE MERGE
                 // =====================================================
 
-                // klucz: cofamy zmiany względem BASE
+                // zawsze cofamy: LAST -> BEFORE (reverse merge)
+                string range = $"{lastRevision}:{baseRevision}";
+
                 string args =
-                    $"merge -r HEAD:{baseRevision} \"{_lastMergeSource}\" " +
+                    $"merge -r {range} \"{_lastMergeSource}\" " +
                     $"--non-interactive --accept postpone";
 
                 string output;
@@ -752,23 +916,27 @@ namespace SVN.Core
                 {
                     output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
                 }
-                catch (Exception ex)
-                when (ex.Message.Contains(SvnAncestryErrorMsg))
+                catch (Exception ex) when (ex.Message.Contains(SvnAncestryErrorMsg))
                 {
                     LogWarning("[Undo] Retry with --ignore-ancestry...");
 
                     string fallback =
-                        $"merge -r HEAD:{baseRevision} \"{_lastMergeSource}\" " +
+                        $"merge -r {range} \"{_lastMergeSource}\" " +
                         $"--ignore-ancestry --non-interactive --accept postpone";
 
                     output = await SvnRunner.RunAsync(fallback, svnManager.WorkingDir);
+                }
+
+                if (string.IsNullOrWhiteSpace(output))
+                {
+                    LogWarning("[Undo] SVN returned empty output — possible no effective changes.");
                 }
 
                 // =====================================================
                 // 📊 RESULT
                 // =====================================================
 
-                ParseMergeOutput(output, false);
+                await ParseMergeOutput(output, false);
                 await svnManager.RefreshStatus();
                 await svnManager.GetModule<SVNResolve>().RefreshConflictUI();
 
@@ -822,10 +990,68 @@ namespace SVN.Core
 
         private int CountRevisions(string output)
         {
-            if (string.IsNullOrWhiteSpace(output)) return 0;
+            if (string.IsNullOrWhiteSpace(output))
+                return 0;
 
-            return output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-                         .Count(line => !string.IsNullOrWhiteSpace(line));
+            return output
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Count(x =>
+                    x.StartsWith("r") &&
+                    long.TryParse(x.TrimStart('r'), out _));
+        }
+
+        private async Task<(int added, int updated, int deleted)> GetRealDiffStats()
+        {
+            try
+            {
+                string output =
+                    await SvnRunner.RunAsync(
+                        "diff --summarize",
+                        svnManager.WorkingDir);
+
+                if (string.IsNullOrWhiteSpace(output))
+                    return (0, 0, 0);
+
+                int added = 0;
+                int updated = 0;
+                int deleted = 0;
+
+                var lines = output.Split(
+                    new[] { '\r', '\n' },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (var raw in lines)
+                {
+                    string line = raw.TrimStart();
+
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
+                    char state = line[0];
+
+                    switch (state)
+                    {
+                        case 'A':
+                            added++;
+                            break;
+
+                        case 'M':
+                            updated++;
+                            break;
+
+                        case 'D':
+                            deleted++;
+                            break;
+                    }
+                }
+
+                return (added, updated, deleted);
+            }
+            catch
+            {
+                return (0, 0, 0);
+            }
         }
 
         private string Normalize(string input)
@@ -835,69 +1061,6 @@ namespace SVN.Core
                 .Replace("\\", "/")
                 .TrimEnd('/')
                 .ToLowerInvariant();
-        }
-
-        private async Task<bool> TryCaptureMergeSnapshot(string sourceUrl)
-        {
-            try
-            {
-                string merged =
-                    await SvnRunner.RunAsync(
-                        $"mergeinfo \"{sourceUrl}\" . --show-revs merged",
-                        svnManager.WorkingDir);
-
-                var revisions = merged
-                    .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(x => x.Trim().TrimStart('r'))
-                    .Where(x => long.TryParse(x, out _))
-                    .Select(long.Parse)
-                    .OrderBy(x => x)
-                    .ToList();
-
-                // =====================================================
-                // 🔥 FIRST MERGE CASE
-                // =====================================================
-                if (revisions.Count == 0)
-                {
-                    LogInfo("[Snapshot] First merge for this branch.");
-
-                    string currentRevision =
-                        await GetWorkingCopyRevision();
-
-                    _lastMergeSource = sourceUrl;
-                    _lastMergeRevisionBefore = currentRevision;
-                    _lastMergeRevisionAfter = "HEAD";
-
-                    _hasRollbackPoint = true;
-
-                    LogInfo("====================================");
-                    LogInfo("[FIRST MERGE SNAPSHOT CREATED]");
-                    LogInfo($"Base Revision : r{currentRevision}");
-                    LogInfo("====================================");
-
-                    return false;
-                }
-
-                _lastMergeSource = sourceUrl;
-                _lastMergeRevisionBefore = revisions.First().ToString();
-                _lastMergeRevisionAfter = revisions.Last().ToString();
-                _hasRollbackPoint = true;
-
-                LogInfo("====================================");
-                LogInfo("[MERGE SNAPSHOT CREATED]");
-                LogInfo($"Source Revision Range : r{_lastMergeRevisionBefore} -> r{_lastMergeRevisionAfter}");
-                LogInfo("====================================");
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"[Snapshot Error] {ex.Message}");
-
-                _hasRollbackPoint = false;
-
-                return false;
-            }
         }
 
         private const string SvnConflictErrorCode = "E200004";

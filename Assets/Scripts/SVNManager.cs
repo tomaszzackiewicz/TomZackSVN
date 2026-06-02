@@ -223,12 +223,18 @@ namespace SVN.Core
                 {
                     await LoadProject(lastProject);
 
-                    projectSelectionPanel?.gameObject.SetActive(false);
+                    if (projectSelectionPanel != null)
+                    {
+                        projectSelectionPanel.gameObject.SetActive(false);
+                    }
                 }
                 else
                 {
-                    projectSelectionPanel?.gameObject.SetActive(true);
-                    projectSelectionPanel?.RefreshList();
+                    if (projectSelectionPanel != null)
+                    {
+                        projectSelectionPanel.gameObject.SetActive(true);
+                        projectSelectionPanel.RefreshList();
+                    }
                 }
             }
             else

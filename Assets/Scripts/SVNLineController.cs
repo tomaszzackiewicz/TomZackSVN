@@ -43,9 +43,14 @@ public class SvnLineController : MonoBehaviour
         }
         indentText.text = indent;
 
-        string statusClean = (element.Status == "DIR" || string.IsNullOrEmpty(element.Status))
-                             ? ""
-                             : $" [{element.Status}]";
+        bool isRoot = element.FullPath == ".svn-root";
+
+        string statusClean =
+            isRoot
+            ? $" [ROOT CHANGE]"
+            : (element.Status == "DIR" || string.IsNullOrEmpty(element.Status)
+                ? ""
+                : $" [{element.Status}]");
 
         nameText.fontStyle = FontStyles.Normal;
         nameText.color = Color.white;
@@ -137,27 +142,66 @@ public class SvnLineController : MonoBehaviour
         {
             fullRowButton.onClick.RemoveAllListeners();
 
-            bool isFile = !_element.IsFolder;
-            bool canDiff = isFile && !string.IsNullOrEmpty(_element.Status);
+            bool isRootMeta = _element.FullPath == ".svn-root" || _element.FullPath == "__ROOT__";
+            bool isFolder = _element.IsFolder;
+            bool isFile = !isFolder;
 
+            bool hasStatus = !string.IsNullOrEmpty(_element.Status) && _element.Status != " ";
+
+            bool canDiff =
+                !isRootMeta &&
+                isFile &&
+                hasStatus;
+
+            // =========================
+            // 🔥 ROOT CHANGE HANDLING
+            // =========================
+            if (isRootMeta)
+            {
+                fullRowButton.interactable = true;
+
+                fullRowButton.onClick.AddListener(() =>
+                {
+                    // możesz tu odpalić np. diff root / log repo root
+                    var log = SVNManager.Instance?.GetModule<SVNLog>();
+                    log?.ShowLogForPath(".");
+                });
+
+                BindHover(fullRowButton, "Repository root change (M .)");
+                statusText.text = "[ROOT CHANGE]";
+                return;
+            }
+
+            // =========================
+            // FILE DIFF MODE
+            // =========================
             if (canDiff)
             {
                 fullRowButton.interactable = true;
                 fullRowButton.onClick.AddListener(OnFullRowClick);
 
-                statusText.text = statusClean;
+                //statusText.text = statusClean;
                 BindHover(fullRowButton, "Click: Preview | Double-Click: External Diff");
             }
-            else if (_element.IsFolder)
+            // =========================
+            // FOLDER MODE
+            // =========================
+            else if (isFolder)
             {
                 fullRowButton.interactable = true;
                 fullRowButton.onClick.AddListener(OnFoldClick);
-                BindHover(fullRowButton, _element.IsExpanded ? "Click to collapse" : "Click to expand");
+
+                BindHover(fullRowButton, _element.IsExpanded
+                    ? "Click to collapse"
+                    : "Click to expand");
             }
+            // =========================
+            // EMPTY / NO ACTION
+            // =========================
             else
             {
                 fullRowButton.interactable = false;
-                BindHover(fullRowButton, "File is up to date.");
+                BindHover(fullRowButton, "No actionable change.");
             }
         }
 

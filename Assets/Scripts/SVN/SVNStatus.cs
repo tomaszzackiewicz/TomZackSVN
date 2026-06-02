@@ -21,14 +21,7 @@ namespace SVN.Core
         private CancellationTokenSource _cts;
         private const bool ENABLE_FILE_SIZES = true;
 
-        private static readonly string[] SIZE_UNITS =
-{
-    "B",
-    "KB",
-    "MB",
-    "GB",
-    "TB"
-};
+        private static readonly string[] SIZE_UNITS = { "B", "KB", "MB", "GB", "TB" };
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -134,6 +127,7 @@ namespace SVN.Core
                 SVNLogBridge.LogError($"[SVN] Błąd podczas odświeżania: {e.Message}");
             }
         }
+
         public async Task RefreshModifiedInternal()
         {
             svnManager.ExpandedPaths.Clear();
@@ -169,9 +163,6 @@ namespace SVN.Core
 
             try
             {
-                // =====================================================
-                // 1. SHOW LOADING TEXT (BEFORE ANY HEAVY WORK)
-                // =====================================================
                 if (svnUI != null)
                 {
                     if (svnUI.TreeDisplay != null)
@@ -196,20 +187,12 @@ namespace SVN.Core
                     }
                 }
 
-                // 🔥 IMPORTANT: force UI paint BEFORE clearing / heavy work
                 await Task.Yield();
                 token.ThrowIfCancellationRequested();
-
-                // =====================================================
-                // 2. CLEAR VISUAL TREE (AFTER TEXT IS SHOWN)
-                // =====================================================
 
                 svnUI?.SvnTreeView?.ClearView();
                 svnUI?.SVNCommitTreeDisplay?.ClearView();
 
-                // =====================================================
-                // 3. LOAD SVN STATUS
-                // =====================================================
                 string root = svnManager.WorkingDir;
                 var statusDict = await GetChangesDictionaryAsync(root, token);
 
@@ -245,9 +228,6 @@ namespace SVN.Core
                     }
                 }
 
-                // =====================================================
-                // 4. BUILD TREE (BACKGROUND THREAD)
-                // =====================================================
                 var buildResult = await Task.Run(() =>
                 {
                     token.ThrowIfCancellationRequested();
@@ -261,22 +241,17 @@ namespace SVN.Core
 
                 var localData = _flatTreeData;
 
-                // =====================================================
-                // 5. MAIN TREE UI
-                // =====================================================
                 if (svnUI.SvnTreeView != null &&
                     svnUI.SvnTreeView.gameObject.activeInHierarchy)
                 {
                     foreach (var e in localData)
                         e.IsCommitDelegate = false;
 
-                    // 🔥 FIX: Czyszczenie overlay'a PRZED ciężkim renderowaniem elementów drzewa
                     if (svnUI.TreeDisplay != null)
                     {
                         SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
                     }
 
-                    // Teraz ładujemy strukturę – napis już jest wygaszony w kolejce renderu
                     svnUI.SvnTreeView.RefreshUI(localData, this);
 
                     _ = LoadLocksAsync(root, localData, token);
@@ -284,9 +259,6 @@ namespace SVN.Core
 
                 token.ThrowIfCancellationRequested();
 
-                // =====================================================
-                // 6. COMMIT TREE
-                // =====================================================
                 if (svnUI.SVNCommitTreeDisplay != null &&
                     svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
                 {
@@ -309,9 +281,6 @@ namespace SVN.Core
                     UpdateSelectedSizeDisplay();
                 }
 
-                // =====================================================
-                // 7. STATS
-                // =====================================================
                 UpdateAllStatisticsUI(
                     CalculateStats(statusDict),
                     _isCurrentViewIgnored
@@ -376,29 +345,6 @@ namespace SVN.Core
             }
         }
 
-        public async Task SetLockAsync()
-        {
-            string root = svnManager.WorkingDir;
-
-            var lockDict = await GetLocksDictionaryAsync(root);
-
-            if (lockDict == null || lockDict.Count == 0)
-                return;
-
-            ApplyLockColors(_flatTreeData, lockDict);
-
-            if (svnUI?.SvnTreeView != null)
-            {
-                svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
-            }
-        }
-
-        private async Task WaitForNextFrame()
-        {
-            await Task.Yield();
-            await Task.Delay(1);
-        }
-
         private void ShowEmptyState()
         {
             ResetTreeView();
@@ -427,24 +373,6 @@ namespace SVN.Core
                     append: false);
 
             UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
-        }
-
-        private void RefreshAllUIComponents()
-        {
-            if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
-            {
-                foreach (var e in _flatTreeData) e.IsCommitDelegate = false;
-                svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
-            }
-
-            bool isCommitActive = (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy);
-            if (isCommitActive)
-            {
-                _commitTreeData = BuildCommitView(_flatTreeData);
-                svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-
-                UpdateSelectedSizeDisplay();
-            }
         }
 
         public void RefreshVisibleUIOnly()
@@ -540,10 +468,17 @@ namespace SVN.Core
 
             foreach (var element in source)
             {
+                bool isRoot =
+                    element.FullPath == ".svn-root" ||
+                    element.FullPath == ".";
+
                 bool isCommitable =
-                    !string.IsNullOrWhiteSpace(element.Status) &&
-                    element.Status != " " &&
-                    element.Status != "DIR";
+                    isRoot ||
+                    (
+                        !string.IsNullOrWhiteSpace(element.Status) &&
+                        element.Status != " " &&
+                        element.Status != "DIR"
+                    );
 
                 if (!isCommitable)
                     continue;
@@ -553,7 +488,6 @@ namespace SVN.Core
                 while (!string.IsNullOrEmpty(current))
                 {
                     visible.Add(current);
-
                     current = GetParentPath(current);
                 }
             }
@@ -593,6 +527,8 @@ namespace SVN.Core
         {
             var previousSelectionStates = new Dictionary<string, bool>();
 
+            bool hasRootChange = statusDict.ContainsKey(".");
+
             if (_flatTreeData != null)
             {
                 foreach (var e in _flatTreeData)
@@ -612,8 +548,37 @@ namespace SVN.Core
 
             long localTotalBytes = 0;
 
+            if (hasRootChange)
+            {
+                var rootInfo = statusDict["."];
+
+                elements.Add(new SvnTreeElement
+                {
+                    FullPath = ".svn-root",
+                    Name = "[Repository Root Change]",
+                    Depth = 0,
+                    Status = rootInfo.Status,
+
+                    IsFolder = true,
+
+                    IsCommitDelegate = true,
+
+                    IsChecked = true,
+                    IsExpanded = true,
+                    IsVisible = true,
+
+                    Size = "",
+                    Bytes = 0
+                });
+
+                existingPaths.Add(".");
+            }
+
             foreach (var relPath in sortedPaths)
             {
+                if (relPath == ".")
+                    continue;
+
                 string normalizedPath = relPath.Replace('\\', '/');
 
                 if (normalizedPath.Contains(":/"))
@@ -644,18 +609,10 @@ namespace SVN.Core
                         continue;
 
                     bool isLastPart = (i == parts.Length - 1);
-                    bool isActuallyFolder;
 
-                    if (!isLastPart)
-                    {
-                        isActuallyFolder = true;
-                    }
-                    else
-                    {
-                        isActuallyFolder =
-                            statusDict.TryGetValue(currentPath, out var info) &&
-                            info.Size == "DIR";
-                    }
+                    bool isActuallyFolder =
+                        !isLastPart ||
+                        (statusDict.TryGetValue(relPath, out var info) && info.Size == "DIR");
 
                     string displayStatus = " ";
 
@@ -689,7 +646,6 @@ namespace SVN.Core
                     )
                     {
                         bytes = fileInfo.Bytes;
-
                         fileSize = FormatSize(bytes);
 
                         if (
@@ -777,8 +733,7 @@ namespace SVN.Core
 
             if (_flatTreeData == null || _flatTreeData.Count == 0)
             {
-                svnUI.CommitSizeText.text =
-                    "Total Commit Size: <color=#FFFF00>0 B</color>";
+                svnUI.CommitSizeText.text = "Total Commit Size: <color=#FFFF00>0 B</color>";
                 return;
             }
 
@@ -862,7 +817,6 @@ namespace SVN.Core
 
             workingDir = workingDir.Replace("\\", "/").TrimEnd('/');
 
-            // 🔥 FAST STATUS
             string output = await SvnRunner.RunAsync(
                 "status --ignore-externals",
                 workingDir,
@@ -893,9 +847,22 @@ namespace SVN.Core
 
                 string rawPath = line.Substring(svnStatusPrefixLength).Trim();
                 string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
-                string fullPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
 
-                // --- POPRAWIONA LOGIKA IDENTYFIKACJI ---
+                bool isRootChange = cleanPath == ".";
+
+                if (isRootChange)
+                {
+                    statusDict["."] = new SvnChangeInfo
+                    {
+                        Status = stat,
+                        Size = "DIR",
+                        Bytes = 0,
+                        Exists = true
+                    };
+
+                    continue;
+                }
+                string fullPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
 
                 bool isActuallyFile = File.Exists(fullPath);
                 bool isActuallyDir = !isActuallyFile && Directory.Exists(fullPath);
@@ -906,7 +873,6 @@ namespace SVN.Core
 
                 if (existsOnDisk)
                 {
-                    // Jeśli istnieje, sprawdzamy czy to plik czy folder
                     sizeLabel = isActuallyFile ? fileLabel : directoryLabel;
 
                     if (isActuallyFile)
@@ -921,8 +887,6 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // 🔥 KLUCZOWA POPRAWKA: Element usunięty/brakujący (Status 'D' lub '!')
-                    // Używamy heurystyki rozszerzenia pliku, aby odróżnić plik od folderu
                     sizeLabel = Path.HasExtension(cleanPath) ? fileLabel : directoryLabel;
                 }
 

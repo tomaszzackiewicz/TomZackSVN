@@ -18,6 +18,7 @@ namespace SVN.Core
         public bool IsCommitDelegate;
         public bool LockedByMe;
         public bool LockedByOther;
+        public bool IsRootChange;
 
         public SvnTreeElement Clone()
         {

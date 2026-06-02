@@ -14,8 +14,21 @@ namespace SVN.Core
         private bool isRefreshing = false;
         private bool _uiRefreshing = false;
 
-        private HashSet<string> _lastRenderedConflicts =
-            new HashSet<string>();
+        private readonly SemaphoreSlim _resolveLock = new(1, 1);
+
+        public enum SVNConflictType { Text, Manual, Tree }
+
+        public enum SVNConflictState { Pending, ManualEditing, Resolving, Resolved }
+
+        public class SVNConflictData
+        {
+            public string Path;
+            public SVNConflictType Type;
+            public SVNConflictState State;
+        }
+
+        private readonly Dictionary<string, SVNConflictData> _conflictCache =
+    new Dictionary<string, SVNConflictData>();
 
         public SVNResolve(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
@@ -47,25 +60,20 @@ namespace SVN.Core
                     return;
                 }
 
-                await svnManager.RefreshStatus();
+                await Task.Delay(120);
 
-                await Task.Delay(150);
+                var conflicts = await GetConflicts(root);
 
-                string[] conflicts =
-                    await GetTargetPaths(root);
+                LogBoth(conflicts.Count > 0
+                    ? $"<b>[Resolve]</b> Detected conflicts: {conflicts.Count}"
+                    : "<b>[Resolve]</b> No conflicts");
 
-                if (conflicts.Length > 0)
-                {
-                    LogBoth(
-                        $"<b>[Resolve]</b> Detected conflicts: {conflicts.Length}");
-                }
-
-                await RefreshConflictUI(conflicts);
+                if (!_uiRefreshing)
+                    await RefreshConflictUI();
             }
             catch (Exception ex)
             {
-                LogBoth(
-                    $"<color=red>Refresh conflict list failed:</color> {ex.Message}");
+                LogBoth($"<color=red>Refresh conflict list failed:</color> {ex.Message}");
             }
             finally
             {
@@ -73,160 +81,225 @@ namespace SVN.Core
             }
         }
 
-        private async Task<string[]> GetTargetPaths(string root)
+        private async Task ResolveMany(
+    IEnumerable<SVNConflictData> conflicts,
+    string strategy)
+        {
+            if (conflicts == null)
+                return;
+
+            var snapshot =
+                conflicts
+                    .Where(x =>
+                        x != null &&
+                        !string.IsNullOrWhiteSpace(x.Path))
+                    .Select(x => x.Path)
+                    .Distinct()
+                    .ToList();
+
+            foreach (var path in snapshot)
+            {
+                await ResolveSingle(
+                    path,
+                    strategy);
+            }
+
+            await Task.Delay(150);
+
+            var latest =
+                await GetConflicts(
+                    svnManager.WorkingDir);
+
+            _conflictCache.Clear();
+
+            foreach (var c in latest)
+            {
+                _conflictCache[c.Path] = c;
+            }
+
+            if (!_uiRefreshing)
+                await RefreshConflictUI();
+        }
+
+        private async Task<List<SVNConflictData>> GetConflicts(string root)
         {
             try
             {
-                if (svnUI.ResolveTargetFileInput != null &&
-                    !string.IsNullOrWhiteSpace(svnUI.ResolveTargetFileInput.text))
-                {
-                    return new[]
-                    {
-                NormalizePath(
-                    svnUI.ResolveTargetFileInput.text.Trim())
-            };
-                }
-
-                string xml =
-                    await SvnRunner.RunAsync(
-                        "status --xml",
-                        root);
+                string xml = await SvnRunner.RunAsync("status --xml", root);
 
                 if (string.IsNullOrWhiteSpace(xml))
                 {
                     LogBoth("<color=red>[Resolve] Empty SVN XML</color>");
-                    return Array.Empty<string>();
+                    return new List<SVNConflictData>();
                 }
-
-                HashSet<string> conflicts =
-                    new HashSet<string>();
 
                 XDocument doc = XDocument.Parse(xml);
 
-                foreach (XElement entry in doc.Descendants("entry"))
+                var result = new List<SVNConflictData>();
+                var seen = new HashSet<string>();
+
+                foreach (var entry in doc.Descendants("entry"))
                 {
-                    XElement wcStatus =
-                        entry.Element("wc-status");
+                    var wc = entry.Element("wc-status");
+                    if (wc == null) continue;
 
-                    if (wcStatus == null)
-                        continue;
-
-                    string itemStatus =
-                        wcStatus.Attribute("item")?.Value;
-
-                    string propsStatus =
-                        wcStatus.Attribute("props")?.Value;
-
-                    string treeConflicted =
-                        wcStatus.Attribute("tree-conflicted")?.Value;
+                    string item = wc.Attribute("item")?.Value;
+                    string props = wc.Attribute("props")?.Value;
+                    string tree = wc.Attribute("tree-conflicted")?.Value;
 
                     bool isConflict =
-                        itemStatus == "conflicted" ||
-                        propsStatus == "conflicted" ||
-                        treeConflicted == "true";
+                        item == "conflicted" ||
+                        props == "conflicted" ||
+                        tree == "true";
 
                     if (!isConflict)
                         continue;
 
-                    string path =
-                        entry.Attribute("path")?.Value;
-
+                    string path = NormalizePath(entry.Attribute("path")?.Value);
                     if (string.IsNullOrWhiteSpace(path))
                         continue;
 
-                    conflicts.Add(
-                        NormalizePath(path));
+                    if (!seen.Add(path))
+                        continue;
+
+                    var type =
+                        tree == "true"
+                            ? SVNConflictType.Tree
+                            : SVNConflictType.Text;
+
+                    if (_conflictCache.TryGetValue(path, out var cached) &&
+                        cached.State == SVNConflictState.ManualEditing)
+                    {
+                        type = SVNConflictType.Manual;
+                    }
+
+                    var data = new SVNConflictData
+                    {
+                        Path = path,
+                        Type = type,
+                        State = _conflictCache.TryGetValue(path, out var old)
+                            ? old.State
+                            : SVNConflictState.Pending
+                    };
+
+                    _conflictCache[path] = data;
+                    result.Add(data);
                 }
 
-                return conflicts.ToArray();
+                var valid = result.Select(x => x.Path).ToHashSet();
+                foreach (var key in _conflictCache.Keys.ToList())
+                {
+                    if (!valid.Contains(key))
+                        _conflictCache.Remove(key);
+                }
+
+                return result.OrderBy(x => x.Path).ToList();
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>GetTargetPaths XML error:</color> {ex.Message}");
-                return Array.Empty<string>();
+                LogBoth($"<color=red>GetConflicts error:</color> {ex.Message}");
+                return new List<SVNConflictData>();
             }
-        }
-
-        private async Task RefreshAll()
-        {
-            await svnManager.RefreshStatus();
-
-            await Task.Delay(150);
-
-            await RefreshConflictUI();
         }
 
         public async void MarkAsResolved()
         {
             if (IsProcessing) return;
-            string root = svnManager.WorkingDir;
+
             IsProcessing = true;
 
             try
             {
-                string[] targetPaths = await GetTargetPaths(root);
-                if (targetPaths.Length == 0)
+                var conflicts = await GetConflicts(svnManager.WorkingDir);
+
+                if (conflicts.Count == 0)
                 {
                     LogBoth("<color=yellow>No conflicts found.</color>");
                     return;
                 }
 
-                foreach (var path in targetPaths)
+                foreach (var c in conflicts)
                 {
-                    string fullPath = Path.Combine(root, path);
-                    if (File.Exists(fullPath))
+                    string full = Path.Combine(svnManager.WorkingDir, c.Path);
+
+                    if (File.Exists(full))
                     {
-                        string content = await File.ReadAllTextAsync(fullPath);
-                        if (content.Contains("<<<<<<<") || content.Contains("=======") || content.Contains(">>>>>>>"))
+                        string content = await File.ReadAllTextAsync(full);
+
+                        if (content.Contains("<<<<<<<") ||
+                            content.Contains("=======") ||
+                            content.Contains(">>>>>>>"))
                         {
-                            LogBoth($"<color=red>Abort:</color> File {path} still has conflict markers!");
+                            LogBoth($"<color=red>Abort:</color> {c.Path} still has markers");
                             return;
                         }
                     }
                 }
 
-                await RunSvnResolve(root, targetPaths, "working");
-                LogBoth("<color=green>Marked as resolved successfully.</color>");
-                await RefreshAll();
+                await ResolveMany(conflicts, "working");
+
+                LogBoth("<color=green>Marked as resolved.</color>");
             }
-            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}"); }
-            finally { IsProcessing = false; }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=red>Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
-        public async void ResolveTheirs() => await RunResolveStrategy("theirs-full");
-        public async void ResolveMine() => await RunResolveStrategy("mine-full");
-
-        private async Task RunResolveStrategy(string strategy)
+        public async void ResolveTheirs()
         {
             if (IsProcessing) return;
-            string root = svnManager.WorkingDir;
-            IsProcessing = true;
 
+            IsProcessing = true;
             try
             {
-                string[] targetPaths = await GetTargetPaths(root);
-                if (targetPaths.Length > 0)
-                {
-                    LogBoth($"Applying strategy <color=orange>{strategy}</color> to {targetPaths.Length} items...");
-                    await RunSvnResolve(root, targetPaths, strategy);
-                    LogBoth("<color=green>Resolved!</color>");
-                    await RefreshAll();
-                }
-                else LogBoth("<color=yellow>Nothing to resolve.</color>");
+                var conflicts = await GetConflicts(svnManager.WorkingDir);
+
+                await ResolveMany(conflicts, "theirs-full");
+
+                LogBoth("<color=green>Theirs-full batch resolved.</color>");
             }
-            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}"); }
-            finally { IsProcessing = false; }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=red>Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
-        private async Task RunSvnResolve(string root, string[] paths, string acceptStrategy)
+        public async void ResolveMine()
         {
-            string pathsArg = string.Join(" ", paths.Select(p => $"\"{p}\""));
-            await SvnRunner.RunAsync($"resolve --accept {acceptStrategy} {pathsArg}", root);
+            if (IsProcessing) return;
+
+            IsProcessing = true;
+            try
+            {
+                var conflicts = await GetConflicts(svnManager.WorkingDir);
+
+                await ResolveMany(conflicts, "mine-full");
+
+                LogBoth("<color=green>Mine-full batch resolved.</color>");
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=red>Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
         public async void OpenInEditor()
         {
             if (IsProcessing) return;
+
             string root = svnManager.WorkingDir;
             string editorPath = svnManager.MergeToolPath;
 
@@ -243,64 +316,81 @@ namespace SVN.Core
             try
             {
                 IsProcessing = true;
-                string targetFile = "";
 
-                if (svnUI.ResolveTargetFileInput != null && !string.IsNullOrEmpty(svnUI.ResolveTargetFileInput.text))
+                string targetFile = null;
+
+                if (svnUI.ResolveTargetFileInput != null &&
+                    !string.IsNullOrWhiteSpace(svnUI.ResolveTargetFileInput.text))
                 {
-                    targetFile = svnUI.ResolveTargetFileInput.text.Trim();
+                    targetFile = NormalizePath(svnUI.ResolveTargetFileInput.text.Trim());
                 }
                 else
                 {
-                    var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
-                    var conflict = statusDict?.FirstOrDefault(x => !string.IsNullOrEmpty(x.Value.status) && x.Value.status.Contains("C"));
-                    if (conflict.HasValue && !string.IsNullOrEmpty(conflict.Value.Key))
-                        targetFile = conflict.Value.Key;
+                    var first = _conflictCache
+                        .Values
+                        .OrderBy(x => x.Path)
+                        .FirstOrDefault(x => x.State != SVNConflictState.Resolved);
+
+                    if (first != null)
+                        targetFile = first.Path;
                 }
 
-                if (!string.IsNullOrEmpty(targetFile))
+                if (string.IsNullOrEmpty(targetFile))
                 {
-                    string fullPath = Path.Combine(root, targetFile);
-                    LogBoth($"Opening editor: <color=green>{targetFile}</color>");
-                    System.Diagnostics.Process.Start(editorPath, $"\"{fullPath}\"");
+                    var conflicts = await GetConflicts(root);
+
+                    foreach (var c in conflicts)
+                    {
+                        if (_conflictCache.TryGetValue(c.Path, out var existing))
+                            existing.Type = c.Type;
+                        else
+                            _conflictCache[c.Path] = c;
+                    }
+
+                    targetFile = conflicts.FirstOrDefault()?.Path;
                 }
-                else LogBoth("<color=yellow>No conflicted file found to open.</color>");
+
+                if (string.IsNullOrEmpty(targetFile))
+                {
+                    LogBoth("<color=yellow>No conflicted file found to open.</color>");
+                    return;
+                }
+
+                string fullPath = Path.Combine(root, targetFile);
+
+                LogBoth($"Opening editor: <color=green>{targetFile}</color>");
+
+                System.Diagnostics.Process.Start(editorPath, $"\"{fullPath}\"");
+
+                if (_conflictCache.TryGetValue(targetFile, out var conflict))
+                {
+                    conflict.Type = SVNConflictType.Manual;
+                    conflict.State = SVNConflictState.ManualEditing;
+                }
+                else
+                {
+                    _conflictCache[targetFile] = new SVNConflictData
+                    {
+                        Path = targetFile,
+                        Type = SVNConflictType.Manual,
+                        State = SVNConflictState.ManualEditing
+                    };
+                }
+
+                await RefreshConflictUI();
             }
-            catch (Exception ex) { LogBoth($"<color=red>Exception:</color> {ex.Message}"); }
-            finally { IsProcessing = false; }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=red>Exception:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
-        private async Task<string[]> GetTreeConflictFiles()
+        public async Task RefreshConflictUI()
         {
-            string status =
-                await SVNManager.Instance.RunSvn("status");
-
-            if (string.IsNullOrWhiteSpace(status))
-                return Array.Empty<string>();
-
-            var lines = status.Split(
-                new[] { '\r', '\n' },
-                StringSplitOptions.RemoveEmptyEntries);
-
-            return lines
-                .Where(x => x.StartsWith("C"))
-                .Select(x =>
-                {
-                    int index = x.IndexOf(' ');
-
-                    if (index < 0)
-                        return null;
-
-                    return x.Substring(index).Trim();
-                })
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct()
-                .ToArray();
-        }
-
-        public async Task RefreshConflictUI(
-    string[] preFetchedConflicts = null)
-        {
-            // 🔒 blokada równoległego renderowania
             if (_uiRefreshing)
                 return;
 
@@ -308,106 +398,43 @@ namespace SVN.Core
 
             try
             {
-                string root = svnManager.WorkingDir;
+                var root = svnManager.WorkingDir;
+                var conflicts = await GetConflicts(root);
 
-                var conflicts =
-                    (preFetchedConflicts ??
-                     await GetTargetPaths(root))
-                    .Select(NormalizePath)
-                    .Distinct()
-                    .OrderBy(x => x)
-                    .ToArray();
-
-                // =====================================================
-                // 🔥 CACHE CHECK
-                // =====================================================
-
-                HashSet<string> currentSet =
-                    new HashSet<string>(conflicts);
-
-                if (currentSet.SetEquals(_lastRenderedConflicts))
-                {
-                    return;
-                }
-
-                _lastRenderedConflicts = currentSet;
-
-                // =====================================================
-                // 🔥 VALIDATION
-                // =====================================================
-
-                if (svnUI.ResolveConsoleContent == null)
-                {
-                    LogBoth("<color=red>ResolveConsoleContent NULL</color>");
-                    return;
-                }
-
-                if (svnUI.ConflictPrefab == null)
-                {
-                    LogBoth("<color=red>ConflictPrefab NULL</color>");
-                    return;
-                }
-
-                // =====================================================
-                // 🔥 CLEAR OLD UI
-                // =====================================================
-
-                Transform parent =
-                    svnUI.ResolveConsoleContent.transform;
+                Transform parent = svnUI.ResolveConsoleContent.transform;
 
                 for (int i = parent.childCount - 1; i >= 0; i--)
                 {
-                    Transform child =
-                        parent.GetChild(i);
-
-                    child.SetParent(null);
-
-                    if (Application.isPlaying)
-                    {
-                        GameObject.Destroy(child.gameObject);
-                    }
-                    else
-                    {
-                        GameObject.DestroyImmediate(child.gameObject);
-                    }
+                    var child = parent.GetChild(i);
+                    GameObject.Destroy(child.gameObject);
                 }
 
                 await Task.Yield();
 
-                // =====================================================
-                // 🔥 BUILD NEW UI
-                // =====================================================
-
-                foreach (string conflict in conflicts)
+                foreach (var c in conflicts)
                 {
-                    GameObject obj =
-                        GameObject.Instantiate(
-                            svnUI.ConflictPrefab,
-                            parent);
+                    bool markers = await HasConflictMarkers(c.Path);
 
+                    var obj = GameObject.Instantiate(svnUI.ConflictPrefab, parent);
                     obj.SetActive(true);
 
-                    SVNConflictItem item =
-                        obj.GetComponent<SVNConflictItem>();
-
+                    var item = obj.GetComponent<SVNConflictItem>();
                     if (item == null)
                     {
-                        LogBoth("<color=red>SVNConflictItem missing on prefab!</color>");
+                        LogBoth("<color=red>SVNConflictItem missing!</color>");
                         continue;
                     }
 
-                    item.Setup(conflict);
+                    item.Setup(c.Path, ConvertConflictType(c.Type), markers);
                 }
 
                 Canvas.ForceUpdateCanvases();
 
-                LogBoth(
-                    $"[Resolve UI] Generated {conflicts.Length} conflict items.");
+                LogBoth($"[Resolve UI] Generated {conflicts.Count} conflict items.");
             }
             catch (Exception ex)
             {
-                LogBoth(
-                    $"<color=red>RefreshConflictUI failed:</color> {ex.Message}");
+                LogBoth($"<color=red>RefreshConflictUI failed:</color> {ex.Message}");
             }
             finally
             {
@@ -415,47 +442,163 @@ namespace SVN.Core
             }
         }
 
-        public async void ResolveSingleMine(string path)
+        private async Task<bool> HasConflictMarkers(string path)
+        {
+            string fullPath =
+                Path.Combine(svnManager.WorkingDir, path);
+
+            if (!File.Exists(fullPath))
+                return false;
+
+            string content =
+                await File.ReadAllTextAsync(fullPath);
+
+            return content.Contains("<<<<<<<") ||
+                   content.Contains("=======") ||
+                   content.Contains(">>>>>>>");
+        }
+
+        private SVNConflictItem.ConflictType ConvertConflictType(SVNConflictType type)
+        {
+            switch (type)
+            {
+                case SVNConflictType.Text:
+                    return SVNConflictItem.ConflictType.Text;
+
+                case SVNConflictType.Manual:
+                    return SVNConflictItem.ConflictType.Manual;
+
+                case SVNConflictType.Tree:
+                    return SVNConflictItem.ConflictType.Tree;
+
+                default:
+                    return SVNConflictItem.ConflictType.Text;
+            }
+        }
+
+        private List<string> GetActiveConflictPaths()
+        {
+            return _conflictCache.Values
+                .Where(x => x != null)
+                .Select(x => x.Path)
+                .ToList();
+        }
+
+        public async void ResolveAllMine()
+        {
+            if (IsProcessing) return;
+
+            IsProcessing = true;
+
+            try
+            {
+                var paths = GetActiveConflictPaths();
+                await ResolveMany(paths.Select(p => new SVNConflictData { Path = p }), "mine-full");
+
+                LogBoth("<color=green>All conflicts resolved (mine-full).</color>");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
+
+        public async void ResolveAllTheirs()
+        {
+            if (IsProcessing) return;
+
+            IsProcessing = true;
+
+            try
+            {
+                var paths = GetActiveConflictPaths();
+                await ResolveMany(paths.Select(p => new SVNConflictData { Path = p }), "theirs-full");
+
+                LogBoth("<color=green>All conflicts resolved (theirs-full).</color>");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
+
+        public async void DeleteAllObstructions()
+        {
+            if (IsProcessing)
+                return;
+
+            IsProcessing = true;
+
+            try
+            {
+                var conflicts = await GetConflicts(svnManager.WorkingDir);
+
+                if (conflicts == null || conflicts.Count == 0)
+                {
+                    LogBoth("<color=yellow>No conflicts found.</color>");
+                    return;
+                }
+
+                var snapshot = conflicts
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Path))
+                    .Select(x => x.Path)
+                    .ToList();
+
+                LogBoth($"[Batch Resolve] {snapshot.Count} items");
+
+                foreach (var path in snapshot)
+                {
+                    await DeleteObstruction(path, false);
+                }
+
+                await SVNManager.Instance.RunSvn("cleanup");
+                await svnManager.RefreshStatus();
+
+                await Task.Delay(250);
+
+                if (!_uiRefreshing)
+                    await RefreshConflictUI();
+
+                LogBoth("<color=green>All obstructions removed.</color>");
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=red>DeleteAllObstructions error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
+
+        public async Task ResolveSingleMine(string path)
         {
             await ResolveSingle(path, "mine-full");
         }
 
-        public async void ResolveSingleTheirs(string path)
+        public async Task ResolveSingleTheirs(string path)
         {
             await ResolveSingle(path, "theirs-full");
         }
 
-        private readonly SemaphoreSlim _resolveLock = new(1, 1);
-
-        private async Task ResolveSingle(
-            string path,
-            string strategy)
+        private async Task ResolveSingle(string path, string strategy)
         {
+            path = NormalizePath(path);
+
             await _resolveLock.WaitAsync();
 
             try
             {
-                if (IsProcessing)
-                    return;
-
-                IsProcessing = true;
-
                 LogBoth($"[Resolve] {strategy} -> {path}");
 
-                string full =
-                    Path.Combine(
-                        svnManager.WorkingDir,
-                        path);
+                if (_conflictCache.TryGetValue(path, out var data))
+                    data.State = SVNConflictState.Resolving;
 
-                string parent =
-                    Path.GetDirectoryName(path);
+                string full = Path.Combine(svnManager.WorkingDir, path);
 
+                string parent = Path.GetDirectoryName(path);
                 if (string.IsNullOrWhiteSpace(parent))
                     parent = ".";
-
-                // =====================================================
-                // 🔥 THEIRS
-                // =====================================================
 
                 if (strategy == "theirs-full")
                 {
@@ -467,262 +610,241 @@ namespace SVN.Core
                         if (Directory.Exists(full))
                             Directory.Delete(full, true);
                     }
-                    catch
-                    {
-                        // intentionally ignored
-                    }
-
-                    await SVNManager.Instance.RunSvn(
-                        $"update \"{parent}\"");
+                    catch { }
 
                     await SVNManager.Instance.RunSvn(
                         $"resolve --accept theirs-full \"{path}\"");
                 }
-
-                // =====================================================
-                // 🔥 MINE
-                // =====================================================
-
                 else
                 {
                     await SVNManager.Instance.RunSvn(
                         $"resolve --accept mine-full \"{path}\"");
-
-                    await SVNManager.Instance.RunSvn(
-                        $"update \"{parent}\"");
                 }
-
-                // =====================================================
-                // 🔥 FINALIZE ONLY IF STILL CONFLICTED
-                // =====================================================
-
-                string status =
-                    await SVNManager.Instance.RunSvn(
-                        $"status \"{path}\"");
-
-                bool stillConflicted =
-                    !string.IsNullOrWhiteSpace(status) &&
-                    status.TrimStart().StartsWith("C");
-
-                if (stillConflicted)
-                {
-                    await SVNManager.Instance.RunSvn(
-                        $"resolve --accept working \"{path}\"");
-                }
-
-                // =====================================================
-                // 🔥 CLEANUP
-                // =====================================================
 
                 await SVNManager.Instance.RunSvn("cleanup");
 
-                // =====================================================
-                // 🔥 REFRESH
-                // =====================================================
+                await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
+
+                await SVNManager.Instance.RunSvn("cleanup --remove-unversioned");
+
+                _conflictCache.Remove(path);
 
                 await svnManager.RefreshStatus();
+                await Task.Delay(120);
 
-                await Task.Delay(150);
-
-                string[] conflicts =
-                    await GetTargetPaths(
-                        svnManager.WorkingDir);
-
-                await RefreshConflictUI(conflicts);
+                if (!_uiRefreshing)
+                    await RefreshConflictUI();
 
                 svnManager
                     .GetModule<SVNExternal>()
                     .RefreshWindowsShellIcons(path);
 
-                LogBoth(
-                    $"<color=green>Resolved ({strategy}):</color> {path}");
+                LogBoth($"<color=green>Resolved ({strategy}):</color> {path}");
             }
             catch (Exception ex)
             {
-                LogBoth(
-                    $"<color=red>Error resolving {path}:</color> {ex.Message}");
+                LogBoth($"<color=red>Error resolving {path}:</color> {ex.Message}");
             }
             finally
             {
-                IsProcessing = false;
                 _resolveLock.Release();
             }
         }
 
-        public void OpenSingle(string path)
+        public async Task OpenSingle(string path)
         {
-            if (IsProcessing) return;
+            if (IsProcessing)
+                return;
 
-            string editorPath = svnManager.MergeToolPath;
+            string editorPath =
+                svnManager.MergeToolPath;
 
             if (string.IsNullOrEmpty(editorPath))
             {
-                editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+                editorPath =
+                    PlayerPrefs.GetString(
+                        SVNManager.KEY_MERGE_TOOL,
+                        "");
+
                 if (string.IsNullOrEmpty(editorPath))
                 {
-                    LogBoth("<color=red>Error:</color> Merge tool path is not set!");
+                    LogBoth("<color=red>Merge tool path missing!</color>");
                     return;
                 }
             }
 
             try
             {
-                string full = System.IO.Path.Combine(svnManager.WorkingDir, path);
-                LogBoth($"Opening editor for: <color=green>{path}</color>");
+                string full =
+                    Path.Combine(
+                        svnManager.WorkingDir,
+                        path);
 
-                System.Diagnostics.Process.Start(editorPath, $"\"{full}\"");
-            }
-            catch (Exception ex)
-            {
-                LogBoth($"<color=red>Exception:</color> {ex.Message}");
-            }
-        }
+                LogBoth($"Opening editor for: {path}");
 
-        public async void MarkSingleResolved(string path)
-        {
-            if (IsProcessing)
-                return;
+                System.Diagnostics.Process.Start(
+                    editorPath,
+                    $"\"{full}\"");
 
-            IsProcessing = true;
-
-            try
-            {
-                LogBoth($"[Resolve] Finalizing: {path}");
-
-                string fullPath = Path.Combine(svnManager.WorkingDir, path);
-
-                // Prevent marking as resolved if conflict markers are still present
-                if (File.Exists(fullPath))
+                if (_conflictCache.TryGetValue(path, out var conflict))
                 {
-                    string content = await File.ReadAllTextAsync(fullPath);
-                    if (content.Contains("<<<<<<<") || content.Contains("=======") || content.Contains(">>>>>>>"))
-                    {
-                        LogBoth($"<color=red>Abort:</color> File {path} still has conflict markers! Merge changes first.");
-                        return;
-                    }
+                    conflict.Type =
+                        SVNConflictType.Manual;
+
+                    conflict.State =
+                        SVNConflictState.ManualEditing;
                 }
 
-                string parent = Path.GetDirectoryName(path);
-
-                if (string.IsNullOrWhiteSpace(parent))
-                    parent = ".";
-
-                await SVNManager.Instance.RunSvn("cleanup");
-
-                await SVNManager.Instance.RunSvn($"update \"{parent}\"");
-
-                await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
-
-                LogBoth($"<color=green>Resolved (working state accepted):</color> {path}");
-
-                // Refresh UI and system status after successful resolve
-                await svnManager.RefreshStatus();
-
-                await Task.Delay(150);
-
-                string[] conflicts =
-                    await GetTargetPaths(
-                        svnManager.WorkingDir);
-
-                await RefreshConflictUI(conflicts);
-            }
-            catch (Exception ex)
-            {
-                LogBoth($"<color=red>Error finalizing {path}:</color> {ex.Message}");
-            }
-            finally
-            {
-                IsProcessing = false;
-            }
-        }
-
-        public async void DeleteObstruction(string path)
-        {
-            if (IsProcessing)
-                return;
-
-            IsProcessing = true;
-
-            try
-            {
-                string full = Path.Combine(svnManager.WorkingDir, path);
-                string parent = Path.GetDirectoryName(path);
-
-                if (string.IsNullOrWhiteSpace(parent))
-                    parent = ".";
-
-                LogBoth($"[TREE CONFLICT] Resolving obstruction: {path}");
-
-                if (File.Exists(full))
-                {
-                    File.Delete(full);
-                    LogBoth($"Deleted obstruction file: {path}");
-                }
-                else if (Directory.Exists(full))
-                {
-                    Directory.Delete(full, true);
-                    LogBoth($"Deleted obstruction dir: {path}");
-                }
-
-                await SVNManager.Instance.RunSvn("cleanup");
-
-                await SVNManager.Instance.RunSvn($"update \"{parent}\"");
-
-                await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
-
-                await SVNManager.Instance.RunSvn("cleanup");
-
-                await DebugConflictState(path);
-
-                await svnManager.RefreshStatus();
-
-                await Task.Delay(150);
-
-                string[] conflicts =
-                    await GetTargetPaths(
-                        svnManager.WorkingDir);
-
-                await RefreshConflictUI(conflicts);
-
-                svnManager.GetModule<SVNExternal>().RefreshWindowsShellIcons(path);
-
-                // Updated log to indicate obstruction deletion resolution
-                LogBoth($"<color=green>Resolved (obstruction deleted):</color> {path}");
+                await RefreshConflictUI();
             }
             catch (Exception ex)
             {
                 LogBoth($"<color=red>{ex.Message}</color>");
             }
+        }
+
+        public async Task MarkSingleResolved(string path)
+        {
+            try
+            {
+                string fullPath =
+                    Path.Combine(
+                        svnManager.WorkingDir,
+                        path);
+
+                if (File.Exists(fullPath))
+                {
+                    string content =
+                        await File.ReadAllTextAsync(fullPath);
+
+                    if (content.Contains("<<<<<<<") ||
+                        content.Contains("=======") ||
+                        content.Contains(">>>>>>>"))
+                    {
+                        LogBoth(
+                            $"<color=red>Conflict markers still exist:</color> {path}");
+
+                        return;
+                    }
+                }
+
+                LogBoth($"[Resolve] Finalizing: {path}");
+
+                await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
+
+                await SVNManager.Instance.RunSvn("cleanup --remove-unversioned");
+
+                _conflictCache.Remove(path);
+
+                await Task.Delay(150);
+
+                await RefreshConflictUI();
+
+                LogBoth(
+                    $"<color=green>Resolved manually:</color> {path}");
+            }
+            catch (Exception ex)
+            {
+                LogBoth(
+                    $"<color=red>Error finalizing {path}:</color> {ex.Message}");
+            }
             finally
             {
                 IsProcessing = false;
             }
         }
 
-        private async Task DebugConflictState(string path)
+        public async Task DeleteObstruction(string path, bool refreshUi = true)
         {
+            await _resolveLock.WaitAsync();
+
             try
             {
-                string status = await SVNManager.Instance.RunSvn($"status \"{path}\"");
-                LogBoth($"[DEBUG STATUS] {path}");
-                LogBoth(status);
+                path = NormalizePath(path);
 
-                string info = await SVNManager.Instance.RunSvn($"info \"{path}\"");
-                LogBoth($"[DEBUG INFO] {path}");
-                LogBoth(info);
+                string fullPath = Path.Combine(svnManager.WorkingDir, path);
+
+                string parent = Path.GetDirectoryName(path);
+                if (string.IsNullOrWhiteSpace(parent))
+                    parent = ".";
+
+                LogBoth($"[TREE RESOLVE] {path}");
+
+                try
+                {
+                    await SVNManager.Instance.RunSvn($"revert \"{path}\"");
+                }
+                catch { }
+
+                try
+                {
+                    await SVNManager.Instance.RunSvn($"resolve --accept working --force \"{path}\"");
+                }
+                catch { }
+
+                await SVNManager.Instance.RunSvn("cleanup");
+
+                try
+                {
+                    if (File.Exists(fullPath))
+                    {
+                        File.SetAttributes(fullPath, FileAttributes.Normal);
+                        File.Delete(fullPath);
+                    }
+                    else if (Directory.Exists(fullPath))
+                    {
+                        Directory.Delete(fullPath, true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogBoth($"<color=yellow>Delete warning:</color> {ex.Message}");
+                }
+
+                await SVNManager.Instance.RunSvn("cleanup");
+
+                _conflictCache.Remove(path);
+
+                var keysToRemove = _conflictCache.Keys
+                    .Where(k => k.StartsWith(path) || path.StartsWith(k))
+                    .ToList();
+
+                foreach (var k in keysToRemove)
+                    _conflictCache.Remove(k);
+
+                await svnManager.RefreshStatus();
+
+                await Task.Delay(150);
+
+                if (refreshUi && !_uiRefreshing)
+                    await RefreshConflictUI();
+
+                svnManager
+                    .GetModule<SVNExternal>()
+                    .RefreshWindowsShellIcons(path);
+
+                LogBoth($"<color=green>Tree conflict resolved:</color> {path}");
             }
             catch (Exception ex)
             {
-                LogBoth($"[DEBUG ERROR] {ex.Message}");
+                LogBoth($"<color=red>DeleteObstruction error:</color> {ex.Message}");
+            }
+            finally
+            {
+                _resolveLock.Release();
             }
         }
 
         private string NormalizePath(string path)
         {
-            return (path ?? "")
+            if (string.IsNullOrWhiteSpace(path))
+                return "";
+
+            return path
                 .Replace("\\", "/")
-                .Trim()
-                .ToLowerInvariant();
+                .Replace("\r", "")
+                .Replace("\n", "")
+                .Trim();
         }
     }
 }

@@ -24,4 +24,9 @@ public class ResolvePanel : MonoBehaviour
     public void Button_ResolveTheirs() => svnManager.GetModule<SVNResolve>().ResolveTheirs();
     public void Button_ResolveMine() => svnManager.GetModule<SVNResolve>().ResolveMine();
     public void Button_ResolveFilePath() => svnManager.GetModule<SVNExternal>().BrowseResolveFilePath();
+
+    public void Button_DeleteAllObstructions() => svnManager.GetModule<SVNResolve>().DeleteAllObstructions();
+    public void Button_ResolveAllTheirs() => svnManager.GetModule<SVNResolve>().ResolveAllTheirs();
+    public void Button_ResolveAllMine() => svnManager.GetModule<SVNResolve>().ResolveAllMine();
+
 }
