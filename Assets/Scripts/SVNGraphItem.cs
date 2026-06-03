@@ -41,7 +41,7 @@ public class SVNGraphItem : MonoBehaviour
     public List<string> GetChangedPaths() => changedPaths;
     public string GetDate() => dateText != null ? dateText.text : "Unknown Date";
 
-    public void Setup(string visual, SVNRevisionNode node, string branchName, string hexColor, SVNManager mgr)
+    public void Setup(string visual, SVNRevisionNode node, string branchName, string hexColor, SVNManager mgr, string mergeLabel = "")
     {
         this.svnManager = mgr;
         this.revisionNumber = node.Revision;
@@ -55,7 +55,8 @@ public class SVNGraphItem : MonoBehaviour
         string cleanMsg = node.Message;
         int idx = cleanMsg.LastIndexOf(" /");
         if (idx != -1) cleanMsg = cleanMsg.Substring(0, idx).Trim();
-        this.rawMessage = cleanMsg;
+
+        this.rawMessage = mergeLabel + cleanMsg;
 
         graphVisualText.text = visual;
 

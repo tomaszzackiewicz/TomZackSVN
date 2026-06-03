@@ -16,11 +16,28 @@ namespace SVN.Core
 
     public class SVNRevGraph : SVNBase
     {
+        // ----- STAŁE ZNAKÓW (każda kolumna = 3 znaki) -----
+        private const string VERT_TRUNK = "│  ";
+        private const string VERT_BRANCH = "│  ";
+        private const string VERT_TAG = "│  ";
+        private const string VERT_MERGED = "┆  ";
+
+        private const string SHAPE_TRUNK = "■";                 // zwykły trunk
+        private const string SHAPE_BRANCH = "●";                 // zwykły branch
+        private const string SHAPE_TAG = "◆";                 // zwykły tag
+        private const string SHAPE_MERGE = "◉";                 // merge z brancha (kółko z obwódką)
+        private const string SHAPE_MERGE_FROM_TRUNK = "▣";      // merge z trunka (kwadrat z obwódką)
+        private const string SHAPE_MERGE_FROM_TAG = "◈";      // merge z taga (romb z obwódką)
+
+        private const string COMMIT = "─ ";
+        // -------------------------------------------------
+
         public SVNRevGraph(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
         private List<GameObject> instantiatedItems = new List<GameObject>();
         private Dictionary<(string Name, NodeType Type), bool> branchStarted = new();
         private Dictionary<string, NodeType> branchTypes = new();
+        private HashSet<string> mergedBranches = new();
 
         public List<GameObject> InstantiatedItems => instantiatedItems;
 
@@ -32,6 +49,7 @@ namespace SVN.Core
             instantiatedItems.Clear();
             branchStarted.Clear();
             branchTypes.Clear();
+            mergedBranches.Clear();
 
             Dictionary<string, int> branchColumns = new();
             Dictionary<string, int> branchStartRow = new();
@@ -60,18 +78,31 @@ namespace SVN.Core
                     string mergeSrcBranch = DetectMergeSourceBranch(node, info.Name, branchColumns.Keys);
                     if (!string.IsNullOrEmpty(mergeSrcBranch))
                     {
+                        mergedBranches.Add(mergeSrcBranch);
                         if (!branchColumns.ContainsKey(mergeSrcBranch))
                         {
                             branchColumns[mergeSrcBranch] = nextColumn++;
                             branchStartRow[mergeSrcBranch] = r;
                             branchTypes[mergeSrcBranch] = mergeSrcBranch == "trunk"
                                 ? NodeType.Trunk
-                                : NodeType.Branch;
+                                : (mergeSrcBranch.StartsWith("tags/") || mergeSrcBranch == "tags"
+                                    ? NodeType.Tag : NodeType.Branch);
+                            // Note: better detection: we can check if the source name came from tags/.
                         }
-
-                        if (!branchEndRow.ContainsKey(mergeSrcBranch) ||
-                            branchEndRow[mergeSrcBranch] < r)
+                        if (!branchEndRow.ContainsKey(mergeSrcBranch) || branchEndRow[mergeSrcBranch] < r)
                             branchEndRow[mergeSrcBranch] = r;
+                    }
+                    else // fallback: oznacz pierwszą inną gałąź jako zmergowaną
+                    {
+                        foreach (var kv in branchColumns)
+                        {
+                            if (kv.Key != info.Name)
+                            {
+                                mergeSrcBranch = kv.Key;
+                                mergedBranches.Add(mergeSrcBranch);
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -86,52 +117,41 @@ namespace SVN.Core
 
                 int col = branchColumns[info.Name];
                 string colHex = BranchColorSystem.GetColor(info.Name);
-
                 StringBuilder g = new StringBuilder();
 
                 bool isMerge = IsMergeCommit(node);
                 string mergeSrcBranch = DetectMergeSourceBranch(node, info.Name, branchColumns.Keys);
-                int srcCol = -1;
-                if (isMerge && !string.IsNullOrEmpty(mergeSrcBranch) &&
-                    branchColumns.ContainsKey(mergeSrcBranch))
-                    srcCol = branchColumns[mergeSrcBranch];
-
-                // [FALLBACK] Jeśli to merge i nie znaleziono źródła z wiadomości,
-                // spróbuj dedukować z aktywnych gałęzi w tym wierszu
-                if (isMerge && srcCol == -1)
+                if (isMerge && string.IsNullOrEmpty(mergeSrcBranch))
                 {
-                    List<string> activeOthers = new List<string>();
                     foreach (var kv in branchColumns)
-                    {
-                        if (kv.Key != info.Name && r >= branchStartRow[kv.Key] && r <= branchEndRow[kv.Key])
-                            activeOthers.Add(kv.Key);
-                    }
-                    if (activeOthers.Count == 1)
-                    {
-                        mergeSrcBranch = activeOthers[0];
-                        srcCol = branchColumns[mergeSrcBranch];
-                    }
-                    else if (activeOthers.Count == 0 && info.Name != "trunk")
-                    {
-                        // często merge z trunka na gałąź bez wzmianki o źródle
-                        mergeSrcBranch = "trunk";
-                        if (branchColumns.ContainsKey("trunk"))
-                            srcCol = branchColumns["trunk"];
-                    }
-                    // dla trunk: jeśli mamy jedną konkretną gałąź w grafie, możemy zgadnąć
-                    else if (info.Name == "trunk" && activeOthers.Count == 0)
-                    {
-                        // znajdź dowolną gałąź, która jest aktywna gdziekolwiek – raczej nie będzie to poprawne
-                    }
+                        if (kv.Key != info.Name) { mergeSrcBranch = kv.Key; break; }
                 }
 
-                char shape = info.Type switch
+                // Wybór kształtu w zależności od typu gałęzi źródłowej
+                string shape;
+                if (isMerge)
                 {
-                    NodeType.Trunk => '■',
-                    NodeType.Branch => '●',
-                    NodeType.Tag => '◆',
-                    _ => '●'
-                };
+                    if (mergeSrcBranch == "trunk")
+                        shape = SHAPE_MERGE_FROM_TRUNK;
+                    else if (branchTypes.ContainsKey(mergeSrcBranch) && branchTypes[mergeSrcBranch] == NodeType.Tag)
+                        shape = SHAPE_MERGE_FROM_TAG;
+                    else
+                        shape = SHAPE_MERGE; // domyślnie branch
+                }
+                else
+                {
+                    shape = info.Type switch
+                    {
+                        NodeType.Trunk => SHAPE_TRUNK,
+                        NodeType.Branch => SHAPE_BRANCH,
+                        NodeType.Tag => SHAPE_TAG,
+                        _ => SHAPE_BRANCH
+                    };
+                }
+
+                string mergeLabel = "";
+                if (isMerge && !string.IsNullOrEmpty(mergeSrcBranch))
+                    mergeLabel = $"<color=#000000>[from {mergeSrcBranch}]</color> ";
 
                 for (int i = 0; i < nextColumn; i++)
                 {
@@ -139,95 +159,58 @@ namespace SVN.Core
                     foreach (var kv in branchColumns)
                         if (kv.Value == i) { laneBranch = kv.Key; break; }
 
-                    string laneColor = laneBranch != null
-                        ? BranchColorSystem.GetColor(laneBranch)
-                        : "#555555";
-
+                    string laneColor = laneBranch != null ? BranchColorSystem.GetColor(laneBranch) : "#555555";
                     string laneText;
                     string finalColor = laneColor;
 
                     bool isCurrent = (i == col);
                     bool isActive = laneBranch != null &&
-                                    (r >= branchStartRow[laneBranch] &&
-                                     r <= branchEndRow[laneBranch]);
+                                    (r >= branchStartRow[laneBranch] && r <= branchEndRow[laneBranch]);
 
-                    bool isCrossing = isMerge && srcCol != -1 &&
-                                      ((i > col && i < srcCol) || (i > srcCol && i < col));
-
-                    // -------------------------------------------------
-                    // CURRENT COLUMN
-                    // -------------------------------------------------
                     if (isCurrent)
                     {
-                        var key = (info.Name, info.Type);
-                        if (!branchStarted.ContainsKey(key))
-                            branchStarted[key] = false;
+                        // Dla merge commita kolor gałęzi źródłowej
+                        if (isMerge && !string.IsNullOrEmpty(mergeSrcBranch))
+                            finalColor = BranchColorSystem.GetColor(mergeSrcBranch);
 
-                        if (isMerge && srcCol != -1)
-                        {
-                            bool fromLeft = srcCol < col;
-                            laneText = $"{shape}{(fromLeft ? "┤ " : "├ ")}";
-                            branchStarted[key] = true;
-                        }
-                        else
-                        {
-                            bool first = !branchStarted[key];
-                            laneText = $"{shape}─ ";
-                            if (first) branchStarted[key] = true;
-                        }
+                        laneText = shape + COMMIT;
                     }
-                    // -------------------------------------------------
-                    // ACTIVE LANE
-                    // -------------------------------------------------
                     else if (isActive)
                     {
                         NodeType laneType = branchTypes.ContainsKey(laneBranch)
                             ? branchTypes[laneBranch]
                             : NodeType.Branch;
 
-                        if (isCrossing)
+                        laneText = laneType switch
                         {
-                            laneText = "┼──";
-                            finalColor = BranchColorSystem.GetColor(mergeSrcBranch);
-                        }
-                        else if (isMerge && i == srcCol)
-                        {
-                            laneText = (col > srcCol) ? "├──" : "┤──";
-                            finalColor = BranchColorSystem.GetColor(mergeSrcBranch);
-                        }
-                        else
-                        {
-                            laneText = laneType switch
-                            {
-                                NodeType.Trunk => "┃  ",
-                                NodeType.Branch => "│  ",
-                                NodeType.Tag => "┆  ",
-                                _ => "│  "
-                            };
-                        }
+                            NodeType.Trunk => VERT_TRUNK,
+                            NodeType.Branch => VERT_BRANCH,
+                            NodeType.Tag => VERT_TAG,
+                            _ => VERT_BRANCH
+                        };
                     }
-                    // -------------------------------------------------
-                    // EMPTY LANE
-                    // -------------------------------------------------
                     else
                     {
-                        if (isCrossing)
+                        NodeType laneType = branchTypes.ContainsKey(laneBranch)
+                            ? branchTypes[laneBranch]
+                            : NodeType.Branch;
+
+                        bool isMergedAndInactive = mergedBranches.Contains(laneBranch) &&
+                                                   r > branchEndRow[laneBranch];
+
+                        if (isMergedAndInactive)
                         {
-                            laneText = "───";
-                            finalColor = BranchColorSystem.GetColor(mergeSrcBranch);
+                            laneText = VERT_MERGED;
+                            finalColor = "#88888844";
                         }
                         else
                         {
-                            NodeType laneType = laneBranch != null && branchTypes.ContainsKey(laneBranch)
-                                ? branchTypes[laneBranch]
-                                : NodeType.Branch;
-
                             laneText = laneType switch
                             {
-                                NodeType.Trunk => "┃  ",
-                                NodeType.Branch => "│  ",
-                                NodeType.Tag => "┆  ",
-                                _ => "│  "
+                                NodeType.Trunk => VERT_TRUNK,
+                                NodeType.Branch => VERT_BRANCH,
+                                NodeType.Tag => VERT_TAG,
+                                _ => VERT_BRANCH
                             };
                             finalColor = "#00000000";
                         }
@@ -236,32 +219,26 @@ namespace SVN.Core
                     g.Append($"<color={finalColor}>{laneText}</color>");
                 }
 
-                GameObject itemGo = UnityEngine.Object.Instantiate(
-                    svnUI.GraphItemPrefab,
-                    svnUI.GraphContainer
-                );
-
+                GameObject itemGo = UnityEngine.Object.Instantiate(svnUI.GraphItemPrefab, svnUI.GraphContainer);
                 instantiatedItems.Add(itemGo);
 
                 SVNGraphItem item = itemGo.GetComponent<SVNGraphItem>();
                 if (item != null)
                 {
-                    item.Setup(g.ToString(), node, info.Name, colHex, svnManager);
+                    item.Setup(g.ToString(), node, info.Name, colHex, svnManager, mergeLabel);
                 }
             }
 
             SVNLogBridge.LogLine($"[SVN] Render complete. {instantiatedItems.Count} revisions rendered.");
         }
 
-        // ================================================================
-        // ULEPSZONE WYKRYWANIE ŹRÓDŁA MERGA
-        // ================================================================
+        // -----------------------------------------------------------
+        // Metody pomocnicze (bez zmian)
+        // -----------------------------------------------------------
         private string DetectMergeSourceBranch(SVNRevisionNode node, string currentBranch, ICollection<string> knownBranches)
         {
             string msg = node.Message ?? "";
-            string lowerMsg = msg.ToLower();
 
-            // 1. Szukamy /branches/xxx lub /trunk lub /tags/xxx
             var pathMatches = System.Text.RegularExpressions.Regex.Matches(
                 msg,
                 @"(?:^|[\s\(\)\[\]\{\}""'`])/?(\^?/)?(?<type>branches|trunk|tags)(/(?<name>[^\s,;:\)]+))?",
@@ -272,43 +249,32 @@ namespace SVN.Core
                 string type = m.Groups["type"].Value.ToLower();
                 string name = m.Groups["name"].Value;
                 string found = type == "trunk" ? "trunk" : (string.IsNullOrEmpty(name) ? null : name);
-                if (!string.IsNullOrEmpty(found) && found != currentBranch)
-                    return found;
+                if (!string.IsNullOrEmpty(found) && found != currentBranch) return found;
             }
 
-            // 2. Szukamy znanych nazw gałęzi w całej wiadomości
             foreach (string branch in knownBranches)
             {
                 if (branch == currentBranch) continue;
-                // szukamy całego słowa (granice wyrazów)
-                if (System.Text.RegularExpressions.Regex.IsMatch(
-                    msg, $@"\b{System.Text.RegularExpressions.Regex.Escape(branch)}\b",
-                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                    return branch;
+                if (System.Text.RegularExpressions.Regex.IsMatch(msg, $@"\b{System.Text.RegularExpressions.Regex.Escape(branch)}\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase)) return branch;
             }
 
-            // 3. Próba wyłapania fraz typu "branch 'xxx'"
-            var branchWordMatch = System.Text.RegularExpressions.Regex.Match(
-                msg, @"branch\s*['""](?<name>[^'""]+)['""]",
+            var branchWordMatch = System.Text.RegularExpressions.Regex.Match(msg, @"branch\s*['""](?<name>[^'""]+)['""]",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (branchWordMatch.Success)
             {
                 string name = branchWordMatch.Groups["name"].Value;
-                if (name != currentBranch)
-                    return name;
+                if (name != currentBranch) return name;
             }
 
-            // 4. Stare przeszukiwanie ChangedPaths (rzadko działa)
             if (node.ChangedPaths != null)
             {
                 foreach (string path in node.ChangedPaths)
                 {
                     string b = ExtractBranchFromPath(path);
-                    if (!string.IsNullOrEmpty(b) && b != currentBranch)
-                        return b;
+                    if (!string.IsNullOrEmpty(b) && b != currentBranch) return b;
                 }
             }
-
             return null;
         }
 
@@ -319,57 +285,39 @@ namespace SVN.Core
             {
                 string[] parts = path.Split('/');
                 int idx = System.Array.IndexOf(parts, "branches");
-                if (idx >= 0 && idx + 1 < parts.Length)
-                    return parts[idx + 1];
+                if (idx >= 0 && idx + 1 < parts.Length) return parts[idx + 1];
             }
-            else if (path.Contains("/trunk"))
-                return "trunk";
+            else if (path.Contains("/trunk")) return "trunk";
             else if (path.Contains("/tags/"))
             {
                 string[] parts = path.Split('/');
                 int idx = System.Array.IndexOf(parts, "tags");
-                if (idx >= 0 && idx + 1 < parts.Length)
-                    return parts[idx + 1];
+                if (idx >= 0 && idx + 1 < parts.Length) return parts[idx + 1];
             }
             return null;
         }
 
-        // ================================================================
-        // WYKRYWANIE CZY COMMIT JEST MERGEM
-        // ================================================================
         private bool IsMergeCommit(SVNRevisionNode node)
         {
             if (node == null) return false;
-
             if (!string.IsNullOrEmpty(node.Message))
             {
                 string msg = node.Message.ToLower();
-                if (msg.Contains("merge") ||
-                    msg.Contains("merged") ||
-                    msg.Contains("reintegrate"))
-                    return true;
+                if (msg.Contains("merge") || msg.Contains("merged") || msg.Contains("reintegrate")) return true;
             }
-
-            // fallback: różne gałęzie w ChangedPaths (mało prawdopodobne)
             if (node.ChangedPaths != null)
             {
                 var branches = new HashSet<string>();
                 foreach (string path in node.ChangedPaths)
                 {
                     string b = ExtractBranchFromPath(path);
-                    if (!string.IsNullOrEmpty(b))
-                        branches.Add(b);
+                    if (!string.IsNullOrEmpty(b)) branches.Add(b);
                 }
-                if (branches.Count >= 2)
-                    return true;
+                if (branches.Count >= 2) return true;
             }
-
             return false;
         }
 
-        // ================================================================
-        // SYSTEM KOLORÓW
-        // ================================================================
         public static class BranchColorSystem
         {
             private static Dictionary<string, string> branchColors = new();
@@ -378,8 +326,7 @@ namespace SVN.Core
 
             public static string GetColor(string branch)
             {
-                if (branchColors.TryGetValue(branch, out var existing))
-                    return existing;
+                if (branchColors.TryGetValue(branch, out var existing)) return existing;
 
                 float hue = Mathf.Repeat(index * GOLDEN_ANGLE, 360f);
                 index++;
@@ -397,9 +344,6 @@ namespace SVN.Core
             }
         }
 
-        // ================================================================
-        // POZOSTAŁE METODY
-        // ================================================================
         private BranchInfo GetBranchInfo(SVNRevisionNode node)
         {
             if (node.ChangedPaths == null) return new BranchInfo { Name = "trunk", Type = NodeType.Trunk };
