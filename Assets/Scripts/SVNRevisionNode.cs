@@ -11,5 +11,6 @@ namespace SVN.Core
         public string Message;
         public List<string> ChangedPaths = new List<string>();
         public List<long> Parents = new List<long>();
+        public bool HasMergeInfoChange { get; set; }
     }
 }

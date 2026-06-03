@@ -12,6 +12,11 @@ public class RevGraphPanel : MonoBehaviour
     private SVNManager svnManager;
     private SVNRevGraph graphModule;
 
+    private void OnEnable()
+    {
+        Button_RefreshGraph();
+    }
+
     private void Start()
     {
         svnUI = SVNUI.Instance;
@@ -122,7 +127,19 @@ public class RevGraphPanel : MonoBehaviour
                 foreach (XmlNode p in pathNodes)
                 {
                     string action = p.Attributes["action"]?.Value ?? "";
-                    node.ChangedPaths.Add($"{action} {p.InnerText}");
+                    string filePath = p.InnerText;                     // np. "/trunk/plik.txt"
+                    string propMods = p.Attributes["prop-mods"]?.Value; // "true" jeśli zmieniono właściwości
+
+                    node.ChangedPaths.Add($"{action} {filePath}");
+
+                    // Wykrywanie merge'a: zmiana właściwości (prop-mods="true") na głównej ścieżce gałęzi
+                    if (propMods == "true" &&
+                        (filePath == "/trunk" ||           // zmiana na katalogu trunk
+                         filePath.StartsWith("/branches/") ||   // zmiana na katalogu gałęzi
+                         filePath.StartsWith("/tags/")))        // zmiana na katalogu taga
+                    {
+                        node.HasMergeInfoChange = true;
+                    }
                 }
             }
 
@@ -130,6 +147,41 @@ public class RevGraphPanel : MonoBehaviour
         }
         return nodes;
     }
+
+    // private async Task<List<SVNRevisionNode>> FetchLogEntries()
+    // {
+    //     string xmlOutput = await SvnRunner.RunAsync("log --xml --verbose ^/", svnManager.WorkingDir);
+
+    //     List<SVNRevisionNode> nodes = new List<SVNRevisionNode>();
+    //     if (string.IsNullOrEmpty(xmlOutput)) return nodes;
+
+    //     XmlDocument doc = new XmlDocument();
+    //     doc.LoadXml(xmlOutput);
+    //     XmlNodeList logEntries = doc.SelectNodes("//logentry");
+
+    //     foreach (XmlNode entry in logEntries)
+    //     {
+    //         SVNRevisionNode node = new SVNRevisionNode();
+
+    //         node.Revision = long.Parse(entry.Attributes["revision"].Value);
+    //         node.Author = entry.SelectSingleNode("author")?.InnerText ?? "n/a";
+    //         node.Date = entry.SelectSingleNode("date")?.InnerText ?? "";
+    //         node.Message = entry.SelectSingleNode("msg")?.InnerText ?? "";
+
+    //         XmlNodeList pathNodes = entry.SelectNodes("paths/path");
+    //         if (pathNodes != null)
+    //         {
+    //             foreach (XmlNode p in pathNodes)
+    //             {
+    //                 string action = p.Attributes["action"]?.Value ?? "";
+    //                 node.ChangedPaths.Add($"{action} {p.InnerText}");
+    //             }
+    //         }
+
+    //         nodes.Add(node);
+    //     }
+    //     return nodes;
+    // }
 
     public void Button_CollpaseAll() => svnManager.GetModule<SVNRevGraph>().CollapseAll();
     public void Button_ExportHistoryToTxt() => svnManager.GetModule<SVNRevGraph>().ExportHistoryToTxt();

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading.Tasks;
+using System.Xml;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -25,9 +27,9 @@ namespace SVN.Core
         private const string SHAPE_TRUNK = "■";
         private const string SHAPE_BRANCH = "●";
         private const string SHAPE_TAG = "◆";
-        private const string SHAPE_MERGE = "◉";
-        private const string SHAPE_MERGE_FROM_TRUNK = "▣";
-        private const string SHAPE_MERGE_FROM_TAG = "◈";
+        private const string SHAPE_MERGE = "◉";   // merge z brancha
+        private const string SHAPE_MERGE_FROM_TRUNK = "▣";   // merge z trunka
+        private const string SHAPE_MERGE_FROM_TAG = "◈";   // merge z taga
 
         private const string SPACER = " ";
         // -------------------------------------------------
@@ -37,20 +39,16 @@ namespace SVN.Core
         private List<GameObject> instantiatedItems = new List<GameObject>();
         private Dictionary<string, NodeType> branchTypes = new();
         private HashSet<string> mergedBranches = new();
-
-        // Nowe słowniki dla zakresów rewizji i informacji o starcie gałęzi
         private Dictionary<string, long> branchFirstRev = new();
         private Dictionary<string, long> branchLastRev = new();
-        private Dictionary<string, string> branchParent = new(); // klucz: nazwa gałęzi, wartość: nazwa rodzica
+        private Dictionary<string, string> branchParent = new(); // gałąź -> rodzic
 
         public List<GameObject> InstantiatedItems => instantiatedItems;
 
         public void RenderGraph(List<SVNRevisionNode> nodes)
         {
-            // ---------------------------------------------------------
-            // 1. SORTOWANIE ROSNĄCO do analizy struktury (aby trunk dostał kolumnę 0)
+            // Sortowanie rosnące do analizy (trunk dostanie kolumnę 0)
             nodes.Sort((a, b) => a.Revision.CompareTo(b.Revision));
-            // ---------------------------------------------------------
 
             foreach (Transform t in svnUI.GraphContainer)
                 UnityEngine.Object.Destroy(t.gameObject);
@@ -66,7 +64,7 @@ namespace SVN.Core
             int nextColumn = 0;
 
             // =====================================================
-            // 2. ANALIZA STRUKTURY (od najstarszych)
+            // 1. ANALIZA STRUKTURY (od najstarszych)
             // =====================================================
             for (int i = 0; i < nodes.Count; i++)
             {
@@ -77,20 +75,16 @@ namespace SVN.Core
                 {
                     branchColumns[info.Name] = nextColumn++;
                     branchTypes[info.Name] = info.Type;
-                    branchFirstRev[info.Name] = node.Revision;   // pierwszy commit gałęzi
+                    branchFirstRev[info.Name] = node.Revision;
                 }
 
-                // Ostatni commit gałęzi (aktualizujemy zawsze)
                 branchLastRev[info.Name] = node.Revision;
 
-                // Wykrywanie gałęzi-rodzica tylko dla pierwszego commita danej gałęzi
-                if (branchFirstRev[info.Name] == node.Revision && info.Type != NodeType.Trunk)
+                // Wykrywanie rodzica tylko dla pierwszego commita gałęzi (nie trunk)
+                if (info.Type != NodeType.Trunk && branchFirstRev[info.Name] == node.Revision)
                 {
                     string parent = DetectBranchParent(node, info.Name);
-                    if (!string.IsNullOrEmpty(parent))
-                        branchParent[info.Name] = parent;
-                    else
-                        branchParent[info.Name] = "trunk"; // domyślnie
+                    branchParent[info.Name] = string.IsNullOrEmpty(parent) ? "trunk" : parent;
                 }
 
                 // Merge
@@ -105,38 +99,30 @@ namespace SVN.Core
                             branchColumns[mergeSrcBranch] = nextColumn++;
                             branchTypes[mergeSrcBranch] = mergeSrcBranch == "trunk"
                                 ? NodeType.Trunk
-                                : (mergeSrcBranch.StartsWith("tags/") || branchTypes.ContainsKey(mergeSrcBranch)
+                                : (branchTypes.ContainsKey(mergeSrcBranch) && branchTypes[mergeSrcBranch] == NodeType.Tag
                                     ? NodeType.Tag : NodeType.Branch);
-                            // Uwaga: gałąź źródłowa może nie mieć jeszcze ustalonego zakresu,
-                            // ale to nie przeszkadza – jeśli pojawi się później jej commit, to zakres się uzupełni.
-                            // Dla bezpieczeństwa ustawiamy firstRev na ten merge (jeśli nie ma wcześniejszego)
                             if (!branchFirstRev.ContainsKey(mergeSrcBranch))
                                 branchFirstRev[mergeSrcBranch] = node.Revision;
                         }
-                        // Aktualizujemy lastRev dla źródłowej gałęzi (może być późniejszy merge)
                         if (!branchLastRev.ContainsKey(mergeSrcBranch) || branchLastRev[mergeSrcBranch] < node.Revision)
                             branchLastRev[mergeSrcBranch] = node.Revision;
                     }
                     else
                     {
-                        // Fallback: pierwsza inna gałąź
                         foreach (var kv in branchColumns)
-                        {
                             if (kv.Key != info.Name)
                             {
                                 mergeSrcBranch = kv.Key;
                                 mergedBranches.Add(mergeSrcBranch);
                                 break;
                             }
-                        }
                     }
                 }
             }
 
             // =====================================================
-            // 3. RYSOWANIE (od najnowszych)
+            // 2. RYSOWANIE (od najnowszych)
             // =====================================================
-            // Sortujemy malejąco, by najnowsze były na górze
             nodes.Sort((a, b) => b.Revision.CompareTo(a.Revision));
 
             for (int i = 0; i < nodes.Count; i++)
@@ -156,7 +142,7 @@ namespace SVN.Core
                         if (kv.Key != info.Name) { mergeSrcBranch = kv.Key; break; }
                 }
 
-                // Prefiks początku gałęzi (tylko jeśli to pierwszy commit gałęzi)
+                // Prefiks początku gałęzi
                 string branchStartPrefix = "";
                 if (info.Type != NodeType.Trunk && node.Revision == branchFirstRev[info.Name])
                 {
@@ -272,9 +258,9 @@ namespace SVN.Core
             SVNLogBridge.LogLine($"[SVN] Render complete. {instantiatedItems.Count} revisions rendered.");
         }
 
-        // -----------------------------------------------------------
-        // POZOSTAŁE METODY (bez zmian)
-        // -----------------------------------------------------------
+        // ================================================================
+        // WYKRYWANIE RODZICA GAŁĘZI
+        // ================================================================
         private string DetectBranchParent(SVNRevisionNode node, string currentBranch)
         {
             if (node.ChangedPaths == null) return null;
@@ -295,11 +281,12 @@ namespace SVN.Core
                         return parentBranch;
                 }
             }
-            if (currentBranch != "trunk")
-                return "trunk";
             return null;
         }
 
+        // ================================================================
+        // WYKRYWANIE ŹRÓDŁA MERGA
+        // ================================================================
         private string DetectMergeSourceBranch(SVNRevisionNode node, string currentBranch, ICollection<string> knownBranches)
         {
             string msg = node.Message ?? "";
@@ -362,24 +349,40 @@ namespace SVN.Core
             return null;
         }
 
+        // ================================================================
+        // NOWE, PEŁNE WYKRYWANIE MERGE'ÓW (flaga + komunikat + fallback)
+        // ================================================================
         private bool IsMergeCommit(SVNRevisionNode node)
         {
             if (node == null) return false;
+            if (node.HasMergeInfoChange) return true;
+
+            // 1. Najpewniejsze: zmiana svn:mergeinfo (ustawiane przez parser logów)
+            if (node.HasMergeInfoChange)
+                return true;
+
+            // 2. Komunikat (standardowe konwencje)
             if (!string.IsNullOrEmpty(node.Message))
             {
                 string msg = node.Message.ToLower();
-                if (msg.Contains("merge") || msg.Contains("merged") || msg.Contains("reintegrate")) return true;
+                if (msg.Contains("merge") || msg.Contains("merged") || msg.Contains("reintegrate"))
+                    return true;
             }
+
+            // 3. Awaryjne: wiele gałęzi w ChangedPaths (bardzo rzadkie, ale zachowujemy)
             if (node.ChangedPaths != null)
             {
                 var branches = new HashSet<string>();
                 foreach (string path in node.ChangedPaths)
                 {
                     string b = ExtractBranchFromPath(path);
-                    if (!string.IsNullOrEmpty(b)) branches.Add(b);
+                    if (!string.IsNullOrEmpty(b))
+                        branches.Add(b);
                 }
-                if (branches.Count >= 2) return true;
+                if (branches.Count >= 2)
+                    return true;
             }
+
             return false;
         }
 
