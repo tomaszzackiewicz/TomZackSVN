@@ -20,6 +20,7 @@ public class SVNGraphItem : MonoBehaviour
     public Transform scrollContent;
     public TextMeshProUGUI summaryText;
     public GameObject fileButtonPrefab;
+    public RectTransform graphRoot;
 
     private List<string> changedPaths = new List<string>();
     private long revisionNumber;
