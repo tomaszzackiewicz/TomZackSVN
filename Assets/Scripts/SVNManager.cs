@@ -194,15 +194,14 @@ namespace SVN.Core
 
         private async void Start()
         {
-            OperationInfo = new SVNOperationInfo
+            try
             {
-                State = SVNOperationState.Idle,
-                Message = "Idle",
-                Duration = 0,
-                Repo = ""
-            };
-
-            await StartAsync();
+                await StartAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
+            }
         }
 
         public void RaiseSnapshotChanged(SVNProjectInfoSnapshot snapshot)
@@ -458,42 +457,42 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
-        private async void OnApplicationFocus(bool hasFocus)
-        {
-            if (!hasFocus) return;
-            if (_focusRefreshRunning) return;
+        // private async void OnApplicationFocus(bool hasFocus)
+        // {
+        //     if (!hasFocus) return;
+        //     if (_focusRefreshRunning) return;
 
-            // 1. Pierwsza zapora: Czy cokolwiek zmieniło się na dysku?
-            // Jeśli tylko klikałeś w przeglądarkę, żeby coś sprawdzić i wracasz -> wychodzimy bez odpalania svn.exe!
-            if (!_diskChangesDetected)
-                return;
+        //     // 1. Pierwsza zapora: Czy cokolwiek zmieniło się na dysku?
+        //     // Jeśli tylko klikałeś w przeglądarkę, żeby coś sprawdzić i wracasz -> wychodzimy bez odpalania svn.exe!
+        //     if (!_diskChangesDetected)
+        //         return;
 
-            // 2. Druga zapora: Cooldown czasowy (np. 2 sekundy)
-            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
-                return;
+        //     // 2. Druga zapora: Cooldown czasowy (np. 2 sekundy)
+        //     if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
+        //         return;
 
-            _lastFocusRefreshTime = Time.realtimeSinceStartup;
-            _focusRefreshRunning = true;
+        //     _lastFocusRefreshTime = Time.realtimeSinceStartup;
+        //     _focusRefreshRunning = true;
 
-            try
-            {
-                await Task.Delay(300); // Mały buffer na dokończenie zapisów przez IDE
+        //     try
+        //     {
+        //         await Task.Delay(300); // Mały buffer na dokończenie zapisów przez IDE
 
-                // Czyścimy flagę PRZED wykonaniem operacji, żeby nie zgubić zmian w trakcie
-                _diskChangesDetected = false;
+        //         // Czyścimy flagę PRZED wykonaniem operacji, żeby nie zgubić zmian w trakcie
+        //         _diskChangesDetected = false;
 
-                // 3. Wywołujemy ODŚWIEŻENIE (Zwróć uwagę na flagę AutoExpand!)
-                await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(false);
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError($"Focus refresh failed: {ex.Message}");
-            }
-            finally
-            {
-                _focusRefreshRunning = false;
-            }
-        }
+        //         // 3. Wywołujemy ODŚWIEŻENIE (Zwróć uwagę na flagę AutoExpand!)
+        //         await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(false);
+        //     }
+        //     catch (Exception ex)
+        //     {
+        //         SVNLogBridge.LogError($"Focus refresh failed: {ex.Message}");
+        //     }
+        //     finally
+        //     {
+        //         _focusRefreshRunning = false;
+        //     }
+        // }
 
         public async Task<string> RunSvn(string args)
         {

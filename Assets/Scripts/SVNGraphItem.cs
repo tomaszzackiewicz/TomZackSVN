@@ -4,6 +4,7 @@ using SVN.Core;
 using System.Collections.Generic;
 using UnityEngine.UI;
 using System.Text.RegularExpressions;
+using System;
 
 public class SVNGraphItem : MonoBehaviour
 {
@@ -20,7 +21,9 @@ public class SVNGraphItem : MonoBehaviour
     public Transform scrollContent;
     public TextMeshProUGUI summaryText;
     public GameObject fileButtonPrefab;
-    public RectTransform graphRoot;
+
+    [Header("Edit Message")]
+    public Button editMessageButton;
 
     private List<string> changedPaths = new List<string>();
     private long revisionNumber;
@@ -41,6 +44,12 @@ public class SVNGraphItem : MonoBehaviour
     public List<string> GetChangedPaths() => changedPaths;
     public string GetDate() => dateText != null ? dateText.text : "Unknown Date";
 
+    private void Start()
+    {
+        if (editMessageButton != null)
+            editMessageButton.onClick.AddListener(OnEditMessageClicked);
+    }
+
     public void Setup(string visual, SVNRevisionNode node, string branchName, string hexColor, SVNManager mgr, string mergeLabel = "")
     {
         this.svnManager = mgr;
@@ -51,6 +60,17 @@ public class SVNGraphItem : MonoBehaviour
         this.rawAuthor = node.Author;
         this.rawBranchName = branchName;
         this.rawRevisionStr = $"r{node.Revision}";
+
+        // Blokada edycji – tylko dla własnych rewizji
+        if (editMessageButton != null)
+        {
+            string currentUser = mgr.CurrentUserName;
+            bool isOwnCommit = !string.IsNullOrEmpty(currentUser) &&
+                               currentUser != "Unknown" &&
+                               string.Equals(currentUser, node.Author, StringComparison.OrdinalIgnoreCase);
+            editMessageButton.interactable = isOwnCommit;
+            // Opcjonalnie: editMessageButton.gameObject.SetActive(isOwnCommit);
+        }
 
         string cleanMsg = node.Message;
         int idx = cleanMsg.LastIndexOf(" /");
@@ -71,6 +91,15 @@ public class SVNGraphItem : MonoBehaviour
         filesContainer.SetActive(false);
 
         ApplyHighlight(null);
+    }
+
+    private void OnEditMessageClicked()
+    {
+        EditMessagePopup.Show(revisionNumber, rawMessage, svnManager, (newMessage) =>
+        {
+            rawMessage = newMessage;
+            ApplyHighlight(currentFilter);   // odświeża wyświetlany tekst
+        });
     }
 
     public void ApplyHighlight(string filter)

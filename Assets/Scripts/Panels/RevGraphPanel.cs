@@ -12,10 +12,10 @@ public class RevGraphPanel : MonoBehaviour
     private SVNManager svnManager;
     private SVNRevGraph graphModule;
 
-    private void OnEnable()
-    {
-        Button_RefreshGraph();
-    }
+    // private void OnEnable()
+    // {
+    //     Button_RefreshGraph();
+    // }
 
     private void Start()
     {
@@ -77,6 +77,13 @@ public class RevGraphPanel : MonoBehaviour
 
     public async void Button_RefreshGraph()
     {
+
+        if (string.IsNullOrEmpty(svnManager.WorkingDir))
+        {
+            SVNLogBridge.LogLine("<color=red>Please select a project first.</color>");
+            return;
+        }
+
         SVNLogBridge.LogLine("<b>[SVN]</b> Fetching revision history...");
 
         try
@@ -147,41 +154,6 @@ public class RevGraphPanel : MonoBehaviour
         }
         return nodes;
     }
-
-    // private async Task<List<SVNRevisionNode>> FetchLogEntries()
-    // {
-    //     string xmlOutput = await SvnRunner.RunAsync("log --xml --verbose ^/", svnManager.WorkingDir);
-
-    //     List<SVNRevisionNode> nodes = new List<SVNRevisionNode>();
-    //     if (string.IsNullOrEmpty(xmlOutput)) return nodes;
-
-    //     XmlDocument doc = new XmlDocument();
-    //     doc.LoadXml(xmlOutput);
-    //     XmlNodeList logEntries = doc.SelectNodes("//logentry");
-
-    //     foreach (XmlNode entry in logEntries)
-    //     {
-    //         SVNRevisionNode node = new SVNRevisionNode();
-
-    //         node.Revision = long.Parse(entry.Attributes["revision"].Value);
-    //         node.Author = entry.SelectSingleNode("author")?.InnerText ?? "n/a";
-    //         node.Date = entry.SelectSingleNode("date")?.InnerText ?? "";
-    //         node.Message = entry.SelectSingleNode("msg")?.InnerText ?? "";
-
-    //         XmlNodeList pathNodes = entry.SelectNodes("paths/path");
-    //         if (pathNodes != null)
-    //         {
-    //             foreach (XmlNode p in pathNodes)
-    //             {
-    //                 string action = p.Attributes["action"]?.Value ?? "";
-    //                 node.ChangedPaths.Add($"{action} {p.InnerText}");
-    //             }
-    //         }
-
-    //         nodes.Add(node);
-    //     }
-    //     return nodes;
-    // }
 
     public void Button_CollpaseAll() => svnManager.GetModule<SVNRevGraph>().CollapseAll();
     public void Button_ExportHistoryToTxt() => svnManager.GetModule<SVNRevGraph>().ExportHistoryToTxt();
