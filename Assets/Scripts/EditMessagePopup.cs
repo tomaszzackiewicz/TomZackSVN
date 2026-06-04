@@ -32,7 +32,7 @@ public class EditMessagePopup : MonoBehaviour
         Instance.currentManager = manager;
         Instance.onSuccess = onEdited;
         Instance.inputField.text = currentMessage;
-        Instance.titleText.text = $"Edit message for r{revision}";
+        Instance.titleText.text = $"Edit message for r{revision} and press Enter";
         Instance.gameObject.SetActive(true);
 
         // Automatyczne zaznaczenie całego tekstu i fokus
