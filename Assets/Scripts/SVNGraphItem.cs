@@ -61,7 +61,6 @@ public class SVNGraphItem : MonoBehaviour
         this.rawBranchName = branchName;
         this.rawRevisionStr = $"r{node.Revision}";
 
-        // Blokada edycji – tylko dla własnych rewizji
         if (editMessageButton != null)
         {
             string currentUser = mgr.CurrentUserName;
@@ -69,7 +68,6 @@ public class SVNGraphItem : MonoBehaviour
                                currentUser != "Unknown" &&
                                string.Equals(currentUser, node.Author, StringComparison.OrdinalIgnoreCase);
             editMessageButton.interactable = isOwnCommit;
-            // Opcjonalnie: editMessageButton.gameObject.SetActive(isOwnCommit);
         }
 
         string cleanMsg = node.Message;
@@ -98,7 +96,7 @@ public class SVNGraphItem : MonoBehaviour
         EditMessagePopup.Show(revisionNumber, rawMessage, svnManager, (newMessage) =>
         {
             rawMessage = newMessage;
-            ApplyHighlight(currentFilter);   // odświeża wyświetlany tekst
+            ApplyHighlight(currentFilter);
         });
     }
 

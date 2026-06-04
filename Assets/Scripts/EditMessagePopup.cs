@@ -35,26 +35,19 @@ public class EditMessagePopup : MonoBehaviour
         Instance.titleText.text = $"Edit message for r{revision} and press Enter";
         Instance.gameObject.SetActive(true);
 
-        // Automatyczne zaznaczenie całego tekstu i fokus
         Instance.inputField.Select();
         Instance.inputField.ActivateInputField();
     }
 
     private void Start()
     {
-        // Obsługa klawiszy Enter/Escape w polu tekstowym
         inputField.onSubmit.AddListener((string text) => SaveAndClose());
-        // Escape nie jest bezpośrednio obsługiwane przez TMP_InputField, więc nasłuchujemy w Update
     }
 
     private async void SaveAndClose()
     {
         string newMessage = inputField.text.Trim();
-        if (string.IsNullOrEmpty(newMessage))
-        {
-            // Można po prostu zamknąć lub wymusić niepusty tekst – tutaj anulujemy, jeśli puste
-            return;
-        }
+        if (string.IsNullOrEmpty(newMessage)) return;
 
         string repoUrl = await SvnRunner.GetRepoUrlAsync(currentManager.WorkingDir);
         string args = $"propset --revprop -r {currentRevision} svn:log \"{newMessage}\" \"{repoUrl}\"";
