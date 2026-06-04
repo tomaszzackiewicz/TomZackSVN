@@ -12,10 +12,19 @@ public class RevGraphPanel : MonoBehaviour
     private SVNManager svnManager;
     private SVNRevGraph graphModule;
 
-    // private void OnEnable()
-    // {
-    //     Button_RefreshGraph();
-    // }
+    private async void OnEnable()
+    {
+        if (svnManager == null)
+            svnManager = SVNManager.Instance;
+
+        if (svnManager == null)
+            return;
+
+        if (string.IsNullOrEmpty(svnManager.WorkingDir))
+            return;
+
+        await RefreshGraph();
+    }
 
     private void Start()
     {
@@ -31,7 +40,6 @@ public class RevGraphPanel : MonoBehaviour
     {
         if (graphModule == null) return;
 
-        // Przygotowujemy filtr do porównań (małe litery)
         string filterLower = filterText.ToLower();
         bool hasFilter = !string.IsNullOrEmpty(filterText);
 
@@ -42,14 +50,12 @@ public class RevGraphPanel : MonoBehaviour
             SVNGraphItem item = itemGo.GetComponent<SVNGraphItem>();
             if (item == null) continue;
 
-            // 1. Sprawdzamy podstawowe pola (branch, wiadomość, autor, rewizja)
             bool matches = !hasFilter ||
                            item.GetBranchName().ToLower().Contains(filterLower) ||
                            item.GetMessage().ToLower().Contains(filterLower) ||
                            item.GetAuthor().ToLower().Contains(filterLower) ||
                            item.GetRevision().ToString().Contains(filterLower);
 
-            // 2. Jeśli brak dopasowania w nagłówku, przeszukujemy listę plików
             if (!matches && hasFilter)
             {
                 var paths = item.GetChangedPaths();
@@ -75,9 +81,8 @@ public class RevGraphPanel : MonoBehaviour
         }
     }
 
-    public async void Button_RefreshGraph()
+    public async Task RefreshGraph()
     {
-
         if (string.IsNullOrEmpty(svnManager.WorkingDir))
         {
             SVNLogBridge.LogLine("<color=red>Please select a project first.</color>");
@@ -110,51 +115,102 @@ public class RevGraphPanel : MonoBehaviour
 
     private async Task<List<SVNRevisionNode>> FetchLogEntries()
     {
-        string xmlOutput = await SvnRunner.RunAsync("log --xml --verbose ^/", svnManager.WorkingDir);
+        string xmlOutput = await SvnRunner.RunAsync(
+            "log --xml --verbose ^/",
+            svnManager.WorkingDir);
 
-        List<SVNRevisionNode> nodes = new List<SVNRevisionNode>();
-        if (string.IsNullOrEmpty(xmlOutput)) return nodes;
+        var nodes = new List<SVNRevisionNode>();
 
-        XmlDocument doc = new XmlDocument();
-        doc.LoadXml(xmlOutput);
-        XmlNodeList logEntries = doc.SelectNodes("//logentry");
+        if (string.IsNullOrEmpty(xmlOutput))
+            return nodes;
 
-        foreach (XmlNode entry in logEntries)
-        {
-            SVNRevisionNode node = new SVNRevisionNode();
-
-            node.Revision = long.Parse(entry.Attributes["revision"].Value);
-            node.Author = entry.SelectSingleNode("author")?.InnerText ?? "n/a";
-            node.Date = entry.SelectSingleNode("date")?.InnerText ?? "";
-            node.Message = entry.SelectSingleNode("msg")?.InnerText ?? "";
-
-            XmlNodeList pathNodes = entry.SelectNodes("paths/path");
-            if (pathNodes != null)
+        using (var stringReader = new System.IO.StringReader(xmlOutput))
+        using (var reader = XmlReader.Create(stringReader,
+            new XmlReaderSettings
             {
-                foreach (XmlNode p in pathNodes)
+                IgnoreComments = true,
+                IgnoreWhitespace = true
+            }))
+        {
+            SVNRevisionNode currentNode = null;
+
+            while (reader.Read())
+            {
+                if (reader.NodeType != XmlNodeType.Element)
+                    continue;
+
+                switch (reader.Name)
                 {
-                    string action = p.Attributes["action"]?.Value ?? "";
-                    string filePath = p.InnerText;                     // np. "/trunk/plik.txt"
-                    string propMods = p.Attributes["prop-mods"]?.Value; // "true" jeśli zmieniono właściwości
+                    case "logentry":
+                        {
+                            currentNode = new SVNRevisionNode();
 
-                    node.ChangedPaths.Add($"{action} {filePath}");
+                            if (reader.GetAttribute("revision") is string rev &&
+                                long.TryParse(rev, out long revision))
+                            {
+                                currentNode.Revision = revision;
+                            }
 
-                    // Wykrywanie merge'a: zmiana właściwości (prop-mods="true") na głównej ścieżce gałęzi
-                    if (propMods == "true" &&
-                        (filePath == "/trunk" ||           // zmiana na katalogu trunk
-                         filePath.StartsWith("/branches/") ||   // zmiana na katalogu gałęzi
-                         filePath.StartsWith("/tags/")))        // zmiana na katalogu taga
-                    {
-                        node.HasMergeInfoChange = true;
-                    }
+                            nodes.Add(currentNode);
+                            break;
+                        }
+
+                    case "author":
+                        {
+                            if (currentNode != null)
+                                currentNode.Author = reader.ReadElementContentAsString();
+                            break;
+                        }
+
+                    case "date":
+                        {
+                            if (currentNode != null)
+                                currentNode.Date = reader.ReadElementContentAsString();
+                            break;
+                        }
+
+                    case "msg":
+                        {
+                            if (currentNode != null)
+                                currentNode.Message = reader.ReadElementContentAsString();
+                            break;
+                        }
+
+                    case "path":
+                        {
+                            if (currentNode == null)
+                                break;
+
+                            string action =
+                                reader.GetAttribute("action") ?? "";
+
+                            string propMods =
+                                reader.GetAttribute("prop-mods") ?? "";
+
+                            string filePath =
+                                reader.ReadElementContentAsString();
+
+                            currentNode.ChangedPaths.Add(
+                                $"{action} {filePath}");
+
+                            if (propMods == "true" &&
+                                (filePath == "/trunk" ||
+                                 filePath.StartsWith("/branches/") ||
+                                 filePath.StartsWith("/tags/")))
+                            {
+                                currentNode.HasMergeInfoChange = true;
+                            }
+
+                            break;
+                        }
                 }
             }
-
-            nodes.Add(node);
         }
+
         return nodes;
     }
 
+    public async void Button_RefreshGraph() => await RefreshGraph();
     public void Button_CollpaseAll() => svnManager.GetModule<SVNRevGraph>().CollapseAll();
     public void Button_ExportHistoryToTxt() => svnManager.GetModule<SVNRevGraph>().ExportHistoryToTxt();
 }
