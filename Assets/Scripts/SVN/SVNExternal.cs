@@ -1,9 +1,10 @@
-using System;
-using UnityEngine;
 using SFB;
+using System;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+using UnityEngine;
 
 namespace SVN.Core
 {
@@ -72,7 +73,14 @@ namespace SVN.Core
                 if (svnUI.LoadDestFolderInput != null)
                     svnUI.LoadDestFolderInput.text = selectedPath;
 
-                _ = svnManager.SetWorkingDirectory(selectedPath);
+                _ = svnManager.SetWorkingDirectory(selectedPath).ContinueWith(task =>
+                {
+                    if (task.Exception != null)
+                    {
+                        SVNLogBridge.LogError($"Failed to set working directory: {task.Exception.Message}");
+                    }
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+
                 SVNLogBridge.LogLine($"SVN path selected: {selectedPath}");
             }
             else
@@ -125,7 +133,10 @@ namespace SVN.Core
 
         public void BrowsePrivateKeyPathAdd()
         {
-            var extensions = new[] { new ExtensionFilter("All Files", "*") };
+            var extensions = new[] {
+                new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh"),
+                new ExtensionFilter("All Files", "*")
+            };
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select Private Key", "", extensions, false);
             if (paths != null && paths.Length > 0)
             {
@@ -154,7 +165,6 @@ namespace SVN.Core
         {
             var extensions = new[] {
                 new ExtensionFilter("All Files", "*"),
-                new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh")
             };
 
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select SSH Private Key for Checkout", "", extensions, false);
@@ -187,6 +197,10 @@ namespace SVN.Core
                 if (selectedPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                 {
                     selectedPath = selectedPath.Substring(root.Length).TrimStart('/');
+                }
+                else
+                {
+                    SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!", true);
                 }
 
                 if (svnUI.ResolveTargetFileInput != null)
@@ -239,14 +253,13 @@ namespace SVN.Core
         {
             string root = svnManager.WorkingDir;
 
-            if (string.IsNullOrEmpty(root))
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
             {
-                SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory is not set!", true);
+                SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory is not set or does not exist!");
                 return;
             }
 
             var extensions = new[] {
-        new ExtensionFilter("Text Files", "cs", "shader", "json", "txt", "xml", "yaml"),
         new ExtensionFilter("All Files", "*")
     };
 
@@ -266,24 +279,20 @@ namespace SVN.Core
                         svnUI.BlameTargetFileInput.text = selectedPath;
                         SVNLogBridge.LogLine($"<color=green>Blame:</color> Target file set to: {selectedPath}");
                     }
-                    else
-                    {
-                        SVNLogBridge.LogError("[SVN] BlameTargetFileInput is not assigned in SVNUI!");
-                    }
                 }
                 else
                 {
-                    SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file for Blame is outside of the Working Directory!", true);
+                    SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!");
                 }
             }
         }
 
         public void OpenTortoiseLog()
         {
-            string root = svnManager.RepositoryUrl;
+            string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root))
             {
-                SVNLogBridge.LogLine("<color=yellow>Warning:</color> Repository URL not found.");
+                SVNLogBridge.LogLine("<color=yellow>Warning:</color> Working directory not set.");
                 return;
             }
 
@@ -326,17 +335,14 @@ namespace SVN.Core
                 string root = svnManager.WorkingDir;
                 if (string.IsNullOrEmpty(root)) return;
 
-                // Budujemy pełną ścieżkę i normalizujemy pod Windowsa
                 string fullPath = System.IO.Path.Combine(root, relativePath).Replace('/', '\\');
 
                 if (System.IO.File.Exists(fullPath) || System.IO.Directory.Exists(fullPath))
                 {
-                    // Argument /select, wymusza zaznaczenie pliku w otwartym oknie
                     System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{fullPath}\"");
                 }
                 else
                 {
-                    // Jeśli plik nie istnieje (np. został usunięty), otwórz po prostu root
                     System.Diagnostics.Process.Start("explorer.exe", root.Replace('/', '\\'));
                 }
             }
@@ -346,7 +352,6 @@ namespace SVN.Core
             }
         }
 
-        // Place this inside your class
         [DllImport("shell32.dll", CharSet = CharSet.Auto)]
         private static extern void SHChangeNotify(long wEventId, uint uFlags, string dwItem1, string dwItem2);
 
@@ -357,14 +362,12 @@ namespace SVN.Core
         {
             try
             {
-                // 1. Force kill TSVNCache.exe so TortoiseSVN is forced to reload metadata immediately
                 Process[] cacheProcesses = Process.GetProcessesByName("TSVNCache");
                 foreach (var process in cacheProcesses)
                 {
                     process.Kill();
                 }
 
-                // 2. Notify Windows Shell that the directory has changed to redraw overlay icons
                 string fullPath = Path.Combine(svnManager.WorkingDir, targetPath);
                 string directoryToRefresh = File.Exists(fullPath) ? Path.GetDirectoryName(fullPath) : fullPath;
 

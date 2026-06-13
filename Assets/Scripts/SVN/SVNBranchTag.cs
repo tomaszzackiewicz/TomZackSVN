@@ -276,6 +276,7 @@ namespace SVN.Core
 
             try
             {
+                if (svnUI.TagsDropdown.options.Count == 0) return;
                 string selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
 
                 if (IsPlaceholder(selected)) return;

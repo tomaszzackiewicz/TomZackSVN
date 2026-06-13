@@ -78,9 +78,9 @@ namespace SVN.Core
 
                 var alreadyLockedPaths =
                     new HashSet<string>(
-                        currentServerLocks.Select(
-                            l => NormalizePath(l.FullPath)
-                        ),
+                        currentServerLocks
+                            .Where(l => !string.IsNullOrEmpty(l.FullPath))
+                            .Select(l => NormalizePath(l.FullPath)),
                         StringComparer.OrdinalIgnoreCase
                     );
 
@@ -219,12 +219,16 @@ namespace SVN.Core
         public async Task ShowAllLocks()
         {
             if (IsProcessing) return;
-            IsProcessing = true;
 
-            SVNLogBridge.UpdateUIField(svnUI.LocksText, "<b><color=orange>Fetching Repository Status...</color></b>", append: false);
+            SVNLogBridge.UpdateUIField(svnUI.LocksText,
+                "<b><color=orange>Fetching Repository Status...</color></b>", append: false);
+
+            IsProcessing = true;
 
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
+
                 var locks = await GetDetailedLocks(svnManager.WorkingDir);
                 string summary = "<b>Active Repository Locks:</b>\n----------------------------------\n";
 
@@ -237,7 +241,8 @@ namespace SVN.Core
                     foreach (var lockItem in locks)
                     {
                         bool isMe = !string.IsNullOrEmpty(svnManager.CurrentUserName) &&
-                                    lockItem.Owner.Trim().Equals(svnManager.CurrentUserName.Trim(), StringComparison.OrdinalIgnoreCase);
+                                    lockItem.Owner.Trim().Equals(svnManager.CurrentUserName.Trim(),
+                                        StringComparison.OrdinalIgnoreCase);
 
                         string color = isMe ? "#00FF00" : "#FF4444";
                         string prefix = isMe ? "[MINE]" : "[LOCKED]";
@@ -256,7 +261,10 @@ namespace SVN.Core
             {
                 SVNLogBridge.UpdateUIField(svnUI.LocksText, $"Error: {ex.Message}", append: true);
             }
-            finally { IsProcessing = false; }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
         public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath)
@@ -314,15 +322,13 @@ namespace SVN.Core
 
             try
             {
-                // 1. Czekamy na wykonanie operacji blokady/odblokowania w SVN
+                await svnManager.CancelBackgroundTasksAsync();
+
                 await SvnRunner.RunAsync(
                     cmd,
                     svnManager.WorkingDir
                 );
 
-                // 2. 🔥 KLUCZOWA ZMIANA: Czekamy aż cache pobierze nowy stan z serwera.
-                // Metoda RefreshLockCacheAsync na samym końcu sama wywoła ApplyLocksToTree(),
-                // które bezpiecznie i finalnie zaktualizuje flagi oraz odświeży UI.
                 await RefreshLockCacheAsync(true);
             }
             catch (Exception ex)
@@ -331,7 +337,6 @@ namespace SVN.Core
                     $"[SVN Lock Error]: {ex.Message}"
                 );
 
-                // W razie błędu również czekamy na odświeżenie stanu faktycznego
                 await RefreshLockCacheAsync(true);
             }
         }

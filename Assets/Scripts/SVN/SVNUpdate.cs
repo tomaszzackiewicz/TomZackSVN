@@ -21,7 +21,14 @@ namespace SVN.Core
 
         public void Update()
         {
+            if (string.IsNullOrWhiteSpace(svnManager.WorkingDir) || !Directory.Exists(svnManager.WorkingDir))
+            {
+                SVNLogBridge.LogError("[SVN] Working directory does not exist.");
+                return;
+            }
+
             SVNLogBridge.LogLine("[SVN-DEBUG] Update() was called! Session will start.");
+
             if (_runningTask != null &&
                 !_runningTask.IsCompleted)
             {
@@ -60,11 +67,9 @@ namespace SVN.Core
             if (session != _sessionId)
                 return;
 
-            // 🔥 KROK 0 – ANULUJ WSZYSTKIE INNE OPERACJE SVN (status, log, etc.)
             var statusModule = svnManager.GetModule<SVNStatus>();
             statusModule?.CancelCurrentRefresh();
 
-            // Daj chwilę na propagację anulowania
             await Task.Delay(500);
 
             SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 1: Creating update token...");
@@ -112,11 +117,16 @@ namespace SVN.Core
             if (svnBar != null)
             {
                 SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 3: Showing project info...");
-                await svnBar.ShowProjectInfo(
-                    svnManager.CurrentProject,
-                    targetPath,
-                    isRefreshing: true
-                );
+                string projectName = svnManager.CurrentProject?.projectName ?? Path.GetFileName(targetPath);
+                string fullLine =
+                    $"<size=150%><color=#FFFF00>●</color></size> " +
+                    $"<color=orange><b>{projectName}</b> ({svnManager.CurrentSnapshot?.WorkingCopySize ?? "?"})</color> | " +
+                    $"<color=#00E5FF>User:</color> <color=#E6E6E6>{svnManager.CurrentUserName}</color> | " +
+                    $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{svnManager.CurrentSnapshot?.Branch ?? "unknown"}</color> | " +
+                    $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{svnManager.CurrentSnapshot?.Revision ?? "?"}</color> | " +
+                    $"<color=#E6E6E6>Updating working copy...</color>";
+
+                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, fullLine, "INFO", append: false);
             }
 
             var stopwatch = Stopwatch.StartNew();
@@ -130,12 +140,8 @@ namespace SVN.Core
 
             try
             {
-                statusModule?.CancelCurrentRefresh();
-
-                // 🔥 Czekaj, aż wszystkie trwające operacje SVN się zakończą i zwolnią semafor
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
 
-                // 🔥 KROK 4 – CLEANUP
                 SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 4: Starting cleanup...");
                 SVNLogBridge.LogLine("<b>[SVN]</b> Pre-update cleanup...");
 
@@ -148,7 +154,6 @@ namespace SVN.Core
                 if (session != _sessionId)
                     throw new OperationCanceledException();
 
-                // 🔥 KROK 5 – WŁAŚCIWY UPDATE
                 SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 5: Running svn update...");
                 SVNLogBridge.LogLine("<color=blue><b>[SVN]</b> Running update...</color>");
 
@@ -187,7 +192,6 @@ namespace SVN.Core
                 if (session != _sessionId || result == "Canceled")
                     throw new OperationCanceledException();
 
-                // PARSOWANIE WYNIKU
                 string finalOutput = liveOutput.ToString();
 
                 int updatedCount = 0;
@@ -225,7 +229,6 @@ namespace SVN.Core
 
                 stopwatch.Stop();
 
-                // SUKCES
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
                     State = SVNOperationState.Success,
@@ -235,7 +238,6 @@ namespace SVN.Core
                 };
                 svnManager.LastUpdateSucceeded = true;
 
-                // RAPORT KOŃCOWY
                 StringBuilder report = new StringBuilder();
                 report.AppendLine("\n<color=blue><b>=========================================</b></color>");
                 report.AppendLine("<color=blue><b>          SVN UPDATE REPORT              </b></color>");
@@ -272,7 +274,6 @@ namespace SVN.Core
                 report.AppendLine("<color=yellow><b>=========================================</b></color>");
                 SVNLogBridge.LogLine(report.ToString(), false);
 
-                // ODSWIEŻ STATUS I SNAPSHOT
                 if (!svnManager.WasUpdateCanceled && statusModule != null)
                 {
                     await statusModule.RefreshModifiedInternal();
@@ -355,7 +356,6 @@ namespace SVN.Core
         {
             try
             {
-                // svn info -r <rewizja> pobiera informacje z repozytorium dla konkretnej rewizji
                 string infoOutput = await SvnRunner.GetInfoAsync($"-r {revision} \"{targetPath}\"");
                 var match = Regex.Match(infoOutput, @"^Last Changed Author:\s*(.+)$", RegexOptions.Multiline);
                 return match.Success ? match.Groups[1].Value.Trim() : null;
@@ -381,16 +381,15 @@ namespace SVN.Core
             svnManager.LastUpdateSucceeded = false;
 
             _updateCTS.Cancel();
+            _runningTask = null;
             _sessionId = Guid.NewGuid();
 
             _lastLiveLine = "";
             _hasNewLine = false;
 
-            // 🔥 STATE
             svnManager.OperationInfo = new SVNOperationInfo
             {
                 State = SVNOperationState.Canceled,
-                //Message = "Update canceled by user",
                 Duration = 0,
                 Repo = svnManager.RepositoryUrl
             };
@@ -424,7 +423,6 @@ namespace SVN.Core
             string message =
                 svnManager.OperationInfo.Message;
 
-            // 🔥 EXACT SAME FORMAT AS RenderSnapshot
             string line =
      $"<size=150%><color={statusColor}>●</color></size> " +
      $"<color=orange><b>{projectName}</b> ({snapshot?.WorkingCopySize ?? "?"})</color> | " +
@@ -463,7 +461,6 @@ namespace SVN.Core
 
             try
             {
-                // Wyczyść pole na czas sprawdzania
                 SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<i>Checking remote...</i>", "REMOTE", append: false);
 
                 string output = await SvnRunner.RunAsync("status -u", root);
@@ -491,10 +488,8 @@ namespace SVN.Core
 
                             string changeMsg = $"<color=orange>Update available:</color> {cleanPath}";
 
-                            // 🔥 Logujemy do konsoli/pliku
                             SVNLogBridge.LogLine(changeMsg);
 
-                            // 🔥 Budujemy zawartość pola UI
                             uiBuilder.AppendLine(changeMsg);
                         }
                     }
@@ -506,7 +501,6 @@ namespace SVN.Core
                     SVNLogBridge.LogLine(summary);
                     uiBuilder.AppendLine(summary);
 
-                    // Podmiana całego pola
                     SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, uiBuilder.ToString(), "REMOTE", append: false);
                 }
                 else

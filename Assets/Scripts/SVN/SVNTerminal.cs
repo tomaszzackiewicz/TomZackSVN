@@ -17,7 +17,6 @@ namespace SVN.Core
             string rawInput = svnUI.TerminalInputField.text.Trim();
             if (string.IsNullOrEmpty(rawInput)) return;
 
-            // 1. Obsługa czyszczenia
             if (rawInput.Equals("cls", System.StringComparison.OrdinalIgnoreCase) ||
                 rawInput.Equals("clear", System.StringComparison.OrdinalIgnoreCase))
             {
@@ -26,19 +25,16 @@ namespace SVN.Core
                 return;
             }
 
-            // 2. Historia
             if (commandHistory.Count == 0 || commandHistory[commandHistory.Count - 1] != rawInput)
                 commandHistory.Add(rawInput);
             historyIndex = -1;
 
-            // 3. Wycinanie "svn " - bezpieczniejszy sposób
             string cmdToExecute = rawInput;
             if (rawInput.StartsWith("svn ", System.StringComparison.OrdinalIgnoreCase))
             {
                 cmdToExecute = rawInput.Substring(4).Trim();
             }
 
-            // 4. Dodaj wymuszenie braku interakcji dla bezpieczeństwa
             if (!cmdToExecute.Contains("--non-interactive"))
             {
                 cmdToExecute += " --non-interactive";
@@ -50,7 +46,7 @@ namespace SVN.Core
             IsProcessing = true;
             try
             {
-                // Wykonanie
+                await svnManager.CancelBackgroundTasksAsync();
                 string result = await SvnRunner.RunAsync(cmdToExecute, svnManager.WorkingDir);
 
                 if (!string.IsNullOrEmpty(result))
@@ -58,7 +54,6 @@ namespace SVN.Core
                 else
                     SVNLogBridge.LogLine("<color=green>Command completed with no output.</color>", append: true);
 
-                // Odświeżanie UI po zmianach
                 if (cmdToExecute.Contains("update") || cmdToExecute.Contains("commit") ||
                     cmdToExecute.Contains("revert") || cmdToExecute.Contains("cleanup"))
                 {

@@ -196,11 +196,10 @@ namespace SVN.Core
                     {
                         line = NormalizeSvnPath(line);
 
-                        if (line.StartsWith("!"))
+                        string path = svnManager.ExtractPathFromStatusLine(line, "!");
+                        if (path != null)
                         {
-                            string path = NormalizeSvnPath(line.Substring(1));
-                            if (!string.IsNullOrEmpty(path))
-                                filesToRevert.Add(path);
+                            filesToRevert.Add(path);
                         }
                     }
                 }
@@ -271,8 +270,7 @@ namespace SVN.Core
                     return;
                 }
 
-                var commitModule = svnManager.GetModule<SVNCommit>();
-                _ = commitModule.ExecuteCommitSelected(messageFromUI);
+                _ = ExecuteCommitSelected(messageFromUI);
             }
             catch (Exception ex)
             {
@@ -324,15 +322,11 @@ namespace SVN.Core
                         string line;
                         while ((line = reader.ReadLine()) != null)
                         {
-                            if (line.Length > 8 && line.StartsWith("!"))
+                            string path = svnManager.ExtractPathFromStatusLine(line, "!");
+                            if (path != null)
                             {
-                                // POPRAWKA: Wymuszamy forward slashe, żeby ubić problem traktowania \t jako tabulacji
-                                string path = line.Substring(8).Trim().Replace("\\", "/");
-
-                                // Obejście błędu "peg revision" dla plików zawierających '@'
                                 if (path.Contains("@") && !path.EndsWith("@")) path += "@";
-
-                                if (!string.IsNullOrEmpty(path)) missingFiles.Add(path);
+                                missingFiles.Add(path);
                             }
                         }
                     }

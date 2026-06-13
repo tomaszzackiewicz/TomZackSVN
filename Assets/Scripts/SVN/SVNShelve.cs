@@ -35,12 +35,12 @@ namespace SVN.Core
 
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
                 await SvnRunner.RunAsync($"shelf-drop {shelfName}", svnManager.WorkingDir);
                 SVNLogBridge.LogLine($"<color=green>[Stash]</color> Deleted: {shelfName}");
             }
             catch (Exception ex)
             {
-                //svnUI.LogText.text += $"<color=red>Delete failed:</color> {ex.Message}\n";
                 SVNLogBridge.LogLine($"<color=red>Delete failed:</color> {ex.Message}\n");
             }
             finally
@@ -55,15 +55,13 @@ namespace SVN.Core
             IsProcessing = true;
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
                 await SvnRunner.RunAsync($"shelf-save {shelfName}", svnManager.WorkingDir);
                 await SvnRunner.RunAsync("revert -R .", svnManager.WorkingDir);
-
-                //svnUI.LogText.text += $"<color=green>[Stash]</color> Success: {shelfName}\n";
                 SVNLogBridge.LogLine($"<color=green>[Stash]</color> Success: {shelfName}\n");
             }
             catch (Exception ex)
             {
-                //svnUI.LogText.text += $"<color=red>Stash failed:</color> {ex.Message}\n";
                 SVNLogBridge.LogLine($"<color=red>Stash failed:</color> {ex.Message}\n");
             }
             finally
@@ -78,15 +76,13 @@ namespace SVN.Core
             IsProcessing = true;
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
                 await SvnRunner.RunAsync($"shelf-restore {shelfName}", svnManager.WorkingDir);
                 await SvnRunner.RunAsync($"shelf-drop {shelfName}", svnManager.WorkingDir);
-
-                //svnUI.LogText.text += $"<color=green>[Stash]</color> Restored: {shelfName}\n";
                 SVNLogBridge.LogLine($"<color=green>[Stash]</color> Restored: {shelfName}\n");
             }
             catch (Exception ex)
             {
-                //svnUI.LogText.text += $"<color=red>Restore failed:</color> {ex.Message}\n";
                 SVNLogBridge.LogLine($"<color=red>Restore failed:</color> {ex.Message}\n");
             }
             finally

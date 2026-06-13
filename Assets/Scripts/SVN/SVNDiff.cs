@@ -18,6 +18,13 @@ namespace SVN.Core
             SVNLogBridge.UpdateUIField(console, msg, "DIFF", true);
         }
 
+        private void LogPreview(string msg)
+        {
+            SVNLogBridge.LogLine(msg);
+            if (svnUI.LogText != null)
+                svnUI.LogText.text = msg;
+        }
+
         public void Button_BrowseDiffFilePath()
         {
             string root = svnManager.WorkingDir;
@@ -68,6 +75,7 @@ namespace SVN.Core
             IsProcessing = true;
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
                 await ShowDiff(relativePath);
             }
             finally
@@ -78,6 +86,8 @@ namespace SVN.Core
 
         public async Task ShowDiff(string relativePath)
         {
+            await svnManager.CancelBackgroundTasksAsync();
+
             if (string.IsNullOrEmpty(svnManager.WorkingDir))
             {
                 LogBoth("<color=red>Error:</color> Working Directory is not set!");
@@ -192,10 +202,7 @@ namespace SVN.Core
                 return;
             }
 
-            if (svnUI.LogText != null)
-            {
-                svnUI.LogText.text = "Loading diff...";
-            }
+            LogPreview("Loading diff...");
 
             try
             {
@@ -203,8 +210,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrWhiteSpace(diffContent))
                 {
-                    if (svnUI.LogText != null)
-                        svnUI.LogText.text = "<color=white>No local changes detected (or file is unversioned).</color>";
+                    LogPreview("<color=white>No local changes detected (or file is unversioned).</color>");
                     return;
                 }
 
@@ -212,25 +218,21 @@ namespace SVN.Core
 
                 if (isBinary)
                 {
-                    if (svnUI.LogText != null)
-                        svnUI.LogText.text = "<color=#FF8080>Binary File:</color> Text preview is not available.";
+                    LogPreview("<color=#FF8080>Binary File:</color> Text preview is not available.");
                     return;
                 }
 
-                if (svnUI.LogText != null)
-                {
-                    svnUI.LogText.text = FormatDiffForUnity(diffContent);
+                string formatted = FormatDiffForUnity(diffContent);
+                LogPreview(formatted);
 
-                    var scrollRect = svnUI.LogText.GetComponentInParent<UnityEngine.UI.ScrollRect>();
-                    if (scrollRect != null)
-                        scrollRect.verticalNormalizedPosition = 1f;
-                }
+                var scrollRect = svnUI.LogText.GetComponentInParent<UnityEngine.UI.ScrollRect>();
+                if (scrollRect != null)
+                    scrollRect.verticalNormalizedPosition = 1f;
             }
             catch (Exception ex)
             {
                 LogBoth($"<color=red>Preview Error:</color> {ex.Message}");
-                if (svnUI.LogText != null)
-                    svnUI.LogText.text = $"<color=red>Exception during Diff generation:</color>\n{ex.Message}";
+                LogPreview($"<color=red>Exception during Diff generation:</color>\n{ex.Message}");
             }
         }
 

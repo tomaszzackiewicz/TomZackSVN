@@ -21,6 +21,8 @@ namespace SVN.Core
 
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
+
                 await FixMissingLogic();
 
                 await Task.Delay(250);
@@ -29,7 +31,6 @@ namespace SVN.Core
 
                 if (statusModule != null)
                 {
-
                     statusModule.ClearCurrentData();
 
                     if (svnUI.SvnTreeView != null)
@@ -38,30 +39,20 @@ namespace SVN.Core
                     if (svnUI.SVNCommitTreeDisplay != null)
                         svnUI.SVNCommitTreeDisplay.ClearView();
 
-
                     if (svnUI.TreeDisplay != null)
                     {
-                        SVNLogBridge.UpdateUIField(
-                            svnUI.TreeDisplay,
-                            "",
-                            "TREE",
-                            append: false);
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
                     }
 
                     if (svnUI.CommitTreeDisplay != null)
                     {
-                        SVNLogBridge.UpdateUIField(
-                            svnUI.CommitTreeDisplay,
-                            "",
-                            "COMMIT_TREE",
-                            append: false);
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
                     }
 
                     svnManager.ExpandedPaths.Clear();
                     svnManager.ExpandedPaths.Add("");
 
-                    SVNLogBridge.LogLine(
-                        "<color=#4FC3F7>Refreshing SVN status...</color>");
+                    SVNLogBridge.LogLine("<color=#4FC3F7>Refreshing SVN status...</color>");
 
                     await statusModule.ExecuteRefreshWithAutoExpand(force: true);
 
@@ -69,20 +60,12 @@ namespace SVN.Core
                     {
                         if (svnUI.TreeDisplay != null)
                         {
-                            SVNLogBridge.UpdateUIField(
-                                svnUI.TreeDisplay,
-                                "<i>No changes detected.</i>",
-                                "TREE",
-                                append: false);
+                            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
                         }
 
                         if (svnUI.CommitTreeDisplay != null)
                         {
-                            SVNLogBridge.UpdateUIField(
-                                svnUI.CommitTreeDisplay,
-                                "<i>Nothing to commit.</i>",
-                                "COMMIT_TREE",
-                                append: false);
+                            SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
                         }
                     }
                 }

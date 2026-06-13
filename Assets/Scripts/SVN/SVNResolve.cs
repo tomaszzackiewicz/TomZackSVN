@@ -250,6 +250,55 @@ namespace SVN.Core
             }
         }
 
+        public async void DeleteAllObstructions()
+        {
+            if (IsProcessing)
+                return;
+
+            IsProcessing = true;
+
+            try
+            {
+                var conflicts = await GetConflicts(svnManager.WorkingDir);
+
+                if (conflicts == null || conflicts.Count == 0)
+                {
+                    LogBoth("<color=yellow>No conflicts found.</color>");
+                    return;
+                }
+
+                var snapshot = conflicts
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Path))
+                    .Select(x => x.Path)
+                    .ToList();
+
+                LogBoth($"[Batch Resolve] {snapshot.Count} items");
+
+                foreach (var path in snapshot)
+                {
+                    await DeleteObstruction(path, false);
+                }
+
+                await SVNManager.Instance.RunSvn("cleanup");
+                await svnManager.RefreshStatus();
+
+                await Task.Delay(250);
+
+                if (!_uiRefreshing)
+                    await RefreshConflictUI();
+
+                LogBoth("<color=green>All obstructions removed.</color>");
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=red>DeleteAllObstructions error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
+
         public async void ResolveTheirs()
         {
             if (IsProcessing) return;
@@ -300,22 +349,22 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            string root = svnManager.WorkingDir;
-            string editorPath = svnManager.MergeToolPath;
-
-            if (string.IsNullOrEmpty(editorPath))
-            {
-                editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-                if (string.IsNullOrEmpty(editorPath))
-                {
-                    LogBoth("<color=red>Error:</color> Merge tool path is not set!");
-                    return;
-                }
-            }
+            IsProcessing = true;
 
             try
             {
-                IsProcessing = true;
+                string root = svnManager.WorkingDir;
+                string editorPath = svnManager.MergeToolPath;
+
+                if (string.IsNullOrEmpty(editorPath))
+                {
+                    editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+                    if (string.IsNullOrEmpty(editorPath))
+                    {
+                        LogBoth("<color=red>Error:</color> Merge tool path is not set!");
+                        return;
+                    }
+                }
 
                 string targetFile = null;
 
@@ -515,55 +564,6 @@ namespace SVN.Core
                 await ResolveMany(paths.Select(p => new SVNConflictData { Path = p }), "theirs-full");
 
                 LogBoth("<color=green>All conflicts resolved (theirs-full).</color>");
-            }
-            finally
-            {
-                IsProcessing = false;
-            }
-        }
-
-        public async void DeleteAllObstructions()
-        {
-            if (IsProcessing)
-                return;
-
-            IsProcessing = true;
-
-            try
-            {
-                var conflicts = await GetConflicts(svnManager.WorkingDir);
-
-                if (conflicts == null || conflicts.Count == 0)
-                {
-                    LogBoth("<color=yellow>No conflicts found.</color>");
-                    return;
-                }
-
-                var snapshot = conflicts
-                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Path))
-                    .Select(x => x.Path)
-                    .ToList();
-
-                LogBoth($"[Batch Resolve] {snapshot.Count} items");
-
-                foreach (var path in snapshot)
-                {
-                    await DeleteObstruction(path, false);
-                }
-
-                await SVNManager.Instance.RunSvn("cleanup");
-                await svnManager.RefreshStatus();
-
-                await Task.Delay(250);
-
-                if (!_uiRefreshing)
-                    await RefreshConflictUI();
-
-                LogBoth("<color=green>All obstructions removed.</color>");
-            }
-            catch (Exception ex)
-            {
-                LogBoth($"<color=red>DeleteAllObstructions error:</color> {ex.Message}");
             }
             finally
             {

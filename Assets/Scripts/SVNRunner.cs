@@ -154,15 +154,17 @@ namespace SVN.Core
                         StandardErrorEncoding = Encoding.UTF8
                     };
 
-                    psi.EnvironmentVariables["SVN_SSH"] =
-                         $"ssh -i \"{safeKeyPath}\" " +
-                         "-o IdentitiesOnly=yes " +
-                         "-o StrictHostKeyChecking=no " +
-                         "-o BatchMode=yes " +
-                         "-o LogLevel=QUIET " +
-                         "-o ServerAliveInterval=15 " +
-                         "-o ServerAliveCountMax=10 " +
-                         "-o IPQoS=throughput";
+                    if(!string.IsNullOrEmpty(safeKeyPath)){
+                        psi.EnvironmentVariables["SVN_SSH"] =
+                             $"ssh -i \"{safeKeyPath}\" " +
+                             "-o IdentitiesOnly=yes " +
+                             "-o StrictHostKeyChecking=no " +
+                             "-o BatchMode=yes " +
+                             "-o LogLevel=QUIET " +
+                             "-o ServerAliveInterval=15 " +
+                             "-o ServerAliveCountMax=10 " +
+                             "-o IPQoS=throughput";
+                    }
 
                     using var process = new Process
                     {
@@ -447,8 +449,6 @@ namespace SVN.Core
 
                 await WaitForExitAsync(process, token);
 
-                process.WaitForExit();
-
                 token.ThrowIfCancellationRequested();
 
                 string output = outputBuilder.ToString();
@@ -729,7 +729,6 @@ namespace SVN.Core
 
         private static async Task WaitForExitAsync(Process process, CancellationToken token = default)
         {
-            // Wymuś aktualizację danych procesu
             process.Refresh();
             if (process.HasExited)
                 return;
@@ -737,7 +736,6 @@ namespace SVN.Core
             while (!process.HasExited && !token.IsCancellationRequested)
             {
                 await Task.Delay(1000, token);
-                // Odśwież stan procesu przed sprawdzeniem
                 process.Refresh();
             }
 
@@ -749,7 +747,6 @@ namespace SVN.Core
 
         public static async Task WaitForSemaphoreFreeAsync(CancellationToken token = default)
         {
-            // Czekamy, aż semafor będzie wolny, po czym natychmiast go zwalniamy
             await _svnSemaphore.WaitAsync(token);
             _svnSemaphore.Release();
         }
@@ -787,7 +784,7 @@ namespace SVN.Core
                 if (stat == " " && propStatus == 'C')
                     stat = "C";
 
-                string pathPart = line.Length >= 9 ? line.Substring(8) : "";
+                string pathPart = line.Length >= 9 ? line.Substring(8).TrimStart() : "";
 
                 if (string.IsNullOrWhiteSpace(pathPart))
                     continue;

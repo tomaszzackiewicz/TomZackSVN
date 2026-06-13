@@ -380,12 +380,6 @@ namespace SVN.Core
                 LogToClean("Step 2/2: Removing unversioned and ignored files (Deep Clean)...");
 
                 await SvnRunner.RunAsync(
-                    "revert -R .",
-                    targetPath,
-                    false,
-                    token);
-
-                await SvnRunner.RunAsync(
                     "cleanup --remove-unversioned --remove-ignored --include-externals",
                     targetPath,
                     false,

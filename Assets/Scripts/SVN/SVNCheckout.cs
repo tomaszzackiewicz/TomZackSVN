@@ -196,6 +196,7 @@ namespace SVN.Core
             }
 
             string keyPath = SvnRunner.KeyPath;
+            svnManager.CurrentKey = keyPath;
 
             if (string.IsNullOrWhiteSpace(keyPath))
             {
@@ -792,7 +793,6 @@ namespace SVN.Core
             string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
             var projects = ProjectSettings.LoadProjects();
 
-            // Sprawdź czy projekt już istnieje na liście
             int index = projects.FindIndex(p =>
                 !string.IsNullOrEmpty(p.workingDir) &&
                 p.workingDir.Replace("\\", "/").TrimEnd('/') == normalizedPath
@@ -804,7 +804,6 @@ namespace SVN.Core
             {
                 projects[index].repoUrl = url;
                 projects[index].lastOpened = DateTime.Now;
-                // Opcjonalnie aktualizujemy klucz jeśli jest dostępny w managerze
                 projects[index].privateKeyPath = SVNManager.Instance.CurrentKey;
             }
             else
@@ -821,7 +820,6 @@ namespace SVN.Core
 
             ProjectSettings.SaveProjects(projects);
 
-            // Ustawiamy jako ostatnio otwarty
             PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
             PlayerPrefs.Save();
         }

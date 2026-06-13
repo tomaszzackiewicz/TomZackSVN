@@ -33,6 +33,8 @@ namespace SVN.Core
 
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
+
                 string output = await LogAsync(root, count);
 
                 if (string.IsNullOrWhiteSpace(output))
@@ -42,7 +44,6 @@ namespace SVN.Core
                 else
                 {
                     string cleanOutput = StripBanner(output);
-
                     string coloredOutput = ApplyColoring(cleanOutput);
 
                     if (string.IsNullOrWhiteSpace(coloredOutput))
@@ -140,12 +141,6 @@ namespace SVN.Core
                     SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
                     SVNLogBridge.LogLine(coloredOutput);
                     SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
-
-                    // if (svnUI.LogScrollRect != null)
-                    // {
-                    //     Canvas.ForceUpdateCanvases();
-                    //     svnUI.LogScrollRect.verticalNormalizedPosition = 1f;
-                    // }
                 }
             }
             catch (Exception ex)

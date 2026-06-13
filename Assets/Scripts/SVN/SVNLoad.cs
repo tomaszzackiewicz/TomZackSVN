@@ -11,6 +11,12 @@ namespace SVN.Core
 
         public async void LoadRepoPathAndRefresh()
         {
+            if (svnManager.IsProcessing)
+            {
+                SVNLogBridge.LogLine("<color=orange>Another operation is running. Please wait.</color>");
+                return;
+            }
+
             if (IsProcessing) return;
 
             string path = svnUI.LoadDestFolderInput.text.Trim();
@@ -38,6 +44,7 @@ namespace SVN.Core
 
             IsProcessing = true;
             svnManager.CurrentKey = keyPath;
+            SvnRunner.KeyPath = keyPath;
 
             SVNLogBridge.LogLine($"<b>Processing path:</b> <color=green>{path}</color>", append: false);
 
@@ -95,7 +102,14 @@ namespace SVN.Core
                 var selectionPanel = UnityEngine.Object.FindAnyObjectByType<ProjectSelectionPanel>();
                 if (selectionPanel != null) selectionPanel.RefreshList();
 
-                await svnManager.RefreshStatus();
+                var project = new SVNProject
+                {
+                    projectName = Path.GetFileName(normalizedPath),
+                    repoUrl = svnManager.RepositoryUrl,
+                    workingDir = normalizedPath,
+                    privateKeyPath = keyPath
+                };
+                await svnManager.LoadProject(project);
 
                 SVNLogBridge.LogLine("<color=green>SUCCESS:</color> System synchronized.");
 

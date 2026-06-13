@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
 using System.Threading;
@@ -850,7 +849,7 @@ namespace SVN.Core
                 if (!allowedSvnStatuses.Contains(stat))
                     continue;
 
-                string rawPath = line.Substring(svnStatusPrefixLength).Trim();
+                string rawPath = line.Substring(svnStatusPrefixLength).TrimStart();
                 string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
 
                 bool isRootChange = cleanPath == ".";
@@ -1085,7 +1084,7 @@ namespace SVN.Core
 
         public void CancelCurrentRefresh()
         {
-            _cts?.Cancel();   // tylko anuluj, nie Disposable – token zostaje do ponownego użycia
+            _cts?.Cancel();
         }
     }
 }

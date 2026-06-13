@@ -102,6 +102,7 @@ namespace SVN.Core
 
                     svnManager.WorkingDir = newPath;
                     await svnManager.RefreshRepositoryInfo();
+                    await svnManager.CancelBackgroundTasksAsync();
                     await svnManager.RefreshStatus();
 
                     SVNLogBridge.LogLine($"<color=green>Success:</color> Switched to project at {newPath}");

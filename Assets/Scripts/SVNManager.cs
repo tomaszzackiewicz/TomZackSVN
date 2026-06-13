@@ -506,12 +506,13 @@ namespace SVN.Core
 
         public async Task UpdateStatus()
         {
+            if (IsUpdateRunning) return;
+
             var barModule = GetModule<SVNBar>();
             if (barModule != null)
             {
                 string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
                 var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
-
                 await barModule.ShowProjectInfo(lastProject, WorkingDir, isRefreshing: false);
             }
         }
@@ -519,6 +520,22 @@ namespace SVN.Core
         private void LogToUI(string message, string color, bool append = true)
         {
             SVNLogBridge.LogLine($"<color={color}>{message}</color>", append);
+        }
+
+        public string ExtractPathFromStatusLine(string line, string statusChar)
+        {
+            int prefixLength = 8;
+            if (line.Length > prefixLength && line.StartsWith(statusChar))
+            {
+                return line.Substring(prefixLength).Trim().Replace('\\', '/');
+            }
+            return null;
+        }
+
+        public async Task CancelBackgroundTasksAsync()
+        {
+            GetModule<SVNStatus>()?.CancelCurrentRefresh();
+            await Task.Delay(100);
         }
 
         public void BroadcastWorkingDirChange(string path)
