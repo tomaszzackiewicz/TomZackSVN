@@ -1082,5 +1082,10 @@ namespace SVN.Core
                 _cts = null;
             }
         }
+
+        public void CancelCurrentRefresh()
+        {
+            _cts?.Cancel();   // tylko anuluj, nie Disposable – token zostaje do ponownego użycia
+        }
     }
 }

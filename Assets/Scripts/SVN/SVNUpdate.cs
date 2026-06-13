@@ -21,6 +21,7 @@ namespace SVN.Core
 
         public void Update()
         {
+            SVNLogBridge.LogLine("[SVN-DEBUG] Update() was called! Session will start.");
             if (_runningTask != null &&
                 !_runningTask.IsCompleted)
             {
@@ -49,8 +50,24 @@ namespace SVN.Core
 
         public async Task ExecuteUpdateAsync(Guid session)
         {
+            SVNLogBridge.LogLine("[SVN-DEBUG] ExecuteUpdateAsync START. Session: " + session);
+            if (session != _sessionId)
+            {
+                SVNLogBridge.LogLine("[SVN-DEBUG] ExecuteUpdateAsync ABORT – session mismatch. Stored: " + _sessionId);
+                return;
+            }
+            SVNLogBridge.LogLine("[SVN-DEBUG] ExecuteUpdateAsync passed session check.");
             if (session != _sessionId)
                 return;
+
+            // 🔥 KROK 0 – ANULUJ WSZYSTKIE INNE OPERACJE SVN (status, log, etc.)
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            statusModule?.CancelCurrentRefresh();
+
+            // Daj chwilę na propagację anulowania
+            await Task.Delay(500);
+
+            SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 1: Creating update token...");
 
             try
             {
@@ -73,7 +90,8 @@ namespace SVN.Core
                 return;
             }
 
-            // Zapamiętujemy rewizję PRZED aktualizacją, żeby pokazać dokładny stan "jak było przedtem"
+            SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 2: Getting old revision...");
+
             string oldRevision = svnManager.CurrentSnapshot?.Revision ?? "Unknown";
             if (oldRevision == "Unknown")
             {
@@ -89,11 +107,11 @@ namespace SVN.Core
             _hasNewLine = true;
 
             var svnBar = svnManager.GetModule<SVNBar>();
-
             _ = svnBar?.StartLiveSizeMonitor(targetPath, token);
 
             if (svnBar != null)
             {
+                SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 3: Showing project info...");
                 await svnBar.ShowProjectInfo(
                     svnManager.CurrentProject,
                     targetPath,
@@ -112,15 +130,27 @@ namespace SVN.Core
 
             try
             {
-                SVNLogBridge.LogLine("<b>[SVN]</b> Pre-update cleanup...", false);
+                statusModule?.CancelCurrentRefresh();
+
+                // 🔥 Czekaj, aż wszystkie trwające operacje SVN się zakończą i zwolnią semafor
+                await SvnRunner.WaitForSemaphoreFreeAsync(token);
+
+                // 🔥 KROK 4 – CLEANUP
+                SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 4: Starting cleanup...");
+                SVNLogBridge.LogLine("<b>[SVN]</b> Pre-update cleanup...");
 
                 await SVNClean.CleanupAsync(targetPath, token);
+
+                SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 4 DONE: Cleanup finished.");
+                SVNLogBridge.LogLine("<b>[SVN]</b> Cleanup completed.");
 
                 token.ThrowIfCancellationRequested();
                 if (session != _sessionId)
                     throw new OperationCanceledException();
 
-                SVNLogBridge.LogLine("<color=blue><b>[SVN]</b> Running update...</color>", false);
+                // 🔥 KROK 5 – WŁAŚCIWY UPDATE
+                SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 5: Running svn update...");
+                SVNLogBridge.LogLine("<color=blue><b>[SVN]</b> Running update...</color>");
 
                 StringBuilder liveOutput = new StringBuilder();
 
@@ -134,7 +164,6 @@ namespace SVN.Core
                         if (session != _sessionId) return;
 
                         liveOutput.AppendLine(line);
-
                         _lastLiveLine = line;
                         _hasNewLine = true;
 
@@ -152,16 +181,17 @@ namespace SVN.Core
                     token
                 );
 
-                token.ThrowIfCancellationRequested();
+                SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 5 DONE: Update process finished.");
 
+                token.ThrowIfCancellationRequested();
                 if (session != _sessionId || result == "Canceled")
                     throw new OperationCanceledException();
 
+                // PARSOWANIE WYNIKU
                 string finalOutput = liveOutput.ToString();
 
                 int updatedCount = 0;
                 string revision = "Unknown";
-
                 int uCount = 0, gCount = 0, aCount = 0, dCount = 0, cCount = 0, rCount = 0;
 
                 await Task.Run(() =>
@@ -170,7 +200,6 @@ namespace SVN.Core
                     revision = svnManager.ParseRevision(finalOutput);
 
                     var matches = Regex.Matches(finalOutput, @"^([UGADCR])\s", RegexOptions.Multiline);
-
                     foreach (Match m in matches)
                     {
                         switch (m.Groups[1].Value)
@@ -191,12 +220,12 @@ namespace SVN.Core
                 {
                     string infoOutput = await SvnRunner.GetInfoAsync(targetPath);
                     token.ThrowIfCancellationRequested();
-
                     revision = ParseRevisionFromInfo(infoOutput);
                 }
 
                 stopwatch.Stop();
 
+                // SUKCES
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
                     State = SVNOperationState.Success,
@@ -204,37 +233,30 @@ namespace SVN.Core
                     Duration = stopwatch.Elapsed.TotalSeconds,
                     Repo = svnManager.RepositoryUrl
                 };
-
                 svnManager.LastUpdateSucceeded = true;
 
-                // 🔥 ROZBUDOWANY, CZYSTY RAPORT KOŃCOWY (BEZ ZNAKÓW PIPE)
+                // RAPORT KOŃCOWY
                 StringBuilder report = new StringBuilder();
                 report.AppendLine("\n<color=blue><b>=========================================</b></color>");
                 report.AppendLine("<color=blue><b>          SVN UPDATE REPORT              </b></color>");
                 report.AppendLine("<color=blue><b>=========================================</b></color>");
 
                 if (oldRevision == revision || oldRevision == "Unknown")
-                {
                     report.AppendLine($"  Revision:   <b>{revision}</b> (No incoming changes)");
-                }
                 else
-                {
                     report.AppendLine($"  Revision:   <b>{oldRevision}</b> ➔ <b>{revision}</b>");
-                }
 
                 report.AppendLine($"  Duration:   <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>");
                 report.AppendLine();
 
                 if (uCount == 0 && aCount == 0 && dCount == 0 && cCount == 0 && gCount == 0 && rCount == 0)
-                {
                     report.AppendLine("  <color=green>Working copy was already fully up-to-date.</color>");
-                }
                 else
                 {
                     report.AppendLine("  <b>[File Modifications]</b>");
                     if (uCount > 0) report.AppendLine($"    Updated:   <b>{uCount}</b>");
                     if (aCount > 0) report.AppendLine($"    Added:     <b>{aCount}</b>");
-                    if (dCount > 0) report.AppendLine($"    Deleted:   <b><color=#B22222>{dCount}</color></b>"); // Wiśniowy kontrast
+                    if (dCount > 0) report.AppendLine($"    Deleted:   <b><color=#B22222>{dCount}</color></b>");
                     if (gCount > 0) report.AppendLine($"    Merged:    <b>{gCount}</b>");
                     if (rCount > 0) report.AppendLine($"    Replaced:  <b>{rCount}</b>");
 
@@ -244,16 +266,13 @@ namespace SVN.Core
                         report.AppendLine("  <color=red><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
                         report.AppendLine($"    Conflicts: <b><color=red>{cCount}</color></b>");
                         report.AppendLine("    Please resolve conflicts in working copy before compiling.");
-
                         await svnManager.GetModule<SVNResolve>().RefreshConflictUI();
                     }
                 }
                 report.AppendLine("<color=yellow><b>=========================================</b></color>");
-
                 SVNLogBridge.LogLine(report.ToString(), false);
 
-                var statusModule = svnManager.GetModule<SVNStatus>();
-
+                // ODSWIEŻ STATUS I SNAPSHOT
                 if (!svnManager.WasUpdateCanceled && statusModule != null)
                 {
                     await statusModule.RefreshModifiedInternal();
@@ -267,17 +286,13 @@ namespace SVN.Core
                     );
 
                     string newAuthor = await GetAuthorForRevision(svnManager.WorkingDir, revision);
-
                     newSnapshot.Revision = revision;
-
                     if (!string.IsNullOrEmpty(newAuthor))
                     {
                         newSnapshot.Author = newAuthor;
                         newSnapshot.CurrentUser = newAuthor;
                     }
-
                     svnManager.CurrentSnapshot = newSnapshot;
-
                     await svnBar.ShowProjectInfo(
                         svnManager.CurrentProject,
                         svnManager.WorkingDir,
@@ -289,7 +304,6 @@ namespace SVN.Core
             catch (OperationCanceledException)
             {
                 stopwatch.Stop();
-
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
                     State = SVNOperationState.Canceled,
@@ -305,13 +319,11 @@ namespace SVN.Core
                 cancelReport.AppendLine($"  Process aborted after <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>.");
                 cancelReport.AppendLine("  Working copy state might be incomplete.");
                 cancelReport.AppendLine("<color=#FFAA00><b>=========================================</b></color>");
-
                 SVNLogBridge.LogLine(cancelReport.ToString(), false);
             }
             catch (Exception ex)
             {
                 stopwatch.Stop();
-
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
                     State = SVNOperationState.Failed,
@@ -327,17 +339,14 @@ namespace SVN.Core
                 failureReport.AppendLine($"  Execution crashed after <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>.");
                 failureReport.AppendLine($"  Error message: <color=#E6E6E6>{ex.Message}</color>");
                 failureReport.AppendLine("<color=#B22222><b>=========================================</b></color>");
-
                 SVNLogBridge.LogLine(failureReport.ToString(), false);
             }
             finally
             {
                 svnManager.IsUpdateRunning = false;
                 IsProcessing = false;
-
                 _lastLiveLine = "";
                 _hasNewLine = false;
-
                 _runningTask = null;
             }
         }
@@ -442,17 +451,10 @@ namespace SVN.Core
 
         public async void CheckRemoteModificationsButton()
         {
-            await CheckRemoteModifications();
+            await ShowRemoteUpdatesInline();
         }
 
-        public async Task CheckRemoteModifications()
-        {
-            var updateModule = svnManager.GetModule<SVNUpdate>();
-
-            await updateModule.UpdateRemoteModifications();
-        }
-
-        public async Task UpdateRemoteModifications()
+        public async Task ShowRemoteUpdatesInline()
         {
             if (IsProcessing) return;
 
@@ -461,68 +463,64 @@ namespace SVN.Core
 
             try
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "", "REMOTE", false);
-
-                string startMsg = "<b>[SVN]</b> Checking repository for remote changes...";
-                SVNLogBridge.LogLine(startMsg);
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, startMsg + "\n", "REMOTE", true);
+                // Wyczyść pole na czas sprawdzania
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<i>Checking remote...</i>", "REMOTE", append: false);
 
                 string output = await SvnRunner.RunAsync("status -u", root);
 
                 if (string.IsNullOrEmpty(output))
                 {
-                    string noChangesMsg = "<color=green>No changes found.</color>";
-                    SVNLogBridge.LogLine(noChangesMsg);
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, noChangesMsg, "REMOTE", true);
+                    SVNLogBridge.LogLine("<color=green>No remote changes found.</color>");
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=green>No remote changes.</color>", "REMOTE", append: false);
                     return;
                 }
 
-                using (var stringReader = new System.IO.StringReader(output))
+                int remoteChangesCount = 0;
+                StringBuilder uiBuilder = new StringBuilder();
+
+                using (var reader = new StringReader(output))
                 {
                     string line;
-                    int remoteChangesCount = 0;
-                    System.Text.StringBuilder remoteLogs = new System.Text.StringBuilder();
-
-                    while ((line = stringReader.ReadLine()) != null)
+                    while ((line = reader.ReadLine()) != null)
                     {
-                        if (line.Length > 8)
+                        if (line.Length > 8 && line[8] == '*')
                         {
-                            char remoteStatus = line[8];
+                            remoteChangesCount++;
+                            string pathPart = line.Substring(9).Trim();
+                            string cleanPath = Regex.Replace(pathPart, @"^\d+\s+", "");
 
-                            if (remoteStatus == '*')
-                            {
-                                remoteChangesCount++;
-                                string pathPart = line.Substring(9).Trim();
-                                string cleanPath = System.Text.RegularExpressions.Regex.Replace(pathPart, @"^\d+\s+", "");
+                            string changeMsg = $"<color=orange>Update available:</color> {cleanPath}";
 
-                                string changeMsg = $"<color=orange>Update available:</color> {cleanPath}";
-                                SVNLogBridge.LogLine(changeMsg);
-                                remoteLogs.AppendLine(changeMsg);
-                            }
+                            // 🔥 Logujemy do konsoli/pliku
+                            SVNLogBridge.LogLine(changeMsg);
+
+                            // 🔥 Budujemy zawartość pola UI
+                            uiBuilder.AppendLine(changeMsg);
                         }
                     }
+                }
 
-                    if (remoteChangesCount > 0)
-                    {
-                        SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, remoteLogs.ToString(), "REMOTE", true);
+                if (remoteChangesCount > 0)
+                {
+                    string summary = $"\n<b>Summary:</b> Found <color=red>{remoteChangesCount}</color> items to update.";
+                    SVNLogBridge.LogLine(summary);
+                    uiBuilder.AppendLine(summary);
 
-                        string summary = $"\n<b>Summary:</b> Found <color=red>{remoteChangesCount}</color> items to update.";
-                        SVNLogBridge.LogLine(summary);
-                        SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, summary, "REMOTE", true);
-                    }
-                    else
-                    {
-                        string upToDateMsg = "<color=green>Your working copy is up to date.</color>";
-                        SVNLogBridge.LogLine(upToDateMsg);
-                        SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, upToDateMsg, "REMOTE", true);
-                    }
+                    // Podmiana całego pola
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, uiBuilder.ToString(), "REMOTE", append: false);
+                }
+                else
+                {
+                    string upToDateMsg = "<color=green>Your working copy is up to date.</color>";
+                    SVNLogBridge.LogLine(upToDateMsg);
+                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, upToDateMsg, "REMOTE", append: false);
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 string errorMsg = $"<color=red>Remote Check Error:</color> {ex.Message}";
                 SVNLogBridge.LogError($"[SVN] {errorMsg}");
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, errorMsg, "REMOTE", true);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, errorMsg, "REMOTE", append: false);
             }
             finally
             {
