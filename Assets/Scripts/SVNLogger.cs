@@ -8,12 +8,12 @@ namespace SVN.Core
     {
         private static string logFilePath;
         private static bool initialized = false;
+        private static readonly object FileLock = new object();
 
         public static void Initialize()
         {
             if (initialized) return;
 
-            //SVNLogBridge.LogLine Path: C:\Users\[User]\AppData\LocalLow\[CompanyName]\[ProjectName]\svn_session.log
             string folderPath = Application.persistentDataPath;
             logFilePath = Path.Combine(folderPath, "svn_session.log");
 
@@ -32,7 +32,6 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogError($"<color=#8B0000>[SVN] Critical Logger Error:</color> <color=#8B0000>{e.Message}</color>");
             }
-
         }
 
         private static void HandleUnityLog(string logString, string stackTrace, LogType type)
@@ -48,13 +47,14 @@ namespace SVN.Core
 
             try
             {
-                lock (logFilePath)
+                lock (FileLock)
                 {
                     File.AppendAllText(logFilePath, logEntry);
                 }
             }
             catch { }
         }
+
         public static void OpenLogFolder()
         {
             Application.OpenURL("file://" + Application.persistentDataPath);
@@ -67,7 +67,7 @@ namespace SVN.Core
             string logEntry = $"[{DateTime.Now:HH:mm:ss}] [{tag}] {message}\n";
             try
             {
-                lock (logFilePath)
+                lock (FileLock)
                 {
                     File.AppendAllText(logFilePath, logEntry);
                 }

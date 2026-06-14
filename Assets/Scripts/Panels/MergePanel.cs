@@ -26,10 +26,6 @@ public class MergePanel : MonoBehaviour
         Button_RefreshBranchDropdown();
     }
 
-    // =====================================================
-    // 🧠 CORE ACTIONS
-    // =====================================================
-
     public void Button_RefreshBranchDropdown()
     {
         _ = RefreshBranchDropdown();
@@ -42,7 +38,6 @@ public class MergePanel : MonoBehaviour
 
     public void Button_SyncWithTrunk()
     {
-        //_ = svnManager.GetModule<SVNMerge>().ExecuteMerge("trunk", false);
         _ = AutoSync();
     }
 
@@ -70,9 +65,6 @@ public class MergePanel : MonoBehaviour
 
     private async Task RefreshBranchDropdown()
     {
-        // if (_isRefreshing) return;
-        // _isRefreshing = true;
-
         try
         {
             var merge = svnManager.GetModule<SVNMerge>();
@@ -86,7 +78,6 @@ public class MergePanel : MonoBehaviour
 
             if (svnUI?.MergeBranchesDropdown == null) return;
 
-            // 1. Zabezpieczenie: usuwamy trunk z listy pobranej, aby nie było duplikatów
             var options = new List<string> { "trunk" };
             if (branches != null)
             {
@@ -97,14 +88,12 @@ public class MergePanel : MonoBehaviour
                 options.AddRange(cleanBranches);
             }
 
-            // 2. Wymuszenie aktualizacji UI
             svnUI.MergeBranchesDropdown.ClearOptions();
             svnUI.MergeBranchesDropdown.AddOptions(options);
-            svnUI.MergeBranchesDropdown.RefreshShownValue(); // To często naprawia problem wizualny w Unity
+            svnUI.MergeBranchesDropdown.RefreshShownValue();
 
             Debug.Log($"[MergePanel] Dropdown refreshed. Found {options.Count} options.");
 
-            // 3. Bezpieczne ustawienie domyślnej wartości
             Dropdown_OnBranchSelected(0);
         }
         catch (System.Exception ex)
@@ -113,13 +102,8 @@ public class MergePanel : MonoBehaviour
         }
         finally
         {
-            //_isRefreshing = false;
         }
     }
-
-    // =====================================================
-    // 🎯 DROPDOWN HANDLER (SAFE)
-    // =====================================================
 
     public void Dropdown_OnBranchSelected(int index)
     {
@@ -137,10 +121,6 @@ public class MergePanel : MonoBehaviour
         if (svnUI.MergeSourceInput != null)
             svnUI.MergeSourceInput.text = selectedName;
     }
-
-    // =====================================================
-    // 🔒 SAFE INPUT RESOLUTION
-    // =====================================================
 
     private string GetSafeSource()
     {
@@ -182,19 +162,4 @@ public class MergePanel : MonoBehaviour
 
         await merge.ExecuteMerge(source, false);
     }
-
-    private string Normalize(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input))
-            return string.Empty;
-
-        return input
-            .Replace("\\", "/")
-            .TrimEnd('/')
-            .ToLowerInvariant()
-            .Replace("svn+ssh://", "")
-            .Replace("https://", "")
-            .Replace("http://", "");
-    }
-
 }

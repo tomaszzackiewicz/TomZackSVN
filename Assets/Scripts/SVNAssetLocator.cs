@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Xml;
-using UnityEngine;
 
 namespace SVN.Core
 {

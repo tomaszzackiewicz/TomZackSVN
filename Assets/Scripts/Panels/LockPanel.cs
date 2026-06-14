@@ -3,8 +3,6 @@ using SVN.Core;
 using System.Collections.Generic;
 using System.Linq;
 using System;
-using TMPro;
-using UnityEngine.UI;
 
 public class LockPanel : MonoBehaviour
 {
@@ -25,7 +23,6 @@ public class LockPanel : MonoBehaviour
     private void OnEnable()
     {
         if (!Application.isPlaying) return;
-
         RefreshAndShow();
     }
 
@@ -42,17 +39,18 @@ public class LockPanel : MonoBehaviour
 
         isProcessing = true;
 
-        SVNLogBridge.LogError("<color=orange>[System]</color> Preparing to fetch lock data...");
-
+        SVNLogBridge.LogLine("<color=orange>[System]</color> Preparing to fetch lock data...");
         ClearContainer();
 
         try
         {
-            SVNLogBridge.LogError("<color=#FFD700>[Process]</color> Querying SVN server (this may take a moment)...");
+            await svnManager.CancelBackgroundTasksAsync();
+
+            SVNLogBridge.LogLine("<color=#FFD700>[Process]</color> Querying SVN server (this may take a moment)...");
 
             var allLocks = await svnManager.GetModule<SVNLock>().GetDetailedLocks(svnManager.WorkingDir);
 
-            SVNLogBridge.LogError($"<color=white>[Info]</color> Received {allLocks.Count} total locks from server.");
+            SVNLogBridge.LogLine($"<color=white>[Info]</color> Received {allLocks.Count} total locks from server.");
 
             string currentUserName = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();
 
@@ -64,18 +62,18 @@ public class LockPanel : MonoBehaviour
 
             if (othersLocks.Count == 0)
             {
-                SVNLogBridge.LogError("<color=yellow>[Info]</color> No locks from other users found.");
+                SVNLogBridge.LogLine("<color=yellow>[Info]</color> No locks from other users found.");
             }
             else
             {
-                SVNLogBridge.LogError($"<color=yellow>[UI]</color> Spawning {othersLocks.Count} entries...");
+                SVNLogBridge.LogLine($"<color=yellow>[UI]</color> Spawning {othersLocks.Count} entries...");
                 Populate(othersLocks);
-                SVNLogBridge.LogError("<color=green>[Success]</color> List updated.");
+                SVNLogBridge.LogLine("<color=green>[Success]</color> List updated.");
             }
         }
         catch (Exception ex)
         {
-            SVNLogBridge.LogError($"<color=red>[Error]</color> Sync failed: {ex.Message}");
+            SVNLogBridge.LogLine($"<color=red>[Error]</color> Sync failed: {ex.Message}");
         }
         finally
         {
@@ -111,14 +109,16 @@ public class LockPanel : MonoBehaviour
         if (isProcessing || lockDetails == null || !Application.isPlaying) return;
 
         isProcessing = true;
-        SVNLogBridge.LogError($"<color=green>[Action]</color> Forcing break on: <b>{lockDetails.Path}</b>");
+        SVNLogBridge.LogLine($"<color=green>[Action]</color> Forcing break on: <b>{lockDetails.Path}</b>");
 
         try
         {
+            await svnManager.CancelBackgroundTasksAsync();
+
             string cmd = $"lock --force -m \"Administrative takeover by {svnManager.CurrentUserName}\" \"{lockDetails.FullPath}\"";
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
-            SVNLogBridge.LogError($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
+            SVNLogBridge.LogLine($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
 
             await System.Threading.Tasks.Task.Delay(600);
             await svnManager.RefreshStatus();
@@ -128,22 +128,8 @@ public class LockPanel : MonoBehaviour
         }
         catch (Exception ex)
         {
-            SVNLogBridge.LogError($"<color=red>[Error]</color> Operation failed: {ex.Message}");
+            SVNLogBridge.LogLine($"<color=red>[Error]</color> Operation failed: {ex.Message}");
             isProcessing = false;
-        }
-    }
-
-    private void LogError(string message)
-    {
-        if (svnUI.StealLocksConsole == null || !Application.isPlaying) return;
-
-        SVNLogBridge.UpdateUIField(svnUI.StealLocksConsole, message, "STEAL_LOCKS", append: true);
-
-        ScrollRect scroll = svnUI.StealLocksConsole.GetComponentInParent<ScrollRect>();
-        if (scroll != null)
-        {
-            Canvas.ForceUpdateCanvases();
-            scroll.verticalNormalizedPosition = 0f;
         }
     }
 

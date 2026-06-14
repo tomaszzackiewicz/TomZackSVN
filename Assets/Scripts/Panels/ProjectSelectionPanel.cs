@@ -60,19 +60,22 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (project == null || svnManager == null)
             return;
 
+        if (svnManager.IsProcessing)
+        {
+            SVNLogBridge.LogLine("<color=orange>Another operation is running. Please wait.</color>");
+            return;
+        }
+
         svnManager.CurrentSnapshot = null;
         svnManager.IsUpdateRunning = false;
 
         try
         {
             var statusModule = svnManager.GetModule<SVNStatus>();
-            var commitModule = svnManager.GetModule<SVNCommit>();
             var settingsModule = svnManager.GetModule<SVNSettings>();
-            var barModule = svnManager.GetModule<SVNBar>();
 
             statusModule?.ClearCurrentData();
             statusModule?.ClearSVNTreeView();
-
 
             svnManager.CurrentKey = string.IsNullOrWhiteSpace(project.privateKeyPath)
                 ? ""
@@ -83,13 +86,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             gameObject.SetActive(false);
 
             settingsModule?.UpdateUIFromManager();
-
-            if (barModule != null)
-            {
-                await barModule.ShowProjectInfo(project, project.workingDir);
-            }
-
-            await svnManager.RefreshStatus();
         }
         catch (Exception ex)
         {

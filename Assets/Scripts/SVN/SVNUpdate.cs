@@ -111,23 +111,8 @@ namespace SVN.Core
             _lastLiveLine = "Connecting to repository...";
             _hasNewLine = true;
 
-            var svnBar = svnManager.GetModule<SVNBar>();
-            _ = svnBar?.StartLiveSizeMonitor(targetPath, token);
-
-            if (svnBar != null)
-            {
-                SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 3: Showing project info...");
-                string projectName = svnManager.CurrentProject?.projectName ?? Path.GetFileName(targetPath);
-                string fullLine =
-                    $"<size=150%><color=#FFFF00>●</color></size> " +
-                    $"<color=orange><b>{projectName}</b> ({svnManager.CurrentSnapshot?.WorkingCopySize ?? "?"})</color> | " +
-                    $"<color=#00E5FF>User:</color> <color=#E6E6E6>{svnManager.CurrentUserName}</color> | " +
-                    $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{svnManager.CurrentSnapshot?.Branch ?? "unknown"}</color> | " +
-                    $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{svnManager.CurrentSnapshot?.Revision ?? "?"}</color> | " +
-                    $"<color=#E6E6E6>Updating working copy...</color>";
-
-                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, fullLine, "INFO", append: false);
-            }
+            SVNBar svnBar = svnManager.GetModule<SVNBar>();
+            svnBar?.ShowUpdatingStatus(svnManager.CurrentProject?.projectName ?? Path.GetFileName(targetPath));
 
             var stopwatch = Stopwatch.StartNew();
 
@@ -281,6 +266,8 @@ namespace SVN.Core
 
                 if (!svnManager.WasUpdateCanceled && svnBar != null)
                 {
+                    svnManager.IsUpdateRunning = false;
+
                     var newSnapshot = await svnBar.BuildSnapshotAsync(
                         svnManager.CurrentProject,
                         svnManager.WorkingDir

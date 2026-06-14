@@ -32,7 +32,6 @@ public class SVNFileItem : MonoBehaviour
 
         if (timeSinceLastClick <= doubleClickThreshold)
         {
-            // DOUBLE CLICK
             if (svnManager != null)
             {
                 await svnManager.CatAndOpenFile(fullPath, revision);
@@ -42,7 +41,6 @@ public class SVNFileItem : MonoBehaviour
         }
         else
         {
-            // SINGLE CLICK
             lastClickTime = Time.time;
         }
     }

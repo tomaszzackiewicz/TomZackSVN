@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using UnityEngine;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -10,10 +9,6 @@ using UnityEditor;
 
 namespace SVN.Core
 {
-    /// <summary>
-    /// Tracks all SVN/SSH processes created by this application
-    /// and safely terminates them on shutdown/cancel.
-    /// </summary>
     public static class SvnProcessTracker
     {
         private static readonly object LockObject = new();
@@ -34,9 +29,6 @@ namespace SVN.Core
         }
 #endif
 
-        /// <summary>
-        /// Register newly started process.
-        /// </summary>
         public static void Register(Process process)
         {
             if (process == null)
@@ -62,9 +54,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Remove finished process from tracking.
-        /// </summary>
         public static void Unregister(Process process)
         {
             if (process == null)
@@ -76,9 +65,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Kill single process safely (FULL TREE KILL).
-        /// </summary>
         public static void Kill(Process process)
         {
             if (process == null)
@@ -104,9 +90,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Hard kill process + children (Windows-safe).
-        /// </summary>
         private static void KillTree(Process process)
         {
             try
@@ -131,9 +114,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Kill ALL tracked processes (safe shutdown).
-        /// </summary>
         public static void KillAll()
         {
             Process[] processesToKill;
@@ -177,9 +157,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Returns true if any SVN operation is still running.
-        /// </summary>
         public static bool HasRunningProcesses()
         {
             lock (LockObject)
@@ -200,9 +177,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Returns number of active SVN operations.
-        /// </summary>
         public static int ActiveCount
         {
             get

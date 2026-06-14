@@ -485,22 +485,8 @@ namespace SVN.Core
             {
                 if (visible.Contains(e.FullPath))
                 {
-                    result.Add(new SvnTreeElement
-                    {
-                        FullPath = e.FullPath,
-                        Name = e.Name,
-                        Depth = e.Depth,
-                        Status = e.Status,
-                        IsFolder = e.IsFolder,
-                        IsChecked = e.IsChecked,
-                        IsExpanded = e.IsExpanded,
-                        IsVisible = e.IsVisible,
-                        Size = e.Size,
-                        LockedByMe = e.LockedByMe,
-                        LockedByOther = e.LockedByOther,
-                        Bytes = e.Bytes,
-                        IsCommitDelegate = true
-                    });
+                    e.IsCommitDelegate = true;
+                    result.Add(e);
                 }
             }
 

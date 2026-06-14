@@ -245,16 +245,13 @@ namespace SVN.Core
             int newLine = 0;
             bool hasSection = false;
 
-            // Statistics
             int added = 0;
             int removed = 0;
             int unchanged = 0;
 
-            // File names
             string fileOld = "";
             string fileNew = "";
 
-            // Colors
             string colNum = "#FFFFFF";
             string colRem = "#800020";
             string colAdd = "#6AFF9E";
@@ -268,7 +265,6 @@ namespace SVN.Core
             string gapNum = "";
             string gap = "  ";
 
-            // --- 1) COLLECT FILE INFORMATION ---
             foreach (string raw in lines)
             {
                 if (raw.StartsWith("--- "))
@@ -278,7 +274,6 @@ namespace SVN.Core
                     fileNew = raw.Substring(4).Trim();
             }
 
-            // --- 2) PROCESS DIFF CONTENT ---
             foreach (string raw in lines)
             {
                 string line = raw.Replace("\t", "    ");
@@ -286,7 +281,6 @@ namespace SVN.Core
                 line = line.Replace("<", "<noparse><</noparse>")
                            .Replace(">", "<noparse>></noparse>");
 
-                // HUNK HEADER
                 if (line.StartsWith("@@"))
                 {
                     var match = System.Text.RegularExpressions.Regex.Match(
@@ -314,7 +308,6 @@ namespace SVN.Core
                 string sOld = oldLine.ToString().PadLeft(wNum);
                 string sNew = newLine.ToString().PadLeft(wNum);
 
-                // REMOVED
                 if (line.StartsWith("-"))
                 {
                     removed++;
@@ -328,7 +321,6 @@ namespace SVN.Core
 
                     oldLine++;
                 }
-                // ADDED
                 else if (line.StartsWith("+"))
                 {
                     added++;
@@ -342,7 +334,6 @@ namespace SVN.Core
 
                     newLine++;
                 }
-                // UNCHANGED
                 else
                 {
                     unchanged++;
@@ -359,7 +350,6 @@ namespace SVN.Core
                 }
             }
 
-            // --- 3) SUMMARY HEADER ---
             var header = new System.Text.StringBuilder();
             header.AppendLine("<color=#00D0FF><b>DIFF SUMMARY</b></color>");
             header.AppendLine("<color=#DDDDDD>Original file:</color> " + fileOld);

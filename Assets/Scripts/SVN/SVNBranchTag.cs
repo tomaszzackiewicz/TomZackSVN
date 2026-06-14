@@ -11,9 +11,6 @@ namespace SVN.Core
 
         public SVNBranchTag(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        // =====================================================
-        // 🌿 CREATE
-        // =====================================================
         public async Task CreateRemoteCopy()
         {
             if (!TryStart()) return;
@@ -37,7 +34,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // 🔥 KLUCZ: zawsze twórz z TRUNK URL (nie WorkingDir)
                 string sourceUrl = $"{repoRoot}/trunk";
 
                 string targetUrl = $"{repoRoot}/{subFolder}/{name}";
@@ -65,9 +61,6 @@ namespace SVN.Core
             }
         }
 
-        // =====================================================
-        // 🔄 REFRESH
-        // =====================================================
         public async Task RefreshUnifiedList()
         {
             if (svnUI == null || (svnUI.BranchesDropdown == null && svnUI.TagsDropdown == null))
@@ -98,9 +91,6 @@ namespace SVN.Core
             }
         }
 
-        // =====================================================
-        // 🌿 SWITCH
-        // =====================================================
         public async Task SwitchToSelectedBranch()
         {
             if (!TryStart()) return;
@@ -177,9 +167,6 @@ namespace SVN.Core
             }
         }
 
-        // =====================================================
-        // 🔎 VALIDATION
-        // =====================================================
         private async Task<bool> CanPerformSwitch()
         {
             LogInfo("Validating safety...");
@@ -202,9 +189,6 @@ namespace SVN.Core
             return true;
         }
 
-        // =====================================================
-        // 🗑 DELETE
-        // =====================================================
         public async Task DeleteSelectedBranch()
         {
             if (!TryStart()) return;
@@ -227,23 +211,18 @@ namespace SVN.Core
                     return;
                 }
 
-                // =====================================================
-                // 🔒 HARD PROTECTION LAYER (ABSOLUTE SAFETY)
-                // =====================================================
                 if (IsProtectedBranch(selectedBranch))
                 {
                     LogErrorLocal("SECURITY BLOCK: 'trunk' is protected and cannot be deleted.");
                     return;
                 }
 
-                // dodatkowy safety net (UI manipulation / fake entries)
                 if (selectedBranch.Equals("trunk", StringComparison.OrdinalIgnoreCase))
                 {
                     LogErrorLocal("SECURITY BLOCK: direct trunk match detected.");
                     return;
                 }
 
-                // sanity check (SVN path injection / malformed entries)
                 if (selectedBranch.Contains("..") ||
                     selectedBranch.Contains("/") && !selectedBranch.StartsWith("branches"))
                 {
@@ -317,9 +296,6 @@ namespace SVN.Core
             }
         }
 
-        // =====================================================
-        // 📊 STATUS
-        // =====================================================
         public static async Task<SvnStats> GetStatsAsync(string workingDir)
         {
             string output = await SvnRunner.RunAsync("status", workingDir);
@@ -348,9 +324,6 @@ namespace SVN.Core
             return stats;
         }
 
-        // =====================================================
-        // 🧩 HELPERS
-        // =====================================================
         private bool IsPlaceholder(string text)
             => text.Contains("Loading") ||
                text.Contains("No ") ||
@@ -392,9 +365,6 @@ namespace SVN.Core
             dropdown.RefreshShownValue();
         }
 
-        // =====================================================
-        // 🌐 SVN CORE
-        // =====================================================
         public static async Task<string> SwitchAsync(
             string workingDir,
             string targetUrl,

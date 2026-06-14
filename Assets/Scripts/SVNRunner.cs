@@ -17,45 +17,85 @@ namespace SVN.Core
             get
             {
                 if (string.IsNullOrEmpty(_keyPath))
-                {
                     _keyPath = PlayerPrefs.GetString("SVN_SSHKeyPath", "");
-                }
                 return _keyPath;
             }
             set => _keyPath = value ?? "";
         }
         private static string _keyPath = "";
 
-        private static readonly SemaphoreSlim _svnSemaphore = new(1, 1);
+        private static readonly SemaphoreSlim _readSemaphore = new(3, 3);
+        private static readonly SemaphoreSlim _writeSemaphore = new(1, 1);
+        private static int _activeReads = 0;
+        private static readonly object _readLockObj = new();
 
         public static event Action<bool> OnProcessingStateChanged;
         private static int _activeOperationsCount = 0;
-
         private static bool _processingState = false;
-
         private static readonly object _processingLock = new();
 
         private static DateTime _lastInfoCacheTime = DateTime.MinValue;
         private static string _lastInfoCache = "";
+        private static readonly TimeSpan InfoCacheDuration = TimeSpan.FromSeconds(2);
 
-        private static readonly TimeSpan InfoCacheDuration =
-            TimeSpan.FromSeconds(2);
+        private static readonly HashSet<string> WriteCommands = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "update", "commit", "lock", "unlock", "switch", "cleanup", "revert",
+            "merge", "copy", "delete", "mkdir", "propset", "propdel",
+            "shelf-save", "shelf-restore", "shelf-drop",
+            "import", "export"
+        };
+
+        private static bool IsWriteCommand(string args)
+        {
+            if (string.IsNullOrWhiteSpace(args)) return false;
+            string firstToken = args.TrimStart().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (firstToken == null) return false;
+            return WriteCommands.Contains(firstToken.ToLowerInvariant());
+        }
+
+        private static async Task EnterReadLockAsync(CancellationToken token)
+        {
+            await _readSemaphore.WaitAsync(token);
+            lock (_readLockObj) { _activeReads++; }
+        }
+
+        private static void ExitReadLock()
+        {
+            lock (_readLockObj)
+            {
+                _activeReads--;
+                if (_activeReads < 0) _activeReads = 0;
+            }
+            _readSemaphore.Release();
+        }
+
+        private static async Task EnterWriteLockAsync(CancellationToken token)
+        {
+            while (true)
+            {
+                bool canWrite;
+                lock (_readLockObj) { canWrite = _activeReads == 0; }
+                if (canWrite) break;
+                await Task.Delay(50, token);
+            }
+            await _writeSemaphore.WaitAsync(token);
+        }
+
+        private static void ExitWriteLock()
+        {
+            _writeSemaphore.Release();
+        }
 
         private static void IncrementOperations()
         {
             int count = Interlocked.Increment(ref _activeOperationsCount);
-
             lock (_processingLock)
             {
                 if (!_processingState && count > 0)
                 {
                     _processingState = true;
-
-                    SVNLogBridge.LogLine(
-                        "<color=#00FFAA>[SVN]</color> Processing START",
-                        false
-                    );
-
+                    SVNLogBridge.LogLine("<color=#00FFAA>[SVN]</color> Processing START", false);
                     OnProcessingStateChanged?.Invoke(true);
                 }
             }
@@ -64,53 +104,37 @@ namespace SVN.Core
         private static void DecrementOperations()
         {
             int count = Interlocked.Decrement(ref _activeOperationsCount);
-
-            if (count < 0)
-            {
-                _activeOperationsCount = 0;
-                count = 0;
-            }
-
+            if (count < 0) { _activeOperationsCount = 0; count = 0; }
             lock (_processingLock)
             {
                 if (_processingState && count == 0)
                 {
                     _processingState = false;
-
-                    SVNLogBridge.LogLine(
-                        "<color=#FFCC00>[SVN]</color> Processing END",
-                        true
-                    );
-
+                    SVNLogBridge.LogLine("<color=#FFCC00>[SVN]</color> Processing END", true);
                     OnProcessingStateChanged?.Invoke(false);
                 }
             }
         }
 
         public static async Task<string> RunAsync(
-    string args,
-    string workingDir,
-    bool retryOnLock = true,
-    CancellationToken token = default)
+            string args,
+            string workingDir,
+            bool retryOnLock = true,
+            CancellationToken token = default)
         {
-            SVNLogBridge.LogLine(
-                $"[SVN QUEUE] Waiting: svn {args}",
-                false
-            );
+            SVNLogBridge.LogLine($"[SVN QUEUE] Waiting: svn {args}", false);
 
-            bool lockTaken = false;
+            bool write = IsWriteCommand(args);
+
+            if (write)
+                await EnterWriteLockAsync(token);
+            else
+                await EnterReadLockAsync(token);
 
             try
             {
-                await _svnSemaphore.WaitAsync(token);
-                lockTaken = true;
-
                 IncrementOperations();
-
-                SVNLogBridge.LogLine(
-                    $"[SVN QUEUE] Acquired: svn {args}",
-                    false
-                );
+                SVNLogBridge.LogLine($"[SVN QUEUE] Acquired: svn {args}", false);
 
                 if (string.IsNullOrEmpty(workingDir))
                 {
@@ -121,8 +145,7 @@ namespace SVN.Core
                 SVNLogBridge.LogLine($"[SvnRunner] Preparing command: svn {args}");
 
                 string cleanWorkingDir = Path.GetFullPath(
-                    workingDir
-                        .Trim()
+                    workingDir.Trim()
                         .Where(c => !char.IsControl(c) && (int)c != 160)
                         .ToArray()
                         .Aggregate("", (s, c) => s + c));
@@ -154,16 +177,17 @@ namespace SVN.Core
                         StandardErrorEncoding = Encoding.UTF8
                     };
 
-                    if(!string.IsNullOrEmpty(safeKeyPath)){
+                    if (!string.IsNullOrEmpty(safeKeyPath))
+                    {
                         psi.EnvironmentVariables["SVN_SSH"] =
-                             $"ssh -i \"{safeKeyPath}\" " +
-                             "-o IdentitiesOnly=yes " +
-                             "-o StrictHostKeyChecking=no " +
-                             "-o BatchMode=yes " +
-                             "-o LogLevel=QUIET " +
-                             "-o ServerAliveInterval=15 " +
-                             "-o ServerAliveCountMax=10 " +
-                             "-o IPQoS=throughput";
+                            $"ssh -i \"{safeKeyPath}\" " +
+                            "-o IdentitiesOnly=yes " +
+                            "-o StrictHostKeyChecking=no " +
+                            "-o BatchMode=yes " +
+                            "-o LogLevel=QUIET " +
+                            "-o ServerAliveInterval=15 " +
+                            "-o ServerAliveCountMax=10 " +
+                            "-o IPQoS=throughput";
                     }
 
                     using var process = new Process
@@ -176,15 +200,12 @@ namespace SVN.Core
 
                     var outputBuilder = new StringBuilder();
                     var errorBuilder = new StringBuilder();
-
                     string lastLoggedError = "";
 
                     DataReceivedEventHandler outHandler = (s, e) =>
                     {
                         if (!string.IsNullOrWhiteSpace(e.Data))
-                        {
                             outputBuilder.AppendLine(e.Data);
-                        }
                     };
 
                     DataReceivedEventHandler errHandler = (s, e) =>
@@ -192,7 +213,6 @@ namespace SVN.Core
                         if (!string.IsNullOrWhiteSpace(e.Data))
                         {
                             string currentError = e.Data.Trim();
-
                             if (currentError != lastLoggedError)
                             {
                                 errorBuilder.AppendLine(currentError);
@@ -207,79 +227,43 @@ namespace SVN.Core
                     try
                     {
                         SVNLogBridge.LogLine($"[SvnRunner] Starting process...");
-
                         process.Start();
-
                         process.BeginOutputReadLine();
                         process.BeginErrorReadLine();
 
                         await WaitForExitAsync(process, token);
 
-                        process.WaitForExit();
-
                         string err = errorBuilder.ToString().Trim();
 
                         if (process.ExitCode != 0)
                         {
-                            bool isLockError =
-                                err.Contains("locked") ||
-                                err.Contains("cleanup");
-
+                            bool isLockError = err.Contains("locked") || err.Contains("cleanup");
                             if (attempt == 0 && retryOnLock && isLockError)
                             {
-                                SVNLogBridge.LogError(
-                                    "[SvnRunner] Lock detected. Running Cleanup..."
-                                );
-
-                                SVNLogBridge.LogLine(
-                                    "<color=orange>[SVN]</color> Performing automatic cleanup...",
-                                    false
-                                );
-
-                                await RunAsync(
-                                    "cleanup",
-                                    workingDir,
-                                    false,
-                                    token
-                                );
-
-                                SVNLogBridge.LogLine(
-                                    "<color=green>[SVN]</color> Cleanup completed. Retrying...",
-                                    false
-                                );
-
+                                SVNLogBridge.LogError("[SvnRunner] Lock detected. Running Cleanup...");
+                                SVNLogBridge.LogLine("<color=orange>[SVN]</color> Performing automatic cleanup...", false);
+                                await RunAsync("cleanup", workingDir, false, token);
+                                SVNLogBridge.LogLine("<color=green>[SVN]</color> Cleanup completed. Retrying...", false);
                                 continue;
                             }
 
                             string diagnostic =
-                                err.Contains("E170013") ||
-                                err.Contains("can't connect")
+                                err.Contains("E170013") || err.Contains("can't connect")
                                     ? " [Connection/URL issue]"
                                     : err.Contains("E215004")
                                         ? " [Authorization/Password error]"
                                         : "";
 
-                            string fullError =
-                                $"SVN Error (Code {process.ExitCode}): {err}{diagnostic}";
-
+                            string fullError = $"SVN Error (Code {process.ExitCode}): {err}{diagnostic}";
                             SVNLogBridge.LogError(fullError);
-
                             throw new Exception(fullError);
                         }
 
-                        SVNLogBridge.LogLine(
-                            $"[SvnRunner] Completed successfully."
-                        );
-
+                        SVNLogBridge.LogLine("[SvnRunner] Completed successfully.");
                         string finalOutput = outputBuilder.ToString();
 
                         if (!string.IsNullOrWhiteSpace(finalOutput))
-                        {
-                            SVNLogger.LogToFile(
-                                $"[SVN OUTPUT]\n{finalOutput.Trim()}",
-                                "DEBUG"
-                            );
-                        }
+                            SVNLogger.LogToFile($"[SVN OUTPUT]\n{finalOutput.Trim()}", "DEBUG");
 
                         return finalOutput;
                     }
@@ -292,18 +276,8 @@ namespace SVN.Core
                     {
                         process.OutputDataReceived -= outHandler;
                         process.ErrorDataReceived -= errHandler;
-
-                        try
-                        {
-                            process.CancelOutputRead();
-                        }
-                        catch { }
-
-                        try
-                        {
-                            process.CancelErrorRead();
-                        }
-                        catch { }
+                        try { process.CancelOutputRead(); } catch { }
+                        try { process.CancelErrorRead(); } catch { }
                     }
                 }
 
@@ -311,47 +285,41 @@ namespace SVN.Core
             }
             finally
             {
-                if (lockTaken)
-                {
-                    _svnSemaphore.Release();
-                }
+                if (write)
+                    ExitWriteLock();
+                else
+                    ExitReadLock();
 
                 DecrementOperations();
             }
         }
 
         public static async Task<string> RunLiveAsync(
-    string args,
-    string workingDir,
-    Action<string> onLineReceived,
-    CancellationToken token = default)
+            string args,
+            string workingDir,
+            Action<string> onLineReceived,
+            CancellationToken token = default)
         {
-            SVNLogBridge.LogLine(
-                $"[SVN QUEUE] Waiting LIVE: svn {args}"
-            );
+            SVNLogBridge.LogLine($"[SVN QUEUE] Waiting LIVE: svn {args}");
 
-            bool lockTaken = false;
+            bool write = IsWriteCommand(args);
+
+            if (write)
+                await EnterWriteLockAsync(token);
+            else
+                await EnterReadLockAsync(token);
 
             Process process = null;
 
             try
             {
-                await _svnSemaphore.WaitAsync(token);
-                lockTaken = true;
-
                 IncrementOperations();
-
-                SVNLogBridge.LogLine(
-                    $"[SVN QUEUE] Acquired LIVE: svn {args}"
-                );
+                SVNLogBridge.LogLine($"[SVN QUEUE] Acquired LIVE: svn {args}");
 
                 string cleanWorkingDir = Path.GetFullPath(
-                    new string(
-                        (workingDir ?? "")
-                            .Trim()
-                            .Where(c => !char.IsControl(c) && (int)c != 160)
-                            .ToArray()
-                    ));
+                    new string((workingDir ?? "").Trim()
+                        .Where(c => !char.IsControl(c) && (int)c != 160)
+                        .ToArray()));
 
                 string safeKeyPath = !string.IsNullOrEmpty(KeyPath)
                     ? KeyPath.Trim().Replace("\"", "").Replace('\\', '/')
@@ -360,8 +328,7 @@ namespace SVN.Core
                 var psi = new ProcessStartInfo
                 {
                     FileName = "svn",
-                    Arguments =
-                        $"{args} --non-interactive --trust-server-cert",
+                    Arguments = $"{args} --non-interactive --trust-server-cert",
                     WorkingDirectory = cleanWorkingDir,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -397,38 +364,24 @@ namespace SVN.Core
 
                 process.OutputDataReceived += (s, e) =>
                 {
-                    if (string.IsNullOrWhiteSpace(e.Data))
-                        return;
-
+                    if (string.IsNullOrWhiteSpace(e.Data)) return;
                     outputBuilder.AppendLine(e.Data);
-
                     SVNLogger.LogToFile(e.Data, "DEBUG");
-
                     onLineReceived?.Invoke(e.Data);
                 };
 
                 process.ErrorDataReceived += (s, e) =>
                 {
-                    if (string.IsNullOrWhiteSpace(e.Data))
-                        return;
-
+                    if (string.IsNullOrWhiteSpace(e.Data)) return;
                     errorBuilder.AppendLine(e.Data);
-
                     SVNLogger.LogToFile(e.Data, "ERROR");
-
                     onLineReceived?.Invoke($"[SVN ERROR] {e.Data}");
                 };
 
-                SVNLogBridge.LogLine(
-                    "[SvnRunner Live] Starting process..."
-                );
+                SVNLogBridge.LogLine("[SvnRunner Live] Starting process...");
 
                 if (!process.Start())
-                {
-                    throw new Exception(
-                        "Failed to start SVN process."
-                    );
-                }
+                    throw new Exception("Failed to start SVN process.");
 
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
@@ -456,108 +409,82 @@ namespace SVN.Core
 
                 if (process.ExitCode != 0)
                 {
-                    string finalError =
-                        $"SVN Error (Code {process.ExitCode})\n{errors}";
-
+                    string finalError = $"SVN Error (Code {process.ExitCode})\n{errors}";
                     SVNLogBridge.LogError(finalError);
-
                     throw new Exception(finalError);
                 }
 
-                SVNLogBridge.LogLine(
-                    "[SvnRunner Live] Completed successfully."
-                );
-
+                SVNLogBridge.LogLine("[SvnRunner Live] Completed successfully.");
                 return output;
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine(
-                    "<color=#FFD700>[CANCEL]</color> SVN operation canceled.",
-                    false
-                );
-
-                if (process != null)
-                {
-                    try
-                    {
-                        SvnProcessTracker.Kill(process);
-                    }
-                    catch { }
-                }
-
+                SVNLogBridge.LogLine("<color=#FFD700>[CANCEL]</color> SVN operation canceled.", false);
+                if (process != null) { try { SvnProcessTracker.Kill(process); } catch { } }
                 throw;
             }
             finally
             {
                 if (process != null)
                 {
-                    try
-                    {
-                        process.CancelOutputRead();
-                    }
-                    catch { }
-
-                    try
-                    {
-                        process.CancelErrorRead();
-                    }
-                    catch { }
-
-                    try
-                    {
-                        process.Dispose();
-                    }
-                    catch { }
+                    try { process.CancelOutputRead(); } catch { }
+                    try { process.CancelErrorRead(); } catch { }
+                    try { process.Dispose(); } catch { }
                 }
 
-                if (lockTaken)
-                {
-                    _svnSemaphore.Release();
-                }
+                if (write)
+                    ExitWriteLock();
+                else
+                    ExitReadLock();
 
                 DecrementOperations();
             }
         }
 
-        public static async Task<string> GetInfoAsync(
-    string workingDir,
-    CancellationToken token = default)
+        private static async Task WaitForExitAsync(Process process, CancellationToken token = default)
+        {
+            process.Refresh();
+            if (process.HasExited) return;
+
+            while (!process.HasExited && !token.IsCancellationRequested)
+            {
+                await Task.Delay(1000, token);
+                process.Refresh();
+            }
+
+            if (!process.HasExited && token.IsCancellationRequested)
+            {
+                try { process.Kill(); } catch { }
+            }
+        }
+
+        public static async Task WaitForSemaphoreFreeAsync(CancellationToken token = default)
+        {
+            await _writeSemaphore.WaitAsync(token);
+            _writeSemaphore.Release();
+        }
+
+        public static async Task<string> GetInfoAsync(string workingDir, CancellationToken token = default)
         {
             if (!string.IsNullOrWhiteSpace(_lastInfoCache))
             {
                 TimeSpan age = DateTime.Now - _lastInfoCacheTime;
-
                 if (age < InfoCacheDuration)
                 {
-                    SVNLogBridge.LogLine(
-                        "<color=#8888FF>[SVN CACHE]</color> Using cached svn info",
-                        false
-                    );
-
+                    SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
                     return _lastInfoCache;
                 }
             }
 
-            string result = await RunAsync(
-                "info",
-                workingDir,
-                true,
-                token
-            );
-
+            string result = await RunAsync("info", workingDir, true, token);
             _lastInfoCache = result;
             _lastInfoCacheTime = DateTime.Now;
-
             return result;
         }
 
         public static async Task<string> GetInfoAsync(string workingDir)
         {
-            return await GetInfoAsync(
-                workingDir,
-                CancellationToken.None
-            );
+            return await GetInfoAsync(workingDir, CancellationToken.None);
         }
 
         public static void BuildTreeString(
@@ -725,30 +652,6 @@ namespace SVN.Core
             int i; double dblSByte = bytes;
             for (i = 0; i < Suffix.Length && bytes >= 1024; i++, bytes /= 1024) dblSByte = bytes / 1024.0;
             return $"{dblSByte:0.##}{Suffix[i]}";
-        }
-
-        private static async Task WaitForExitAsync(Process process, CancellationToken token = default)
-        {
-            process.Refresh();
-            if (process.HasExited)
-                return;
-
-            while (!process.HasExited && !token.IsCancellationRequested)
-            {
-                await Task.Delay(1000, token);
-                process.Refresh();
-            }
-
-            if (!process.HasExited && token.IsCancellationRequested)
-            {
-                try { process.Kill(); } catch { }
-            }
-        }
-
-        public static async Task WaitForSemaphoreFreeAsync(CancellationToken token = default)
-        {
-            await _svnSemaphore.WaitAsync(token);
-            _svnSemaphore.Release();
         }
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(

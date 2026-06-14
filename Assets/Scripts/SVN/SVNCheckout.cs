@@ -43,7 +43,6 @@ namespace SVN.Core
         private const double BytesInGB = 1024d * 1024d * 1024d;
         private const double BytesInMB = 1024d * 1024d;
         private const double MinSpeedThresholdMB = 0.01d;
-        private const int MonitorUpdateIntervalMs = 1000;
 
 
         public SVNCheckout(SVNUI svnUI, SVNManager manager) : base(svnUI, manager)
@@ -448,25 +447,6 @@ namespace SVN.Core
             }
         }
 
-        private int GetFileCount(string path)
-        {
-            try
-            {
-                if (!Directory.Exists(path))
-                    return 0;
-
-                return Directory.GetFiles(
-                    path,
-                    "*",
-                    SearchOption.AllDirectories
-                ).Length;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-
         private async Task ExecuteSvnOperation(
     string url,
     string path,
@@ -562,8 +542,6 @@ namespace SVN.Core
                             double sessionMB = bytesDownloadedInSession / BytesInMB;
                             double totalGB = currentTotalDiskSize / BytesInGB;
 
-                            int realFiles = GetFileCount(path);
-
                             double totalSeconds =
                                 Math.Max((DateTime.Now - start).TotalSeconds, 1);
 
@@ -642,11 +620,10 @@ namespace SVN.Core
                                     timeStr +
                                     $"<b>Total on Disk:</b> {totalGB:F2} GB\n" +
                                     $"<b>Session:</b> {sessionMB:F2} MB\n" +
-                                    $"<b>Speed:</b> {speedMB:F2} MB/s\n" +
-                                    $"<b>Files:</b> {realFiles}\n";
+                                    $"<b>Speed:</b> {speedMB:F2} MB/s\n";
                             }, null);
 
-                            await Task.Delay(MonitorUpdateIntervalMs, token);
+                            await Task.Delay(15000, token);
                         }
                         catch (TaskCanceledException)
                         {

@@ -2,6 +2,7 @@ using UnityEngine;
 using System.Text.RegularExpressions;
 using TMPro;
 using System;
+using System.Threading.Tasks;
 
 namespace SVN.Core
 {
@@ -12,15 +13,12 @@ namespace SVN.Core
 
         public static void LogLine(string message, bool append = true, string level = "INFO")
         {
-            // Operacje tekstowe wykonujemy natychmiast, na dowolnym wątku
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
             string uiMessage = $"[{timestamp}] {message}";
             string cleanMessage = StripRichText(message);
 
-            // Zapis do pliku natychmiast (zakładając, że SVNLogger.LogToFile ma wewnątrz lock)
-            SVNLogger.LogToFile(cleanMessage, level);
+            _ = Task.Run(() => SVNLogger.LogToFile(cleanMessage, level));
 
-            // Operacje UI oddelegowane na wątek główny
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.LogText == null) return;
@@ -41,8 +39,6 @@ namespace SVN.Core
         public static void LogError(string message, bool append = true)
         {
             string errorMessage = $"<color=#FF8800><b>[ERROR]</b> {message}</color>";
-
-            // LogLine wewnątrz siebie załatwi dispatchera i zapis do pliku
             LogLine(errorMessage, append, "ERROR");
         }
 
@@ -50,17 +46,14 @@ namespace SVN.Core
         {
             if (uiField == null) return;
 
-            // Zapis do pliku robimy natychmiast, żeby nie zgubić danych zanim główny wątek je przetworzy
             string cleanContent = StripRichText(content);
             if (!string.IsNullOrEmpty(cleanContent))
             {
-                SVNLogger.LogToFile(cleanContent, logLabel);
+                _ = Task.Run(() => SVNLogger.LogToFile(cleanContent, logLabel));
             }
 
-            // Operacje UI na wątek główny
             UnityMainThreadDispatcher.Enqueue(() =>
             {
-                // Ponowne sprawdzenie, bo uiField mogło zostać zniszczone w międzyczasie
                 if (uiField == null) return;
 
                 if (append)
@@ -78,10 +71,8 @@ namespace SVN.Core
 
         public static void ShowNotification(string message)
         {
-            // Logujemy od razu
             LogLine($"<color=blue>[NOTIFY]</color> {message}");
 
-            // UI na wątek główny
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null) return;
@@ -91,7 +82,6 @@ namespace SVN.Core
 
         public static void LogTooltip(string message)
         {
-            // UI na wątek główny
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
@@ -101,7 +91,6 @@ namespace SVN.Core
 
         public static void ClearTooltip()
         {
-            // UI na wątek główny
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
@@ -114,14 +103,12 @@ namespace SVN.Core
             string cleanMessage = StripRichText(message);
             if (!string.IsNullOrEmpty(cleanMessage))
             {
-                SVNLogger.LogToFile(cleanMessage, "CHECKOUT");
+                _ = Task.Run(() => SVNLogger.LogToFile(cleanMessage, "CHECKOUT"));
             }
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
-                if (SVNUI.Instance == null || SVNUI.Instance.CheckoutedFilesText == null)
-                    return;
-
+                if (SVNUI.Instance == null || SVNUI.Instance.CheckoutedFilesText == null) return;
                 SVNUI.Instance.CheckoutedFilesText.text = message;
             });
         }

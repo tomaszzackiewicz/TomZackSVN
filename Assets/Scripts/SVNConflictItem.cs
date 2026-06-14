@@ -18,10 +18,6 @@ public class SVNConflictItem : MonoBehaviour
 
     private string _path;
 
-    // =====================================================
-    // TYPES
-    // =====================================================
-
     public enum ConflictType
     {
         Text,
@@ -29,17 +25,12 @@ public class SVNConflictItem : MonoBehaviour
         Tree
     }
 
-    // =====================================================
-    // SETUP
-    // =====================================================
-
     public void Setup(
         string path,
         ConflictType type,
         bool hasMarkers)
     {
         _path = path;
-        //_conflictCache = type;
 
         if (conflictTypeText != null)
         {
@@ -55,30 +46,17 @@ public class SVNConflictItem : MonoBehaviour
         if (fileNameText != null)
             fileNameText.text = path;
 
-        // =====================================================
-        // CLEAR OLD EVENTS
-        // =====================================================
-
         ClearButton(mineButton);
         ClearButton(theirsButton);
         ClearButton(resolvedButton);
         ClearButton(openButton);
         ClearButton(deleteButton);
 
-        // =====================================================
-        // HIDE EVERYTHING FIRST
-        // =====================================================
-
         SetButton(mineButton, false);
         SetButton(theirsButton, false);
         SetButton(resolvedButton, false);
         SetButton(openButton, false);
         SetButton(deleteButton, false);
-
-        // =====================================================
-        // TEXT CONFLICT
-        // [Mine] [Theirs] [Open]
-        // =====================================================
 
         if (type == ConflictType.Text)
         {
@@ -108,11 +86,6 @@ public class SVNConflictItem : MonoBehaviour
             });
         }
 
-        // =====================================================
-        // MANUAL CONFLICT
-        // [Open] [Resolved]
-        // =====================================================
-
         else if (type == ConflictType.Manual)
         {
             SetButton(openButton, true);
@@ -135,11 +108,6 @@ public class SVNConflictItem : MonoBehaviour
             });
         }
 
-        // =====================================================
-        // TREE CONFLICT
-        // [Delete Obstruction]
-        // =====================================================
-
         else if (type == ConflictType.Tree)
         {
             SetButton(deleteButton, true);
@@ -152,10 +120,6 @@ public class SVNConflictItem : MonoBehaviour
             });
         }
     }
-
-    // =====================================================
-    // HELPERS
-    // =====================================================
 
     private void ClearButton(Button button)
     {

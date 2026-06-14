@@ -92,7 +92,6 @@ namespace SVN.Core
                     string author = entry.Element("author")?.Value ?? "unknown";
                     string content = entry.Element("line")?.Value ?? string.Empty;
 
-                    // Przycinamy autora do 12 znaków, by tabela się nie rozjeżdżała
                     string authorShort = author.Length > 12 ? author.Substring(0, 12) : author;
 
                     string lineNumStr = $"<color=#666666>{lineNumber:D3}</color> | ";

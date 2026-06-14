@@ -8,7 +8,7 @@ namespace SVN.Core
     {
         private static readonly Queue<Action> ExecutionQueue = new Queue<Action>();
         private static UnityMainThreadDispatcher _instance;
-        private const int MAX_ACTIONS_PER_FRAME = 64;
+        private const int MAX_ACTIONS_PER_FRAME = 256;
 
         public static void Enqueue(Action action)
         {

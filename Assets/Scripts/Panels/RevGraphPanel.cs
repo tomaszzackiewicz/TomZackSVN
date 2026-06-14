@@ -1,8 +1,9 @@
+using SVN.Core;
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Xml;
 using UnityEngine;
-using SVN.Core;
 
 public class RevGraphPanel : MonoBehaviour
 {
@@ -11,19 +12,20 @@ public class RevGraphPanel : MonoBehaviour
     private SVNUI svnUI;
     private SVNManager svnManager;
     private SVNRevGraph graphModule;
+    private Coroutine _debounceCoroutine;
+    private bool _graphLoaded = false;
 
     private async void OnEnable()
     {
-        if (svnManager == null)
-            svnManager = SVNManager.Instance;
+        if (svnManager == null) svnManager = SVNManager.Instance;
+        if (svnManager == null) return;
+        if (string.IsNullOrEmpty(svnManager.WorkingDir)) return;
 
-        if (svnManager == null)
-            return;
-
-        if (string.IsNullOrEmpty(svnManager.WorkingDir))
-            return;
-
-        await RefreshGraph();
+        if (!_graphLoaded)
+        {
+            _graphLoaded = true;
+            await RefreshGraph();
+        }
     }
 
     private void Start()
@@ -37,6 +39,19 @@ public class RevGraphPanel : MonoBehaviour
     }
 
     public void OnFilterChanged(string filterText)
+    {
+        if (_debounceCoroutine != null)
+            StopCoroutine(_debounceCoroutine);
+        _debounceCoroutine = StartCoroutine(ApplyFilterAfterDelay(filterText));
+    }
+
+    private IEnumerator ApplyFilterAfterDelay(string filterText)
+    {
+        yield return new WaitForSeconds(0.3f);
+        ApplyFilter(filterText);
+    }
+
+    private void ApplyFilter(string filterText)
     {
         if (graphModule == null) return;
 
@@ -210,7 +225,11 @@ public class RevGraphPanel : MonoBehaviour
         return nodes;
     }
 
-    public async void Button_RefreshGraph() => await RefreshGraph();
+    public async void Button_RefreshGraph() 
+    {
+        _graphLoaded = true;
+        await RefreshGraph(); 
+    }
     public void Button_CollpaseAll() => svnManager.GetModule<SVNRevGraph>().CollapseAll();
     public void Button_ExportHistoryToTxt() => svnManager.GetModule<SVNRevGraph>().ExportHistoryToTxt();
 }

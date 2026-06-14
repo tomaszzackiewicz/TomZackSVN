@@ -1,6 +1,4 @@
-using System.Threading;
 using UnityEngine;
-using UnityEngine.UIElements;
 
 namespace SVN.Core
 {
@@ -27,12 +25,6 @@ namespace SVN.Core
                 });
             }
         }
-
-        void OnTerminalSubmit()
-        {
-            ExecuteLogic();
-        }
-
 
         public void ExecuteCommand()
         {

@@ -33,8 +33,6 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(input))
                 return string.Empty;
-
-            // usuń control chars (TAB, CR, LF itd.)
             var cleaned = new string(input.Where(c => !char.IsControl(c)).ToArray());
 
             return cleaned
