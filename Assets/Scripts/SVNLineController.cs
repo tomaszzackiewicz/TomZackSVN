@@ -245,19 +245,30 @@ public class SvnLineController : MonoBehaviour
 
                 lockBtn.onClick.AddListener(async () =>
                 {
-                    var lockModule =
-                        SVNManager.Instance.GetModule<SVNLock>();
+                    var lockModule = SVNManager.Instance.GetModule<SVNLock>();
+                    if (lockModule == null) return;
 
-                    if (lockModule == null)
-                        return;
-
+                    // Pokaż oczekiwanie
+                    lockBtnText.text = "…";
                     lockBtn.interactable = false;
 
-                    await lockModule.ToggleLockSingleItem(_element);
+                    try
+                    {
+                        await lockModule.ToggleLockSingleItem(_element);
+                    }
+                    finally
+                    {
+                        // Zawsze przywróć przycisk i zaktualizuj wygląd
+                        lockBtn.interactable = true;
 
-                    RefreshLockButton();
-
-                    lockBtn.interactable = true;
+                        // Odświeżenie wyglądu przycisku (inline)
+                        if (_element.LockedByOther)
+                            lockBtnText.text = "<color=#FF4444>O</color>";
+                        else if (_element.LockedByMe)
+                            lockBtnText.text = "<color=#00FF00>K</color>";
+                        else
+                            lockBtnText.text = "<color=#E6E6E6>U</color>";
+                    }
                 });
 
                 if (isLockedByOthers)
@@ -357,25 +368,6 @@ public class SvnLineController : MonoBehaviour
                 });
                 BindHover(explorerBtn, "Open location in Windows Explorer.");
             }
-        }
-    }
-
-    private void RefreshLockButton()
-    {
-        bool isLockedByMe = _element.LockedByMe;
-        bool isLockedByOthers = _element.LockedByOther;
-
-        if (isLockedByOthers)
-        {
-            lockBtnText.text = "<color=#FF4444>O</color>";
-        }
-        else if (isLockedByMe)
-        {
-            lockBtnText.text = "<color=#00FF00>K</color>";
-        }
-        else
-        {
-            lockBtnText.text = "<color=#E6E6E6>U</color>";
         }
     }
 

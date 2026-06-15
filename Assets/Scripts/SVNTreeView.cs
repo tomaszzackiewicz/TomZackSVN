@@ -11,7 +11,8 @@ public class SvnTreeView : MonoBehaviour
 
     public void RefreshUI(List<SvnTreeElement> elements, SVNStatus manager)
     {
-        foreach (var obj in _pool) obj.SetActive(false);
+        foreach (var obj in _pool)
+            obj.SetActive(false);
 
         int activeIndex = 0;
         foreach (var element in elements)

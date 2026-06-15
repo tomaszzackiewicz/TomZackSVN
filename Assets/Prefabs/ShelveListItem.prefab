@@ -161,7 +161,7 @@ GameObject:
   m_Component:
   - component: {fileID: 838123470682891479}
   - component: {fileID: 2560771199095576186}
-  - component: {fileID: 1037099780416493510}
+  - component: {fileID: 4089591202855932171}
   m_Layer: 5
   m_Name: ShelveListItem
   m_TagString: Untagged
@@ -216,7 +216,7 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
---- !u!114 &1037099780416493510
+--- !u!114 &4089591202855932171
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -225,11 +225,14 @@ MonoBehaviour:
   m_GameObject: {fileID: 829082345583674087}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 6ae31682a5bbc1f4c9711dca6e9137d6, type: 3}
+  m_Script: {fileID: 11500000, guid: f2a49793b5817aa48bbe8f7edbed5567, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: 
-  projectNameText: {fileID: 3851000610791222561}
-  selectButton: {fileID: 1281347198271038538}
+  m_EditorClassIdentifier: Assembly-CSharp::ShelfItemUI
+  nameText: {fileID: 3851000610791222561}
+  dateText: {fileID: 2414248088157480993}
+  filesLabel: {fileID: 1986834075046215691}
+  sizeLabel: {fileID: 6149637845343762493}
+  restoreButton: {fileID: 1281347198271038538}
   deleteButton: {fileID: 5860430717183246250}
 --- !u!1 &1394455450041140987
 GameObject:
@@ -266,7 +269,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 200, y: 60}
+  m_SizeDelta: {x: 150, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &625413269273025918
 CanvasRenderer:
@@ -403,7 +406,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 200, y: 60}
+  m_SizeDelta: {x: 250, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &8567364963825549814
 CanvasRenderer:
@@ -751,9 +754,9 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 1
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
-  m_overflowMode: 0
+  m_overflowMode: 1
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0

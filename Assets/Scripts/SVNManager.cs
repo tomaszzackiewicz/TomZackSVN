@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -41,7 +42,7 @@ namespace SVN.Core
         private FileSystemWatcher _folderWatcher;
         private float _lastAutoRefreshTime;
         private bool _isUpdatingSize = false;
-        private volatile bool _diskChangesDetected = false; // volatile for multithreading
+        public volatile bool _diskChangesDetected = false; // volatile for multithreading
 
         public SVNProject CurrentProject { get; private set; }
         public bool WasUpdateCanceled { get; set; }
@@ -189,8 +190,10 @@ namespace SVN.Core
             }
             WorkingDir = SVNAssetLocator.NormalizePath(path);
             SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
-
-            InitFileSystemWatcher();
+            //if (!Application.isEditor)
+            //{
+            //    InitFileSystemWatcher();
+            //}
             await RefreshRepositoryInfo();
         }
 
@@ -308,7 +311,10 @@ namespace SVN.Core
 
             if (Directory.Exists(WorkingDir))
             {
-                InitFileSystemWatcher();
+                //if (!Application.isEditor)
+                //{
+                //    InitFileSystemWatcher();
+                //}
                 await InitializeActiveProject(project);
             }
 
@@ -317,11 +323,8 @@ namespace SVN.Core
 
         private async Task InitializeActiveProject(SVNProject project)
         {
-            IsUpdateRunning = false;
-
             if (string.IsNullOrEmpty(CurrentUserName) || CurrentUserName == "Unknown")
                 await AutoDetectSvnUser();
-
             if (this == null) return;
 
             var barModule = GetModule<SVNBar>();
@@ -334,11 +337,7 @@ namespace SVN.Core
             await RefreshRepositoryInfo();
             if (this == null) return;
 
-            await RefreshStatus();
-            if (this == null) return;
-
-            var statusModule = GetModule<SVNStatus>();
-            var poller = GetComponent<SVNPollingService>();
+            _ = RefreshLocksSafe();
         }
 
         public async void SetActiveProject(SVNProject project)
@@ -505,9 +504,6 @@ namespace SVN.Core
             if (!hasFocus) return;
             if (_focusRefreshRunning) return;
 
-            if (!_diskChangesDetected)
-                return;
-
             if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
                 return;
 
@@ -520,8 +516,7 @@ namespace SVN.Core
 
             try
             {
-                _diskChangesDetected = false;
-
+                await Task.Delay(300);
                 await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(false);
             }
             catch (Exception ex)
@@ -749,35 +744,64 @@ namespace SVN.Core
             }
         }
 
+        private bool _restartingWatcher = false;
+
+        private CancellationTokenSource _watcherRestartCts;
+
         private void InitFileSystemWatcher()
         {
+            // Zapobiega nakładaniu się restartów
+            if (_restartingWatcher)
+                return;
+
             try
             {
                 if (_folderWatcher != null)
                 {
                     _folderWatcher.EnableRaisingEvents = false;
                     _folderWatcher.Dispose();
+                    _folderWatcher = null;
                 }
 
                 string path = WorkingDir;
-                if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
+                if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+                    return;
 
                 _folderWatcher = new FileSystemWatcher(path)
                 {
                     IncludeSubdirectories = true,
                     NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
-                    InternalBufferSize = 128 * 1024  // 128 KB
+                    InternalBufferSize = 256 * 1024  // Zwiększony bufor (256 KB)
                 };
 
+                // Podłączamy zdarzenia
                 _folderWatcher.Changed += OnDiskEvent;
                 _folderWatcher.Created += OnDiskEvent;
                 _folderWatcher.Deleted += OnDiskEvent;
                 _folderWatcher.Renamed += OnDiskEvent;
+
+                // Bezpieczna obsługa błędów z opóźnionym restartem
                 _folderWatcher.Error += (sender, e) =>
                 {
-                    SVNLogBridge.LogError($"[SVN Watcher] Error: {e.GetException().Message}");
+                    var ex = e.GetException();
+                    // Logujemy błąd, ale nie restartujemy natychmiast
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                        SVNLogBridge.LogError($"[SVN Watcher] Buffer overflow/error: {ex.Message}. Will restart after cooldown."));
 
-                    InitFileSystemWatcher();
+                    // Anuluj poprzedni restart, jeśli trwa
+                    _watcherRestartCts?.Cancel();
+                    _watcherRestartCts = new CancellationTokenSource();
+
+                    // Uruchom restart z opóźnieniem (15 sekund)
+                    Task.Delay(TimeSpan.FromSeconds(15), _watcherRestartCts.Token)
+                        .ContinueWith(t =>
+                        {
+                            if (!t.IsCanceled)
+                            {
+                                _restartingWatcher = false;
+                                InitFileSystemWatcher();
+                            }
+                        }, TaskScheduler.Default);
                 };
 
                 _folderWatcher.EnableRaisingEvents = true;
@@ -789,11 +813,34 @@ namespace SVN.Core
             }
         }
 
+        private DateTime _lastDiskEventTime = DateTime.MinValue;
+        private CancellationTokenSource _diskDebounceCts;
+
         private void OnDiskEvent(object sender, FileSystemEventArgs e)
         {
             if (e.FullPath.Contains(".svn")) return;
 
             _diskChangesDetected = true;
+            _lastDiskEventTime = DateTime.UtcNow;
+
+            // Anuluj poprzedni debounce
+            _diskDebounceCts?.Cancel();
+            _diskDebounceCts = new CancellationTokenSource();
+
+            // Opóźnienie 2 sekundy – jeśli w tym czasie nie będzie więcej zdarzeń, wykonaj odświeżenie
+            Task.Delay(TimeSpan.FromSeconds(2), _diskDebounceCts.Token)
+                .ContinueWith(t =>
+                {
+                    if (!t.IsCanceled && _diskChangesDetected)
+                    {
+                        UnityMainThreadDispatcher.Enqueue(() =>
+                        {
+                            if (gameObject.activeInHierarchy && !IsUpdateRunning)
+                                _ = GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(false);
+                        });
+                        _diskChangesDetected = false;
+                    }
+                }, TaskScheduler.Default);
         }
 
         private void OnDestroy()

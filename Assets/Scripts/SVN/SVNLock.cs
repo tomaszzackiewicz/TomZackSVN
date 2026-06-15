@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 using UnityEngine;
@@ -52,6 +53,8 @@ namespace SVN.Core
 
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
+
                 var statusDict =
                     await SvnRunner.GetFullStatusDictionaryAsync(
                         root,
@@ -117,6 +120,8 @@ namespace SVN.Core
                         "<color=green>Locking completed successfully.</color>"
                     );
 
+                    svnManager._diskChangesDetected = true;
+
                     await RefreshLockCacheAsync(true);
 
                     var statusModule =
@@ -180,6 +185,8 @@ namespace SVN.Core
 
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
+
                 var allLocks = await GetDetailedLocks(root);
 
                 var myLocksPaths = allLocks
@@ -192,6 +199,8 @@ namespace SVN.Core
                     string allPathsJoined = string.Join(" ", myLocksPaths);
                     await SvnRunner.RunAsync($"unlock --force {allPathsJoined}", root);
                     SVNLogBridge.LogLine("<color=green>Locks released successfully.</color>");
+
+                    svnManager._diskChangesDetected = true;
 
                     var statusModule = svnManager.GetModule<SVNStatus>();
                     if (statusModule != null)
@@ -267,10 +276,11 @@ namespace SVN.Core
             }
         }
 
-        public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath)
+        public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath, CancellationToken token = default)
         {
+
             List<SVNLockDetails> locks = new List<SVNLockDetails>();
-            string xmlOutput = await SvnRunner.RunAsync("status --xml -u --no-ignore", rootPath);
+            string xmlOutput = await SvnRunner.RunAsync("status --xml -u --no-ignore", rootPath, token: token);
 
             if (string.IsNullOrEmpty(xmlOutput)) return locks;
 
@@ -310,34 +320,47 @@ namespace SVN.Core
 
         public async Task ToggleLockSingleItem(SvnTreeElement element)
         {
-            if (element == null)
-                return;
+            if (element == null) return;
 
             bool isLocked = element.LockedByMe;
 
-            string cmd =
-                isLocked
-                ? $"unlock \"{element.FullPath}\""
-                : $"lock \"{element.FullPath}\"";
+            string cmd = isLocked
+                ? $"unlock --force \"{element.FullPath}\""
+                : $"lock --force \"{element.FullPath}\"";
+
+            SVNLogBridge.LogLine($"<color=#00E5FF>[Lock]</color> Request: {cmd}");
 
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
-                await SvnRunner.RunAsync(
-                    cmd,
-                    svnManager.WorkingDir
-                );
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await SvnRunner.RunAsync(cmd, svnManager.WorkingDir, token: cts.Token);
 
-                await RefreshLockCacheAsync(true);
+                if (isLocked)
+                {
+                    element.LockedByMe = false;
+                    element.LockedByOther = false;
+                }
+                else
+                {
+                    element.LockedByMe = true;
+                    element.LockedByOther = false;
+                }
+
+                _ = RefreshLockCacheAsync(true);
+
+                svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly();
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogError("[SVN Lock] Timeout while waiting for write semaphore.");
+                svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly();
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError(
-                    $"[SVN Lock Error]: {ex.Message}"
-                );
-
-                await RefreshLockCacheAsync(true);
+                SVNLogBridge.LogError($"[SVN Lock Error]: {ex.Message}");
+                svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly();
             }
         }
 

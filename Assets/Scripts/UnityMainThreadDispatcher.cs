@@ -20,6 +20,9 @@ namespace SVN.Core
 
         private void Update()
         {
+            if (ExecutionQueue.Count > 10)
+                SVNLogBridge.LogLine($"[Dispatcher] Queue size: {ExecutionQueue.Count}");
+
             int processed = 0;
 
             while (processed < MAX_ACTIONS_PER_FRAME)

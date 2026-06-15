@@ -11,7 +11,7 @@ namespace SVN.Core
 
         public DateTime LastRefreshUtc;
 
-        public bool IsValid(double maxSeconds = 15.0)
+        public bool IsValid(double maxSeconds = 60.0)
         {
             return (DateTime.UtcNow - LastRefreshUtc).TotalSeconds < maxSeconds;
         }

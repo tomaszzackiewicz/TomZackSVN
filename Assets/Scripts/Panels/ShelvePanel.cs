@@ -13,4 +13,5 @@ public class ShalvePanel : MonoBehaviour
     }
 
     public void Button_Stash() => svnManager.GetModule<SVNShelve>().ExecuteShelve();
+    public void Button_Refresh() => svnManager.GetModule<SVNShelve>().RefreshShelvesUI();
 }

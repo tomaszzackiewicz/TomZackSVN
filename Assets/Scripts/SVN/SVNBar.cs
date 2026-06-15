@@ -17,14 +17,52 @@ namespace SVN.Core
         }
 
         public async Task ShowProjectInfo(
-           SVNProject svnProject,
-           string path,
-           bool forceOutdatedCheck = false,
-           bool isRefreshing = false)
+    SVNProject svnProject,
+    string path,
+    bool forceOutdatedCheck = false,
+    bool isRefreshing = false)
         {
+            if (svnManager.IsUpdateRunning)
+            {
+                string projectName = svnProject?.projectName ?? "Project";
+                SVNLogBridge.UpdateUIField(
+                    svnUI.StatusInfoText,
+                    $"<size=150%><color=#FFFF00>●</color></size> " +
+                    $"<color=orange><b>{projectName}</b></color> | " +
+                    $"<color=#FFFF00>Updating working copy…</color>",
+                    "INFO",
+                    append: false);
+                return;
+            }
+
             var snapshot = await BuildSnapshotAsync(svnProject, path);
             svnManager.CurrentSnapshot = snapshot;
             RenderSnapshot(snapshot, isRefreshing);
+        }
+
+        public async Task StartLightSizeMonitor(string path, CancellationToken token)
+        {
+            string lastFormatted = svnManager.CurrentSnapshot?.WorkingCopySize ?? "?";
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    long bytes = await CalculateWorkingCopySizeBytes(path, token);
+                    double gb = bytes / (1024d * 1024d * 1024d);
+                    string formatted = gb >= 1.0 ? $"{gb:F2} GB" : $"{bytes / (1024d * 1024d):F2} MB";
+
+                    if (formatted != lastFormatted && svnManager.CurrentSnapshot != null)
+                    {
+                        svnManager.CurrentSnapshot.WorkingCopySize = formatted;
+                        svnManager.RaiseSnapshotChanged(svnManager.CurrentSnapshot);
+                        lastFormatted = formatted;
+                    }
+                }
+                catch { }
+
+                await Task.Delay(5000, token);
+            }
         }
 
         public async Task<string> GetFolderSizeAsync(string path)

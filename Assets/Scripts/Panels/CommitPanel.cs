@@ -33,6 +33,7 @@ public class CommitPanel : MonoBehaviour
 
     public async void Button_ShowModified() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();
     public void Button_Revert() => svnManager.GetModule<SVNRevert>().RevertAll();
+    public void Button_CancelRevert() => svnManager.GetModule<SVNRevert>().CancelRevert();
     public void Button_Commit() => svnManager.GetModule<SVNCommit>().CommitAll();
     public void Button_CommitSelected() => svnManager.GetModule<SVNCommit>().CommitSelected();
     public void Button_Add() => _ = svnManager.GetModule<SVNAdd>().AddAll();

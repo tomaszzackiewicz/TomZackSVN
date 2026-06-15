@@ -1,11 +1,12 @@
 ﻿using System;
-using UnityEngine;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Threading;
-using System.Text;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using UnityEngine;
 
 namespace SVN.Core
 {
@@ -108,6 +109,8 @@ namespace SVN.Core
                 catch { oldRevision = "Unknown"; }
             }
 
+            var oldSnapshot = svnManager.CurrentSnapshot;
+
             _lastLiveLine = "Connecting to repository...";
             _hasNewLine = true;
 
@@ -115,6 +118,8 @@ namespace SVN.Core
             svnBar?.ShowUpdatingStatus(svnManager.CurrentProject?.projectName ?? Path.GetFileName(targetPath));
 
             var stopwatch = Stopwatch.StartNew();
+
+            _ = svnBar?.StartLightSizeMonitor(targetPath, token);
 
             svnManager.OperationInfo = new SVNOperationInfo
             {
@@ -139,6 +144,16 @@ namespace SVN.Core
                 if (session != _sessionId)
                     throw new OperationCanceledException();
 
+                int totalUpdates = 0;
+                try
+                {
+                    string statusOutput = await SvnRunner.RunAsync("status -u", targetPath, token: token);
+                    totalUpdates = statusOutput.Split('\n').Count(l => l.Length > 8 && l[8] == '*');
+                }
+                catch { }
+
+                int processed = 0;
+
                 SVNLogBridge.LogLine("<color=orange>[DEBUG]</color> Step 5: Running svn update...");
                 SVNLogBridge.LogLine("<color=blue><b>[SVN]</b> Running update...</color>");
 
@@ -153,6 +168,16 @@ namespace SVN.Core
                         if (token.IsCancellationRequested) return;
                         if (session != _sessionId) return;
 
+                        processed++;
+                        string progress = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
+
+                        string friendlyLine = line
+                            .Replace("Updating '.'", "Scanning repository...")
+                            .Replace("U   ", "= Updated: ")
+                            .Replace("A   ", "+ Added: ")
+                            .Replace("D   ", "− Deleted: ")
+                            .Replace("C   ", "x Conflict: ");
+
                         liveOutput.AppendLine(line);
                         _lastLiveLine = line;
                         _hasNewLine = true;
@@ -163,7 +188,7 @@ namespace SVN.Core
                             if (session != _sessionId) return;
 
                             SVNLogBridge.LogLine(
-                                $"<b>[SVN]</b> Updating: <color=blue>{line}</color>",
+                                $"<b>[SVN]</b> <color=blue>{friendlyLine}{progress}</color>",
                                 false
                             );
                         });
@@ -222,6 +247,8 @@ namespace SVN.Core
                     Repo = svnManager.RepositoryUrl
                 };
                 svnManager.LastUpdateSucceeded = true;
+
+                svnManager._diskChangesDetected = true;
 
                 StringBuilder report = new StringBuilder();
                 report.AppendLine("\n<color=blue><b>=========================================</b></color>");
@@ -292,6 +319,19 @@ namespace SVN.Core
             catch (OperationCanceledException)
             {
                 stopwatch.Stop();
+
+                svnManager.IsUpdateRunning = false;
+
+                svnManager.CurrentSnapshot = oldSnapshot;
+                if (svnBar != null)
+                {
+                    await svnBar.ShowProjectInfo(
+                        svnManager.CurrentProject,
+                        svnManager.WorkingDir,
+                        forceOutdatedCheck: false,
+                        isRefreshing: false);
+                }
+
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
                     State = SVNOperationState.Canceled,
@@ -312,6 +352,17 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 stopwatch.Stop();
+
+                svnManager.CurrentSnapshot = oldSnapshot;
+                if (svnBar != null)
+                {
+                    await svnBar.ShowProjectInfo(
+                        svnManager.CurrentProject,
+                        svnManager.WorkingDir,
+                        forceOutdatedCheck: false,
+                        isRefreshing: false);
+                }
+
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
                     State = SVNOperationState.Failed,
@@ -355,7 +406,7 @@ namespace SVN.Core
 
         public void CancelUpdate()
         {
-            if (_updateCTS == null || !IsProcessing)
+            if (_updateCTS == null || !svnManager.IsUpdateRunning)
                 return;
 
             SVNLogBridge.LogLine(

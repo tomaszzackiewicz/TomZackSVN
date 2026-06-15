@@ -161,6 +161,11 @@ namespace SVN.Core
             {
                 commitPanel.SetActive(false);
             }
+
+            if (svnUI.CommitConsoleContent != null)
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "", "COMMIT_CONSOLE", append: false);
+            }
         }
 
         public void Button_OpenCheckout()
@@ -244,6 +249,7 @@ namespace SVN.Core
             if (shelvePanel != null)
             {
                 shelvePanel.SetActive(true);
+                svnManager.GetModule<SVNShelve>()?.RefreshShelvesUI();
             }
         }
 
