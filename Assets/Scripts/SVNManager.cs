@@ -325,6 +325,7 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(CurrentUserName) || CurrentUserName == "Unknown")
                 await AutoDetectSvnUser();
+
             if (this == null) return;
 
             var barModule = GetModule<SVNBar>();
@@ -337,7 +338,16 @@ namespace SVN.Core
             await RefreshRepositoryInfo();
             if (this == null) return;
 
-            _ = RefreshLocksSafe();
+            var statusModule = GetModule<SVNStatus>();
+            var currentData = statusModule?.GetCurrentData();
+            if (currentData == null || currentData.Count == 0)
+            {
+                await RefreshStatus();
+            }
+
+            if (this == null) return;
+
+            var poller = GetComponent<SVNPollingService>();
         }
 
         public async void SetActiveProject(SVNProject project)

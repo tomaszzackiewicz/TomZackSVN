@@ -58,6 +58,11 @@ public class MergePanel : MonoBehaviour
         _ = CancelLocalMergeInternal();
     }
 
+    public void Button_RevertToHead()
+    {
+        _ = RevertToHead();
+    }
+
     public void Button_UndoMerge()
     {
         _ = svnManager.GetModule<SVNMerge>().UndoLastMerge();
@@ -141,6 +146,14 @@ public class MergePanel : MonoBehaviour
         if (merge == null) return;
 
         await merge.CancelLocalMerge();
+    }
+
+    private async Task RevertToHead()
+    {
+        var merge = svnManager.GetModule<SVNMerge>();
+        if (merge == null) return;
+
+        await merge.RevertToHead();
     }
 
     public async Task AutoSync()

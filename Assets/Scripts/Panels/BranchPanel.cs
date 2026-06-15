@@ -15,8 +15,14 @@ public class BranchPanel : MonoBehaviour
         _ = svnManager.GetModule<SVNBranchTag>().RefreshUnifiedList();
     }
 
-    public void Button_Create()
-        => _ = svnManager.GetModule<SVNBranchTag>().CreateRemoteCopy();
+    public void Button_CreateBranchFromTrunk()
+        => _ = svnManager.GetModule<SVNBranchTag>().CreateBranchFromTrunk();
+
+    public void Button_CreateBranchFromSelected()
+        => _ = svnManager.GetModule<SVNBranchTag>().CreateBranchFromSelected();
+
+    public void Button_ShowDetails()
+        => _ = svnManager.GetModule<SVNBranchTag>().ShowDetailsForSelected();
 
     public void Button_SwitchBranch()
         => _ = svnManager.GetModule<SVNBranchTag>().SwitchToSelectedBranch();

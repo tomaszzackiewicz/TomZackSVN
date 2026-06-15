@@ -353,6 +353,9 @@ namespace SVN.Core
 
             try
             {
+                // 🔥 Anuluj automatyczne odświeżanie statusu, aby edytor otworzył się natychmiast
+                await svnManager.CancelBackgroundTasksAsync();
+
                 string root = svnManager.WorkingDir;
                 string editorPath = svnManager.MergeToolPath;
 
@@ -368,6 +371,7 @@ namespace SVN.Core
 
                 string targetFile = null;
 
+                // 1. Jeśli użytkownik wpisał ścieżkę w polu tekstowym – użyj jej
                 if (svnUI.ResolveTargetFileInput != null &&
                     !string.IsNullOrWhiteSpace(svnUI.ResolveTargetFileInput.text))
                 {
@@ -375,6 +379,7 @@ namespace SVN.Core
                 }
                 else
                 {
+                    // 2. W przeciwnym razie weź pierwszy nierozwiązany konflikt z cache
                     var first = _conflictCache
                         .Values
                         .OrderBy(x => x.Path)
@@ -384,6 +389,7 @@ namespace SVN.Core
                         targetFile = first.Path;
                 }
 
+                // 3. Jeśli dalej nic nie znaleziono, pobierz świeżą listę konfliktów
                 if (string.IsNullOrEmpty(targetFile))
                 {
                     var conflicts = await GetConflicts(root);
@@ -406,11 +412,11 @@ namespace SVN.Core
                 }
 
                 string fullPath = Path.Combine(root, targetFile);
-
                 LogBoth($"Opening editor: <color=green>{targetFile}</color>");
 
                 System.Diagnostics.Process.Start(editorPath, $"\"{fullPath}\"");
 
+                // Zaznacz plik jako edytowany ręcznie
                 if (_conflictCache.TryGetValue(targetFile, out var conflict))
                 {
                     conflict.Type = SVNConflictType.Manual;
@@ -584,60 +590,40 @@ namespace SVN.Core
         private async Task ResolveSingle(string path, string strategy)
         {
             path = NormalizePath(path);
-
             await _resolveLock.WaitAsync();
-
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();   // 🔥
+
                 LogBoth($"[Resolve] {strategy} -> {path}");
 
                 if (_conflictCache.TryGetValue(path, out var data))
                     data.State = SVNConflictState.Resolving;
 
                 string full = Path.Combine(svnManager.WorkingDir, path);
-
-                string parent = Path.GetDirectoryName(path);
-                if (string.IsNullOrWhiteSpace(parent))
-                    parent = ".";
+                string parent = Path.GetDirectoryName(path) ?? ".";
 
                 if (strategy == "theirs-full")
                 {
-                    try
-                    {
-                        if (File.Exists(full))
-                            File.Delete(full);
-
-                        if (Directory.Exists(full))
-                            Directory.Delete(full, true);
-                    }
+                    try { if (File.Exists(full)) File.Delete(full); if (Directory.Exists(full)) Directory.Delete(full, true); }
                     catch { }
-
-                    await SVNManager.Instance.RunSvn(
-                        $"resolve --accept theirs-full \"{path}\"");
+                    await SVNManager.Instance.RunSvn($"resolve --accept theirs-full \"{path}\"");
                 }
                 else
                 {
-                    await SVNManager.Instance.RunSvn(
-                        $"resolve --accept mine-full \"{path}\"");
+                    await SVNManager.Instance.RunSvn($"resolve --accept mine-full \"{path}\"");
                 }
 
                 await SVNManager.Instance.RunSvn("cleanup");
-
                 await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
-
                 await SVNManager.Instance.RunSvn("cleanup --remove-unversioned");
 
                 _conflictCache.Remove(path);
-
                 await svnManager.RefreshStatus();
                 await Task.Delay(120);
 
-                if (!_uiRefreshing)
-                    await RefreshConflictUI();
-
-                svnManager
-                    .GetModule<SVNExternal>()
-                    .RefreshWindowsShellIcons(path);
+                if (!_uiRefreshing) await RefreshConflictUI();
+                svnManager.GetModule<SVNExternal>().RefreshWindowsShellIcons(path);
 
                 LogBoth($"<color=green>Resolved ({strategy}):</color> {path}");
             }
@@ -707,46 +693,31 @@ namespace SVN.Core
         {
             try
             {
-                string fullPath =
-                    Path.Combine(
-                        svnManager.WorkingDir,
-                        path);
+                await svnManager.CancelBackgroundTasksAsync();   // 🔥
 
+                string fullPath = Path.Combine(svnManager.WorkingDir, path);
                 if (File.Exists(fullPath))
                 {
-                    string content =
-                        await File.ReadAllTextAsync(fullPath);
-
-                    if (content.Contains("<<<<<<<") ||
-                        content.Contains("=======") ||
-                        content.Contains(">>>>>>>"))
+                    string content = await File.ReadAllTextAsync(fullPath);
+                    if (content.Contains("<<<<<<<") || content.Contains("=======") || content.Contains(">>>>>>>"))
                     {
-                        LogBoth(
-                            $"<color=red>Conflict markers still exist:</color> {path}");
-
+                        LogBoth($"<color=red>Conflict markers still exist:</color> {path}");
                         return;
                     }
                 }
 
                 LogBoth($"[Resolve] Finalizing: {path}");
-
                 await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
-
                 await SVNManager.Instance.RunSvn("cleanup --remove-unversioned");
-
                 _conflictCache.Remove(path);
-
                 await Task.Delay(150);
-
                 await RefreshConflictUI();
-
-                LogBoth(
-                    $"<color=green>Resolved manually:</color> {path}");
+                await svnManager.RefreshStatus();   // 🔥
+                LogBoth($"<color=green>Resolved manually:</color> {path}");
             }
             catch (Exception ex)
             {
-                LogBoth(
-                    $"<color=red>Error finalizing {path}:</color> {ex.Message}");
+                LogBoth($"<color=red>Error finalizing {path}:</color> {ex.Message}");
             }
             finally
             {
@@ -762,8 +733,10 @@ namespace SVN.Core
             {
                 path = NormalizePath(path);
 
-                string fullPath = Path.Combine(svnManager.WorkingDir, path);
+                // 🔥 Anuluj automatyczne odświeżanie statusu, aby nie czekać na semafor
+                await svnManager.CancelBackgroundTasksAsync();
 
+                string fullPath = Path.Combine(svnManager.WorkingDir, path);
                 string parent = Path.GetDirectoryName(path);
                 if (string.IsNullOrWhiteSpace(parent))
                     parent = ".";
@@ -803,17 +776,10 @@ namespace SVN.Core
 
                 await SVNManager.Instance.RunSvn("cleanup");
 
+                // Usuwamy tylko ten konkretny wpis z cache – bez szukania pokrewnych
                 _conflictCache.Remove(path);
 
-                var keysToRemove = _conflictCache.Keys
-                    .Where(k => k.StartsWith(path) || path.StartsWith(k))
-                    .ToList();
-
-                foreach (var k in keysToRemove)
-                    _conflictCache.Remove(k);
-
                 await svnManager.RefreshStatus();
-
                 await Task.Delay(150);
 
                 if (refreshUi && !_uiRefreshing)
