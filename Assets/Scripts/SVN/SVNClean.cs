@@ -29,7 +29,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                SVNLogBridge.LogException(ex);
             }
         }
 
@@ -111,7 +111,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                SVNLogBridge.LogException(ex);
             }
         }
 
@@ -190,7 +190,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                SVNLogBridge.LogException(ex);
             }
         }
 
@@ -265,7 +265,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                SVNLogBridge.LogException(ex);
             }
         }
 
@@ -349,7 +349,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                SVNLogBridge.LogException(ex);
             }
         }
 
@@ -365,7 +365,7 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(targetPath))
                     return;
 
-                Debug.LogWarning("[SVN] Hard Reset started - deleting unversioned and reverting changes!");
+                SVNLogBridge.LogLine("[SVN] Hard Reset started - deleting unversioned and reverting changes!");
 
                 LogToClean("<b>[HARD RESET]</b> Cleaning project to match HEAD...", false);
 
@@ -416,7 +416,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                SVNLogBridge.LogException(ex);
             }
         }
 

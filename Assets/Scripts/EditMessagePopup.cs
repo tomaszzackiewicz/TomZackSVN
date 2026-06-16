@@ -23,7 +23,7 @@ public class EditMessagePopup : MonoBehaviour
     {
         if (Instance == null)
         {
-            Debug.LogError("EditMessagePopup not in scene!");
+            SVNLogBridge.LogError("EditMessagePopup not in scene!");
             return;
         }
 

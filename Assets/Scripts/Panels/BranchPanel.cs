@@ -12,6 +12,11 @@ public class BranchPanel : MonoBehaviour
         svnUI = SVNUI.Instance;
         svnManager = SVNManager.Instance;
 
+        if (svnUI.BranchTagConsoleText != null)
+        {
+            SVNLogBridge.UpdateUIField(svnUI.BranchTagConsoleText, "", "BRANCH_TAG", append: false);
+        }
+
         _ = svnManager.GetModule<SVNBranchTag>().RefreshUnifiedList();
     }
 

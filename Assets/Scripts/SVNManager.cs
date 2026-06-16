@@ -205,7 +205,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                Debug.LogException(ex);
+                SVNLogBridge.LogException(ex);
             }
         }
 
@@ -338,16 +338,24 @@ namespace SVN.Core
             await RefreshRepositoryInfo();
             if (this == null) return;
 
-            var statusModule = GetModule<SVNStatus>();
-            var currentData = statusModule?.GetCurrentData();
-            if (currentData == null || currentData.Count == 0)
-            {
-                await RefreshStatus();
-            }
+            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
+            _ = RefreshStatusAsync();
 
             if (this == null) return;
-
             var poller = GetComponent<SVNPollingService>();
+        }
+
+        private async Task RefreshStatusAsync()
+        {
+            try
+            {
+                await Task.Delay(50);
+                await RefreshStatus();
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[Init] Background refresh failed: {ex.Message}");
+            }
         }
 
         public async void SetActiveProject(SVNProject project)
@@ -760,7 +768,6 @@ namespace SVN.Core
 
         private void InitFileSystemWatcher()
         {
-            // Zapobiega nakładaniu się restartów
             if (_restartingWatcher)
                 return;
 
@@ -781,28 +788,24 @@ namespace SVN.Core
                 {
                     IncludeSubdirectories = true,
                     NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
-                    InternalBufferSize = 256 * 1024  // Zwiększony bufor (256 KB)
+                    InternalBufferSize = 256 * 1024
                 };
 
-                // Podłączamy zdarzenia
                 _folderWatcher.Changed += OnDiskEvent;
                 _folderWatcher.Created += OnDiskEvent;
                 _folderWatcher.Deleted += OnDiskEvent;
                 _folderWatcher.Renamed += OnDiskEvent;
 
-                // Bezpieczna obsługa błędów z opóźnionym restartem
                 _folderWatcher.Error += (sender, e) =>
                 {
                     var ex = e.GetException();
-                    // Logujemy błąd, ale nie restartujemy natychmiast
+
                     UnityMainThreadDispatcher.Enqueue(() =>
                         SVNLogBridge.LogError($"[SVN Watcher] Buffer overflow/error: {ex.Message}. Will restart after cooldown."));
 
-                    // Anuluj poprzedni restart, jeśli trwa
                     _watcherRestartCts?.Cancel();
                     _watcherRestartCts = new CancellationTokenSource();
 
-                    // Uruchom restart z opóźnieniem (15 sekund)
                     Task.Delay(TimeSpan.FromSeconds(15), _watcherRestartCts.Token)
                         .ContinueWith(t =>
                         {
@@ -833,11 +836,9 @@ namespace SVN.Core
             _diskChangesDetected = true;
             _lastDiskEventTime = DateTime.UtcNow;
 
-            // Anuluj poprzedni debounce
             _diskDebounceCts?.Cancel();
             _diskDebounceCts = new CancellationTokenSource();
 
-            // Opóźnienie 2 sekundy – jeśli w tym czasie nie będzie więcej zdarzeń, wykonaj odświeżenie
             Task.Delay(TimeSpan.FromSeconds(2), _diskDebounceCts.Token)
                 .ContinueWith(t =>
                 {

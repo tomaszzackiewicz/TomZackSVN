@@ -10,22 +10,18 @@ namespace SVN.Core
 {
     public class SVNBranchTag : SVNBase
     {
-        // Timery dla double‑click (usuwanie)
         private float _lastDeleteBranchClickTime = -10f;
         private float _lastDeleteTagClickTime = -10f;
 
         public SVNBranchTag(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        // ============================================================
-        // CREATE BRANCH / TAG
-        // ============================================================
         public async Task CreateBranchFromTrunk()
         {
             if (!TryStart()) return;
 
             try
             {
-                await svnManager.CancelBackgroundTasksAsync();   // 🔥
+                await svnManager.CancelBackgroundTasksAsync();
 
                 string name = svnUI.BranchNameInput.text.Trim();
                 if (string.IsNullOrEmpty(name))
@@ -61,10 +57,6 @@ namespace SVN.Core
             finally { End(); }
         }
 
-        /// <summary>
-        /// Tworzy nowy branch (lub tag) z aktualnie wybranej gałęzi w dropdownie.
-        /// Nazwa nowej gałęzi pobierana jest z pola BranchNameInput.
-        /// </summary>
         public async Task CreateBranchFromSelected()
         {
             if (!TryStart()) return;
@@ -73,10 +65,8 @@ namespace SVN.Core
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
-                // Określ, czy tworzymy branch czy tag
                 string subFolder = (svnUI.TypeSelector.value == 0) ? "branches" : "tags";
 
-                // Pobierz gałąź źródłową z odpowiedniego dropdowna
                 TMP_Dropdown sourceDropdown = subFolder == "branches"
                     ? svnUI.BranchesDropdown
                     : svnUI.TagsDropdown;
@@ -94,7 +84,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Nazwa nowej gałęzi
                 string newName = svnUI.BranchNameInput.text.Trim();
                 if (string.IsNullOrEmpty(newName))
                 {
@@ -109,7 +98,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Źródło: jeśli wybrano "trunk" → trunk, inaczej branches/Nazwa (lub tags/Nazwa)
                 string sourceUrl = sourceName.Equals("trunk", StringComparison.OrdinalIgnoreCase)
                     ? $"{repoRoot}/trunk"
                     : $"{repoRoot}/{subFolder}/{sourceName}";
@@ -137,9 +125,6 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // REFRESH LIST
-        // ============================================================
         public async Task RefreshUnifiedList()
         {
             if (svnUI == null || (svnUI.BranchesDropdown == null && svnUI.TagsDropdown == null))
@@ -171,12 +156,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Pobiera i wyświetla szczegóły aktualnie wybranej gałęzi (lub taga).
-        /// </summary>
-        /// <summary>
-        /// Pobiera i wyświetla szczegóły aktualnie wybranej gałęzi lub taga.
-        /// </summary>
         public async Task ShowDetailsForSelected()
         {
             if (!TryStart()) return;
@@ -185,7 +164,6 @@ namespace SVN.Core
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
-                // Ustalamy, czy pracujemy na branchach czy tagach
                 string subFolder = (svnUI.TypeSelector.value == 0) ? "branches" : "tags";
                 TMP_Dropdown dropdown = subFolder == "branches"
                     ? svnUI.BranchesDropdown
@@ -220,7 +198,6 @@ namespace SVN.Core
                 LogInfo($"URL: {branchUrl}");
                 LogInfo("====================================");
 
-                // Pierwszy commit – autor i data utworzenia
                 string logOutput = await SvnRunner.RunAsync(
                     $"log \"{branchUrl}\" -r 1:HEAD --limit 1 --xml",
                     svnManager.WorkingDir);
@@ -238,7 +215,6 @@ namespace SVN.Core
                     }
                 }
 
-                // Źródło kopii
                 string sourceBranch = "trunk (default)";
                 try
                 {
@@ -298,9 +274,6 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // SWITCH
-        // ============================================================
         public async Task SwitchToSelectedBranch()
         {
             if (!TryStart()) return;
@@ -310,7 +283,7 @@ namespace SVN.Core
                     return;
                 string selected = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text;
                 if (IsPlaceholder(selected)) return;
-                if (!await CanPerformSwitch()) return;   // ostrzeżenie, ale nie blokuje
+                if (!await CanPerformSwitch()) return;
                 await ExecuteUnifiedSwitch(selected, "branches");
             }
             finally { End(); }
@@ -376,9 +349,6 @@ namespace SVN.Core
             return true;
         }
 
-        // ============================================================
-        // DELETE (z double‑click)
-        // ============================================================
         public async Task DeleteSelectedBranch()
         {
             if (!TryStart()) return;
@@ -397,7 +367,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Double‑click
                 float timeSinceLastClick = Time.time - _lastDeleteBranchClickTime;
                 if (timeSinceLastClick > 5f)
                 {
@@ -424,7 +393,6 @@ namespace SVN.Core
                 string selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
                 if (IsPlaceholder(selected)) return;
 
-                // Double‑click
                 float timeSinceLastClick = Time.time - _lastDeleteTagClickTime;
                 if (timeSinceLastClick > 5f)
                 {
@@ -465,9 +433,6 @@ namespace SVN.Core
             catch (Exception ex) { LogErrorLocal($"[Delete Error] {ex.Message}"); }
         }
 
-        // ============================================================
-        // HELPERS
-        // ============================================================
         private bool IsProtectedBranch(string name) =>
             string.Equals(name?.Trim(), "trunk", StringComparison.OrdinalIgnoreCase);
 
@@ -517,9 +482,6 @@ namespace SVN.Core
             dropdown.RefreshShownValue();
         }
 
-        // ============================================================
-        // STATIC SVN HELPERS
-        // ============================================================
         public static async Task<string> SwitchAsync(string workingDir, string targetUrl, CancellationToken token = default)
         {
             string currentKey = SvnRunner.KeyPath;

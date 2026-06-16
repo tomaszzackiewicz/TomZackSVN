@@ -248,7 +248,6 @@ public class SvnLineController : MonoBehaviour
                     var lockModule = SVNManager.Instance.GetModule<SVNLock>();
                     if (lockModule == null) return;
 
-                    // Pokaż oczekiwanie
                     lockBtnText.text = "…";
                     lockBtn.interactable = false;
 
@@ -258,10 +257,8 @@ public class SvnLineController : MonoBehaviour
                     }
                     finally
                     {
-                        // Zawsze przywróć przycisk i zaktualizuj wygląd
                         lockBtn.interactable = true;
 
-                        // Odświeżenie wyglądu przycisku (inline)
                         if (_element.LockedByOther)
                             lockBtnText.text = "<color=#FF4444>O</color>";
                         else if (_element.LockedByMe)

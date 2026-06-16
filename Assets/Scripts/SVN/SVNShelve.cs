@@ -20,8 +20,6 @@ namespace SVN.Core
                 Directory.CreateDirectory(_shelfFolder);
         }
 
-        // ----- PUBLICZNE METODY DLA PRZYCISKÓW -----
-
         public async void ExecuteShelve()
         {
             string name = svnUI.ShelfNameInput?.text;
@@ -36,13 +34,10 @@ namespace SVN.Core
 
         public async void ExecuteUnshelve(string selectedShelf)
         {
-            // 🔥 Natychmiastowo usuwamy wpis z listy
             RemoveShelfUI(selectedShelf);
 
-            // Wykonujemy właściwą operację (może chwilę potrwać)
             await Unshelve(selectedShelf);
 
-            // Odświeżamy listę, aby upewnić się, że wpis nie wróci (np. gdy unshelve nie usunął pliku)
             RefreshShelvesUI();
         }
 
@@ -51,7 +46,6 @@ namespace SVN.Core
             if (IsProcessing) return;
             IsProcessing = true;
 
-            // 🔥 Usuwamy wpis natychmiastowo
             RemoveShelfUI(shelfName);
 
             try
@@ -74,19 +68,14 @@ namespace SVN.Core
             finally
             {
                 IsProcessing = false;
-                RefreshShelvesUI();   // dla bezpieczeństwa odświeżamy
+                RefreshShelvesUI();
             }
         }
 
-        /// <summary>
-        /// Ręczne odświeżenie listy półek (opcjonalny przycisk Refresh).
-        /// </summary>
         public void Button_RefreshShelvesUI()
         {
             RefreshShelvesUI();
         }
-
-        // ----- LOGIKA SHELVE / UNSHELVE -----
 
         public async Task Shelve(string shelfName)
         {
@@ -142,7 +131,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Nałożenie diffa
                 await SvnRunner.RunAsync($"patch \"{patchFile}\"", root);
                 File.Delete(patchFile);
 
@@ -159,11 +147,6 @@ namespace SVN.Core
             }
         }
 
-        // ----- POMOCNICZE -----
-
-        /// <summary>
-        /// Natychmiastowo usuwa z UI element odpowiadający podanej nazwie półki.
-        /// </summary>
         private void RemoveShelfUI(string shelfName)
         {
             if (svnUI.ShelfListContainer == null) return;
@@ -175,7 +158,7 @@ namespace SVN.Core
                 if (ui != null && ui.NameText.text == shelfName)
                 {
                     GameObject.DestroyImmediate(child.gameObject);
-                    return; // usuwamy tylko jeden pasujący element
+                    return;
                 }
             }
         }
@@ -197,11 +180,9 @@ namespace SVN.Core
                             SizeBytes = fileInfo.Length
                         };
 
-                        // Parsuj plik .patch, aby policzyć liczbę zmienionych plików
                         try
                         {
                             string content = File.ReadAllText(fileInfo.FullName);
-                            // Każdy plik w patchu zaczyna się od "Index: " lub "--- "
                             info.FileCount = System.Text.RegularExpressions.Regex.Matches(
                                 content, @"^---\s\S+", System.Text.RegularExpressions.RegexOptions.Multiline).Count;
                         }
@@ -213,7 +194,7 @@ namespace SVN.Core
                         return info;
                     })
                     .Where(info => !string.IsNullOrEmpty(info.Name))
-                    .OrderByDescending(info => info.Date)  // najnowsze na górze
+                    .OrderByDescending(info => info.Date)
                     .ToList();
 
                 return Task.FromResult(shelfInfos);
@@ -241,7 +222,6 @@ namespace SVN.Core
 
             Transform container = svnUI.ShelfListContainer.content;
 
-            // Natychmiastowe usunięcie starych obiektów
             foreach (Transform child in container.Cast<Transform>().ToList())
             {
                 if (child != null && child.gameObject != null)
@@ -263,7 +243,6 @@ namespace SVN.Core
                 {
                     if (svnUI.ShelfItemPrefab == null) break;
 
-                    // Sprawdź, czy plik faktycznie istnieje
                     string filePath = GetShelfFilePath(info.Name);
                     if (!File.Exists(filePath))
                     {
@@ -278,7 +257,6 @@ namespace SVN.Core
                         ui.RestoreButton.onClick.RemoveAllListeners();
                         ui.DeleteButton.onClick.RemoveAllListeners();
 
-                        // Ustawiamy dane
                         ui.NameText.text = info.Name;
                         ui.DateText.text = info.Date.ToString("yyyy-MM-dd HH:mm");
 

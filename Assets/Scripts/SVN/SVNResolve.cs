@@ -252,9 +252,7 @@ namespace SVN.Core
 
         public async void DeleteAllObstructions()
         {
-            if (IsProcessing)
-                return;
-
+            if (IsProcessing) return;
             IsProcessing = true;
 
             try
@@ -267,25 +265,17 @@ namespace SVN.Core
                     return;
                 }
 
-                var snapshot = conflicts
-                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Path))
-                    .Select(x => x.Path)
-                    .ToList();
+                LogBoth($"[Batch Resolve] {conflicts.Count} items");
 
-                LogBoth($"[Batch Resolve] {snapshot.Count} items");
-
-                foreach (var path in snapshot)
+                while (conflicts.Count > 0)
                 {
-                    await DeleteObstruction(path, false);
+                    string path = conflicts[0].Path;
+                    await DeleteObstruction(path, refreshUi: true);
+
+                    await Task.Delay(100);
+
+                    conflicts = await GetConflicts(svnManager.WorkingDir);
                 }
-
-                await SVNManager.Instance.RunSvn("cleanup");
-                await svnManager.RefreshStatus();
-
-                await Task.Delay(250);
-
-                if (!_uiRefreshing)
-                    await RefreshConflictUI();
 
                 LogBoth("<color=green>All obstructions removed.</color>");
             }
@@ -302,47 +292,31 @@ namespace SVN.Core
         public async void ResolveTheirs()
         {
             if (IsProcessing) return;
-
             IsProcessing = true;
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
                 var conflicts = await GetConflicts(svnManager.WorkingDir);
-
                 await ResolveMany(conflicts, "theirs-full");
-
                 LogBoth("<color=green>Theirs-full batch resolved.</color>");
             }
-            catch (Exception ex)
-            {
-                LogBoth($"<color=red>Error:</color> {ex.Message}");
-            }
-            finally
-            {
-                IsProcessing = false;
-            }
+            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}"); }
+            finally { IsProcessing = false; }
         }
 
         public async void ResolveMine()
         {
             if (IsProcessing) return;
-
             IsProcessing = true;
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
                 var conflicts = await GetConflicts(svnManager.WorkingDir);
-
                 await ResolveMany(conflicts, "mine-full");
-
                 LogBoth("<color=green>Mine-full batch resolved.</color>");
             }
-            catch (Exception ex)
-            {
-                LogBoth($"<color=red>Error:</color> {ex.Message}");
-            }
-            finally
-            {
-                IsProcessing = false;
-            }
+            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}"); }
+            finally { IsProcessing = false; }
         }
 
         public async void OpenInEditor()
@@ -353,7 +327,6 @@ namespace SVN.Core
 
             try
             {
-                // 🔥 Anuluj automatyczne odświeżanie statusu, aby edytor otworzył się natychmiast
                 await svnManager.CancelBackgroundTasksAsync();
 
                 string root = svnManager.WorkingDir;
@@ -371,7 +344,6 @@ namespace SVN.Core
 
                 string targetFile = null;
 
-                // 1. Jeśli użytkownik wpisał ścieżkę w polu tekstowym – użyj jej
                 if (svnUI.ResolveTargetFileInput != null &&
                     !string.IsNullOrWhiteSpace(svnUI.ResolveTargetFileInput.text))
                 {
@@ -379,7 +351,6 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // 2. W przeciwnym razie weź pierwszy nierozwiązany konflikt z cache
                     var first = _conflictCache
                         .Values
                         .OrderBy(x => x.Path)
@@ -389,7 +360,6 @@ namespace SVN.Core
                         targetFile = first.Path;
                 }
 
-                // 3. Jeśli dalej nic nie znaleziono, pobierz świeżą listę konfliktów
                 if (string.IsNullOrEmpty(targetFile))
                 {
                     var conflicts = await GetConflicts(root);
@@ -416,7 +386,6 @@ namespace SVN.Core
 
                 System.Diagnostics.Process.Start(editorPath, $"\"{fullPath}\"");
 
-                // Zaznacz plik jako edytowany ręcznie
                 if (_conflictCache.TryGetValue(targetFile, out var conflict))
                 {
                     conflict.Type = SVNConflictType.Manual;
@@ -593,7 +562,7 @@ namespace SVN.Core
             await _resolveLock.WaitAsync();
             try
             {
-                await svnManager.CancelBackgroundTasksAsync();   // 🔥
+                await svnManager.CancelBackgroundTasksAsync();
 
                 LogBoth($"[Resolve] {strategy} -> {path}");
 
@@ -693,7 +662,7 @@ namespace SVN.Core
         {
             try
             {
-                await svnManager.CancelBackgroundTasksAsync();   // 🔥
+                await svnManager.CancelBackgroundTasksAsync();
 
                 string fullPath = Path.Combine(svnManager.WorkingDir, path);
                 if (File.Exists(fullPath))
@@ -712,7 +681,7 @@ namespace SVN.Core
                 _conflictCache.Remove(path);
                 await Task.Delay(150);
                 await RefreshConflictUI();
-                await svnManager.RefreshStatus();   // 🔥
+                await svnManager.RefreshStatus();
                 LogBoth($"<color=green>Resolved manually:</color> {path}");
             }
             catch (Exception ex)
@@ -732,68 +701,110 @@ namespace SVN.Core
             try
             {
                 path = NormalizePath(path);
-
-                // 🔥 Anuluj automatyczne odświeżanie statusu, aby nie czekać na semafor
                 await svnManager.CancelBackgroundTasksAsync();
 
                 string fullPath = Path.Combine(svnManager.WorkingDir, path);
-                string parent = Path.GetDirectoryName(path);
-                if (string.IsNullOrWhiteSpace(parent))
-                    parent = ".";
+                bool fileExists = File.Exists(fullPath) || Directory.Exists(fullPath);
 
-                LogBoth($"[TREE RESOLVE] {path}");
+                LogBoth($"[TREE RESOLVE] {path} (exists: {fileExists})");
 
-                try
+                if (fileExists)
                 {
-                    await SVNManager.Instance.RunSvn($"revert \"{path}\"");
-                }
-                catch { }
+                    LogBoth("[TREE RESOLVE] File exists locally – removing physical file...");
 
-                try
-                {
-                    await SVNManager.Instance.RunSvn($"resolve --accept working --force \"{path}\"");
+                    try
+                    {
+                        await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
+                    }
+                    catch { }
+
+                    bool removed = false;
+                    try
+                    {
+                        if (File.Exists(fullPath))
+                        {
+                            File.SetAttributes(fullPath, FileAttributes.Normal);
+                            File.Delete(fullPath);
+                            removed = true;
+                        }
+                        else if (Directory.Exists(fullPath))
+                        {
+                            DirectoryInfo di = new DirectoryInfo(fullPath);
+                            di.Attributes = FileAttributes.Normal;
+                            foreach (var file in di.GetFiles("*", SearchOption.AllDirectories))
+                                file.Attributes = FileAttributes.Normal;
+                            Directory.Delete(fullPath, true);
+                            removed = true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogBoth($"<color=yellow>Physical delete failed:</color> {ex.Message} – using svn delete --force");
+                    }
+
+                    if (!removed)
+                    {
+                        try
+                        {
+                            await SVNManager.Instance.RunSvn($"delete \"{path}\" --force --keep-local");
+                            if (File.Exists(fullPath)) File.Delete(fullPath);
+                            else if (Directory.Exists(fullPath)) Directory.Delete(fullPath, true);
+                            LogBoth("[TREE RESOLVE] Removed via svn delete --force.");
+                        }
+                        catch (Exception ex2)
+                        {
+                            LogBoth($"<color=red>svn delete --force failed:</color> {ex2.Message}");
+                        }
+                    }
+
+                    await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
                 }
-                catch { }
+                else
+                {
+                    LogBoth("[TREE RESOLVE] File missing locally – restoring from server...");
+
+                    try
+                    {
+                        await SVNManager.Instance.RunSvn($"revert \"{path}\"");
+                        LogBoth("[TREE RESOLVE] File restored via svn revert.");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogBoth($"<color=yellow>Revert failed:</color> {ex.Message} – trying theirs-full...");
+                        try
+                        {
+                            await SVNManager.Instance.RunSvn($"resolve --accept theirs-full \"{path}\"");
+                        }
+                        catch (Exception ex2)
+                        {
+                            LogBoth($"<color=red>theirs-full failed:</color> {ex2.Message}");
+                        }
+                    }
+
+                    try
+                    {
+                        await SVNManager.Instance.RunSvn($"resolve --accept working \"{path}\"");
+                    }
+                    catch { }
+                }
 
                 await SVNManager.Instance.RunSvn("cleanup");
 
-                try
-                {
-                    if (File.Exists(fullPath))
-                    {
-                        File.SetAttributes(fullPath, FileAttributes.Normal);
-                        File.Delete(fullPath);
-                    }
-                    else if (Directory.Exists(fullPath))
-                    {
-                        Directory.Delete(fullPath, true);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogBoth($"<color=yellow>Delete warning:</color> {ex.Message}");
-                }
-
-                await SVNManager.Instance.RunSvn("cleanup");
-
-                // Usuwamy tylko ten konkretny wpis z cache – bez szukania pokrewnych
                 _conflictCache.Remove(path);
 
                 await svnManager.RefreshStatus();
-                await Task.Delay(150);
+                await Task.Delay(100);
 
                 if (refreshUi && !_uiRefreshing)
                     await RefreshConflictUI();
 
-                svnManager
-                    .GetModule<SVNExternal>()
-                    .RefreshWindowsShellIcons(path);
+                svnManager.GetModule<SVNExternal>().RefreshWindowsShellIcons(path);
 
                 LogBoth($"<color=green>Tree conflict resolved:</color> {path}");
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>DeleteObstruction error:</color> {ex.Message}");
+                LogBoth($"<color=red>Tree resolve error:</color> {ex.Message}");
             }
             finally
             {

@@ -112,5 +112,13 @@ namespace SVN.Core
                 SVNUI.Instance.CheckoutedFilesText.text = message;
             });
         }
+
+        public static void LogException(Exception ex, bool append = true)
+        {
+            if (ex == null) return;
+
+            string message = $"<color=#FF8800><b>[EXCEPTION]</b> {ex.Message}</color>\n<color=#AAAAAA>{ex.StackTrace}</color>";
+            LogLine(message, append, "ERROR");
+        }
     }
 }

@@ -24,9 +24,7 @@ namespace SVN.Core
         }
         private static string _keyPath = "";
 
-        // Pojedynczy semafor – bezpieczny i prosty
         private static readonly SemaphoreSlim _svnSemaphore = new(1, 1);
-        // osobny semafor dla operacji zapisu – nie rywalizuje z odczytami
         private static readonly SemaphoreSlim _writeSemaphore = new(1, 1);
 
         public static event Action<bool> OnProcessingStateChanged;
@@ -67,9 +65,6 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // RunAsync
-        // ============================================================
         public static async Task<string> RunAsync(
     string args,
     string workingDir,
@@ -80,7 +75,6 @@ namespace SVN.Core
 
             bool write = IsWriteCommand(args);
 
-            // 🔥 Zapis korzysta z osobnego semafora – nigdy nie czeka na odczyty
             if (write)
                 await _writeSemaphore.WaitAsync(token);
             else
@@ -286,7 +280,6 @@ namespace SVN.Core
             }
             finally
             {
-                // 🔥 Zwolnij odpowiedni semafor
                 if (write)
                     _writeSemaphore.Release();
                 else
@@ -296,9 +289,6 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // RunLiveAsync
-        // ============================================================
         public static async Task<string> RunLiveAsync(
     string args,
     string workingDir,
@@ -311,7 +301,6 @@ namespace SVN.Core
 
             bool write = IsWriteCommand(args);
 
-            // 🔥 Zapis korzysta z osobnego semafora
             if (write)
                 await _writeSemaphore.WaitAsync(token);
             else
@@ -479,7 +468,6 @@ namespace SVN.Core
                     catch { }
                 }
 
-                // 🔥 Zwolnij odpowiedni semafor
                 if (write)
                     _writeSemaphore.Release();
                 else
@@ -489,9 +477,6 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // WaitForExitAsync
-        // ============================================================
         private static async Task WaitForExitAsync(Process process, CancellationToken token = default)
         {
             process.Refresh();
@@ -509,18 +494,12 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // WaitForSemaphoreFreeAsync
-        // ============================================================
         public static async Task WaitForSemaphoreFreeAsync(CancellationToken token = default)
         {
             await _svnSemaphore.WaitAsync(token);
             _svnSemaphore.Release();
         }
 
-        // ============================================================
-        // GetInfoAsync
-        // ============================================================
         public static async Task<string> GetInfoAsync(string workingDir, CancellationToken token = default)
         {
             if (!string.IsNullOrWhiteSpace(_lastInfoCache))

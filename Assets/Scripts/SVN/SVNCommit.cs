@@ -279,18 +279,12 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
+            await svnManager.CancelBackgroundTasksAsync();
+
             string message = svnUI.CommitMessageInput?.text;
             if (string.IsNullOrWhiteSpace(message))
             {
                 SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=red>Error:</color> Commit message is empty!", append: true);
-                return;
-            }
-
-            var statusCheck = await SvnRunner.GetFullStatusDictionaryAsync(svnManager.WorkingDir, false);
-            bool hasAnyChanges = statusCheck.Any(x => "MADC?!".Contains(x.Value.status));
-            if (!hasAnyChanges)
-            {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=yellow>No SVN changes detected.\nWorking copy is already clean.</color>", append: false);
                 return;
             }
 
@@ -404,6 +398,8 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
+            await svnManager.CancelBackgroundTasksAsync();
+
             string root = NormalizeSvnPath(svnManager.WorkingDir);
             var statusModule = svnManager.GetModule<SVNStatus>();
 
@@ -475,7 +471,6 @@ namespace SVN.Core
                     catch { }
                 }
 
-                // Zbierz finalną listę ścieżek do commita
                 var finalTargets = new HashSet<string>(
                     selectedItems.Select(e => NormalizeSvnPath(e.FullPath))
                                  .Where(p => !string.IsNullOrWhiteSpace(p))

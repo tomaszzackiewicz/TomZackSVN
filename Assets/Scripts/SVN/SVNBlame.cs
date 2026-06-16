@@ -168,7 +168,6 @@ namespace SVN.Core
                     string author = entry.Element("author")?.Value ?? "unknown";
                     string content = entry.Element("line")?.Value ?? string.Empty;
 
-                    // Przycinanie autora dla czytelności
                     string authorShort = author.Length > 14 ? author.Substring(0, 14) : author;
 
                     sb.AppendLine($"{lineNumber:D3} | {rev,5} | {authorShort,-14} | {content}");

@@ -23,7 +23,29 @@ public class MergePanel : MonoBehaviour
             svnUI.MergeBranchesDropdown.onValueChanged.AddListener(Dropdown_OnBranchSelected);
         }
 
+        var merge = svnManager.GetModule<SVNMerge>();
+
+        if (merge != null)
+        {
+            merge.OnDryRunCompleted -= HandleDryRunResult;
+            merge.OnDryRunCompleted += HandleDryRunResult;
+        }
+
+        ClearMergeUI();
+
         Button_RefreshBranchDropdown();
+    }
+
+    private void ClearMergeUI()
+    {
+        if (svnUI.MergeConsoleText != null)
+            SVNLogBridge.UpdateUIField(svnUI.MergeConsoleText, "", "MERGE", append: false);
+
+        if (svnUI.MergeFilesContainer != null)
+        {
+            foreach (Transform child in svnUI.MergeFilesContainer)
+                Destroy(child.gameObject);
+        }
     }
 
     public void Button_RefreshBranchDropdown()
@@ -41,14 +63,26 @@ public class MergePanel : MonoBehaviour
         _ = AutoSync();
     }
 
+    public void Button_RepairMergeHistory()
+    {
+        _ = svnManager.GetModule<SVNMerge>().RepairMergeHistory();
+    }
+
+    public void Button_ForceMergeFromTrunk()
+    {
+        _ = svnManager.GetModule<SVNMerge>().ForceMergeFromTrunk();
+    }
+
     public void Button_DryRunMerge()
     {
+        HandleDryRunResult(new SVNMerge.MergeFileResult());
         string source = GetSafeSource();
         _ = svnManager.GetModule<SVNMerge>().ExecuteMerge(source, true);
     }
 
     public void Button_ConfirmMerge()
     {
+        HandleDryRunResult(new SVNMerge.MergeFileResult());
         string source = GetSafeSource();
         _ = svnManager.GetModule<SVNMerge>().ExecuteMerge(source, false);
     }
@@ -75,7 +109,7 @@ public class MergePanel : MonoBehaviour
             var merge = svnManager.GetModule<SVNMerge>();
             if (merge == null)
             {
-                Debug.LogError("[MergePanel] SVNMerge module not found!");
+                SVNLogBridge.LogError("[MergePanel] SVNMerge module not found!");
                 return;
             }
 
@@ -97,13 +131,13 @@ public class MergePanel : MonoBehaviour
             svnUI.MergeBranchesDropdown.AddOptions(options);
             svnUI.MergeBranchesDropdown.RefreshShownValue();
 
-            Debug.Log($"[MergePanel] Dropdown refreshed. Found {options.Count} options.");
+            SVNLogBridge.LogLine($"[MergePanel] Dropdown refreshed. Found {options.Count} options.");
 
             Dropdown_OnBranchSelected(0);
         }
         catch (System.Exception ex)
         {
-            Debug.LogError($"[MergePanel] Refresh failed: {ex.Message}");
+            SVNLogBridge.LogError($"[MergePanel] Refresh failed: {ex.Message}");
         }
         finally
         {
@@ -170,9 +204,47 @@ public class MergePanel : MonoBehaviour
         string currentUrl =
             await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
 
-        Debug.Log($"[AutoSync] Current: {currentUrl}");
-        Debug.Log($"[AutoSync] Source : {source}");
+        SVNLogBridge.LogLine($"[AutoSync] Current: {currentUrl}");
+        SVNLogBridge.LogLine($"[AutoSync] Source : {source}");
 
         await merge.ExecuteMerge(source, false);
     }
+
+    private void HandleDryRunResult(SVNMerge.MergeFileResult result)
+    {
+        if (svnUI == null)
+            return;
+
+        if (svnUI.MergeFilesContainer == null)
+            return;
+
+        if (svnUI.MergeFileItemPrefab == null)
+            return;
+
+        foreach (Transform child in svnUI.MergeFilesContainer)
+        {
+            Destroy(child.gameObject);
+        }
+
+        foreach (SVNMerge.MergeFileInfo file in result.Files)
+        {
+            MergeFileItem item =
+                Instantiate(
+                    svnUI.MergeFileItemPrefab,
+                    svnUI.MergeFilesContainer);
+
+            item.Setup(file);
+        }
+    }
+
+    private void OnDisable()
+    {
+        var merge = svnManager?.GetModule<SVNMerge>();
+
+        if (merge != null)
+        {
+            merge.OnDryRunCompleted -= HandleDryRunResult;
+        }
+    }
+
 }

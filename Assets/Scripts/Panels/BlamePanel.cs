@@ -27,7 +27,7 @@ public class BlamePanel : MonoBehaviour
         }
         else
         {
-            Debug.LogWarning("No file path selected for Blame!");
+            SVNLogBridge.LogError("No file path selected for Blame!");
         }
     }
 }

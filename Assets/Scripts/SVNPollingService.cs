@@ -9,11 +9,11 @@ namespace SVN.Core
         private int _lastKnownRemoteRevision = -1;
 
         [Header("Focus Settings")]
-        public float focusCheckCooldownSeconds = 3f;
+        public float focusCheckCooldownSeconds = 180f;
         private float _lastFocusCheckTime = -100f;
 
         [Header("Logging")]
-        public bool showDebugLogs = true;
+        public bool showDebugLogs = false;
 
         private void OnApplicationFocus(bool hasFocus)
         {
@@ -32,62 +32,61 @@ namespace SVN.Core
         {
             try
             {
-                string wd = SVNManager.MainThreadWorkingDir;
+                SVNManager manager = SVNManager.Instance;
+                if (manager == null || string.IsNullOrEmpty(manager.WorkingDir))
+                    return;
 
-                if (string.IsNullOrEmpty(wd)) return;
+                await manager.CancelBackgroundTasksAsync();
 
-                string revOutput = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", wd);
+                string wd = manager.WorkingDir;
+                string revOutput = await SvnRunner.RunAsync(
+                    "info -r HEAD --show-item last-changed-revision", wd);
 
-                if (int.TryParse(revOutput.Trim(), out int remoteRev))
+                if (!int.TryParse(revOutput.Trim(), out int remoteRev))
+                    return;
+
+                if (_lastKnownRemoteRevision == -1)
                 {
-                    if (_lastKnownRemoteRevision == -1)
+                    _lastKnownRemoteRevision = remoteRev;
+                    return;
+                }
+
+                if (remoteRev > _lastKnownRemoteRevision)
+                {
+                    _lastKnownRemoteRevision = remoteRev;
+
+                    string author = await FetchAuthor(wd);
+                    string localUser = manager.CurrentUserName;
+
+                    if (!string.Equals(author.Trim(), localUser?.Trim(), StringComparison.OrdinalIgnoreCase))
                     {
-                        _lastKnownRemoteRevision = remoteRev;
-                        return;
+                        string commitMsg = await FetchCleanCommitMessage(wd, remoteRev);
+
+                        UnityMainThreadDispatcher.Enqueue(() =>
+                        {
+                            if (SVNNotificationAudio.Instance != null)
+                                SVNNotificationAudio.Instance.PlayCommitSound();
+
+                            SVNLogBridge.ShowNotification(
+                                $"<b>{author}</b> committed changes!\n" +
+                                $"Revision: <color=yellow>{remoteRev}</color>\n" +
+                                $"<i>\"{commitMsg}\"</i>");
+
+                            _ = manager.RefreshStatus();
+                        });
                     }
-
-                    if (remoteRev > _lastKnownRemoteRevision)
+                    else
                     {
-                        _lastKnownRemoteRevision = remoteRev;
+                        if (showDebugLogs)
+                            SVNLogBridge.LogLine($"<color=green>[Polling]</color> Local commit detected (Rev {remoteRev}).");
 
-                        string author = await FetchAuthor(wd);
-                        string localUser = SVNManager.CachedUserName;
-
-                        if (!string.Equals(author.Trim(), localUser?.Trim(), StringComparison.OrdinalIgnoreCase))
-                        {
-                            string commitMsg = await FetchCleanCommitMessage(wd, remoteRev);
-
-                            UnityMainThreadDispatcher.Enqueue(async () =>
-                            {
-                                if (SVNNotificationAudio.Instance != null)
-                                    SVNNotificationAudio.Instance.PlayCommitSound();
-
-                                string message = $"<b>{author}</b> committed changes!\n" +
-                                                 $"Revision: <color=yellow>{remoteRev}</color>\n" +
-                                                 $"<i>\"{commitMsg}\"</i>";
-
-                                SVNLogBridge.ShowNotification(message);
-
-                                if (SVNManager.Instance != null)
-                                    await SVNManager.Instance.RefreshStatus();
-                            });
-                        }
-                        else
-                        {
-                            if (showDebugLogs) SVNLogBridge.LogLine($"<color=green>[SVN Focus Check]</color> Local commit detected (Rev {remoteRev}).");
-
-                            UnityMainThreadDispatcher.Enqueue(async () =>
-                            {
-                                if (SVNManager.Instance != null)
-                                    await SVNManager.Instance.RefreshStatus();
-                            });
-                        }
+                        UnityMainThreadDispatcher.Enqueue(() => _ = manager.RefreshStatus());
                     }
                 }
             }
             catch (Exception e)
             {
-                Debug.LogError($"[SVN Focus Check Error] {e.Message}");
+                SVNLogBridge.LogError($"[SVN Polling Error] {e.Message}");
             }
         }
 
@@ -110,7 +109,6 @@ namespace SVN.Core
 
                 string[] lines = logOutput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
                 string cleanMsg = (lines.Length > 1) ? string.Join(" ", lines, 1, lines.Length - 1).Trim() : lines[0].Trim();
-
                 return cleanMsg.Length > 120 ? cleanMsg.Substring(0, 117) + "..." : cleanMsg;
             }
             catch { return "No message."; }

@@ -15,7 +15,6 @@ namespace SVN.Core
 
         public SVNRevert(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        // Pomocnicza metoda – loguje do pliku i do konsoli commita (dla RevertAll)
         private void LogToConsole(string msg)
         {
             SVNLogBridge.LogLine(msg);
@@ -25,16 +24,14 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // REVERT ALL (z podwójnym potwierdzeniem i anulowaniem)
-        // ============================================================
         public async void RevertAll()
         {
             if (IsProcessing) return;
 
+            await svnManager.CancelBackgroundTasksAsync();
+
             float timeSinceLastClick = Time.time - _lastRevertAllClickTime;
 
-            // Pierwsze kliknięcie (lub po >5s) -> pokaż ostrzeżenie
             if (timeSinceLastClick > 5f)
             {
                 _lastRevertAllClickTime = Time.time;
@@ -44,7 +41,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Zbyt szybkie drugie kliknięcie (<0.3s) – odświeżamy ostrzeżenie i czekamy dalej
             if (timeSinceLastClick < 0.3f)
             {
                 _lastRevertAllClickTime = Time.time;
@@ -53,7 +49,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Drugie kliknięcie w przedziale 0.3–5s -> wykonaj revert
             _lastRevertAllClickTime = -10f;
 
             string root = svnManager.WorkingDir;
@@ -124,9 +119,6 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // CANCEL REVERT ALL
-        // ============================================================
         public void CancelRevert()
         {
             if (_revertCts != null && IsProcessing)
@@ -136,12 +128,11 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // REVERT SINGLE ITEM (z podwójnym potwierdzeniem, log do głównego okna)
-        // ============================================================
         public async void RevertSingleItem(SvnTreeElement element)
         {
             if (IsProcessing || element == null) return;
+
+            await svnManager.CancelBackgroundTasksAsync();
 
             float timeSinceLastClick = Time.time - _lastRevertSingleClickTime;
 
@@ -197,9 +188,6 @@ namespace SVN.Core
             }
         }
 
-        // ============================================================
-        // REVERT ASYNC (z tokenem i bez)
-        // ============================================================
         public static async Task<string> RevertAsync(string workingDir, string[] files, Action<string> onProgress, CancellationToken token = default)
         {
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim()).Replace('\\', '/');
@@ -235,7 +223,6 @@ namespace SVN.Core
             }
         }
 
-        // Stara sygnatura (kompatybilność)
         public static async Task<string> RevertAsync(string workingDir, string[] files, Action<string> onProgress = null)
         {
             return await RevertAsync(workingDir, files, onProgress, CancellationToken.None);
