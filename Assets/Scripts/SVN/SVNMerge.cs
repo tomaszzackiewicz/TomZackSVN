@@ -486,20 +486,28 @@ namespace SVN.Core
 
                     if (!isMergeInfoOnly)
                     {
-                        realChanges++;
+                        bool looksLikeFilePath =
+                            line.Length > 2 &&
+                            line[1] == ' ' &&
+                            (line[2] == ' ' || line[2] == '\t');
 
-                        string path =
-                            line.Length > 2
-                                ? line.Substring(2).Trim()
-                                : string.Empty;
-
-                        if (!string.IsNullOrWhiteSpace(path))
+                        if (looksLikeFilePath)
                         {
-                            result.Files.Add(new MergeFileInfo
+                            realChanges++;
+
+                            string path =
+                                line.Length > 2
+                                    ? line.Substring(2).Trim()
+                                    : string.Empty;
+
+                            if (!string.IsNullOrWhiteSpace(path))
                             {
-                                State = state,
-                                Path = path
-                            });
+                                result.Files.Add(new MergeFileInfo
+                                {
+                                    State = state,
+                                    Path = path
+                                });
+                            }
                         }
                     }
                 }

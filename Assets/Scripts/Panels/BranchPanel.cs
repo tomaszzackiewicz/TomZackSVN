@@ -35,6 +35,12 @@ public class BranchPanel : MonoBehaviour
     public void Button_SwitchTag()
         => _ = svnManager.GetModule<SVNBranchTag>().SwitchToSelectedTag();
 
+    public void Button_DiffWithCurrentBranch()
+    => _ = svnManager.GetModule<SVNBranchTag>().DiffWithCurrent(false);
+
+    public void Button_DiffWithCurrentTag()
+        => _ = svnManager.GetModule<SVNBranchTag>().DiffWithCurrent(true);
+
     public void Button_DeleteBranch()
         => _ = svnManager.GetModule<SVNBranchTag>().DeleteSelectedBranch();
 

@@ -2,6 +2,7 @@ using SFB;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -381,6 +382,404 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 LogBoth($"[Shell Error] Failed to refresh icons: {ex.Message}");
+            }
+        }
+
+        public async void TestConnection()
+        {
+            if (SVNUI.Instance != null && SVNUI.Instance.LogText != null)
+                SVNUI.Instance.LogText.text = $"[{DateTime.Now:HH:mm:ss}] [INFO] Starting connection diagnostics...\n";
+
+            if (IsProcessing)
+            {
+                SVNLogBridge.LogLine("[WARN] Another operation is already running. Please wait for it to finish.");
+                return;
+            }
+
+            IsProcessing = true;
+
+            try
+            {
+                bool hadErrors = false;
+                var report = new System.Text.StringBuilder();
+
+                // Kolory
+                string colOK = "#00E5FF";
+                string colWARN = "#FFCC00";
+                string colERR = "#FF5555";
+                string colSTEP = "#00008B";
+
+                report.AppendLine($"Session Token: {svnManager.SessionToken}");
+                report.AppendLine("====================================");
+                report.AppendLine("  CONNECTION DIAGNOSTICS");
+                report.AppendLine("====================================");
+                report.AppendLine();
+
+                string repoUrl = svnManager.RepositoryUrl;
+
+                if (string.IsNullOrEmpty(repoUrl))
+                {
+                    report.AppendLine($"<color={colERR}>[ERROR]</color> Repository URL not set.");
+                    SVNLogBridge.UpdateUIField(SVNUI.Instance.LogText, report.ToString(), "DIAG", append: false);
+                    return;
+                }
+
+                string host = "unknown";
+                string protocol = "unknown";
+                string port = "unknown";
+                string repoPath = "unknown";
+                string username = "unknown";
+                bool validUrl = true;
+                int targetPort = 22;
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[0/10] CHECKING REPOSITORY URL...</color>");
+                report.AppendLine("  Verifying that the provided repository URL is syntactically correct");
+                report.AppendLine("  and uses a supported protocol (SVN+SSH is expected).");
+
+                try
+                {
+                    var uri = new Uri(repoUrl);
+                    host = uri.Host;
+                    protocol = uri.Scheme.ToUpper();
+                    repoPath = uri.AbsolutePath.TrimStart('/');
+                    username = !string.IsNullOrEmpty(uri.UserInfo)
+                                   ? uri.UserInfo
+                                   : (svnManager.CurrentUserName ?? "unknown");
+
+                    if (protocol == "SVN+SSH" || protocol == "SSH") targetPort = 22;
+                    else if (protocol == "HTTPS") targetPort = 443;
+                    else if (protocol == "HTTP") targetPort = 80;
+                    else if (protocol == "SVN") targetPort = 3690;
+                    if (!uri.IsDefaultPort) targetPort = uri.Port;
+                    port = targetPort.ToString();
+
+                    string[] supportedProtocols = { "SVN+SSH", "HTTP", "HTTPS", "SVN" };
+                    if (!supportedProtocols.Contains(protocol))
+                        report.AppendLine($"<color={colWARN}>[WARN]</color> Unrecognized protocol: {protocol}");
+                    else if (protocol != "SVN+SSH")
+                        report.AppendLine($"<color={colWARN}>[WARN]</color> Protocol {protocol} detected. SVN+SSH is recommended.");
+                    else
+                        report.AppendLine($"<color={colOK}>[OK]</color>   Protocol: SVN+SSH – supported and active.");
+                }
+                catch (Exception ex)
+                {
+                    validUrl = false;
+                    hadErrors = true;
+                    report.AppendLine($"<color={colERR}>[ERROR]</color> Invalid URL: {ex.Message}");
+                }
+
+                report.AppendLine();
+                report.AppendLine($"  Repository URL : {repoUrl}");
+                report.AppendLine($"  Protocol       : {protocol}");
+                report.AppendLine($"  Host           : {host}");
+                report.AppendLine($"  Port           : {port}");
+                report.AppendLine($"  Repository Path: {repoPath}");
+                report.AppendLine($"  Username       : {username}");
+                report.AppendLine();
+
+                if (!validUrl)
+                {
+                    report.AppendLine("====================================");
+                    report.AppendLine("  DIAGNOSTICS ABORTED");
+                    report.AppendLine("====================================");
+                    SVNLogBridge.UpdateUIField(SVNUI.Instance.LogText, report.ToString(), "DIAG", append: false);
+                    return;
+                }
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[1/10] CHECKING SVN CLIENT...</color>");
+                report.AppendLine("  Querying the local SVN command‑line client for its version number.");
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Querying SVN client version...</color>");
+                    string version = await SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir);
+                    report.AppendLine($"<color={colOK}>[OK]</color>   SVN client version : {version.Trim()}");
+                }
+                catch (Exception ex)
+                {
+                    hadErrors = true;
+                    report.AppendLine($"<color={colERR}>[ERROR]</color> Unable to detect SVN client: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[2/10] CHECKING OPENSSH CLIENT...</color>");
+                report.AppendLine("  Verifying that an OpenSSH client is installed and can be invoked.");
+                report.AppendLine("  This is required for SVN+SSH connections.");
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Detecting OpenSSH version...</color>");
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "ssh",
+                        Arguments = "-V",
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using var sshProc = Process.Start(psi);
+                    if (sshProc != null)
+                    {
+                        string sshVersion = await sshProc.StandardError.ReadToEndAsync();
+                        report.AppendLine($"<color={colOK}>[OK]</color>   OpenSSH version  : {sshVersion.Trim()}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    report.AppendLine($"<color={colWARN}>[WARN]</color> Could not detect OpenSSH version: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[3/10] CHECKING SSH KEY...</color>");
+                report.AppendLine("  Looking for the private SSH key that will be used for authentication.");
+                string keyPath = SvnRunner.KeyPath;
+                if (!string.IsNullOrEmpty(keyPath))
+                {
+                    string cleanPath = keyPath.Replace("\"", "").Trim().Replace("\\", "/");
+                    if (File.Exists(cleanPath))
+                    {
+                        report.AppendLine($"<color={colOK}>[OK]</color>   Key file exists   : {cleanPath}");
+                        try
+                        {
+                            var info = new FileInfo(cleanPath);
+                            report.AppendLine($"<color={colOK}>[OK]</color>   Key file size     : {info.Length} bytes");
+                            report.AppendLine($"<color={colOK}>[OK]</color>   Key file modified : {info.LastWriteTime}");
+                        }
+                        catch { }
+                    }
+                    else
+                    {
+                        hadErrors = true;
+                        report.AppendLine($"<color={colERR}>[ERROR]</color> Key file not found at path: {cleanPath}");
+                    }
+                }
+                else
+                {
+                    report.AppendLine($"<color={colWARN}>[WARN]</color> No SSH key has been configured.");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[4/10] TESTING DNS RESOLUTION...</color>");
+                report.AppendLine("  Translating the hostname into an IP address using system DNS.");
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Resolving hostname...</color>");
+                    var addresses = await System.Net.Dns.GetHostAddressesAsync(host);
+                    foreach (var address in addresses)
+                        report.AppendLine($"<color={colOK}>[OK]</color>   DNS resolved → {address}");
+                }
+                catch (Exception ex)
+                {
+                    hadErrors = true;
+                    report.AppendLine($"<color={colERR}>[ERROR]</color> DNS resolution failed: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[5/10] TESTING HOST REACHABILITY (ICMP)...</color>");
+                report.AppendLine("  Sending an ICMP Echo Request (ping) to the host.");
+                report.AppendLine("  A failure here is common – many servers block ICMP for security.");
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Pinging host...</color>");
+                    var ping = new System.Net.NetworkInformation.Ping();
+                    var reply = await ping.SendPingAsync(host, 3000);
+                    if (reply.Status == System.Net.NetworkInformation.IPStatus.Success)
+                        report.AppendLine($"<color={colOK}>[OK]</color>   Host reachable  : {reply.Address} (response time: {reply.RoundtripTime}ms)");
+                    else
+                        report.AppendLine($"<color=black>[INFO]</color> Ping blocked – ICMP may be disabled on this host.");
+                }
+                catch (Exception ex)
+                {
+                    report.AppendLine($"<color=black>[INFO]</color> Ping unavailable: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[6/10] TESTING TCP PORT {targetPort}...</color>");
+                report.AppendLine($"  Attempting to establish a raw TCP connection to port {targetPort}.");
+                report.AppendLine("  This confirms that the server is reachable and the port is open.");
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Connecting to remote port...</color>");
+                    using var client = new System.Net.Sockets.TcpClient();
+                    var connectTask = client.ConnectAsync(host, targetPort);
+                    var completed = await Task.WhenAny(connectTask, Task.Delay(5000));
+                    if (completed == connectTask && client.Connected)
+                        report.AppendLine($"<color={colOK}>[OK]</color>   TCP port {targetPort} is open and reachable.");
+                    else
+                    {
+                        hadErrors = true;
+                        report.AppendLine($"<color={colERR}>[ERROR]</color> TCP port {targetPort} timed out – service may be down or firewalled.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    hadErrors = true;
+                    report.AppendLine($"<color={colERR}>[ERROR]</color> TCP test failed: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[7/10] TESTING DIRECT SSH CONNECTION...</color>");
+                report.AppendLine("  Performing an SSH handshake (without executing any remote command)");
+                report.AppendLine("  to verify that the key is accepted and authentication works.");
+                if (!string.IsNullOrEmpty(keyPath))
+                {
+                    try
+                    {
+                        string cleanKeyPath = keyPath.Replace("\"", "").Trim().Replace("\\", "/");
+                        if (File.Exists(cleanKeyPath))
+                        {
+                            SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Attempting SSH handshake (timeout 10s)...</color>");
+                            report.AppendLine("  Attempting SSH handshake (timeout 10s)...");
+                            string sshArgs = $"-T -i \"{cleanKeyPath}\" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 {username}@{host}";
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = "ssh",
+                                Arguments = sshArgs,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true,
+                                UseShellExecute = false,
+                                CreateNoWindow = true
+                            };
+                            using var sshProc = Process.Start(psi);
+                            if (sshProc != null)
+                            {
+                                var exitTask = Task.Run(() => sshProc.WaitForExit());
+                                if (await Task.WhenAny(exitTask, Task.Delay(10000)) != exitTask)
+                                {
+                                    try { sshProc.Kill(); } catch { }
+                                    report.AppendLine($"<color={colWARN}>[WARN]</color> SSH handshake timed out after 10 seconds.");
+                                }
+                                else
+                                {
+                                    string output = await sshProc.StandardOutput.ReadToEndAsync();
+                                    string error = await sshProc.StandardError.ReadToEndAsync();
+                                    if (sshProc.ExitCode == 0 || (sshProc.ExitCode == 1 && !error.Contains("Permission denied") && !error.Contains("Authentication failed")))
+                                        report.AppendLine($"<color={colOK}>[OK]</color>   SSH connection successfully established.");
+                                    else
+                                    {
+                                        hadErrors = true;
+                                        report.AppendLine($"<color={colERR}>[ERROR]</color> SSH connection failed: {error}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        hadErrors = true;
+                        report.AppendLine($"<color={colERR}>[ERROR]</color> SSH test failed: {ex.Message}");
+                    }
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[8/10] TESTING SVN AUTHENTICATION...</color>");
+                report.AppendLine("  Connecting to the repository via SVN and retrieving its UUID.");
+                report.AppendLine("  This confirms that your credentials are valid.");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Authenticating with repository...</color>");
+                    string uuid = await SvnRunner.RunAsync("info --show-item repos-uuid", svnManager.WorkingDir);
+                    sw.Stop();
+                    report.AppendLine($"<color={colOK}>[OK]</color>   Repository UUID  : {uuid.Trim()}");
+                    report.AppendLine($"<color={colOK}>[OK]</color>   Authentication time : {sw.Elapsed.TotalSeconds:F2}s");
+
+                    try
+                    {
+                        string revision = await SvnRunner.RunAsync("info --show-item revision", svnManager.WorkingDir);
+                        report.AppendLine($"<color={colOK}>[OK]</color>   Current revision  : r{revision.Trim()}");
+                    }
+                    catch { }
+                    try
+                    {
+                        string branch = await SvnRunner.RunAsync("info --show-item relative-url", svnManager.WorkingDir);
+                        report.AppendLine($"<color={colOK}>[OK]</color>   Checked‑out branch: {branch.Trim()}");
+                    }
+                    catch { }
+                }
+                catch (Exception ex)
+                {
+                    sw.Stop();
+                    hadErrors = true;
+                    report.AppendLine($"<color={colERR}>[ERROR]</color> Authentication failed: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[9/10] CHECKING WORKING COPY STATE...</color>");
+                report.AppendLine("  Scanning the local working copy for locks, conflicts or missing files.");
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Scanning working copy status...</color>");
+                    string status = await SvnRunner.RunAsync("status", svnManager.WorkingDir);
+                    var lines = status.Split('\n', '\r').Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+                    bool hasLocks = lines.Any(x => x.StartsWith("L"));
+                    bool hasConflicts = lines.Any(x => x.StartsWith("C"));
+                    bool hasMissing = lines.Any(x => x.StartsWith("!"));
+                    if (hasLocks) report.AppendLine($"<color={colWARN}>[WARN]</color> Locked files detected – some files are locked.");
+                    if (hasConflicts) report.AppendLine($"<color={colWARN}>[WARN]</color> Conflicts detected – resolve before committing.");
+                    if (hasMissing) report.AppendLine($"<color={colWARN}>[WARN]</color> Missing files detected – use Fix Missing to repair.");
+                    if (!hasLocks && !hasConflicts && !hasMissing)
+                        report.AppendLine($"<color={colOK}>[OK]</color>   Working copy is healthy – no locks, conflicts or missing files.");
+                }
+                catch (Exception ex)
+                {
+                    report.AppendLine($"<color={colWARN}>[WARN]</color> Could not check working copy state: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                report.AppendLine($"<color={colSTEP}>[10/10] TESTING REPOSITORY RESPONSE SPEED...</color>");
+                report.AppendLine("  Fetching the last 5 log entries to measure server response time.");
+                sw.Restart();
+                try
+                {
+                    SVNLogBridge.LogLine("<color=#55FF55>[RUNNING] Fetching recent log entries...</color>");
+                    string logOutput = await SvnRunner.RunAsync("log -l 5 --quiet", svnManager.WorkingDir);
+                    sw.Stop();
+                    int count = logOutput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Count(l => l.StartsWith("r"));
+                    report.AppendLine($"<color={colOK}>[OK]</color>   Fetched {count} revisions in {sw.Elapsed.TotalSeconds:F2}s.");
+                }
+                catch (Exception ex)
+                {
+                    report.AppendLine($"<color={colWARN}>[WARN]</color> Speed test failed: {ex.Message}");
+                }
+                report.AppendLine();
+
+                // ------------------------------------------------
+                // Werdykt
+                // ------------------------------------------------
+                report.AppendLine("====================================");
+                report.AppendLine("  DIAGNOSTICS COMPLETE");
+                report.AppendLine("====================================");
+                report.AppendLine("  Summary:");
+                report.AppendLine("    - Every test marked [OK] passed successfully.");
+                report.AppendLine("    - [WARN] items are non‑critical but may require attention.");
+                report.AppendLine("    - [ERROR] items indicate a problem that prevents normal operation.");
+                report.AppendLine();
+                if (hadErrors)
+                    report.AppendLine($"<color={colERR}><b>VERDICT: FAILED</b> – Review the errors above.</color>");
+                else
+                    report.AppendLine($"<color=#55FF55><b>VERDICT: HEALTHY</b> – All tests passed successfully.</color>");
+                report.AppendLine($"Session Token: {svnManager.SessionToken}");
+
+                SVNLogBridge.UpdateUIField(SVNUI.Instance.LogText, report.ToString(), "DIAG", append: false);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=#FF5555>[ERROR]</color> Diagnostics crashed: {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
             }
         }
 

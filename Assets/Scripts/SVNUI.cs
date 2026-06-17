@@ -31,6 +31,7 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI checkoutedFilesText;
         [Header("Branching & Tagging")]
         [SerializeField] private TextMeshProUGUI mergeConsoleText;
+        [SerializeField] private TMP_InputField revisionInput;
         [SerializeField] private TMP_InputField mergeSourceInput;
         [SerializeField] private TMP_InputField branchNameInput;
         [SerializeField] private TMP_InputField branchCommitMsgInput;
@@ -115,6 +116,7 @@ namespace SVN.Core
         public TextMeshProUGUI CheckoutStatusInfoText => checkoutStatusInfoText;
         public TextMeshProUGUI CheckoutedFilesText => checkoutedFilesText;
         public TextMeshProUGUI MergeConsoleText => mergeConsoleText;
+        public TMP_InputField RevisionInput => revisionInput;
         public TMP_InputField MergeSourceInput => mergeSourceInput;
         public TMP_InputField BranchNameInput => branchNameInput;
         public TMP_InputField BranchCommitMsgInput => branchCommitMsgInput;

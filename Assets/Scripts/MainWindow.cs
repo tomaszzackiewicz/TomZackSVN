@@ -99,5 +99,7 @@ namespace SVN.Core
                 SVNLogBridge.LogLine("<color=#777777>Locks view cleared by user.</color>");
             }
         }
+
+        public void Button_TestConnection() => svnManager.GetModule<SVNExternal>().TestConnection();
     }
 }

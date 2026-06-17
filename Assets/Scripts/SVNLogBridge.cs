@@ -120,5 +120,16 @@ namespace SVN.Core
             string message = $"<color=#FF8800><b>[EXCEPTION]</b> {ex.Message}</color>\n<color=#AAAAAA>{ex.StackTrace}</color>";
             LogLine(message, append, "ERROR");
         }
+
+        public static void LogRaw(string message)
+        {
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (SVNUI.Instance == null || SVNUI.Instance.LogText == null)
+                    return;
+
+                SVNUI.Instance.LogText.text = message;
+            });
+        }
     }
 }

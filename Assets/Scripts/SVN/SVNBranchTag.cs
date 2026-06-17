@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,16 +39,34 @@ namespace SVN.Core
                     return;
                 }
 
+                string revision = svnUI.RevisionInput?.text?.Trim();
+                bool hasRevision = !string.IsNullOrEmpty(revision) && long.TryParse(revision, out _);
+
                 string sourceUrl = $"{repoRoot}/trunk";
                 string targetUrl = $"{repoRoot}/{subFolder}/{name}";
 
-                LogInfo($"[Create] Copying from TRUNK → {subFolder}");
-                LogInfo($"Source: {sourceUrl}");
-                LogInfo($"Target: {targetUrl}");
+                if (hasRevision)
+                {
+                    string sourceUrlWithRev = $"{sourceUrl}@{revision}";
+                    LogInfo($"[Create @ rev] trunk@{revision} → {subFolder}/{name}");
+                    LogInfo($"Source: {sourceUrlWithRev}");
+                    LogInfo($"Target: {targetUrl}");
 
-                string cmd = $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"Created {subFolder}/{name}\" --parents";
-                await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
-                LogSuccess($"Created: {name}");
+                    string cmd = $"copy \"{sourceUrlWithRev}\" \"{targetUrl}\" -m \"Created {subFolder}/{name} from trunk@{revision}\" --parents";
+                    await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+                    LogSuccess($"Created: {name} from trunk at revision {revision}");
+                }
+                else
+                {
+                    LogInfo($"[Create] Copying from TRUNK → {subFolder}");
+                    LogInfo($"Source: {sourceUrl}");
+                    LogInfo($"Target: {targetUrl}");
+
+                    string cmd = $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"Created {subFolder}/{name}\" --parents";
+                    await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+                    LogSuccess($"Created: {name}");
+                }
+
                 await RefreshUnifiedList();
             }
             catch (Exception ex)
@@ -102,16 +121,34 @@ namespace SVN.Core
                     ? $"{repoRoot}/trunk"
                     : $"{repoRoot}/{subFolder}/{sourceName}";
 
+                string revision = svnUI.RevisionInput?.text?.Trim();
+                bool hasValidRevision = !string.IsNullOrEmpty(revision) && long.TryParse(revision, out _);
+
+                if (hasValidRevision)
+                {
+                    sourceUrl = $"{sourceUrl}@{revision}";
+                    LogInfo($"[Create @ rev] {sourceName}@{revision} → {subFolder}/{newName}");
+                }
+                else
+                {
+                    LogInfo($"[Create] {sourceName} → {subFolder}/{newName}");
+                }
+
                 string targetUrl = $"{repoRoot}/{subFolder}/{newName}";
 
-                LogInfo($"[Create] {sourceName} → {subFolder}/{newName}");
                 LogInfo($"Source: {sourceUrl}");
                 LogInfo($"Target: {targetUrl}");
 
-                string cmd = $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"Created {subFolder}/{newName} from {sourceName}\" --parents";
+                string message = hasValidRevision
+                    ? $"Created {subFolder}/{newName} from {sourceName}@{revision}"
+                    : $"Created {subFolder}/{newName} from {sourceName}";
+
+                string cmd = $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"{message}\" --parents";
                 await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
-                LogSuccess($"Created {newName} from {sourceName}");
+                LogSuccess(hasValidRevision
+                    ? $"Created {newName} from {sourceName} at revision {revision}"
+                    : $"Created {newName} from {sourceName}");
 
                 await RefreshUnifiedList();
             }
@@ -156,6 +193,155 @@ namespace SVN.Core
             }
         }
 
+        public async Task DiffWithCurrent(bool isTag)
+        {
+            if (!TryStart()) return;
+
+            try
+            {
+                await svnManager.CancelBackgroundTasksAsync();
+
+                TMP_Dropdown dropdown = isTag ? svnUI.TagsDropdown : svnUI.BranchesDropdown;
+                if (dropdown == null || dropdown.options.Count == 0)
+                {
+                    LogErrorLocal("[Diff] No items available.");
+                    return;
+                }
+
+                string selected = dropdown.options[dropdown.value].text;
+                if (string.IsNullOrEmpty(selected) || IsPlaceholder(selected))
+                {
+                    LogErrorLocal("[Diff] Please select a valid branch/tag.");
+                    return;
+                }
+
+                string subFolder = isTag ? "tags" : "branches";
+                string repoRoot = svnManager.GetRepoRoot()?.TrimEnd('/');
+                if (string.IsNullOrWhiteSpace(repoRoot))
+                {
+                    LogErrorLocal("[Diff] Repo root missing.");
+                    return;
+                }
+
+                string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
+                if (string.IsNullOrWhiteSpace(currentUrl))
+                {
+                    LogErrorLocal("[Diff] Could not determine current URL.");
+                    return;
+                }
+
+                string selectedUrl = selected.Equals("trunk", StringComparison.OrdinalIgnoreCase)
+                    ? $"{repoRoot}/trunk"
+                    : $"{repoRoot}/{subFolder}/{selected}";
+
+                if (NormalizeUrl(currentUrl) == NormalizeUrl(selectedUrl))
+                {
+                    LogWarning($"[Diff] You are already on '{selected}'. Comparison skipped.");
+                    return;
+                }
+
+                string currentName = GetBranchNameFromUrl(currentUrl, repoRoot);
+                string selectedName = selected;
+
+                LogInfo($"====================================");
+                LogInfo($"[Diff] Exporting differences to file...");
+                LogInfo($"Current : {currentName}");
+                LogInfo($"Selected: {selectedName}");
+                LogInfo("====================================");
+
+                string args = $"diff --summarize \"{currentUrl}\" \"{selectedUrl}\"";
+                LogInfo($"[Diff] Executing: svn {args}");
+
+                string output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
+
+                if (string.IsNullOrWhiteSpace(output))
+                {
+                    LogSuccess($"[Diff] No differences found between {currentName} and {selectedName}.");
+                    return;
+                }
+
+                var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                var sb = new System.Text.StringBuilder();
+
+                sb.AppendLine($"=== SVN DIFF SUMMARY ===");
+                sb.AppendLine($"Generated: {DateTime.Now}");
+                sb.AppendLine($"Current ({currentName}): {currentUrl}");
+                sb.AppendLine($"Selected ({selectedName}): {selectedUrl}");
+                sb.AppendLine(new string('-', 60));
+
+                int added = 0, modified = 0, deleted = 0;
+
+                foreach (string line in lines)
+                {
+                    if (line.Length < 2) continue;
+                    char status = line[0];
+                    string path = line.Substring(2).Trim();
+
+                    string decodedPath = Uri.UnescapeDataString(path);
+
+                    switch (status)
+                    {
+                        case 'A': added++; break;
+                        case 'M': modified++; break;
+                        case 'D': deleted++; break;
+                    }
+
+                    sb.AppendLine($"[{status}] {decodedPath}");
+                }
+
+                sb.AppendLine(new string('-', 60));
+                sb.AppendLine($"Summary: Added: {added} | Modified: {modified} | Deleted: {deleted}");
+                sb.AppendLine($"Total changes: {added + modified + deleted}");
+
+                string fileName = $"Diff_{currentName}_vs_{selectedName}_{DateTime.Now:yyyyMMdd_HHmm}.txt";
+                string filePath = Path.Combine(Application.temporaryCachePath, fileName);
+                File.WriteAllText(filePath, sb.ToString());
+
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
+                {
+                    FileName = filePath,
+                    UseShellExecute = true
+                });
+
+                LogSuccess($"[Diff] Full diff exported to: {fileName}");
+                LogInfo($"Summary: <color=#55FF55>Added: {added}</color>  <color=#FFFF55>Modified: {modified}</color>  <color=#FF5555>Deleted: {deleted}</color>");
+                LogInfo($"Total changes: {added + modified + deleted}");
+                LogInfo("====================================");
+            }
+            catch (Exception ex)
+            {
+                LogErrorLocal($"[Diff Error] {ex.Message}");
+            }
+            finally
+            {
+                End();
+            }
+        }
+
+        private string GetBranchNameFromUrl(string url, string repoRoot)
+        {
+            if (string.IsNullOrEmpty(url)) return "unknown";
+
+            url = url.TrimEnd('/');
+            if (url.EndsWith("/trunk")) return "trunk";
+
+            string relative = url;
+            if (url.StartsWith(repoRoot, StringComparison.OrdinalIgnoreCase))
+                relative = url.Substring(repoRoot.Length).TrimStart('/');
+
+            if (relative.StartsWith("branches/", StringComparison.OrdinalIgnoreCase))
+                return relative.Substring("branches/".Length);
+            else if (relative.StartsWith("tags/", StringComparison.OrdinalIgnoreCase))
+                return relative.Substring("tags/".Length);
+
+            return relative;
+        }
+
+        private string NormalizeUrl(string url)
+        {
+            return (url ?? "").Trim().TrimEnd('/').ToLowerInvariant();
+        }
+
         public async Task ShowDetailsForSelected()
         {
             if (!TryStart()) return;
@@ -194,7 +380,7 @@ namespace SVN.Core
                     : $"{repoRoot}/{subFolder}/{selected}";
 
                 LogInfo($"====================================");
-                LogInfo($"[Details] {subFolder}: {selected}");
+                LogInfo($"[Details] Fetching info for: {selected}");
                 LogInfo($"URL: {branchUrl}");
                 LogInfo("====================================");
 
@@ -225,29 +411,64 @@ namespace SVN.Core
                     if (!string.IsNullOrWhiteSpace(verboseLog))
                     {
                         var doc2 = System.Xml.Linq.XDocument.Parse(verboseLog);
-                        var paths = doc2.Descendants("path")
-                            .Select(p => p.Value)
-                            .Where(p => p.Contains("(from "))
-                            .ToList();
+                        var pathElements = doc2.Descendants("path").ToList();
 
-                        foreach (string path in paths)
+                        bool found = false;
+
+                        foreach (var path in pathElements)
                         {
-                            int fromIdx = path.IndexOf("(from ");
-                            if (fromIdx >= 0)
+                            string copyFromPath = path.Attribute("copyfrom-path")?.Value ?? "";
+                            if (!string.IsNullOrEmpty(copyFromPath))
                             {
-                                string fromPart = path.Substring(fromIdx + 6).TrimEnd(')');
-                                if (fromPart.Contains("/branches/"))
-                                    sourceBranch = fromPart.Substring(fromPart.LastIndexOf("/branches/") + "/branches/".Length);
-                                else if (fromPart.Contains("/tags/"))
-                                    sourceBranch = "tag: " + fromPart.Substring(fromPart.LastIndexOf("/tags/") + "/tags/".Length);
-                                else if (fromPart.Contains("/trunk"))
-                                    sourceBranch = "trunk";
+                                sourceBranch = ExtractBranchName(copyFromPath);
+                                found = true;
                                 break;
+                            }
+
+                            string action = path.Attribute("action")?.Value ?? "";
+                            if (action == "A" && !string.IsNullOrEmpty(copyFromPath))
+                            {
+                                sourceBranch = ExtractBranchName(copyFromPath);
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if (!found)
+                        {
+                            foreach (var path in pathElements)
+                            {
+                                string pathValue = path.Value ?? "";
+                                int fromIdx = pathValue.IndexOf("(from ");
+                                if (fromIdx >= 0)
+                                {
+                                    string fromPart = pathValue.Substring(fromIdx + 6).TrimEnd(')');
+                                    fromPart = fromPart.Split(':')[0].Trim();
+
+                                    if (fromPart.Contains("/branches/"))
+                                    {
+                                        sourceBranch = fromPart.Substring(fromPart.LastIndexOf("/branches/") + "/branches/".Length);
+                                        found = true;
+                                        break;
+                                    }
+                                    else if (fromPart.Contains("/tags/"))
+                                    {
+                                        sourceBranch = "tag: " + fromPart.Substring(fromPart.LastIndexOf("/tags/") + "/tags/".Length);
+                                        found = true;
+                                        break;
+                                    }
+                                    else if (fromPart.Contains("/trunk"))
+                                    {
+                                        sourceBranch = "trunk";
+                                        found = true;
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                catch { }
+                catch {}
 
                 LogSuccess($"Name       : {selected}");
                 LogInfo($"Created by : {firstAuthor}");
@@ -261,8 +482,8 @@ namespace SVN.Core
                     friendlyDate = parsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") + $" (UTC{offsetStr})";
                 }
                 LogInfo($"Created on : {friendlyDate}");
-
                 LogInfo($"Source     : {sourceBranch}");
+                LogInfo("====================================");
             }
             catch (Exception ex)
             {
@@ -272,6 +493,27 @@ namespace SVN.Core
             {
                 End();
             }
+        }
+
+        private string ExtractBranchName(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "trunk (default)";
+
+            if (path.Contains("/branches/"))
+            {
+                string name = path.Substring(path.LastIndexOf("/branches/") + "/branches/".Length);
+                return name.TrimEnd('/');
+            }
+            else if (path.Contains("/tags/"))
+            {
+                return "tag: " + path.Substring(path.LastIndexOf("/tags/") + "/tags/".Length).TrimEnd('/');
+            }
+            else if (path.Contains("/trunk"))
+            {
+                return "trunk";
+            }
+
+            return "trunk (default)";
         }
 
         public async Task SwitchToSelectedBranch()

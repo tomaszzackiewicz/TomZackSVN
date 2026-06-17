@@ -44,6 +44,7 @@ namespace SVN.Core
         private bool _isUpdatingSize = false;
         public volatile bool _diskChangesDetected = false; // volatile for multithreading
 
+        public string SessionToken { get; private set; } = Guid.NewGuid().ToString("N")[..8].ToUpper();
         public SVNProject CurrentProject { get; private set; }
         public bool WasUpdateCanceled { get; set; }
         public SVNProjectInfoSnapshot CurrentSnapshot { get; set; }
