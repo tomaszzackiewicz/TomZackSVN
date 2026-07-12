@@ -57,7 +57,7 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private async void OnProjectSelected(SVNProject project)
     {
-        if (project == null || svnManager == null)
+        if (project == null || svnManager == null || !svnManager.isActiveAndEnabled)
             return;
 
         if (svnManager.IsProcessing)
@@ -65,6 +65,8 @@ public class ProjectSelectionPanel : MonoBehaviour
             SVNLogBridge.LogLine("<color=orange>Another operation is running. Please wait.</color>");
             return;
         }
+
+        await svnManager.CancelBackgroundTasksAsync();
 
         svnManager.CurrentSnapshot = null;
         svnManager.IsUpdateRunning = false;
@@ -84,7 +86,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             await svnManager.LoadProject(project);
 
             gameObject.SetActive(false);
-
             settingsModule?.UpdateUIFromManager();
         }
         catch (Exception ex)

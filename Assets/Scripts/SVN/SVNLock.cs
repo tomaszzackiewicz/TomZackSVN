@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
-using UnityEngine;
 
 namespace SVN.Core
 {
@@ -39,134 +39,86 @@ namespace SVN.Core
 
         public async Task LockModified()
         {
-            if (IsProcessing)
-                return;
+            if (IsProcessing) return;
 
             string root = svnManager.WorkingDir;
-
             IsProcessing = true;
 
-            SVNLogBridge.LogLine(
-                "<b>[Lock]</b> Scanning for modified files (M)...",
-                append: false
-            );
+            SVNLogBridge.LogLine("<b>[Lock]</b> Scanning for modified files (M)...", append: false);
 
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
-                var statusDict =
-                    await SvnRunner.GetFullStatusDictionaryAsync(
-                        root,
-                        false
-                    );
-
-                var modifiedFiles =
-                    statusDict
+                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+                var modifiedFiles = statusDict
                     .Where(x => x.Value.status == "M")
                     .Select(x => x.Key)
                     .ToList();
 
                 if (modifiedFiles.Count == 0)
                 {
-                    SVNLogBridge.LogLine(
-                        "<color=yellow>No modified files (M) found to lock.</color>"
-                    );
-
+                    SVNLogBridge.LogLine("<color=yellow>No modified files (M) found to lock.</color>");
                     return;
                 }
 
-                var currentServerLocks =
-                    await GetDetailedLocks(root);
+                var currentServerLocks = await GetDetailedLocks(root);
+                var alreadyLockedPaths = new HashSet<string>(
+                    currentServerLocks
+                        .Where(l => !string.IsNullOrEmpty(l.FullPath))
+                        .Select(l => NormalizePath(l.FullPath)),
+                    StringComparer.OrdinalIgnoreCase
+                );
 
-                var alreadyLockedPaths =
-                    new HashSet<string>(
-                        currentServerLocks
-                            .Where(l => !string.IsNullOrEmpty(l.FullPath))
-                            .Select(l => NormalizePath(l.FullPath)),
-                        StringComparer.OrdinalIgnoreCase
-                    );
-
-                var filesToLock =
-                    modifiedFiles
-                    .Where(f =>
-                    {
-                        string normalized =
-                            NormalizePath(f);
-
-                        return !alreadyLockedPaths.Contains(normalized);
-                    })
+                var filesToLock = modifiedFiles
+                    .Where(f => !alreadyLockedPaths.Contains(NormalizePath(f)))
                     .Select(f => $"\"{f}\"")
                     .ToArray();
 
-                int alreadyLockedCount =
-                    modifiedFiles.Count - filesToLock.Length;
-
                 if (filesToLock.Length > 0)
                 {
-                    SVNLogBridge.LogLine(
-                        $"Locking {filesToLock.Length} new files..."
-                    );
+                    SVNLogBridge.LogLine($"Locking {filesToLock.Length} new files...");
 
-                    string allPathsJoined =
-                        string.Join(" ", filesToLock);
+                    string allPathsJoined = string.Join(" ", filesToLock);
+                    await SvnRunner.RunAsync($"lock {allPathsJoined}", root);
 
-                    await SvnRunner.RunAsync(
-                        $"lock {allPathsJoined}",
-                        root
-                    );
-
-                    SVNLogBridge.LogLine(
-                        "<color=green>Locking completed successfully.</color>"
-                    );
+                    SVNLogBridge.LogLine("<color=green>Locking completed successfully.</color>");
 
                     svnManager._diskChangesDetected = true;
-
+                    SVNStatus.ClearLockCache();
                     await RefreshLockCacheAsync(true);
 
-                    var statusModule =
-                        svnManager.GetModule<SVNStatus>();
-
+                    var statusModule = svnManager.GetModule<SVNStatus>();
                     if (statusModule != null)
-                    {
                         await statusModule.RefreshAfterAction();
-                    }
                 }
                 else
                 {
-                    SVNLogBridge.LogLine(
-                        "<color=yellow>All modified files are already locked.</color>"
-                    );
+                    SVNLogBridge.LogLine("<color=yellow>All modified files are already locked.</color>");
 
+                    SVNStatus.ClearLockCache();
                     await RefreshLockCacheAsync(true);
-
-                    svnManager
-                        .GetModule<SVNStatus>()
-                        ?.RefreshVisibleUIOnly();
+                    svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly();
                 }
 
                 await svnManager.RefreshStatus();
             }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[Lock] Operation cancelled.</color>");
+            }
             catch (Exception ex)
             {
-                if (ex.Message.Contains("W160035") ||
-                    ex.Message.Contains("E200009"))
+                if (ex.Message.Contains("W160035") || ex.Message.Contains("E200009"))
                 {
-                    SVNLogBridge.LogLine(
-                        "<color=yellow>Some files are already locked.</color>"
-                    );
-
+                    SVNLogBridge.LogLine("<color=yellow>Some files are already locked.</color>");
+                    SVNStatus.ClearLockCache();
                     await RefreshLockCacheAsync(true);
-
-                    svnManager
-                        .GetModule<SVNStatus>()
-                        ?.RefreshVisibleUIOnly();
+                    svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly();
                 }
                 else
                 {
-                    SVNLogBridge.LogLine(
-                        $"<color=red>Lock Error:</color> {ex.Message}"
-                    );
+                    SVNLogBridge.LogLine($"<color=red>Lock Error:</color> {ex.Message}");
                 }
             }
             finally
@@ -188,7 +140,6 @@ namespace SVN.Core
                 await svnManager.CancelBackgroundTasksAsync();
 
                 var allLocks = await GetDetailedLocks(root);
-
                 var myLocksPaths = allLocks
                     .Where(l => l.Owner.Trim().Equals(svnManager.CurrentUserName.Trim(), StringComparison.OrdinalIgnoreCase))
                     .Select(l => $"\"{l.FullPath}\"")
@@ -202,11 +153,11 @@ namespace SVN.Core
 
                     svnManager._diskChangesDetected = true;
 
+                    SVNStatus.ClearLockCache();
+
                     var statusModule = svnManager.GetModule<SVNStatus>();
                     if (statusModule != null)
-                    {
                         await statusModule.RefreshAfterAction();
-                    }
 
                     ShowAllLocksButton();
                 }
@@ -215,7 +166,7 @@ namespace SVN.Core
                     SVNLogBridge.LogLine("You do not own any locked files.");
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=red>Error:</color> {ex.Message}");
             }
@@ -278,8 +229,8 @@ namespace SVN.Core
 
         public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath, CancellationToken token = default)
         {
-
             List<SVNLockDetails> locks = new List<SVNLockDetails>();
+            
             string xmlOutput = await SvnRunner.RunAsync("status --xml -u --no-ignore", rootPath, token: token);
 
             if (string.IsNullOrEmpty(xmlOutput)) return locks;
@@ -293,6 +244,8 @@ namespace SVN.Core
 
                 foreach (XmlNode lockNode in lockNodes)
                 {
+                    token.ThrowIfCancellationRequested();
+
                     XmlNode entryNode = lockNode.ParentNode.ParentNode;
                     if (entryNode == null) continue;
 
@@ -310,6 +263,10 @@ namespace SVN.Core
                     });
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 SVNLogBridge.LogError("SVN XML Parse Error: " + ex.Message);
@@ -324,9 +281,14 @@ namespace SVN.Core
 
             bool isLocked = element.LockedByMe;
 
+            string root = SvnRunner.ForceCleanPath(svnManager.WorkingDir);
+            string relative = SvnRunner.ForceCleanPath(element.FullPath);
+            string fullPath = Path.Combine(root, relative);
+            fullPath = SvnRunner.ForceCleanPath(fullPath);
+
             string cmd = isLocked
-                ? $"unlock --force \"{element.FullPath}\""
-                : $"lock --force \"{element.FullPath}\"";
+                ? $"unlock --force \"{fullPath}\""
+                : $"lock --force \"{fullPath}\"";
 
             SVNLogBridge.LogLine($"<color=#00E5FF>[Lock]</color> Request: {cmd}");
 
@@ -334,27 +296,30 @@ namespace SVN.Core
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                await SvnRunner.RunAsync(cmd, svnManager.WorkingDir, token: cts.Token);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await SvnRunner.RunAsync(cmd, root, token: cts.Token);  // root jest już czysty
+
+                SVNStatus.ClearLockCache();
 
                 if (isLocked)
                 {
                     element.LockedByMe = false;
                     element.LockedByOther = false;
+                    SVNLogBridge.LogLine($"<color=green>Unlocked:</color> {element.Name}");
                 }
                 else
                 {
                     element.LockedByMe = true;
                     element.LockedByOther = false;
+                    SVNLogBridge.LogLine($"<color=green>Locked:</color> {element.Name}");
                 }
 
                 _ = RefreshLockCacheAsync(true);
-
                 svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly();
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogError("[SVN Lock] Timeout while waiting for write semaphore.");
+                SVNLogBridge.LogError("[SVN Lock] Operation timed out or was cancelled.");
                 svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly();
             }
             catch (Exception ex)
@@ -366,21 +331,15 @@ namespace SVN.Core
 
         private string NormalizePath(string path)
         {
-            if (string.IsNullOrEmpty(path))
-                return "";
+            if (string.IsNullOrEmpty(path)) return "";
 
             path = path.Replace("\\", "/");
-
-            string root =
-                svnManager.WorkingDir
-                .Replace("\\", "/")
-                .TrimEnd('/');
+            string root = svnManager.WorkingDir.Replace("\\", "/").TrimEnd('/');
 
             if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
             {
                 path = path.Substring(root.Length);
             }
-
             return path.TrimStart('/');
         }
 
@@ -390,13 +349,12 @@ namespace SVN.Core
             SVNLogBridge.LogLine("<color=orange><b>[System]</b> Cleaning local database locks...</color>");
             await SvnRunner.RunAsync("cleanup --remove-locks", root);
             SVNLogBridge.LogLine("Local locks removed.");
+            SVNStatus.ClearLockCache();
         }
 
-        public async Task RefreshLockCacheAsync(bool force = false)
+        public async Task RefreshLockCacheAsync(bool force = false, CancellationToken token = default)
         {
-            if (_isRefreshingLocks)
-                return;
-
+            if (_isRefreshingLocks) return;
             _isRefreshingLocks = true;
 
             try
@@ -405,21 +363,23 @@ namespace SVN.Core
                     return;
 
                 string root = svnManager.WorkingDir;
-
-                var locks = await GetDetailedLocks(root);
+          
+                var locks = await GetDetailedLocks(root, token);
 
                 svnManager.LockCache.Clear();
-
                 foreach (var l in locks)
                 {
+                    token.ThrowIfCancellationRequested();
                     string normalized = NormalizePath(l.FullPath);
-
                     svnManager.LockCache.Locks[normalized] = l;
                 }
-
                 svnManager.LockCache.LastRefreshUtc = DateTime.UtcNow;
 
                 ApplyLocksToTree();
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[Lock] Cache refresh cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -434,40 +394,29 @@ namespace SVN.Core
         private void ApplyLocksToTree(bool refreshUI = true)
         {
             var status = svnManager.GetModule<SVNStatus>();
-
-            if (status == null)
-                return;
+            if (status == null) return;
 
             var data = status.GetCurrentData();
+            if (data == null) return;
 
-            if (data == null)
-                return;
-
-            string currentUser =
-                svnManager.CurrentUserName?.Trim().ToLower();
+            string currentUser = svnManager.CurrentUserName?.Trim().ToLower();
 
             foreach (var e in data)
             {
                 e.LockedByMe = false;
                 e.LockedByOther = false;
 
-                string normalized =
-                    NormalizePath(e.FullPath);
-
+                string normalized = NormalizePath(e.FullPath);
                 if (svnManager.LockCache.Locks.TryGetValue(normalized, out var lockInfo))
                 {
-                    bool isMine =
-                        lockInfo.Owner.Trim().ToLower() == currentUser;
-
+                    bool isMine = lockInfo.Owner.Trim().ToLower() == currentUser;
                     e.LockedByMe = isMine;
                     e.LockedByOther = !isMine;
                 }
             }
 
             if (refreshUI)
-            {
                 status.RefreshVisibleUIOnly();
-            }
         }
     }
 }

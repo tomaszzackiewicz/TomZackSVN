@@ -334,9 +334,6 @@ namespace SVN.Core
             if (node == null) return false;
             if (node.HasMergeInfoChange) return true;
 
-            if (node.HasMergeInfoChange)
-                return true;
-
             if (!string.IsNullOrEmpty(node.Message))
             {
                 string msg = node.Message.ToLower();

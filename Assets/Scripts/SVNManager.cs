@@ -41,8 +41,8 @@ namespace SVN.Core
         public SVNLockCache LockCache = new SVNLockCache();
         private FileSystemWatcher _folderWatcher;
         private float _lastAutoRefreshTime;
-        private bool _isUpdatingSize = false;
-        public volatile bool _diskChangesDetected = false; // volatile for multithreading
+        private int _isUpdatingSize = 0;
+        public volatile bool _diskChangesDetected = false;
 
         public string SessionToken { get; private set; } = Guid.NewGuid().ToString("N")[..8].ToUpper();
         public SVNProject CurrentProject { get; private set; }
@@ -75,15 +75,11 @@ namespace SVN.Core
                 }
 
                 var sb = new System.Text.StringBuilder();
-
                 foreach (char c in value)
                 {
-                    if (char.IsLetterOrDigit(c) || ":\\/._- ".Contains(c))
-                    {
+                    if (!char.IsControl(c) && c != '\u00A0' && c != '\u200B')
                         sb.Append(c);
-                    }
                 }
-
                 workingDir = sb.ToString().Trim();
             }
         }
@@ -191,10 +187,7 @@ namespace SVN.Core
             }
             WorkingDir = SVNAssetLocator.NormalizePath(path);
             SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
-            //if (!Application.isEditor)
-            //{
-            //    InitFileSystemWatcher();
-            //}
+
             await RefreshRepositoryInfo();
         }
 
@@ -300,6 +293,9 @@ namespace SVN.Core
             statusModule.ClearCurrentData();
 
             WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
+
+            workingDir = SvnRunner.ForceCleanPath(workingDir);
+
             RepositoryUrl = project.repoUrl;
             CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
             MergeToolPath = SVNAssetLocator.NormalizePath(project.mergeToolPath);
@@ -312,10 +308,6 @@ namespace SVN.Core
 
             if (Directory.Exists(WorkingDir))
             {
-                //if (!Application.isEditor)
-                //{
-                //    InitFileSystemWatcher();
-                //}
                 await InitializeActiveProject(project);
             }
 
@@ -350,7 +342,6 @@ namespace SVN.Core
         {
             try
             {
-                await Task.Delay(50);
                 await RefreshStatus();
             }
             catch (Exception ex)
@@ -393,11 +384,6 @@ namespace SVN.Core
         private string CleanPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return string.Empty;
-
-            System.Text.StringBuilder debugInfo = new System.Text.StringBuilder();
-
-            SVNLogBridge.LogLine(debugInfo.ToString());
-
             return new string(path.Where(c => !char.IsControl(c) && (int)c != 160 && (int)c != 8203).ToArray()).Trim();
         }
 
@@ -415,15 +401,14 @@ namespace SVN.Core
 
                 await Task.Yield();
 
-                await statusModule.ExecuteRefreshWithAutoExpand(force: true);
+                await statusModule.ExecuteRefreshWithAutoExpand(force: force);
 
                 await PostProcessStatus();
 
                 SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>");
 
-                if (!_isUpdatingSize)
+                if (Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
                 {
-                    _isUpdatingSize = true;
                     _ = Task.Run(async () =>
                     {
                         try
@@ -432,13 +417,15 @@ namespace SVN.Core
                             if (bar != null && CurrentSnapshot != null)
                             {
                                 string newSize = await bar.GetFolderSizeAsync(WorkingDir);
-                                CurrentSnapshot.WorkingCopySize = newSize;
-
-                                UnityMainThreadDispatcher.Enqueue(() =>
+                                if (CurrentSnapshot != null)
                                 {
-                                    if (CurrentSnapshot != null)
-                                        bar.RenderSnapshot(CurrentSnapshot);
-                                });
+                                    CurrentSnapshot.WorkingCopySize = newSize;
+                                    UnityMainThreadDispatcher.Enqueue(() =>
+                                    {
+                                        if (CurrentSnapshot != null)
+                                            bar.RenderSnapshot(CurrentSnapshot);
+                                    });
+                                }
                             }
                         }
                         catch (Exception ex)
@@ -447,7 +434,7 @@ namespace SVN.Core
                         }
                         finally
                         {
-                            _isUpdatingSize = false;
+                            Interlocked.Exchange(ref _isUpdatingSize, 0);
                         }
                     });
                 }
@@ -523,20 +510,19 @@ namespace SVN.Core
             if (!hasFocus) return;
             if (_focusRefreshRunning) return;
 
-            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 2f)
-                return;
-
-            if (Time.realtimeSinceStartup - _lastAutoRefreshTime < 30f)
+            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 10f)
                 return;
 
             _lastFocusRefreshTime = Time.realtimeSinceStartup;
-            _lastAutoRefreshTime = Time.realtimeSinceStartup;
             _focusRefreshRunning = true;
 
             try
             {
-                await Task.Delay(300);
-                await GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(false);
+                var polling = GetComponent<SVNPollingService>();
+                if (polling != null)
+                {
+                    await polling.CheckForRemoteCommitsAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -550,7 +536,7 @@ namespace SVN.Core
 
         public async Task<string> RunSvn(string args)
         {
-            string output = await SVNRun.ExecuteAsync(args, workingDir);
+            string output = await SvnRunner.RunAsync(args, workingDir);
 
             if (!string.IsNullOrEmpty(output))
                 SVNLogBridge.LogLine(output);
@@ -581,7 +567,7 @@ namespace SVN.Core
             int prefixLength = 8;
             if (line.Length > prefixLength && line.StartsWith(statusChar))
             {
-                return line.Substring(prefixLength).Trim().Replace('\\', '/');
+                return line.Substring(prefixLength).Trim().Replace("\t", "").Replace('\\', '/');
             }
             return null;
         }
@@ -589,7 +575,6 @@ namespace SVN.Core
         public async Task CancelBackgroundTasksAsync()
         {
             GetModule<SVNStatus>()?.CancelCurrentRefresh();
-            await Task.Delay(100);
         }
 
         public void BroadcastWorkingDirChange(string path)
@@ -858,6 +843,7 @@ namespace SVN.Core
         private void OnDestroy()
         {
             SVN.Core.SvnRunner.OnProcessingStateChanged -= OnSvnProcessingChanged;
+            SVNLogBridge.Shutdown();
             if (_folderWatcher != null)
             {
                 _folderWatcher.EnableRaisingEvents = false;

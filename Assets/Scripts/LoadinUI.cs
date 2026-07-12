@@ -19,6 +19,8 @@ namespace SVN.UI
 
         private StringBuilder _sb = new StringBuilder();
         private string[] _hexCache;
+        private int frameCounter = 0;
+        private const int framesBetweenUpdates = 3;
 
         private void Awake()
         {
@@ -61,6 +63,10 @@ namespace SVN.UI
         private void Update()
         {
             if (svnManager == null || !svnManager.IsProcessing || animatedDots == null) return;
+
+            frameCounter++;
+            if (frameCounter < framesBetweenUpdates) return;
+            frameCounter = 0;
 
             _sb.Clear();
             _sb.Append("<nobr><size=150%>");

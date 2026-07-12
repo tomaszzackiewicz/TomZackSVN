@@ -1,4 +1,7 @@
 using System;
+using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -6,7 +9,14 @@ namespace SVN.Core
 {
     public class SVNLog : SVNBase
     {
+        private CancellationTokenSource _logCts;
+
         public SVNLog(SVNUI ui, SVNManager manager) : base(ui, manager) { }
+
+        public void Cancel()
+        {
+            _logCts?.Cancel();
+        }
 
         public async void ShowLog()
         {
@@ -21,21 +31,20 @@ namespace SVN.Core
 
             int count = 10;
             if (svnUI.LogCountInputField != null && !string.IsNullOrWhiteSpace(svnUI.LogCountInputField.text))
-            {
-                if (!int.TryParse(svnUI.LogCountInputField.text, out count)) count = 10;
-            }
+                int.TryParse(svnUI.LogCountInputField.text, out count);
             count = Mathf.Clamp(count, 1, 500);
 
             IsProcessing = true;
+            _logCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var token = _logCts.Token;
 
-            string timestamp = $"[{DateTime.Now:HH:mm:ss}]";
-            SVNLogBridge.LogLine($"{timestamp} <color=#00FF99>Fetching last {count} log entries...</color>", append: false);
+            SVNLogBridge.LogLine($"[{DateTime.Now:HH:mm:ss}] <color=#00FF99>Fetching last {count} log entries...</color>", append: false);
 
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
-                string output = await LogAsync(root, count);
+                string output = await LogAsync(root, count, token);
 
                 if (string.IsNullOrWhiteSpace(output))
                 {
@@ -43,37 +52,32 @@ namespace SVN.Core
                 }
                 else
                 {
-                    string cleanOutput = StripBanner(output);
-                    string coloredOutput = ApplyColoring(cleanOutput);
-
-                    if (string.IsNullOrWhiteSpace(coloredOutput))
-                    {
-                        SVNLogBridge.LogLine("<color=yellow>SVNLogBridge.LogLine is empty after filtering.</color>");
-                    }
-                    else
-                    {
-                        SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
-                        SVNLogBridge.LogLine(coloredOutput);
-                        SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
-                    }
-
+                    string coloredOutput = ApplyColoring(StripBanner(output));
+                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
+                    SVNLogBridge.LogLine(coloredOutput);
+                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
                     await ScrollToBottom();
                 }
             }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>Log request cancelled or timed out.</color>");
+            }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>SVNLogBridge.LogLine Error:</color> {ex.Message}");
-                SVNLogBridge.LogError($"[SVN SVNLogBridge.LogLine] {ex}");
+                SVNLogBridge.LogLine($"<color=red>Log Error:</color> {ex.Message}");
             }
             finally
             {
                 IsProcessing = false;
+                _logCts?.Dispose();
+                _logCts = null;
             }
         }
 
-        public static async Task<string> LogAsync(string workingDir, int lastN = 10)
+        public static async Task<string> LogAsync(string workingDir, int lastN = 10, CancellationToken token = default)
         {
-            return await SvnRunner.RunAsync($"log -l {lastN}", workingDir);
+            return await SvnRunner.RunAsync($"log -l {lastN}", workingDir, token: token);
         }
 
         private string ApplyColoring(string rawText)
@@ -123,13 +127,34 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root)) return;
 
-            IsProcessing = true;
+            relativePath = SvnRunner.ForceCleanPath(relativePath);
+            root = SvnRunner.ForceCleanPath(root);
+            if (string.IsNullOrWhiteSpace(relativePath)) return;
 
-            SVNLogBridge.LogLine($"<color=#00FF99>Fetching history for: {relativePath}...</color>", append: false);
+            string absolutePath = Path.Combine(root, relativePath);
+            absolutePath = SvnRunner.ForceCleanPath(absolutePath);
+
+            int count = 10;
+            if (svnUI.LogCountInputField != null && !string.IsNullOrWhiteSpace(svnUI.LogCountInputField.text))
+                int.TryParse(svnUI.LogCountInputField.text, out count);
+            count = Mathf.Clamp(count, 1, 500);
+
+            IsProcessing = true;
+            _logCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var token = _logCts.Token;
+
+            SVNLogBridge.LogLine($"<color=#00FF99>Fetching history for: {absolutePath}</color>", append: false);
 
             try
             {
-                string output = await SvnRunner.RunAsync($"log -l 10 \"{relativePath}\"", root);
+                string statusCheck = await SvnRunner.RunAsync($"status \"{absolutePath}\"", root, token: token);
+                if (string.IsNullOrEmpty(statusCheck) || statusCheck.StartsWith("?"))
+                {
+                    SVNLogBridge.LogLine("<color=yellow>File is not under version control – no history available.</color>");
+                    return;
+                }
+
+                string output = await SvnRunner.RunAsync($"log -l {count} \"{absolutePath}\"", root, token: token);
 
                 if (string.IsNullOrWhiteSpace(output))
                 {
@@ -143,13 +168,19 @@ namespace SVN.Core
                     SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
                 }
             }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>Log request cancelled or timed out.</color>");
+            }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>SVNLogBridge.LogLine Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=red>Log Error:</color> {ex.Message}");
             }
             finally
             {
                 IsProcessing = false;
+                _logCts?.Dispose();
+                _logCts = null;
             }
         }
     }

@@ -1,9 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
-using System.Threading;
 
 namespace SVN.Core
 {
@@ -12,13 +13,15 @@ namespace SVN.Core
         public event Action OnSelectionChanged;
 
         private List<SvnTreeElement> _flatTreeData = new List<SvnTreeElement>();
-
         private List<SvnTreeElement> _commitTreeData;
-
         private bool _isCurrentViewIgnored = false;
-        long totalCommitBytes = 0;
+        private long totalCommitBytes = 0;
         private CancellationTokenSource _cts;
         private const bool ENABLE_FILE_SIZES = true;
+
+        private static (DateTime time, Dictionary<string, SVNLockDetails> data) _lockCache;
+        private static readonly TimeSpan LockCacheDuration = TimeSpan.FromMinutes(2);
+        private static readonly object _cacheLock = new object();
 
         private static readonly string[] SIZE_UNITS = { "B", "KB", "MB", "GB", "TB" };
 
@@ -30,7 +33,6 @@ namespace SVN.Core
         private async void HandleProjectChanged(SVNProject project)
         {
             if (project == null) return;
-
             try
             {
                 ClearCurrentData();
@@ -51,7 +53,6 @@ namespace SVN.Core
         public void ToggleFolderVisibility(SvnTreeElement folder)
         {
             List<SvnTreeElement> targetData = folder.IsCommitDelegate ? _commitTreeData : _flatTreeData;
-
             if (targetData == null || targetData.Count == 0) return;
 
             int startIndex = targetData.IndexOf(folder);
@@ -60,27 +61,16 @@ namespace SVN.Core
             string folderPath = folder.FullPath;
             string prefix = folderPath.EndsWith("/") ? folderPath : folderPath + "/";
 
-            var localLookup = new Dictionary<string, SvnTreeElement>(32)
-            {
-                [folderPath] = folder
-            };
+            var localLookup = new Dictionary<string, SvnTreeElement>(32) { [folderPath] = folder };
 
             for (int i = startIndex + 1; i < targetData.Count; i++)
             {
                 var e = targetData[i];
-
-                if (!e.FullPath.StartsWith(prefix))
-                {
-                    break;
-                }
+                if (!e.FullPath.StartsWith(prefix)) break;
 
                 localLookup[e.FullPath] = e;
-
                 string parentPath = GetParentPath(e.FullPath);
-                if (string.IsNullOrEmpty(parentPath))
-                {
-                    continue;
-                }
+                if (string.IsNullOrEmpty(parentPath)) continue;
 
                 if (localLookup.TryGetValue(parentPath, out var parent))
                 {
@@ -89,15 +79,9 @@ namespace SVN.Core
             }
 
             if (folder.IsCommitDelegate)
-            {
-                if (svnUI.SVNCommitTreeDisplay != null)
-                    svnUI.SVNCommitTreeDisplay.RefreshUI(targetData, this);
-            }
+                svnUI.SVNCommitTreeDisplay?.RefreshUI(targetData, this);
             else
-            {
-                if (svnUI.SvnTreeView != null)
-                    svnUI.SvnTreeView.RefreshUI(targetData, this);
-            }
+                svnUI.SvnTreeView?.RefreshUI(targetData, this);
         }
 
         private string GetParentPath(string path)
@@ -111,53 +95,39 @@ namespace SVN.Core
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
             ClearSVNTreeView();
-
             await ExecuteRefreshWithAutoExpand(force: true);
         }
 
         public async void ShowOnlyModified()
         {
-            try
-            {
-                await RefreshModifiedInternal();
-            }
-            catch (Exception e)
-            {
-                SVNLogBridge.LogError($"[SVN] Błąd podczas odświeżania: {e.Message}");
-            }
+            try { await RefreshModifiedInternal(); }
+            catch (Exception e) { SVNLogBridge.LogError($"[SVN] Błąd podczas odświeżania: {e.Message}"); }
         }
 
         public async Task RefreshModifiedInternal()
         {
             svnManager.ExpandedPaths.Clear();
             svnManager.ExpandedPaths.Add("");
-
             ClearSVNTreeView();
 
             if (svnUI.TreeDisplay != null)
                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
-
             if (svnUI.CommitTreeDisplay != null)
                 SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
 
             _isCurrentViewIgnored = false;
-
             await ExecuteRefreshWithAutoExpand(force: true);
         }
 
         public async Task ExecuteRefreshWithAutoExpand(bool force = false)
         {
             var oldCts = _cts;
-
             _cts = new CancellationTokenSource();
             CancellationToken token = _cts.Token;
-
             oldCts?.Cancel();
             oldCts?.Dispose();
 
-            if (IsProcessing && !force)
-                return;
-
+            if (IsProcessing && !force) return;
             IsProcessing = true;
 
             try
@@ -165,25 +135,9 @@ namespace SVN.Core
                 if (svnUI != null)
                 {
                     if (svnUI.TreeDisplay != null)
-                    {
-                        SVNLogBridge.UpdateUIField(
-                            svnUI.TreeDisplay,
-                            "Scanning local changes...",
-                            "TREE",
-                            append: false
-                        );
-                    }
-
-                    if (svnUI.CommitTreeDisplay != null &&
-                        svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
-                    {
-                        SVNLogBridge.UpdateUIField(
-                            svnUI.CommitTreeDisplay,
-                            "Refreshing commit list...",
-                            "COMMIT_TREE",
-                            append: false
-                        );
-                    }
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Scanning local changes...", "TREE", append: false);
+                    if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing commit list...", "COMMIT_TREE", append: false);
                 }
 
                 await Task.Yield();
@@ -193,9 +147,14 @@ namespace SVN.Core
                 svnUI?.SVNCommitTreeDisplay?.ClearView();
 
                 string root = svnManager.WorkingDir;
-                var statusDict = await GetChangesDictionaryAsync(root, token);
 
+                var statusTask = GetChangesDictionaryAsync(root, token);
+                var locksTask = GetLocksDictionaryAsync(root, token);
+                await Task.WhenAll(statusTask, locksTask);
                 token.ThrowIfCancellationRequested();
+
+                var statusDict = statusTask.Result;
+                var lockDict = locksTask.Result;
 
                 if (statusDict == null || statusDict.Count == 0)
                 {
@@ -206,83 +165,44 @@ namespace SVN.Core
                 if (svnUI != null)
                 {
                     if (svnUI.TreeDisplay != null)
-                    {
-                        SVNLogBridge.UpdateUIField(
-                            svnUI.TreeDisplay,
-                            "",
-                            "TREE",
-                            append: false
-                        );
-                    }
-
-                    if (svnUI.CommitTreeDisplay != null &&
-                        svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
-                    {
-                        SVNLogBridge.UpdateUIField(
-                            svnUI.CommitTreeDisplay,
-                            "",
-                            "COMMIT_TREE",
-                            append: false
-                        );
-                    }
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+                    if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
+                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
                 }
 
-                var buildResult = await Task.Run(() =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    return BuildFlatTreeStructureText(root, statusDict);
-                }, token);
-
+                var buildResult = await Task.Run(() => BuildFlatTreeStructureText(root, statusDict), token);
                 token.ThrowIfCancellationRequested();
 
                 _flatTreeData = buildResult.Elements;
                 totalCommitBytes = buildResult.TotalBytes;
 
+                if (lockDict != null && lockDict.Count > 0)
+                    ApplyLockColors(_flatTreeData, lockDict);
+
                 var localData = _flatTreeData;
 
-                if (svnUI.SvnTreeView != null &&
-                    svnUI.SvnTreeView.gameObject.activeInHierarchy)
+                if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
                 {
                     foreach (var e in localData)
                         e.IsCommitDelegate = false;
-
-                    if (svnUI.TreeDisplay != null)
-                    {
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-                    }
-
                     svnUI.SvnTreeView.RefreshUI(localData, this);
-
-                    _ = LoadLocksAsync(root, localData, token);
                 }
 
                 token.ThrowIfCancellationRequested();
 
-                if (svnUI.SVNCommitTreeDisplay != null &&
-                    svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
+                if (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
                 {
-                    _commitTreeData = await Task.Run(() =>
-                    {
-                        token.ThrowIfCancellationRequested();
-                        return BuildCommitView(localData);
-                    }, token);
-
+                    _commitTreeData = await Task.Run(() => BuildCommitView(localData), token);
                     token.ThrowIfCancellationRequested();
 
                     if (svnUI.CommitTreeDisplay != null)
-                    {
                         SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
-                    }
 
                     svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-
                     UpdateSelectedSizeDisplay();
                 }
 
-                UpdateAllStatisticsUI(
-                    CalculateStats(statusDict),
-                    _isCurrentViewIgnored
-                );
+                UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
             }
             catch (OperationCanceledException)
             {
@@ -295,118 +215,49 @@ namespace SVN.Core
             finally
             {
                 if (_cts != null && token == _cts.Token)
-                {
                     IsProcessing = false;
-                }
-            }
-        }
-
-        private async Task LoadLocksAsync(
-    string root,
-    List<SvnTreeElement> localData,
-    CancellationToken token)
-        {
-            try
-            {
-                var lockDict =
-                    await GetLocksDictionaryAsync(root, token);
-
-                if (token.IsCancellationRequested)
-                    return;
-
-                if (lockDict == null || lockDict.Count == 0)
-                    return;
-
-                UnityMainThreadDispatcher.Enqueue(() =>
-                {
-                    if (token.IsCancellationRequested)
-                        return;
-
-                    ApplyLockColors(localData, lockDict);
-
-                    if (svnUI?.SvnTreeView != null)
-                    {
-                        svnUI.SvnTreeView.RefreshUI(
-                            localData,
-                            this
-                        );
-                    }
-                });
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError(
-                    $"LoadLocksAsync failed: {ex.Message}");
             }
         }
 
         private void ShowEmptyState()
         {
             ResetTreeView();
-
             _flatTreeData.Clear();
             _commitTreeData?.Clear();
 
-            if (svnUI.SvnTreeView != null)
-                svnUI.SvnTreeView.ClearView();
-
-            if (svnUI.SVNCommitTreeDisplay != null)
-                svnUI.SVNCommitTreeDisplay.ClearView();
+            svnUI.SvnTreeView?.ClearView();
+            svnUI.SVNCommitTreeDisplay?.ClearView();
 
             if (svnUI.TreeDisplay != null)
-                SVNLogBridge.UpdateUIField(
-                    svnUI.TreeDisplay,
-                    "<i>No changes detected.</i>",
-                    "TREE",
-                    append: false);
-
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
             if (svnUI.CommitTreeDisplay != null)
-                SVNLogBridge.UpdateUIField(
-                    svnUI.CommitTreeDisplay,
-                    "<i>Nothing to commit.</i>",
-                    "COMMIT_TREE",
-                    append: false);
+                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
 
             UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
         }
 
         public void RefreshVisibleUIOnly()
         {
-            if (svnUI.SvnTreeView != null)
-            {
-                svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
-            }
+            svnUI.SvnTreeView?.RefreshUI(_flatTreeData, this);
 
-            bool commitPanelVisible =
-                svnUI.SVNCommitTreeDisplay != null &&
-                svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
-
+            bool commitPanelVisible = svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
             if (commitPanelVisible)
-            {
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-            }
         }
 
         public void ClearCurrentData()
         {
             _flatTreeData?.Clear();
             _commitTreeData?.Clear();
-
             if (svnManager != null && svnManager.CurrentStatusDict != null)
                 svnManager.CurrentStatusDict.Clear();
-
             totalCommitBytes = 0;
         }
 
         public void ClearSVNTreeView()
         {
             foreach (var svnTreeView in svnUI.SVNTreeViews)
-            {
                 svnTreeView.ClearView();
-            }
         }
 
         public void ResetTreeView()
@@ -424,51 +275,29 @@ namespace SVN.Core
                 bool isFolder = item.Size == "DIR";
                 string s = item.Status;
 
-                if (isFolder)
-                {
-                    stats.FolderCount++;
-                    continue;
-                }
-
+                if (isFolder) { stats.FolderCount++; continue; }
                 stats.FileCount++;
 
                 switch (s)
                 {
-                    case "M":
-                        stats.ModifiedCount++;
-                        break;
-
-                    case "A":
-                        stats.AddedCount++;
-                        break;
-
-                    case "?":
-                        stats.NewFilesCount++;
-                        break;
-
+                    case "M": stats.ModifiedCount++; break;
+                    case "A": stats.AddedCount++; break;
+                    case "?": stats.NewFilesCount++; break;
                     case "D":
-                    case "!":
-                        stats.DeletedCount++;
-                        break;
-
-                    case "C":
-                        stats.ConflictsCount++;
-                        break;
+                    case "!": stats.DeletedCount++; break;
+                    case "C": stats.ConflictsCount++; break;
                 }
             }
-
             return stats;
         }
 
         private List<SvnTreeElement> BuildCommitView(List<SvnTreeElement> source)
         {
             var visible = new HashSet<string>();
-
             foreach (var element in source)
             {
                 bool isRoot = element.FullPath == ".svn-root" || element.FullPath == ".";
                 bool isCommitable = isRoot || (!string.IsNullOrWhiteSpace(element.Status) && element.Status != " " && element.Status != "DIR");
-
                 if (!isCommitable) continue;
 
                 string current = element.FullPath;
@@ -480,7 +309,6 @@ namespace SVN.Core
             }
 
             var result = new List<SvnTreeElement>(visible.Count);
-
             foreach (var e in source)
             {
                 if (visible.Contains(e.FullPath))
@@ -489,7 +317,6 @@ namespace SVN.Core
                     result.Add(e);
                 }
             }
-
             return result;
         }
 
@@ -657,6 +484,9 @@ namespace SVN.Core
                     {
                         isChecked = prev;
                     }
+
+                    if (currentPath.Contains('\t'))
+                        Debug.Log($"[DEBUG BuildTree] CURRENT PATH has tab: '{currentPath}'");
 
                     elements.Add(new SvnTreeElement
                     {
@@ -836,6 +666,8 @@ namespace SVN.Core
                     continue;
 
                 string rawPath = line.Substring(svnStatusPrefixLength).TrimStart();
+
+                rawPath = new string(rawPath.Where(c => !char.IsControl(c) && c != '\u00A0').ToArray());
                 string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
 
                 bool isRootChange = cleanPath == ".";
@@ -939,77 +771,69 @@ namespace SVN.Core
             return _flatTreeData;
         }
 
-        public async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(
-    string root,
-    CancellationToken token = default)
+        public async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(string root, CancellationToken token = default)
         {
-            var result = new Dictionary<string, SVNLockDetails>();
+            lock (_cacheLock)
+            {
+                if (_lockCache.data != null && (DateTime.UtcNow - _lockCache.time) < LockCacheDuration)
+                    return _lockCache.data;
+            }
 
+            var result = new Dictionary<string, SVNLockDetails>();
             try
             {
                 var lockModule = svnManager.GetModule<SVNLock>();
-
-                if (lockModule == null)
-                    return result;
+                if (lockModule == null) return result;
 
                 var locks = await lockModule.GetDetailedLocks(root);
-
                 token.ThrowIfCancellationRequested();
 
                 foreach (var l in locks)
                 {
                     token.ThrowIfCancellationRequested();
-
-                    if (string.IsNullOrEmpty(l.FullPath))
-                        continue;
-
-                    string normalized =
-                        NormalizeLockPath(l.FullPath);
-
+                    if (string.IsNullOrEmpty(l.FullPath)) continue;
+                    string normalized = NormalizeLockPath(l.FullPath);
                     result[normalized] = l;
                 }
+
+                lock (_cacheLock)
+                {
+                    _lockCache = (DateTime.UtcNow, result);
+                }
             }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 SVNLogBridge.LogError($"Lock dictionary fetch failed: {ex.Message}");
             }
-
             return result;
         }
 
-        public void ApplyLockColors(
-    List<SvnTreeElement> elements,
-    Dictionary<string, SVNLockDetails> lockDict)
+        public static void ClearLockCache()
         {
-            if (elements == null || lockDict == null)
-                return;
+            lock (_cacheLock)
+            {
+                _lockCache = default;
+            }
+        }
 
-            string currentUser =
-                svnManager.CurrentUserName?
-                    .Trim()
-                    .ToLower();
+        public void ApplyLockColors(List<SvnTreeElement> elements, Dictionary<string, SVNLockDetails> lockDict)
+        {
+            if (elements == null || lockDict == null) return;
+
+            string currentUser = svnManager.CurrentUserName?.Trim().ToLower();
 
             foreach (var e in elements)
             {
                 e.LockedByMe = false;
                 e.LockedByOther = false;
+                if (string.IsNullOrEmpty(e.FullPath)) continue;
 
-                if (string.IsNullOrEmpty(e.FullPath))
-                    continue;
-
-                string normalized =
-                    NormalizeLockPath(e.FullPath);
-
+                string normalized = NormalizeLockPath(e.FullPath);
                 if (lockDict.TryGetValue(normalized, out var lockInfo))
                 {
-                    bool isMine =
-                        !string.IsNullOrEmpty(lockInfo.Owner) &&
-                        lockInfo.Owner.Trim().ToLower() == currentUser;
-
+                    bool isMine = !string.IsNullOrEmpty(lockInfo.Owner) &&
+                                  lockInfo.Owner.Trim().ToLower() == currentUser;
                     e.LockedByMe = isMine;
                     e.LockedByOther = !isMine;
                 }
@@ -1018,22 +842,11 @@ namespace SVN.Core
 
         private string NormalizeLockPath(string path)
         {
-            if (string.IsNullOrEmpty(path))
-                return "";
-
+            if (string.IsNullOrEmpty(path)) return "";
             path = path.Replace("\\", "/");
-
-            string root =
-                svnManager.WorkingDir
-                    .Replace("\\", "/")
-                    .TrimEnd('/');
-
-            // absolute -> relative
+            string root = svnManager.WorkingDir.Replace("\\", "/").TrimEnd('/');
             if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-            {
                 path = path.Substring(root.Length);
-            }
-
             return path.TrimStart('/');
         }
 
@@ -1049,23 +862,11 @@ namespace SVN.Core
             if (commitPanelVisible)
             {
                 _commitTreeData = BuildCommitView(_flatTreeData);
-
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
             }
 
             UpdateSelectedSizeDisplay();
-
             OnSelectionChanged?.Invoke();
-        }
-
-        public void Dispose()
-        {
-            if (_cts != null)
-            {
-                _cts.Cancel();
-                _cts.Dispose();
-                _cts = null;
-            }
         }
 
         public void CancelCurrentRefresh()
@@ -1073,4 +874,5 @@ namespace SVN.Core
             _cts?.Cancel();
         }
     }
+
 }

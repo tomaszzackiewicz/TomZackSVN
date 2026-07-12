@@ -59,9 +59,20 @@ namespace SVN.Core
                         lastFormatted = formatted;
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
                 catch { }
 
-                await Task.Delay(5000, token);
+                try
+                {
+                    await Task.Delay(5000, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 
@@ -132,7 +143,10 @@ namespace SVN.Core
                         ? svnProject.projectName
                         : Path.GetFileName(path);
 
-                string rawInfo = await SvnRunner.GetInfoAsync(path);
+                var infoTask = SvnRunner.GetInfoAsync(path);
+                var remoteRevTask = SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", path);
+
+                string rawInfo = await infoTask;
 
                 if (string.IsNullOrWhiteSpace(rawInfo) || rawInfo == "unknown")
                     return snapshot;
@@ -156,32 +170,35 @@ namespace SVN.Core
 
                 if (int.TryParse(snapshot.Revision, out _))
                 {
-                    var realInfo = await GetRealCommitInfoAsync(path, snapshot.Revision);
-                    if (!string.IsNullOrEmpty(realInfo.author))
-                        snapshot.Author = realInfo.author;
-                    if (!string.IsNullOrEmpty(realInfo.date))
-                        snapshot.Date = realInfo.date;
+                    var logTask = GetRealCommitInfoAsync(path, snapshot.Revision);
+                    string remoteRevRaw = await remoteRevTask;
+
+                    if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
+                        snapshot.RemoteRevision = remoteRevRaw.Trim();
+
+                    var (realAuthor, realDate) = await logTask;
+                    if (!string.IsNullOrEmpty(realAuthor))
+                        snapshot.Author = realAuthor;
+                    if (!string.IsNullOrEmpty(realDate))
+                        snapshot.Date = realDate;
+                }
+                else
+                {
+                    string remoteRevRaw = await remoteRevTask;
+                    if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
+                        snapshot.RemoteRevision = remoteRevRaw.Trim();
                 }
 
                 snapshot.RelativeUrl = ExtractValue(rawInfo, "Relative URL:");
                 snapshot.Url = ExtractValue(rawInfo, "URL:");
                 snapshot.RepoRoot = ExtractValue(rawInfo, "Repository Root:");
-                snapshot.RemoteRevision = snapshot.Revision;
 
-                try
+                snapshot.IsOutdated = false;
+                if (int.TryParse(snapshot.Revision, out int localRev) &&
+                    int.TryParse(snapshot.RemoteRevision, out int remoteRev))
                 {
-                    string remoteRevRaw = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", path);
-                    if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
-                    {
-                        snapshot.RemoteRevision = remoteRevRaw.Trim();
-                        if (int.TryParse(snapshot.Revision, out int localRev) &&
-                            int.TryParse(snapshot.RemoteRevision, out int remoteRev))
-                        {
-                            snapshot.IsOutdated = remoteRev > localRev;
-                        }
-                    }
+                    snapshot.IsOutdated = remoteRev > localRev;
                 }
-                catch { }
 
                 string source = snapshot.RelativeUrl != "unknown"
                     ? snapshot.RelativeUrl
@@ -460,8 +477,7 @@ namespace SVN.Core
 
                     foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories))
                     {
-                        if (token.IsCancellationRequested)
-                            break;
+                        token.ThrowIfCancellationRequested();
 
                         try
                         {
@@ -472,6 +488,10 @@ namespace SVN.Core
 
                     return bytes;
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch
                 {
                     return 0;
@@ -479,11 +499,11 @@ namespace SVN.Core
             }, token);
         }
 
-        private async Task<(string author, string date)> GetRealCommitInfoAsync(string path, string revision)
+        private async Task<(string author, string date)> GetRealCommitInfoAsync(string path, string revision, CancellationToken token = default)
         {
             try
             {
-                string logOutput = await SvnRunner.RunAsync($"log -r {revision} --limit 1", path);
+                string logOutput = await SvnRunner.RunAsync($"log -r {revision} --limit 1", path, token: token);
                 if (!string.IsNullOrWhiteSpace(logOutput))
                 {
                     var match = Regex.Match(logOutput, @"^r\d+\s*\|\s*([^|]+)\s*\|\s*([^|]+)", RegexOptions.Multiline);
@@ -492,6 +512,10 @@ namespace SVN.Core
                         return (match.Groups[1].Value.Trim(), match.Groups[2].Value.Trim());
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {

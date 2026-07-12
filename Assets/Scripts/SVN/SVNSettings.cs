@@ -11,8 +11,7 @@ namespace SVN.Core
 
         private void UpdateProjectInJson(string workingDir, Action<SVNProject> updateAction)
         {
-            if (string.IsNullOrEmpty(workingDir))
-                return;
+            if (string.IsNullOrEmpty(workingDir)) return;
 
             List<SVNProject> projects = ProjectSettings.LoadProjects();
             var project = projects.Find(p => p.workingDir == workingDir);
@@ -117,7 +116,15 @@ namespace SVN.Core
 
         public void LoadSettings()
         {
-            LoadSettings();
+            if (svnManager == null) return;
+
+            string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
+            if (string.IsNullOrEmpty(lastPath)) return;
+
+            var projects = ProjectSettings.LoadProjects();
+            var current = projects.Find(p => p.workingDir == lastPath);
+            if (current != null)
+                _ = svnManager.LoadProject(current);
         }
 
         public async void LoadSettingAsync()
@@ -128,8 +135,7 @@ namespace SVN.Core
             var projects = ProjectSettings.LoadProjects();
             var current = projects.Find(p => p.workingDir == lastPath);
 
-            if (current == null)
-                return;
+            if (current == null) return;
 
             await svnManager.LoadProject(current);
         }

@@ -1,7 +1,6 @@
 using System;
 using System.Text.RegularExpressions;
 using System.Threading;
-using UnityEngine;
 
 namespace SVN.Core
 {
@@ -12,9 +11,6 @@ namespace SVN.Core
 
         private int _isProcessingFlag = 0;
 
-        // =====================================================
-        // 🔒 GLOBAL PROCESS LOCK (per module instance)
-        // =====================================================
         protected bool TryStart()
             => Interlocked.Exchange(ref _isProcessingFlag, 1) == 0;
 
@@ -27,9 +23,6 @@ namespace SVN.Core
             set => svnManager.IsProcessing = value;
         }
 
-        // =====================================================
-        // 🧠 CONSTRUCTOR
-        // =====================================================
         protected SVNBase(SVNUI ui, SVNManager manager)
         {
             svnUI = ui;
@@ -41,9 +34,6 @@ namespace SVN.Core
             }
         }
 
-        // =====================================================
-        // 🧹 UTIL
-        // =====================================================
         protected string StripBanner(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
@@ -69,14 +59,9 @@ namespace SVN.Core
             return string.Join("\n", finalLines);
         }
 
-        // =====================================================
-        // 🟦 LOG SYSTEM (MODULAR UI)
-        // =====================================================
-
-        // 🔥 KLUCZ: każdy moduł wskazuje własną konsolę
         protected virtual TMPro.TMP_Text GetConsole()
         {
-            return null; // base = brak UI (muszą override)
+            return null;
         }
 
         protected void Append(string msg, string color)

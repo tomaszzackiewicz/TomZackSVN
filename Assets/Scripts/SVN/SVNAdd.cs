@@ -43,9 +43,6 @@ namespace SVN.Core
 
                 await SvnRunner.RunAsync("add * --force --parents --depth infinity", root, true, token);
 
-
-                IsProcessing = false;
-
                 UpdateLightLog("<color=#4FC3F7>Rebuilding tree...</color>");
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
@@ -53,7 +50,7 @@ namespace SVN.Core
                 {
                     statusModule.ClearSVNTreeView();
                     statusModule.ClearCurrentData();
-                    statusModule.ShowOnlyModified();
+                    await statusModule.RefreshModifiedInternal();
                 }
 
                 UpdateLightLog("\n<color=green><b>[SUCCESS]</b> Items marked as 'Added'.</color>");
@@ -66,7 +63,43 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 SVNLogBridge.LogError($"\n<color=red>Error during AddAll: {ex.Message}</color>");
-                IsProcessing = false;
+            }
+            finally
+            {
+                CleanUpOperation(token);
+            }
+        }
+
+        public async void AddSingleItem(SvnTreeElement element)
+        {
+            if (IsProcessing || element == null) return;
+
+            string root = svnManager.WorkingDir;
+            if (string.IsNullOrEmpty(root)) return;
+
+            CancellationToken token = PrepareNewOperation();
+            ClearAndLog($"<b>[Add]</b> Adding item: {element.Name}...");
+
+            try
+            {
+                await SvnRunner.RunAsync($"add \"{element.FullPath}\"", root, true, token);
+
+                UpdateLightLog($"<color=green>Successfully added:</color> {element.Name}");
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    UpdateLightLog("<color=#4FC3F7>Rebuilding tree...</color>");
+                    await statusModule.RefreshModifiedInternal();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                UpdateLightLog("<color=orange>Operation cancelled by user.</color>");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"<color=red>Add Error: {ex.Message}</color>");
             }
             finally
             {
@@ -84,12 +117,8 @@ namespace SVN.Core
         private void UpdateLightLog(string message)
         {
             _logBuffer.Add(message);
-
             if (_logBuffer.Count > MaxLogLines)
-            {
                 _logBuffer.RemoveAt(1);
-            }
-
             SyncBufferWithUI();
         }
 
@@ -99,16 +128,15 @@ namespace SVN.Core
 
             StringBuilder sb = new StringBuilder();
             foreach (var line in _logBuffer)
-            {
                 sb.AppendLine(line);
-            }
 
             SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, sb.ToString(), append: false);
         }
 
         private CancellationToken PrepareNewOperation()
         {
-            if (_activeCTS != null) { _activeCTS.Cancel(); _activeCTS.Dispose(); }
+            _activeCTS?.Cancel();
+            _activeCTS?.Dispose();
             _activeCTS = new CancellationTokenSource();
             IsProcessing = true;
             if (svnUI.OperationProgressBar != null)
@@ -135,44 +163,6 @@ namespace SVN.Core
             await Task.Delay((int)(delay * 1000));
             if (!IsProcessing && svnUI.OperationProgressBar != null)
                 svnUI.OperationProgressBar.gameObject.SetActive(false);
-        }
-
-        public async void AddSingleItem(SvnTreeElement element)
-        {
-            if (IsProcessing || element == null) return;
-
-            string root = svnManager.WorkingDir;
-            if (string.IsNullOrEmpty(root)) return;
-
-            CancellationToken token = PrepareNewOperation();
-            ClearAndLog($"<b>[Add]</b> Adding item: {element.Name}...");
-
-            try
-            {
-                await SvnRunner.RunAsync($"add \"{element.FullPath}\"", root, true, token);
-
-                UpdateLightLog($"<color=green>Successfully added:</color> {element.Name}");
-
-                IsProcessing = false;
-
-                var statusModule = svnManager.GetModule<SVNStatus>();
-                if (statusModule != null)
-                {
-                    UpdateLightLog("<color=#4FC3F7>Rebuilding tree...</color>");
-
-                    statusModule.ShowOnlyModified();
-                }
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError($"<color=red>Add Error: {ex.Message}</color>");
-
-                IsProcessing = false;
-            }
-            finally
-            {
-                CleanUpOperation(token);
-            }
         }
     }
 }

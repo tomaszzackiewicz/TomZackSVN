@@ -24,6 +24,7 @@ public class SvnLineController : MonoBehaviour
     [SerializeField] private Button lockBtn;
     [SerializeField] private TextMeshProUGUI lockBtnText;
     [SerializeField] private Button blameBtn;
+    [SerializeField] private Button resolveBtn;
 
     private SvnTreeElement _element;
     private SVNStatus svnStatus;
@@ -39,6 +40,7 @@ public class SvnLineController : MonoBehaviour
         if (lockBtn != null) lockBtn.gameObject.SetActive(false);
         if (blameBtn != null) blameBtn.gameObject.SetActive(false);
         if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
+        if (resolveBtn != null) resolveBtn.gameObject.SetActive(false);
     }
 
     public void Setup(SvnTreeElement element, SVNStatus manager)
@@ -90,16 +92,11 @@ public class SvnLineController : MonoBehaviour
             statusText.text = "<color=#ADD8E6>[FILE]</color> " + statusClean;
             statusText.color = GetStatusColor(element.Status);
             nameText.text = element.Name;
-            sizeText.text = element.Size;
 
             if (element.IsCommitDelegate)
-            {
                 sizeText.text = "";
-            }
             else
-            {
                 sizeText.text = element.Size;
-            }
         }
 
         if (foldButton != null)
@@ -219,6 +216,7 @@ public class SvnLineController : MonoBehaviour
         if (lockBtn != null) lockBtn.gameObject.SetActive(false);
         if (blameBtn != null) blameBtn.gameObject.SetActive(false);
         if (explorerBtn != null) explorerBtn.gameObject.SetActive(false);
+        if (resolveBtn != null) resolveBtn.gameObject.SetActive(false);
 
         if (!_element.IsFolder && hasChanges)
         {
@@ -233,14 +231,24 @@ public class SvnLineController : MonoBehaviour
                 BindHover(addBtn, "Add this unversioned file to SVN control.");
             }
 
+            if (status == "C" && resolveBtn != null)
+            {
+                resolveBtn.gameObject.SetActive(true);
+                resolveBtn.onClick.RemoveAllListeners();
+                resolveBtn.onClick.AddListener(() =>
+                {
+                    SVNManager.Instance?.PanelHandler?.Button_OpenResolve();
+                });
+                BindHover(resolveBtn, "This file has conflicts. Click to open Resolve panel.");
+            }
+
             bool isLockedByMe = _element.LockedByMe;
             bool isLockedByOthers = _element.LockedByOther;
 
-            if (!_element.IsFolder && !isUnversioned && !isMissingOrDeleted && lockBtn != null)
+            if (!_element.IsFolder && !isUnversioned && status != "A" && !isMissingOrDeleted && lockBtn != null)
             {
                 lockBtn.gameObject.SetActive(true);
                 lockBtn.onClick.RemoveAllListeners();
-
                 lockBtn.interactable = true;
 
                 lockBtn.onClick.AddListener(async () =>
@@ -300,7 +308,7 @@ public class SvnLineController : MonoBehaviour
                 BindHover(revertBtn, "Discard local changes and restore to repository version.");
             }
 
-            if (!isUnversioned && logBtn != null)
+            if (!isUnversioned && status != "A" && logBtn != null)
             {
                 logBtn.gameObject.SetActive(true);
                 logBtn.onClick.RemoveAllListeners();
@@ -331,7 +339,7 @@ public class SvnLineController : MonoBehaviour
                 blameBtn.onClick.RemoveAllListeners();
 
                 bool isFile = !_element.IsFolder;
-                bool hasHistory = _element.Status != "Added" && _element.Status != "?" && !string.IsNullOrEmpty(_element.Status);
+                bool hasHistory = status != "?" && status != "A" && !string.IsNullOrEmpty(status);
 
                 bool canBlame = isFile && hasHistory;
 
@@ -345,7 +353,6 @@ public class SvnLineController : MonoBehaviour
                         if (blameModule != null)
                         {
                             _ = blameModule?.ShowBlameInMainConsole(_element.FullPath);
-
                         }
                     });
 
@@ -399,15 +406,15 @@ public class SvnLineController : MonoBehaviour
     {
         switch (status)
         {
-            case "M": return ParseHex("#FFD700"); // Mod (M)
-            case "K": return ParseHex("#00FF00"); // Locked by ME
-            case "O": return ParseHex("#FF4444"); // Locked by OTHERS
-            case "A": return ParseHex("#00FF00"); // Add (A)
-            case "?": return ParseHex("#00E5FF"); // New (?)
+            case "M": return ParseHex("#FFD700");
+            case "K": return ParseHex("#00FF00");
+            case "O": return ParseHex("#FF4444");
+            case "A": return ParseHex("#00FF00");
+            case "?": return ParseHex("#00E5FF");
             case "D":
-            case "!": return ParseHex("#FF4444"); // Del (D/!)
-            case "C": return ParseHex("#FF00FF"); // Conf (C)
-            case "I": return ParseHex("#444444"); // Ignored
+            case "!": return ParseHex("#FF4444");
+            case "C": return ParseHex("#FF00FF");
+            case "I": return ParseHex("#444444");
             default: return Color.white;
         }
     }

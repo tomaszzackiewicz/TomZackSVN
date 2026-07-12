@@ -175,7 +175,7 @@ namespace SVN.Core
                 string branchesUrl = $"{repoRoot}/branches";
                 string tagsUrl = $"{repoRoot}/tags";
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 var branchesTask = SvnRunner.GetRepoListAsync(svnManager.WorkingDir, branchesUrl);
                 var tagsTask = SvnRunner.GetRepoListAsync(svnManager.WorkingDir, tagsUrl);
                 await Task.WhenAll(branchesTask, tagsTask);
@@ -552,6 +552,12 @@ namespace SVN.Core
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
+                if (!SVNAssetLocator.IsWorkingCopy(svnManager.WorkingDir))
+                {
+                    LogErrorLocal("Working directory is not a valid SVN working copy.");
+                    return;
+                }
+
                 LogInfo($"[Switch] Switching to {targetName}...");
                 string repoRoot = svnManager.GetRepoRoot();
                 string targetUrl = (targetName.ToLower() == "trunk")
@@ -661,7 +667,7 @@ namespace SVN.Core
                 string repoRoot = svnManager.GetRepoRoot();
                 string targetUrl = $"{repoRoot}/{subFolder}/{targetName}";
 
-                if (currentUrl.TrimEnd('/') == targetUrl.TrimEnd('/'))
+                if (NormalizeUrl(currentUrl) == NormalizeUrl(targetUrl))
                 {
                     LogErrorLocal("ABORTED: Active branch cannot be deleted!");
                     return;

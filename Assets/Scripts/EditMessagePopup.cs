@@ -61,4 +61,9 @@ public class EditMessagePopup : MonoBehaviour
             SVNLogBridge.LogError("Failed to edit log: " + output);
         }
     }
+
+    public void Cancel()
+    {
+        gameObject.SetActive(false);
+    }
 }

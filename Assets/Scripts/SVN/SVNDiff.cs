@@ -18,13 +18,6 @@ namespace SVN.Core
             SVNLogBridge.UpdateUIField(console, msg, "DIFF", true);
         }
 
-        private void LogPreview(string msg)
-        {
-            SVNLogBridge.LogLine(msg);
-            if (svnUI.LogText != null)
-                svnUI.LogText.text = msg;
-        }
-
         public void Button_BrowseDiffFilePath()
         {
             string root = svnManager.WorkingDir;
@@ -88,21 +81,26 @@ namespace SVN.Core
         {
             await svnManager.CancelBackgroundTasksAsync();
 
-            if (string.IsNullOrEmpty(svnManager.WorkingDir))
+            if (string.IsNullOrWhiteSpace(svnManager.WorkingDir))
             {
                 LogBoth("<color=red>Error:</color> Working Directory is not set!");
                 return;
             }
 
-            string editorPath = svnManager.MergeToolPath;
-            if (string.IsNullOrEmpty(editorPath) && svnUI.SettingsMergeToolPathInput != null)
-                editorPath = svnUI.SettingsMergeToolPathInput.text;
-            if (string.IsNullOrEmpty(editorPath))
-                editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                LogBoth("<color=yellow>No file selected.</color>");
+                return;
+            }
 
-            if (!string.IsNullOrEmpty(editorPath))
-                editorPath = editorPath.Trim().Replace("\"", "");
+            string fullPath = Path.Combine(svnManager.WorkingDir, relativePath);
+            if (Directory.Exists(fullPath))
+            {
+                LogBoth("<color=yellow>Diff for directories is not supported. Select a file.</color>");
+                return;
+            }
 
+            string editorPath = GetMergeToolPath();
             if (string.IsNullOrEmpty(editorPath) || !File.Exists(editorPath))
             {
                 LogBoth($"<color=red>Error:</color> Invalid Diff Tool path! (Found: '{editorPath}')");
@@ -124,24 +122,16 @@ namespace SVN.Core
                 if (diffContent.Contains("Cannot display: file marked as a binary type"))
                 {
                     LogBoth("<color=orange>Binary File:</color> Opening Explorer...");
-                    string fullPath = Path.Combine(svnManager.WorkingDir, relativePath).Replace("/", "\\");
-                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{fullPath}\"");
+                    string explorerPath = fullPath.Replace("/", "\\");
+                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{explorerPath}\"");
                     return;
                 }
 
-                if (editorPath.ToLower().Contains("notepad++"))
-                {
-                    string tempDiffPath = Path.Combine(Application.temporaryCachePath, "svn_preview.diff");
-                    string enrichedContent = FormatDiffForExternalEditor(diffContent);
+                string tempDiffPath = Path.Combine(Application.temporaryCachePath, "svn_diff_preview.diff");
+                string enrichedContent = FormatDiffForExternalEditor(diffContent);
+                await File.WriteAllTextAsync(tempDiffPath, enrichedContent);
 
-                    await File.WriteAllTextAsync(tempDiffPath, enrichedContent);
-                    System.Diagnostics.Process.Start(editorPath, $"\"{tempDiffPath}\"");
-                }
-                else
-                {
-                    string fullPath = Path.Combine(svnManager.WorkingDir, relativePath);
-                    System.Diagnostics.Process.Start(editorPath, $"\"{fullPath}\"");
-                }
+                System.Diagnostics.Process.Start(editorPath, $"\"{tempDiffPath}\"");
             }
             catch (Exception ex)
             {
@@ -196,13 +186,26 @@ namespace SVN.Core
 
         public async Task ShowPreviewInUnity(string relativePath)
         {
-            if (string.IsNullOrEmpty(svnManager.WorkingDir))
+            if (string.IsNullOrWhiteSpace(svnManager.WorkingDir))
             {
                 LogBoth("<color=red>Error:</color> Working Directory is not set!");
                 return;
             }
 
-            LogPreview("Loading diff...");
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                LogBoth("<color=yellow>No file selected.</color>");
+                return;
+            }
+
+            string fullPath = Path.Combine(svnManager.WorkingDir, relativePath);
+            if (Directory.Exists(fullPath))
+            {
+                LogBoth("<color=yellow>Preview for directories is not supported. Select a file.</color>");
+                return;
+            }
+
+            LogBoth("Loading diff...");
 
             try
             {
@@ -210,29 +213,30 @@ namespace SVN.Core
 
                 if (string.IsNullOrWhiteSpace(diffContent))
                 {
-                    LogPreview("<color=white>No local changes detected (or file is unversioned).</color>");
+                    LogBoth("<color=white>No local changes detected (or file is unversioned).</color>");
                     return;
                 }
 
-                bool isBinary = diffContent.Contains("Cannot display: file marked as a binary type");
-
-                if (isBinary)
+                if (diffContent.Contains("Cannot display: file marked as a binary type"))
                 {
-                    LogPreview("<color=#FF8080>Binary File:</color> Text preview is not available.");
+                    LogBoth("<color=#FF8080>Binary File:</color> Text preview is not available.");
                     return;
                 }
 
                 string formatted = FormatDiffForUnity(diffContent);
-                LogPreview(formatted);
 
-                var scrollRect = svnUI.LogText.GetComponentInParent<UnityEngine.UI.ScrollRect>();
-                if (scrollRect != null)
-                    scrollRect.verticalNormalizedPosition = 1f;
+                var targetField = svnUI.DiffConsoleText ?? svnUI.CommitConsoleContent ?? svnUI.LogText;
+                if (targetField != null)
+                {
+                    targetField.text = formatted;
+                    var scrollRect = targetField.GetComponentInParent<UnityEngine.UI.ScrollRect>();
+                    if (scrollRect != null)
+                        scrollRect.verticalNormalizedPosition = 1f;
+                }
             }
             catch (Exception ex)
             {
                 LogBoth($"<color=red>Preview Error:</color> {ex.Message}");
-                LogPreview($"<color=red>Exception during Diff generation:</color>\n{ex.Message}");
             }
         }
 
@@ -362,6 +366,23 @@ namespace SVN.Core
             header.AppendLine("\n────────────────────────────────────────\n");
 
             return header.ToString() + sb.ToString();
+        }
+
+        private string GetMergeToolPath()
+        {
+            string path = svnManager.MergeToolPath;
+            if (!string.IsNullOrWhiteSpace(path))
+                return path.Trim().Replace("\"", "");
+
+            if (svnUI.SettingsMergeToolPathInput != null)
+            {
+                path = svnUI.SettingsMergeToolPathInput.text;
+                if (!string.IsNullOrWhiteSpace(path))
+                    return path.Trim().Replace("\"", "");
+            }
+
+            path = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+            return path.Trim().Replace("\"", "");
         }
 
         public void OpenExternalDiff(SvnTreeElement element)

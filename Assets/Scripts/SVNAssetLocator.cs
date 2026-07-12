@@ -39,9 +39,9 @@ namespace SVN.Core
 
         public static string ParseRevision(string input)
         {
-            if (string.IsNullOrEmpty(input)) return null;
+            if (string.IsNullOrEmpty(input)) return string.Empty;
             var match = Regex.Match(input, @"revision\s+(\d+)", RegexOptions.IgnoreCase);
-            return match.Success ? match.Groups[1].Value : null;
+            return match.Success ? match.Groups[1].Value : string.Empty;
         }
 
         public static string ExtractUserFromUrl(string xmlOutput)

@@ -28,7 +28,7 @@ namespace SVN.Core
             }
         }
 
-        private async Task CheckForRemoteCommitsAsync()
+        public async Task CheckForRemoteCommitsAsync()
         {
             try
             {

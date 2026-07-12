@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Threading;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
@@ -696,7 +695,17 @@ namespace SVN.Core
                 string range = $"{_lastMergeRevisionAfter}:{_lastMergeRevisionBefore}";
                 string args = $"merge -r {range} \"{_lastMergeSource}\" --non-interactive --accept postpone";
 
-                string output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
+                string output;
+                try
+                {
+                    output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
+                }
+                catch (Exception ex) when (IsAncestryError(ex))
+                {
+                    LogWarning("[CancelLocalMerge] Ancestry issue – retrying with --ignore-ancestry...");
+                    args = $"merge -r {range} \"{_lastMergeSource}\" --ignore-ancestry --non-interactive --accept postpone";
+                    output = await SvnRunner.RunAsync(args, svnManager.WorkingDir);
+                }
 
                 if (string.IsNullOrWhiteSpace(output) || output.Contains("No changes"))
                 {
@@ -899,13 +908,20 @@ namespace SVN.Core
         public async Task<string[]> FetchAvailableBranches(bool force = false)
         {
             if (!TryStart())
+            {
+                if (_cachedBranches != null)
+                {
+                    LogInfo("[Branches] Using cached branches (module busy).");
+                    return _cachedBranches;
+                }
                 return Array.Empty<string>();
+            }
 
             try
             {
                 if (_isFetchingBranches)
                 {
-                    LogInfo("[Branches] Fetch already in progress → skipping duplicate call.");
+                    LogInfo("[Branches] Fetch already in progress → returning cache.");
                     return _cachedBranches ?? Array.Empty<string>();
                 }
 
@@ -922,16 +938,10 @@ namespace SVN.Core
                     await svnManager.CancelBackgroundTasksAsync();
 
                     string repoRoot = svnManager.GetRepoRoot()?.Trim().TrimEnd('/');
-
                     if (string.IsNullOrWhiteSpace(repoRoot))
                     {
-                        string rootOutput =
-                            await SvnRunner.RunAsync(
-                                "info --show-item repos-root-url",
-                                svnManager.WorkingDir);
-
+                        string rootOutput = await SvnRunner.RunAsync("info --show-item repos-root-url", svnManager.WorkingDir);
                         repoRoot = rootOutput?.Trim().TrimEnd('/');
-
                         if (string.IsNullOrWhiteSpace(repoRoot))
                         {
                             LogErrorLocal("[Critical Error] Repo root missing.");
@@ -940,22 +950,16 @@ namespace SVN.Core
                     }
 
                     string branchesUrl = $"{repoRoot}/branches";
-
                     LogInfo("[Debug] Scanning branches at:");
                     LogInfo(branchesUrl);
 
-                    string rawOutput =
-                        await SvnRunner.RunAsync(
-                            $"list \"{branchesUrl}\" --non-interactive",
-                            svnManager.WorkingDir);
+                    string rawOutput = await SvnRunner.RunAsync($"list \"{branchesUrl}\" --non-interactive", svnManager.WorkingDir);
 
                     if (string.IsNullOrWhiteSpace(rawOutput))
                     {
                         LogWarning("Branches folder is empty.");
-
                         _cachedBranches = Array.Empty<string>();
                         _branchesCacheValid = true;
-
                         return _cachedBranches;
                     }
 
@@ -974,7 +978,6 @@ namespace SVN.Core
                     _branchesCacheValid = true;
 
                     LogSuccess($"Found {branchList.Length} branch(es).");
-
                     return branchList;
                 }
                 finally

@@ -12,6 +12,7 @@ namespace SVN.Core
     public class SVNShelve : SVNBase
     {
         private readonly string _shelfFolder;
+        private CancellationTokenSource _cts;
 
         public SVNShelve(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -20,8 +21,15 @@ namespace SVN.Core
                 Directory.CreateDirectory(_shelfFolder);
         }
 
+        public void Cancel()
+        {
+            _cts?.Cancel();
+        }
+
         public async void ExecuteShelve()
         {
+            if (IsProcessing) return;
+
             string name = svnUI.ShelfNameInput?.text;
             if (string.IsNullOrWhiteSpace(name))
                 name = "Stash_" + DateTime.Now.ToString("HHmm");
@@ -35,9 +43,7 @@ namespace SVN.Core
         public async void ExecuteUnshelve(string selectedShelf)
         {
             RemoveShelfUI(selectedShelf);
-
             await Unshelve(selectedShelf);
-
             RefreshShelvesUI();
         }
 
@@ -72,29 +78,31 @@ namespace SVN.Core
             }
         }
 
-        public void Button_RefreshShelvesUI()
-        {
-            RefreshShelvesUI();
-        }
+        public void Button_RefreshShelvesUI() => RefreshShelvesUI();
 
         public async Task Shelve(string shelfName)
         {
+            if (IsProcessing) return;
             IsProcessing = true;
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
                 string root = svnManager.WorkingDir;
-                string patchFile = GetShelfFilePath(shelfName);
 
-                string diff = await SvnRunner.RunAsync("diff", root);
+                string diff = await SvnRunner.RunAsync("diff", root, token: token);
                 if (string.IsNullOrWhiteSpace(diff))
                 {
                     SVNLogBridge.LogLine("<color=yellow>[Stash]</color> No changes to shelve.");
                     return;
                 }
 
+                await SvnRunner.RunAsync("revert -R .", root, token: token);
+
+                string patchFile = GetShelfFilePath(shelfName);
                 File.WriteAllText(patchFile, diff);
-                await SvnRunner.RunAsync("revert -R .", root);
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
                 if (statusModule != null)
@@ -106,6 +114,10 @@ namespace SVN.Core
 
                 SVNLogBridge.LogLine($"<color=green>[Stash]</color> Saved as: {shelfName}");
             }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[Stash] Cancelled.</color>");
+            }
             catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=red>Stash failed:</color> {ex.Message}");
@@ -113,12 +125,18 @@ namespace SVN.Core
             finally
             {
                 IsProcessing = false;
+                _cts?.Dispose();
+                _cts = null;
             }
         }
 
         public async Task Unshelve(string shelfName)
         {
+            if (IsProcessing) return;
             IsProcessing = true;
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
@@ -131,11 +149,15 @@ namespace SVN.Core
                     return;
                 }
 
-                await SvnRunner.RunAsync($"patch \"{patchFile}\"", root);
+                await SvnRunner.RunAsync($"patch \"{patchFile}\"", root, token: token);
                 File.Delete(patchFile);
 
                 SVNLogBridge.LogLine($"<color=green>[Stash]</color> Restored: {shelfName}");
                 await svnManager.RefreshStatus();
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[Stash] Unshelve cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -144,6 +166,8 @@ namespace SVN.Core
             finally
             {
                 IsProcessing = false;
+                _cts?.Dispose();
+                _cts = null;
             }
         }
 
@@ -157,21 +181,26 @@ namespace SVN.Core
                 var ui = child.GetComponent<ShelfItemUI>();
                 if (ui != null && ui.NameText.text == shelfName)
                 {
-                    GameObject.DestroyImmediate(child.gameObject);
+                    if (Application.isPlaying)
+                        GameObject.Destroy(child.gameObject);
+                    else
+                        GameObject.DestroyImmediate(child.gameObject);
                     return;
                 }
             }
         }
 
-        public Task<List<ShelfInfo>> GetShelvesList()
+        public async Task<List<ShelfInfo>> GetShelvesList()
         {
-            try
+            return await Task.Run(() =>
             {
-                var dirInfo = new DirectoryInfo(_shelfFolder);
-                dirInfo.Refresh();
+                var result = new List<ShelfInfo>();
+                try
+                {
+                    var dirInfo = new DirectoryInfo(_shelfFolder);
+                    if (!dirInfo.Exists) return result;
 
-                var shelfInfos = dirInfo.GetFiles("*.patch")
-                    .Select(fileInfo =>
+                    foreach (var fileInfo in dirInfo.GetFiles("*.patch"))
                     {
                         var info = new ShelfInfo
                         {
@@ -191,18 +220,13 @@ namespace SVN.Core
                             info.FileCount = 0;
                         }
 
-                        return info;
-                    })
-                    .Where(info => !string.IsNullOrEmpty(info.Name))
-                    .OrderByDescending(info => info.Date)
-                    .ToList();
+                        result.Add(info);
+                    }
+                }
+                catch { }
 
-                return Task.FromResult(shelfInfos);
-            }
-            catch
-            {
-                return Task.FromResult(new List<ShelfInfo>());
-            }
+                return result.OrderByDescending(i => i.Date).ToList();
+            });
         }
 
         private string FormatSize(long bytes)
@@ -224,7 +248,10 @@ namespace SVN.Core
 
             foreach (Transform child in container.Cast<Transform>().ToList())
             {
-                if (child != null && child.gameObject != null)
+                if (child == null || child.gameObject == null) continue;
+                if (Application.isPlaying)
+                    GameObject.Destroy(child.gameObject);
+                else
                     GameObject.DestroyImmediate(child.gameObject);
             }
 
@@ -262,7 +289,6 @@ namespace SVN.Core
 
                         if (ui.FilesLabel != null)
                             ui.FilesLabel.text = $"Files: {info.FileCount}";
-
                         if (ui.SizeLabel != null)
                             ui.SizeLabel.text = $"Size: {FormatSize(info.SizeBytes)}";
 

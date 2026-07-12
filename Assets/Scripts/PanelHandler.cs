@@ -70,17 +70,6 @@ namespace SVN.Core
             }
         }
 
-        public void Button_OpenResolve()
-        {
-            ResetAllPanels();
-
-            if (resolvePanel != null)
-            {
-                resolvePanel.SetActive(true);
-                SVNManager.Instance.GetModule<SVNResolve>().AutoRefreshConflictList();
-            }
-        }
-
         public void Button_CloseResolve()
         {
             if (resolvePanel != null)
@@ -143,16 +132,24 @@ namespace SVN.Core
             }
         }
 
+        public void Button_OpenResolve()
+        {
+            ResetAllPanels();
+            if (resolvePanel != null)
+            {
+                resolvePanel.SetActive(true);
+                SVNManager.Instance?.GetModule<SVNResolve>()?.AutoRefreshConflictList();
+            }
+        }
+
         public void Button_OpenCommit()
         {
             ResetAllPanels();
-
             if (commitPanel != null)
             {
                 commitPanel.SetActive(true);
             }
-
-            svnManager.GetModule<SVNStatus>().ShowOnlyModified();
+            svnManager?.GetModule<SVNStatus>()?.ShowOnlyModified();
         }
 
         public void Button_CloseCommit()

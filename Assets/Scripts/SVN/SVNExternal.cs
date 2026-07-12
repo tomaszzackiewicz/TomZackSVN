@@ -403,7 +403,6 @@ namespace SVN.Core
                 bool hadErrors = false;
                 var report = new System.Text.StringBuilder();
 
-                // Kolory
                 string colOK = "#00E5FF";
                 string colWARN = "#FFCC00";
                 string colERR = "#FF5555";
@@ -432,7 +431,6 @@ namespace SVN.Core
                 bool validUrl = true;
                 int targetPort = 22;
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[0/10] CHECKING REPOSITORY URL...</color>");
                 report.AppendLine("  Verifying that the provided repository URL is syntactically correct");
                 report.AppendLine("  and uses a supported protocol (SVN+SSH is expected).");
@@ -487,7 +485,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[1/10] CHECKING SVN CLIENT...</color>");
                 report.AppendLine("  Querying the local SVN command‑line client for its version number.");
                 try
@@ -503,7 +500,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[2/10] CHECKING OPENSSH CLIENT...</color>");
                 report.AppendLine("  Verifying that an OpenSSH client is installed and can be invoked.");
                 report.AppendLine("  This is required for SVN+SSH connections.");
@@ -532,7 +528,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[3/10] CHECKING SSH KEY...</color>");
                 report.AppendLine("  Looking for the private SSH key that will be used for authentication.");
                 string keyPath = SvnRunner.KeyPath;
@@ -562,7 +557,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[4/10] TESTING DNS RESOLUTION...</color>");
                 report.AppendLine("  Translating the hostname into an IP address using system DNS.");
                 try
@@ -579,7 +573,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[5/10] TESTING HOST REACHABILITY (ICMP)...</color>");
                 report.AppendLine("  Sending an ICMP Echo Request (ping) to the host.");
                 report.AppendLine("  A failure here is common – many servers block ICMP for security.");
@@ -599,7 +592,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[6/10] TESTING TCP PORT {targetPort}...</color>");
                 report.AppendLine($"  Attempting to establish a raw TCP connection to port {targetPort}.");
                 report.AppendLine("  This confirms that the server is reachable and the port is open.");
@@ -624,7 +616,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[7/10] TESTING DIRECT SSH CONNECTION...</color>");
                 report.AppendLine("  Performing an SSH handshake (without executing any remote command)");
                 report.AppendLine("  to verify that the key is accepted and authentication works.");
@@ -679,7 +670,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[8/10] TESTING SVN AUTHENTICATION...</color>");
                 report.AppendLine("  Connecting to the repository via SVN and retrieving its UUID.");
                 report.AppendLine("  This confirms that your credentials are valid.");
@@ -713,7 +703,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[9/10] CHECKING WORKING COPY STATE...</color>");
                 report.AppendLine("  Scanning the local working copy for locks, conflicts or missing files.");
                 try
@@ -736,7 +725,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
                 report.AppendLine($"<color={colSTEP}>[10/10] TESTING REPOSITORY RESPONSE SPEED...</color>");
                 report.AppendLine("  Fetching the last 5 log entries to measure server response time.");
                 sw.Restart();
@@ -754,9 +742,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // ------------------------------------------------
-                // Werdykt
-                // ------------------------------------------------
                 report.AppendLine("====================================");
                 report.AppendLine("  DIAGNOSTICS COMPLETE");
                 report.AppendLine("====================================");

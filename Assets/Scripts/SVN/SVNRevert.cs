@@ -19,9 +19,37 @@ namespace SVN.Core
         {
             SVNLogBridge.LogLine(msg);
             if (svnUI.CommitConsoleContent != null)
-            {
                 SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, msg, "REVERT", append: true);
+        }
+
+        private void ClearAllUI()
+        {
+            if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
+            if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
+            if (svnUI.TreeDisplay != null) SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+            if (svnUI.CommitTreeDisplay != null) SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+        }
+
+        private bool ConfirmAction(ref float lastClickTime, string warningMessage)
+        {
+            float timeSinceLastClick = Time.time - lastClickTime;
+
+            if (timeSinceLastClick > 5f)
+            {
+                lastClickTime = Time.time;
+                LogToConsole(warningMessage);
+                return false;
             }
+
+            if (timeSinceLastClick < 0.3f)
+            {
+                lastClickTime = Time.time;
+                LogToConsole("<color=#FFAA00><b>[Revert]</b></color> Confirmation too fast – press again to confirm.");
+                return false;
+            }
+
+            lastClickTime = -10f;
+            return true;
         }
 
         public async void RevertAll()
@@ -30,26 +58,10 @@ namespace SVN.Core
 
             await svnManager.CancelBackgroundTasksAsync();
 
-            float timeSinceLastClick = Time.time - _lastRevertAllClickTime;
-
-            if (timeSinceLastClick > 5f)
-            {
-                _lastRevertAllClickTime = Time.time;
-                LogToConsole(
+            if (!ConfirmAction(ref _lastRevertAllClickTime,
                     "<color=#FFAA00><b>[Revert All]</b></color> Are you sure? This will discard <b>ALL local changes</b>!\n" +
-                    "Press the button again within <b>5 seconds</b> to confirm.");
+                    "Press the button again within <b>5 seconds</b> to confirm."))
                 return;
-            }
-
-            if (timeSinceLastClick < 0.3f)
-            {
-                _lastRevertAllClickTime = Time.time;
-                LogToConsole(
-                    "<color=#FFAA00><b>[Revert All]</b></color> Confirmation too fast – press again to confirm.");
-                return;
-            }
-
-            _lastRevertAllClickTime = -10f;
 
             string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root))
@@ -82,21 +94,14 @@ namespace SVN.Core
                     return;
                 }
 
-                await RevertAsync(root, filesToRevert, msg => LogToConsole($"<color=green>[Progress]</color> {msg}"), token);
+                await RevertWorkingCopyAsync(root, msg => LogToConsole($"<color=green>[Progress]</color> {msg}"), token);
 
                 svnManager._diskChangesDetected = true;
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
-                if (statusModule != null)
-                {
-                    statusModule.ClearSVNTreeView();
-                    statusModule.ClearCurrentData();
-                }
-
-                if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
-                if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
-                if (svnUI.TreeDisplay != null) SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-                if (svnUI.CommitTreeDisplay != null) SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+                statusModule?.ClearSVNTreeView();
+                statusModule?.ClearCurrentData();
+                ClearAllUI();
 
                 LogToConsole($"<color=green><b>SUCCESS!</b></color> Reverted <b>{filesToRevert.Length}</b> files.");
                 LogToConsole("<color=#4FC3F7>Refreshing SVN status...</color>");
@@ -134,49 +139,40 @@ namespace SVN.Core
 
             await svnManager.CancelBackgroundTasksAsync();
 
-            float timeSinceLastClick = Time.time - _lastRevertSingleClickTime;
-
-            if (timeSinceLastClick > 5f)
-            {
-                _lastRevertSingleClickTime = Time.time;
-                SVNLogBridge.LogLine(
+            if (!ConfirmAction(ref _lastRevertSingleClickTime,
                     $"<color=#FFAA00><b>[Revert]</b></color> Are you sure you want to revert <b>{element.Name}</b>?\n" +
-                    "Press the button again within <b>5 seconds</b> to confirm.");
+                    "Press the button again within <b>5 seconds</b> to confirm."))
                 return;
-            }
 
-            _lastRevertSingleClickTime = -10f;
             string root = svnManager.WorkingDir;
-
             if (string.IsNullOrEmpty(root)) return;
 
             IsProcessing = true;
+
+            _revertCts = new CancellationTokenSource();
+            var token = _revertCts.Token;
 
             SVNLogBridge.LogLine($"<b>Reverting:</b> {element.Name}...");
 
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
-                await SvnRunner.RunAsync($"revert \"{element.FullPath}\"", root);
+                await SvnRunner.RunAsync($"revert \"{element.FullPath}\"", root, token: token);
 
                 SVNLogBridge.LogLine($"<color=green>Successfully reverted:</color> {element.Name}");
 
                 svnManager._diskChangesDetected = true;
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
-
-                if (statusModule != null)
-                {
-                    statusModule.ClearSVNTreeView();
-                    statusModule.ClearCurrentData();
-                }
-
-                if (svnUI.SvnTreeView != null) svnUI.SvnTreeView.ClearView();
-                if (svnUI.SVNCommitTreeDisplay != null) svnUI.SVNCommitTreeDisplay.ClearView();
-                if (svnUI.TreeDisplay != null) SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-                if (svnUI.CommitTreeDisplay != null) SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+                statusModule?.ClearSVNTreeView();
+                statusModule?.ClearCurrentData();
+                ClearAllUI();
 
                 await svnManager.RefreshStatus();
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[Revert]</color> Operation cancelled by user.");
             }
             catch (Exception ex)
             {
@@ -184,11 +180,13 @@ namespace SVN.Core
             }
             finally
             {
+                _revertCts?.Dispose();
+                _revertCts = null;
                 IsProcessing = false;
             }
         }
 
-        public static async Task<string> RevertAsync(string workingDir, string[] files, Action<string> onProgress, CancellationToken token = default)
+        private static async Task RevertWorkingCopyAsync(string workingDir, Action<string> onProgress, CancellationToken token)
         {
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim()).Replace('\\', '/');
 
@@ -210,7 +208,6 @@ namespace SVN.Core
                 }
 
                 SVNLogBridge.LogLine("<color=green>[SVN]</color> Recursive revert completed successfully.");
-                return result;
             }
             catch (OperationCanceledException)
             {
@@ -221,11 +218,6 @@ namespace SVN.Core
                 SVNLogBridge.LogError($"[SVN Revert Error] Recursive revert failed: {ex.Message}");
                 throw;
             }
-        }
-
-        public static async Task<string> RevertAsync(string workingDir, string[] files, Action<string> onProgress = null)
-        {
-            return await RevertAsync(workingDir, files, onProgress, CancellationToken.None);
         }
     }
 }
