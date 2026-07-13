@@ -52,4 +52,12 @@ public class SvnTreeView : MonoBehaviour
             if (obj != null) obj.SetActive(false);
         }
     }
+
+    public void FilterTree(string filterText)
+    {
+        foreach (var lineController in GetComponentsInChildren<SvnLineController>(true))
+        {
+            lineController.ApplyFilter(filterText);
+        }
+    }
 }

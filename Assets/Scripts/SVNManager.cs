@@ -188,6 +188,8 @@ namespace SVN.Core
             WorkingDir = SVNAssetLocator.NormalizePath(path);
             SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
 
+            //InitFileSystemWatcher();
+
             await RefreshRepositoryInfo();
         }
 
@@ -308,6 +310,7 @@ namespace SVN.Core
 
             if (Directory.Exists(WorkingDir))
             {
+                //InitFileSystemWatcher();
                 await InitializeActiveProject(project);
             }
 
@@ -825,7 +828,7 @@ namespace SVN.Core
             _diskDebounceCts?.Cancel();
             _diskDebounceCts = new CancellationTokenSource();
 
-            Task.Delay(TimeSpan.FromSeconds(2), _diskDebounceCts.Token)
+            Task.Delay(TimeSpan.FromSeconds(1.5), _diskDebounceCts.Token)
                 .ContinueWith(t =>
                 {
                     if (!t.IsCanceled && _diskChangesDetected)

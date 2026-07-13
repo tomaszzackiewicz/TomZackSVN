@@ -1,19 +1,17 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
-using System;
 
 public class SVNHoverHandler : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
 {
-    public event Action OnHoverEnter;
-    public event Action OnHoverExit;
+    public event System.Action OnHoverEnter;
+    public event System.Action OnHoverExit;
 
-    public void OnPointerEnter(PointerEventData eventData)
-    {
-        OnHoverEnter?.Invoke();
-    }
+    public void OnPointerEnter(PointerEventData eventData) => OnHoverEnter?.Invoke();
+    public void OnPointerExit(PointerEventData eventData) => OnHoverExit?.Invoke();
 
-    public void OnPointerExit(PointerEventData eventData)
+    private void OnDestroy()
     {
-        OnHoverExit?.Invoke();
+        OnHoverEnter = null;
+        OnHoverExit = null;
     }
 }

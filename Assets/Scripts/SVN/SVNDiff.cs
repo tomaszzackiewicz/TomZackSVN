@@ -79,38 +79,34 @@ namespace SVN.Core
 
         public async Task ShowDiff(string relativePath)
         {
-            await svnManager.CancelBackgroundTasksAsync();
+            if (IsProcessing) return;
 
-            if (string.IsNullOrWhiteSpace(svnManager.WorkingDir))
-            {
-                LogBoth("<color=red>Error:</color> Working Directory is not set!");
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(relativePath))
-            {
-                LogBoth("<color=yellow>No file selected.</color>");
-                return;
-            }
-
-            string fullPath = Path.Combine(svnManager.WorkingDir, relativePath);
-            if (Directory.Exists(fullPath))
-            {
-                LogBoth("<color=yellow>Diff for directories is not supported. Select a file.</color>");
-                return;
-            }
-
-            string editorPath = GetMergeToolPath();
-            if (string.IsNullOrEmpty(editorPath) || !File.Exists(editorPath))
-            {
-                LogBoth($"<color=red>Error:</color> Invalid Diff Tool path! (Found: '{editorPath}')");
-                return;
-            }
-
-            LogBoth($"Comparing: <color=green>{relativePath}</color>...");
-
+            IsProcessing = true;
             try
             {
+                await svnManager.CancelBackgroundTasksAsync();
+
+                if (string.IsNullOrEmpty(svnManager.WorkingDir))
+                {
+                    LogBoth("<color=red>Error:</color> Working Directory is not set!");
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(relativePath))
+                {
+                    LogBoth("<color=yellow>No file selected.</color>");
+                    return;
+                }
+
+                string editorPath = GetMergeToolPath();
+                if (string.IsNullOrEmpty(editorPath) || !File.Exists(editorPath))
+                {
+                    LogBoth($"<color=red>Error:</color> Invalid Diff Tool path! (Found: '{editorPath}')");
+                    return;
+                }
+
+                LogBoth($"Comparing: <color=green>{relativePath}</color>...");
+
                 string diffContent = await SvnRunner.RunAsync($"diff \"{relativePath}\"", svnManager.WorkingDir, false);
 
                 if (string.IsNullOrWhiteSpace(diffContent))
@@ -122,8 +118,8 @@ namespace SVN.Core
                 if (diffContent.Contains("Cannot display: file marked as a binary type"))
                 {
                     LogBoth("<color=orange>Binary File:</color> Opening Explorer...");
-                    string explorerPath = fullPath.Replace("/", "\\");
-                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{explorerPath}\"");
+                    string fullPath = Path.Combine(svnManager.WorkingDir, relativePath).Replace("/", "\\");
+                    System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{fullPath}\"");
                     return;
                 }
 
@@ -137,6 +133,27 @@ namespace SVN.Core
             {
                 LogBoth($"<color=red>Exception:</color> {ex.Message}");
             }
+            finally
+            {
+                IsProcessing = false;
+            }
+        }
+
+        private string GetMergeToolPath()
+        {
+            string path = svnManager.MergeToolPath;
+            if (!string.IsNullOrWhiteSpace(path))
+                return path.Trim().Replace("\"", "");
+
+            if (svnUI.SettingsMergeToolPathInput != null)
+            {
+                path = svnUI.SettingsMergeToolPathInput.text;
+                if (!string.IsNullOrWhiteSpace(path))
+                    return path.Trim().Replace("\"", "");
+            }
+
+            path = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
+            return path.Trim().Replace("\"", "");
         }
 
         private string FormatDiffForExternalEditor(string rawDiff)
@@ -366,23 +383,6 @@ namespace SVN.Core
             header.AppendLine("\n────────────────────────────────────────\n");
 
             return header.ToString() + sb.ToString();
-        }
-
-        private string GetMergeToolPath()
-        {
-            string path = svnManager.MergeToolPath;
-            if (!string.IsNullOrWhiteSpace(path))
-                return path.Trim().Replace("\"", "");
-
-            if (svnUI.SettingsMergeToolPathInput != null)
-            {
-                path = svnUI.SettingsMergeToolPathInput.text;
-                if (!string.IsNullOrWhiteSpace(path))
-                    return path.Trim().Replace("\"", "");
-            }
-
-            path = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-            return path.Trim().Replace("\"", "");
         }
 
         public void OpenExternalDiff(SvnTreeElement element)

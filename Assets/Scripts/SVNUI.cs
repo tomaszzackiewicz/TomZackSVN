@@ -46,6 +46,7 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI statusInfoText;
         [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
+        [SerializeField] private TMP_InputField filterTreeViewInput;
         [SerializeField] private SvnTreeView svnTreeView;
         [SerializeField] private SvnTreeView svnCommitTreeDisplay;
         [Header("Ignored")]
@@ -130,6 +131,7 @@ namespace SVN.Core
         public TextMeshProUGUI StatusInfoText => statusInfoText;
         public TextMeshProUGUI LocksText => locksText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
+        public TMP_InputField FilterTreeViewInput => filterTreeViewInput;
         public SvnTreeView SvnTreeView => svnTreeView;
         public SvnTreeView SVNCommitTreeDisplay => svnCommitTreeDisplay;
         public TextMeshProUGUI IgnoredText => ignoredText;
@@ -203,6 +205,15 @@ namespace SVN.Core
             yield return new WaitForSeconds(delay);
             NotificationPanel.SetActive(false);
             _notificationCoroutine = null;
+        }
+
+        public void OnTreeViewFilterChanged(string value)
+        {
+            var treeView = SvnTreeView;
+            if (treeView != null)
+            {
+                treeView.FilterTree(value);
+            }
         }
     }
 }

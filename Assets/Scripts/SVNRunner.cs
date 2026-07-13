@@ -37,10 +37,10 @@ namespace SVN.Core
 
         private static void IncrementOperations()
         {
-            int count = Interlocked.Increment(ref _activeOperationsCount);
             lock (_processingLock)
             {
-                if (!_processingState && count > 0)
+                _activeOperationsCount++;
+                if (!_processingState)
                 {
                     _processingState = true;
                     SVNLogBridge.LogLine("<color=#00FFAA>[SVN]</color> Processing START", false);
@@ -51,11 +51,13 @@ namespace SVN.Core
 
         private static void DecrementOperations()
         {
-            int count = Interlocked.Decrement(ref _activeOperationsCount);
-            if (count < 0) { _activeOperationsCount = 0; count = 0; }
             lock (_processingLock)
             {
-                if (_processingState && count == 0)
+                _activeOperationsCount--;
+                if (_activeOperationsCount < 0)
+                    _activeOperationsCount = 0;
+
+                if (_processingState && _activeOperationsCount == 0)
                 {
                     _processingState = false;
                     SVNLogBridge.LogLine("<color=#FFCC00>[SVN]</color> Processing END", true);
@@ -368,7 +370,24 @@ namespace SVN.Core
 
         private static async Task WaitForExitAsync(Process process, CancellationToken token)
         {
-            await Task.Run(() => process.WaitForExit(), token);
+            var tcs = new TaskCompletionSource<bool>();
+
+            using (token.Register(() =>
+            {
+                try { process.Kill(); } catch { }
+                tcs.TrySetCanceled(token);
+            }))
+            {
+                process.EnableRaisingEvents = true;
+                process.Exited += (s, e) => tcs.TrySetResult(true);
+
+                if (process.HasExited)
+                {
+                    tcs.TrySetResult(true);
+                }
+
+                await tcs.Task;
+            }
         }
 
         public static async Task WaitForSemaphoreFreeAsync(CancellationToken token = default)

@@ -443,7 +443,7 @@ namespace SVN.Core
                                     $"<b>Speed:</b> {speedMB:F2} MB/s\n";
                             }, null);
 
-                            await Task.Delay(15000, token);
+                            await Task.Delay(1000, token);
                         }
                         catch (TaskCanceledException) { break; }
                         catch { }

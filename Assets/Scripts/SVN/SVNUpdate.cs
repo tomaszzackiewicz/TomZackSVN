@@ -357,14 +357,20 @@ namespace SVN.Core
 
         public void CancelUpdate()
         {
-            if (_updateCTS == null || !svnManager.IsUpdateRunning) return;
+            if (_updateCTS == null || !svnManager.IsUpdateRunning)
+                return;
 
-            SVNLogBridge.LogLine("<color=orange><b>[SVN]</b> Cancel requested...</color>", false);
+            SVNLogBridge.LogLine(
+                "<color=orange><b>[SVN]</b> Cancel requested...</color>",
+                false
+            );
+
             svnManager.WasUpdateCanceled = true;
             svnManager.IsUpdateRunning = false;
             svnManager.LastUpdateSucceeded = false;
 
-            _updateCTS.Cancel();
+            try { _updateCTS?.Cancel(); } catch { }
+
             _runningTask = null;
             _sessionId = Guid.NewGuid();
 
@@ -379,13 +385,30 @@ namespace SVN.Core
             };
 
             var snapshot = svnManager.CurrentSnapshot;
+
             string statusColor = "#FFAA00";
-            string projectName = snapshot?.ProjectName ??
-                (string.IsNullOrEmpty(svnManager.WorkingDir) ? "Unknown project" : Path.GetFileName(svnManager.WorkingDir.TrimEnd('/', '\\')));
-            string user = snapshot?.CurrentUser ?? svnManager.CurrentUserName ?? "Unknown";
-            string branch = snapshot?.Branch ?? "unknown";
-            string revision = snapshot?.Revision ?? "unknown";
-            string repo = Uri.TryCreate(svnManager.RepositoryUrl, UriKind.Absolute, out var uri) ? uri.Host : "Unknown repo";
+
+            string projectName =
+                snapshot?.ProjectName ??
+                (string.IsNullOrEmpty(svnManager.WorkingDir)
+                    ? "Unknown project"
+                    : Path.GetFileName(svnManager.WorkingDir.TrimEnd('/', '\\')));
+
+            string user =
+                snapshot?.CurrentUser ??
+                svnManager.CurrentUserName ??
+                "Unknown";
+
+            string branch =
+                snapshot?.Branch ?? "unknown";
+
+            string revision =
+                snapshot?.Revision ?? "unknown";
+
+            string repo =
+                Uri.TryCreate(svnManager.RepositoryUrl, UriKind.Absolute, out var uri)
+                    ? uri.Host
+                    : "Unknown repo";
 
             string line =
                 $"<size=150%><color={statusColor}>●</color></size> " +
@@ -397,7 +420,12 @@ namespace SVN.Core
                 $"<color=#E6E6E6>Srv:{repo}</color> | " +
                 $"<color=#E6E6E6>Update Interrupted</color>";
 
-            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, line, "INFO", append: false);
+            SVNLogBridge.UpdateUIField(
+                svnUI.StatusInfoText,
+                line,
+                "INFO",
+                append: false
+            );
         }
 
         public string ParseRevisionFromInfo(string infoOutput)
