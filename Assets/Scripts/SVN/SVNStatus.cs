@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -373,15 +372,11 @@ namespace SVN.Core
                     Name = "[Repository Root Change]",
                     Depth = 0,
                     Status = rootInfo.Status,
-
                     IsFolder = true,
-
                     IsCommitDelegate = true,
-
                     IsChecked = true,
                     IsExpanded = true,
                     IsVisible = true,
-
                     Size = "",
                     Bytes = 0
                 });
@@ -394,17 +389,7 @@ namespace SVN.Core
                 if (relPath == ".")
                     continue;
 
-                string normalizedPath = relPath.Replace('\\', '/');
-
-                if (normalizedPath.Contains(":/"))
-                {
-                    int trunkIdx = normalizedPath.LastIndexOf("trunk/");
-
-                    if (trunkIdx != -1)
-                    {
-                        normalizedPath = normalizedPath.Substring(trunkIdx);
-                    }
-                }
+                string normalizedPath = SvnRunner.NormalizeRepositoryPath(relPath);
 
                 string[] parts = normalizedPath.Split('/');
                 string currentPath = "";
@@ -484,9 +469,6 @@ namespace SVN.Core
                     {
                         isChecked = prev;
                     }
-
-                    if (currentPath.Contains('\t'))
-                        Debug.Log($"[DEBUG BuildTree] CURRENT PATH has tab: '{currentPath}'");
 
                     elements.Add(new SvnTreeElement
                     {
@@ -640,86 +622,93 @@ namespace SVN.Core
                 token: cancellationToken
             );
 
-            var statusDict = new Dictionary<string, SvnChangeInfo>(2048);
-
             if (string.IsNullOrWhiteSpace(output))
-                return statusDict;
+                return new Dictionary<string, SvnChangeInfo>(2048);
 
-            string[] lines = output.Split(
-                new[] { '\n', '\r' },
-                StringSplitOptions.RemoveEmptyEntries
-            );
-
-            foreach (var line in lines)
+            var statusDict = await Task.Run(() =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                var dict = new Dictionary<string, SvnChangeInfo>(2048);
+                string[] lines = output.Split(
+                    new[] { '\n', '\r' },
+                    StringSplitOptions.RemoveEmptyEntries
+                );
 
-                if (line.Length < svnStatusPrefixLength)
-                    continue;
-
-                char itemStatus = line[0];
-                char propStatus = line[1];
-
-                string stat = itemStatus != ' ' ? itemStatus.ToString().ToUpper() : propStatus.ToString().ToUpper();
-
-                if (!allowedSvnStatuses.Contains(stat))
-                    continue;
-
-                string rawPath = line.Substring(svnStatusPrefixLength).TrimStart();
-
-                rawPath = new string(rawPath.Where(c => !char.IsControl(c) && c != '\u00A0').ToArray());
-                string cleanPath = SvnRunner.CleanSvnPath(rawPath).Replace("\\", "/");
-
-                bool isRootChange = cleanPath == ".";
-
-                if (isRootChange)
+                foreach (var line in lines)
                 {
-                    statusDict["."] = new SvnChangeInfo
+                    Debug.Log($"SVN STATUS RAW = [{line}]");
+                }
+
+                foreach (var line in lines)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (line.Length < svnStatusPrefixLength)
+                        continue;
+
+                    char itemStatus = line[0];
+                    char propStatus = line[1];
+
+                    string stat = itemStatus != ' ' ? itemStatus.ToString().ToUpper() : propStatus.ToString().ToUpper();
+
+                    if (!allowedSvnStatuses.Contains(stat))
+                        continue;
+
+                    string rawPath = line.Substring(svnStatusPrefixLength);
+
+                    string cleanPath = SvnRunner.NormalizeRepositoryPath(rawPath);
+
+                    bool isRootChange = cleanPath == ".";
+
+                    if (isRootChange)
+                    {
+                        dict["."] = new SvnChangeInfo
+                        {
+                            Status = stat,
+                            Size = "DIR",
+                            Bytes = 0,
+                            Exists = true
+                        };
+                        continue;
+                    }
+
+                    string fullPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
+
+                    bool isActuallyFile = File.Exists(fullPath);
+                    bool isActuallyDir = !isActuallyFile && Directory.Exists(fullPath);
+                    bool existsOnDisk = isActuallyFile || isActuallyDir;
+
+                    string sizeLabel;
+                    long bytes = 0;
+
+                    if (existsOnDisk)
+                    {
+                        sizeLabel = isActuallyFile ? fileLabel : directoryLabel;
+
+                        if (isActuallyFile)
+                        {
+                            try
+                            {
+                                var fileInfo = new FileInfo(fullPath);
+                                bytes = fileInfo.Length;
+                            }
+                            catch { bytes = 0; }
+                        }
+                    }
+                    else
+                    {
+                        sizeLabel = Path.HasExtension(cleanPath) ? fileLabel : directoryLabel;
+                    }
+
+                    dict[cleanPath] = new SvnChangeInfo
                     {
                         Status = stat,
-                        Size = "DIR",
-                        Bytes = 0,
-                        Exists = true
+                        Size = sizeLabel,
+                        Bytes = bytes,
+                        Exists = existsOnDisk
                     };
-
-                    continue;
                 }
-                string fullPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
-
-                bool isActuallyFile = File.Exists(fullPath);
-                bool isActuallyDir = !isActuallyFile && Directory.Exists(fullPath);
-                bool existsOnDisk = isActuallyFile || isActuallyDir;
-
-                string sizeLabel;
-                long bytes = 0;
-
-                if (existsOnDisk)
-                {
-                    sizeLabel = isActuallyFile ? fileLabel : directoryLabel;
-
-                    if (isActuallyFile)
-                    {
-                        try
-                        {
-                            var fileInfo = new FileInfo(fullPath);
-                            bytes = fileInfo.Length;
-                        }
-                        catch { bytes = 0; }
-                    }
-                }
-                else
-                {
-                    sizeLabel = Path.HasExtension(cleanPath) ? fileLabel : directoryLabel;
-                }
-
-                statusDict[cleanPath] = new SvnChangeInfo
-                {
-                    Status = stat,
-                    Size = sizeLabel,
-                    Bytes = bytes,
-                    Exists = existsOnDisk
-                };
-            }
+                return dict;
+            }, cancellationToken);
 
             return statusDict;
         }
@@ -842,12 +831,7 @@ namespace SVN.Core
 
         private string NormalizeLockPath(string path)
         {
-            if (string.IsNullOrEmpty(path)) return "";
-            path = path.Replace("\\", "/");
-            string root = svnManager.WorkingDir.Replace("\\", "/").TrimEnd('/');
-            if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                path = path.Substring(root.Length);
-            return path.TrimStart('/');
+            return SvnRunner.NormalizeRepositoryPath(path);
         }
 
         public void NotifySelectionChanged()
@@ -859,9 +843,8 @@ namespace SVN.Core
                 svnUI.SVNCommitTreeDisplay != null &&
                 svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
 
-            if (commitPanelVisible)
+            if (commitPanelVisible && _commitTreeData != null)
             {
-                _commitTreeData = BuildCommitView(_flatTreeData);
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
             }
 
@@ -874,5 +857,4 @@ namespace SVN.Core
             _cts?.Cancel();
         }
     }
-
 }

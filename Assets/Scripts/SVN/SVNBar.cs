@@ -1,15 +1,17 @@
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
-using System.Threading;
 
 namespace SVN.Core
 {
     public class SVNBar : SVNBase
     {
         private string _svnVersionCached = "";
+        private DateTime _lastSizeCalcTime = DateTime.MinValue;
+        private string _lastSizeCalcValue = "";
 
         public SVNBar(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -42,38 +44,12 @@ namespace SVN.Core
 
         public async Task StartLightSizeMonitor(string path, CancellationToken token)
         {
-            string lastFormatted = svnManager.CurrentSnapshot?.WorkingCopySize ?? "?";
+            await Task.CompletedTask;
+        }
 
-            while (!token.IsCancellationRequested)
-            {
-                try
-                {
-                    long bytes = await CalculateWorkingCopySizeBytes(path, token);
-                    double gb = bytes / (1024d * 1024d * 1024d);
-                    string formatted = gb >= 1.0 ? $"{gb:F2} GB" : $"{bytes / (1024d * 1024d):F2} MB";
-
-                    if (formatted != lastFormatted && svnManager.CurrentSnapshot != null)
-                    {
-                        svnManager.CurrentSnapshot.WorkingCopySize = formatted;
-                        svnManager.RaiseSnapshotChanged(svnManager.CurrentSnapshot);
-                        lastFormatted = formatted;
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch { }
-
-                try
-                {
-                    await Task.Delay(5000, token);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
+        public async Task StartLiveSizeMonitor(string path, CancellationToken token)
+        {
+            await Task.CompletedTask;
         }
 
         public async Task<string> GetFolderSizeAsync(string path)
@@ -82,14 +58,16 @@ namespace SVN.Core
             {
                 try
                 {
-                    DirectoryInfo dir = new DirectoryInfo(path);
-                    if (!dir.Exists) return "0 GB";
+                    string targetPath = Path.Combine(path, "Assets");
+                    if (!Directory.Exists(targetPath)) targetPath = path;
+
+                    DirectoryInfo dir = new DirectoryInfo(targetPath);
+                    if (!dir.Exists) return "0 MB";
 
                     long bytes = 0;
-
                     foreach (var fi in dir.EnumerateFiles("*", SearchOption.AllDirectories))
                     {
-                        bytes += fi.Length;
+                        try { bytes += fi.Length; } catch { }
                     }
 
                     double gigabytes = (double)bytes / (1024 * 1024 * 1024);
@@ -111,6 +89,7 @@ namespace SVN.Core
             var match = Regex.Match(info, $@"^{key}\s*(.*)", RegexOptions.Multiline | RegexOptions.IgnoreCase);
             return match.Success ? match.Groups[1].Value.Trim() : "unknown";
         }
+
         private async Task EnsureVersionCached()
         {
             if (string.IsNullOrEmpty(_svnVersionCached))
@@ -125,8 +104,8 @@ namespace SVN.Core
         }
 
         public async Task<SVNProjectInfoSnapshot> BuildSnapshotAsync(
-    SVNProject svnProject,
-    string path)
+SVNProject svnProject,
+string path)
         {
             var snapshot = new SVNProjectInfoSnapshot();
 
@@ -146,23 +125,31 @@ namespace SVN.Core
                 var infoTask = SvnRunner.GetInfoAsync(path);
                 var remoteRevTask = SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", path);
 
-                string rawInfo = await infoTask;
+                bool cacheIsValid = (DateTime.UtcNow - _lastSizeCalcTime).TotalSeconds < 10;
+                Task<string> sizeTask;
+
+                if (cacheIsValid && !string.IsNullOrEmpty(_lastSizeCalcValue))
+                {
+                    sizeTask = Task.FromResult(_lastSizeCalcValue);
+                }
+                else
+                {
+                    sizeTask = GetFolderSizeAsync(path);
+                }
+
+                await Task.WhenAll(infoTask, remoteRevTask, sizeTask);
+
+                string rawInfo = infoTask.Result;
 
                 if (string.IsNullOrWhiteSpace(rawInfo) || rawInfo == "unknown")
                     return snapshot;
 
                 snapshot.ProjectName = projectName;
 
-                if (!string.IsNullOrEmpty(svnManager.CurrentSnapshot?.WorkingCopySize) &&
-                    svnManager.CurrentSnapshot.WorkingCopySize != "?" &&
-                    svnManager.CurrentSnapshot.WorkingCopySize != "calculating…")
-                {
-                    snapshot.WorkingCopySize = svnManager.CurrentSnapshot.WorkingCopySize;
-                }
-                else
-                {
-                    snapshot.WorkingCopySize = await GetFolderSizeAsync(path);
-                }
+                _lastSizeCalcValue = sizeTask.Result;
+                _lastSizeCalcTime = DateTime.UtcNow;
+
+                snapshot.WorkingCopySize = sizeTask.Result;
 
                 snapshot.Revision = ExtractValue(rawInfo, "Revision:");
                 snapshot.Author = ExtractValue(rawInfo, "Last Changed Author:");
@@ -171,7 +158,7 @@ namespace SVN.Core
                 if (int.TryParse(snapshot.Revision, out _))
                 {
                     var logTask = GetRealCommitInfoAsync(path, snapshot.Revision);
-                    string remoteRevRaw = await remoteRevTask;
+                    string remoteRevRaw = remoteRevTask.Result;
 
                     if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
                         snapshot.RemoteRevision = remoteRevRaw.Trim();
@@ -184,7 +171,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    string remoteRevRaw = await remoteRevTask;
+                    string remoteRevRaw = remoteRevTask.Result;
                     if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
                         snapshot.RemoteRevision = remoteRevRaw.Trim();
                 }
@@ -239,61 +226,35 @@ namespace SVN.Core
             }
         }
 
-        public void RenderSnapshot(
-    SVNProjectInfoSnapshot snapshot,
-    bool isRefreshing = false)
+        public void RenderSnapshot(SVNProjectInfoSnapshot snapshot, bool isRefreshing = false)
         {
             if (snapshot == null || !snapshot.IsValid)
             {
-                SVNLogBridge.UpdateUIField(
-                    svnUI.StatusInfoText,
-                    "<size=150%><color=black>●</color></size> Invalid working copy",
-                    "INFO",
-                    append: false);
-
+                SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, "<size=150%><color=black>●</color></size> Invalid working copy", "INFO", append: false);
                 return;
             }
 
             var state = svnManager.OperationInfo;
-
-            bool isBusy =
-                state.State == SVNOperationState.Updating;
-
-            bool isCanceled =
-                state.State == SVNOperationState.Canceled;
-
-            bool isFailed =
-                state.State == SVNOperationState.Failed;
+            bool isBusy = state.State == SVNOperationState.Updating;
+            bool isCanceled = state.State == SVNOperationState.Canceled;
+            bool isFailed = state.State == SVNOperationState.Failed;
 
             string statusColor = "#4ca74c";
+            if (isRefreshing || isBusy) statusColor = "#FFFF00";
+            else if (isCanceled) statusColor = "#FFAA00";
+            else if (isFailed) statusColor = "#FF1A1A";
+            else if (snapshot.IsOutdated) statusColor = "#FF1A1A";
 
-            if (isRefreshing || isBusy)
-                statusColor = "#FFFF00";
-            else if (isCanceled)
-                statusColor = "#FFAA00";
-            else if (isFailed)
-                statusColor = "#FF1A1A";
-            else if (snapshot.IsOutdated)
-                statusColor = "#FF1A1A";
+            string shortDate = snapshot.Date != "unknown" ? snapshot.Date.Split('(')[0].Trim() : "no commits";
 
-            string shortDate =
-                snapshot.Date != "unknown"
-                    ? snapshot.Date.Split('(')[0].Trim()
-                    : "no commits";
-
-            string revDisplay =
-                snapshot.IsOutdated
-                    ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
-                    : snapshot.Revision;
+            string revDisplay = snapshot.IsOutdated
+                ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
+                : snapshot.Revision;
 
             string statusSuffix = "";
-
-            if (isBusy)
-                statusSuffix = " | Updating...";
-            else if (isCanceled)
-                statusSuffix = " | Update Canceled";
-            else if (isFailed)
-                statusSuffix = $" | Update Interrupted";
+            if (isBusy) statusSuffix = " | Updating...";
+            else if (isCanceled) statusSuffix = " | Update Canceled";
+            else if (isFailed) statusSuffix = $" | Update Interrupted";
 
             string line =
                 $"<size=150%><color={statusColor}>●</color></size> " +
@@ -308,20 +269,13 @@ namespace SVN.Core
                 $"<color=#E6E6E6>SVN: {snapshot.SvnVersion}</color>" +
                 statusSuffix;
 
-            SVNLogBridge.UpdateUIField(
-                svnUI.StatusInfoText,
-                line,
-                "INFO",
-                append: false);
+            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, line, "INFO", append: false);
         }
 
-        public async Task<SVNProjectInfoSnapshot> BuildSnapshot(
-    SVNProject project,
-    string workingDir)
+        public async Task<SVNProjectInfoSnapshot> BuildSnapshot(SVNProject project, string workingDir)
         {
             string info = await SvnRunner.GetInfoAsync(workingDir);
             string revision = SVNAssetLocator.ParseRevision(info);
-
             string author = ExtractAuthor(info);
             string date = ExtractDate(info);
 
@@ -363,49 +317,29 @@ namespace SVN.Core
 
         public void RenderFromSnapshot(SVNProjectInfoSnapshot snapshot)
         {
-            if (snapshot == null)
-                return;
+            if (snapshot == null) return;
 
             var state = svnManager.OperationInfo;
-
-            bool isBusy =
-                state.State == SVNOperationState.Updating;
-
-            bool isCanceled =
-                state.State == SVNOperationState.Canceled;
-
-            bool isFailed =
-                state.State == SVNOperationState.Failed;
+            bool isBusy = state.State == SVNOperationState.Updating;
+            bool isCanceled = state.State == SVNOperationState.Canceled;
+            bool isFailed = state.State == SVNOperationState.Failed;
 
             string statusColor = "#4ca74c";
+            if (isBusy) statusColor = "#FFFF00";
+            else if (isCanceled) statusColor = "#FFAA00";
+            else if (isFailed) statusColor = "#FF1A1A";
+            else if (snapshot.IsOutdated) statusColor = "#FF1A1A";
 
-            if (isBusy)
-                statusColor = "#FFFF00";
-            else if (isCanceled)
-                statusColor = "#FFAA00";
-            else if (isFailed)
-                statusColor = "#FF1A1A";
-            else if (snapshot.IsOutdated)
-                statusColor = "#FF1A1A";
+            string shortDate = snapshot.Date != "unknown" ? snapshot.Date.Split('(')[0].Trim() : "no commits";
 
-            string shortDate =
-                snapshot.Date != "unknown"
-                    ? snapshot.Date.Split('(')[0].Trim()
-                    : "no commits";
-
-            string revDisplay =
-                snapshot.IsOutdated
-                    ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
-                    : snapshot.Revision;
+            string revDisplay = snapshot.IsOutdated
+                ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
+                : snapshot.Revision;
 
             string statusSuffix = "";
-
-            if (isBusy)
-                statusSuffix = " | Updating...";
-            else if (isCanceled)
-                statusSuffix = $" | Update Canceled";
-            else if (isFailed)
-                statusSuffix = $" | Update Failed";
+            if (isBusy) statusSuffix = " | Updating...";
+            else if (isCanceled) statusSuffix = $" | Update Canceled";
+            else if (isFailed) statusSuffix = $" | Update Failed";
 
             string line =
                 $"<size=150%><color={statusColor}>●</color></size> " +
@@ -420,12 +354,7 @@ namespace SVN.Core
                 $"<color=#E6E6E6>SVN: {snapshot.SvnVersion}</color>" +
                 statusSuffix;
 
-            SVNLogBridge.UpdateUIField(
-                svnUI.StatusInfoText,
-                line,
-                "INFO",
-                false
-            );
+            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, line, "INFO", false);
         }
 
         public void Dispose()
@@ -434,69 +363,6 @@ namespace SVN.Core
             {
                 svnManager.OnSnapshotChanged -= RenderFromSnapshot;
             }
-        }
-
-        public async Task StartLiveSizeMonitor(string path, CancellationToken token)
-        {
-            while (!token.IsCancellationRequested)
-            {
-                long bytes = await CalculateWorkingCopySizeBytes(path, token);
-
-                double gb = bytes / (1024d * 1024d * 1024d);
-
-                string formatted =
-                    gb > 1
-                        ? $"{gb:F2} GB"
-                        : $"{bytes / (1024d * 1024d):F2} MB";
-
-                if (svnManager.CurrentSnapshot != null)
-                {
-                    svnManager.CurrentSnapshot.WorkingCopySize = formatted;
-
-                    svnManager.RaiseSnapshotChanged(svnManager.CurrentSnapshot);
-                }
-
-                await Task.Delay(1000, token);
-            }
-        }
-
-        public async Task<long> CalculateWorkingCopySizeBytes(string path, CancellationToken token)
-        {
-            return await Task.Run(() =>
-            {
-                try
-                {
-                    if (string.IsNullOrEmpty(path))
-                        return 0;
-
-                    var dir = new DirectoryInfo(path);
-                    if (!dir.Exists)
-                        return 0;
-
-                    long bytes = 0;
-
-                    foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories))
-                    {
-                        token.ThrowIfCancellationRequested();
-
-                        try
-                        {
-                            bytes += file.Length;
-                        }
-                        catch { }
-                    }
-
-                    return bytes;
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch
-                {
-                    return 0;
-                }
-            }, token);
         }
 
         private async Task<(string author, string date)> GetRealCommitInfoAsync(string path, string revision, CancellationToken token = default)
@@ -513,10 +379,7 @@ namespace SVN.Core
                     }
                 }
             }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 SVNLogBridge.LogError($"Failed to fetch real author/date from log: {ex.Message}");
@@ -535,6 +398,5 @@ namespace SVN.Core
                 "INFO",
                 append: false);
         }
-       
     }
 }

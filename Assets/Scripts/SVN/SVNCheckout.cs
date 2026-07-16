@@ -355,6 +355,35 @@ namespace SVN.Core
             long sizeBeforeThisSession = Directory.Exists(path) ? GetDirectorySizeFast(path) : 0;
             Task monitorTask = null;
 
+            // --- BUFOR DO BATCHOWANIA LOGÓW (Rozwiązuje problem "rozrywania" TextMeshPro) ---
+            var logBuffer = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
+            Task logFlushTask = Task.Run(async () =>
+            {
+                while (!token.IsCancellationRequested)
+                {
+                    await Task.Delay(150, token); // Wysyłaj paczki do UI co 150ms (~6-7 upd/s zamiast setek)
+
+                    if (logBuffer.IsEmpty) continue;
+
+                    var linesToFlush = new List<string>();
+                    while (logBuffer.TryDequeue(out string bufferedLine))
+                    {
+                        linesToFlush.Add(bufferedLine);
+                    }
+
+                    if (linesToFlush.Count > 0)
+                    {
+                        string batchText = string.Join("\n", linesToFlush) + "\n";
+                        _mainThreadContext.Post(_ =>
+                        {
+                            SVNLogBridge.LogCheckoutConsole(batchText);
+                        }, null);
+                    }
+                }
+            }, token);
+            // -----------------------------------------------------------------------------------
+
             try
             {
                 if (!Directory.Exists(path))
@@ -460,7 +489,11 @@ namespace SVN.Core
                     {
                         if (string.IsNullOrWhiteSpace(line)) return;
 
-                        string trimmed = line.Trim();
+                        // CZYSZCZENIE \r (powoduje nadpisywanie tekstu w paczkach)
+                        string cleanedLine = line.Replace("\r", "").Trim();
+                        if (string.IsNullOrEmpty(cleanedLine)) return;
+
+                        string trimmed = cleanedLine;
                         if (trimmed.Length > 0 && trimmed.All(c => c == '@' || c == '*')) return;
                         if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@")) return;
 
@@ -470,7 +503,9 @@ namespace SVN.Core
                             return;
 
                         lastActivity = DateTime.Now;
-                        SVNLogBridge.LogCheckoutConsole(line);
+
+                        // DODAWANIE DO BUFORA ZAMIAST BEZPOŚREDNIEGO ODŚWIEŻANIA UI
+                        logBuffer.Enqueue(cleanLine);
                     },
                     token
                 );
@@ -545,7 +580,21 @@ namespace SVN.Core
             }
             finally
             {
+                // --- WYPŁUKANIE RESZTEK Z BUFORA PRZED ZAKOŃCZENIEM ---
+                var finalLines = new List<string>();
+                while (logBuffer.TryDequeue(out string finalLine))
+                {
+                    finalLines.Add(finalLine);
+                }
+                if (finalLines.Count > 0)
+                {
+                    string finalText = string.Join("\n", finalLines) + "\n";
+                    _mainThreadContext.Post(_ => SVNLogBridge.LogCheckoutConsole(finalText), null);
+                }
+                // -------------------------------------------------------
+
                 try { if (monitorTask != null) await monitorTask; } catch { }
+                try { if (logFlushTask != null) await logFlushTask; } catch { } // Zamknięcie taska bufora
                 _checkoutCTS?.Dispose();
                 _checkoutCTS = null;
                 IsProcessing = false;

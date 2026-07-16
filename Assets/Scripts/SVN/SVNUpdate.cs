@@ -12,8 +12,6 @@ namespace SVN.Core
 {
     public class SVNUpdate : SVNBase
     {
-        private string _lastLiveLine = string.Empty;
-        private bool _hasNewLine = false;
         private CancellationTokenSource _updateCTS;
         private Task _runningTask;
         private Guid _sessionId = Guid.Empty;
@@ -27,8 +25,6 @@ namespace SVN.Core
                 SVNLogBridge.LogError("[SVN] Working directory does not exist.");
                 return;
             }
-
-            SVNLogBridge.LogLine("[SVN-DEBUG] Update() was called! Session will start.");
 
             if (_runningTask != null && !_runningTask.IsCompleted)
             {
@@ -56,11 +52,7 @@ namespace SVN.Core
             var statusModule = svnManager.GetModule<SVNStatus>();
             statusModule?.CancelCurrentRefresh();
 
-            try
-            {
-                _updateCTS?.Dispose();
-            }
-            catch { }
+            try { _updateCTS?.Dispose(); } catch { }
 
             _updateCTS = new CancellationTokenSource();
             CancellationToken token = _updateCTS.Token;
@@ -88,8 +80,6 @@ namespace SVN.Core
             }
 
             var oldSnapshot = svnManager.CurrentSnapshot;
-            _lastLiveLine = "Connecting to repository...";
-            _hasNewLine = true;
 
             SVNBar svnBar = svnManager.GetModule<SVNBar>();
             svnBar?.ShowUpdatingStatus(svnManager.CurrentProject?.projectName ?? Path.GetFileName(targetPath));
@@ -135,16 +125,12 @@ namespace SVN.Core
                         if (string.IsNullOrWhiteSpace(line)) return;
 
                         string trimmed = line.Trim();
-                        if (trimmed.Length > 0 && trimmed.All(c => c == '@' || c == '*' || c == ' '))
-                            return;
-
-                        if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@"))
-                            return;
+                        if (trimmed.Length > 0 && trimmed.All(c => c == '@' || c == '*' || c == ' ')) return;
+                        if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@")) return;
 
                         string cleanLine = trimmed.Replace("[SVN ERROR]", "").Trim();
                         if (cleanLine.Length > 0 && cleanLine.All(c => c == '@' || c == '*') ||
-                            cleanLine.StartsWith("*****") || cleanLine.StartsWith("@@@@@"))
-                            return;
+                            cleanLine.StartsWith("*****") || cleanLine.StartsWith("@@@@@")) return;
 
                         if (token.IsCancellationRequested) return;
                         if (session != _sessionId) return;
@@ -152,16 +138,25 @@ namespace SVN.Core
                         processed++;
                         string progress = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
 
-                        string friendlyLine = line
+                        string friendlyLine = line;
+
+                        if (friendlyLine.Length > 1 && "UAGDCR ".Contains(friendlyLine[0]))
+                        {
+                            char status = friendlyLine[0];
+                            string path = SvnRunner.NormalizeRepositoryPath(friendlyLine.Substring(1).TrimStart());
+                            friendlyLine = $"{status} {path}";
+                        }
+
+                        friendlyLine = friendlyLine
                             .Replace("Updating '.'", "Scanning repository...")
-                            .Replace("U   ", "= Updated: ")
-                            .Replace("A   ", "+ Added: ")
-                            .Replace("D   ", "− Deleted: ")
-                            .Replace("C   ", "x Conflict: ");
+                            .Replace("U ", "= Updated: ")
+                            .Replace("A ", "+ Added: ")
+                            .Replace("D ", "− Deleted: ")
+                            .Replace("C ", "x Conflict: ")
+                            .Replace("G ", "~ Merged: ")
+                            .Replace("R ", "↻ Replaced: ");
 
                         liveOutput.AppendLine(line);
-                        _lastLiveLine = line;
-                        _hasNewLine = true;
 
                         UnityMainThreadDispatcher.Enqueue(() =>
                         {
@@ -270,7 +265,9 @@ namespace SVN.Core
                 {
                     svnManager.IsUpdateRunning = false;
                     var newSnapshot = await svnBar.BuildSnapshotAsync(svnManager.CurrentProject, svnManager.WorkingDir);
+
                     string newAuthor = await GetAuthorForRevision(svnManager.WorkingDir, revision);
+
                     newSnapshot.Revision = revision;
                     if (!string.IsNullOrEmpty(newAuthor))
                     {
@@ -338,8 +335,6 @@ namespace SVN.Core
             {
                 svnManager.IsUpdateRunning = false;
                 IsProcessing = false;
-                _lastLiveLine = "";
-                _hasNewLine = false;
                 _runningTask = null;
             }
         }
@@ -348,8 +343,8 @@ namespace SVN.Core
         {
             try
             {
-                string infoOutput = await SvnRunner.GetInfoAsync($"-r {revision} \"{targetPath}\"");
-                var match = Regex.Match(infoOutput, @"^Last Changed Author:\s*(.+)$", RegexOptions.Multiline);
+                string logOutput = await SvnRunner.RunAsync($"log -r {revision} -q", targetPath);
+                var match = Regex.Match(logOutput, @"^r\d+\s*\|\s*([^|]+)\s*\|", RegexOptions.Multiline);
                 return match.Success ? match.Groups[1].Value.Trim() : null;
             }
             catch { return null; }
@@ -357,13 +352,9 @@ namespace SVN.Core
 
         public void CancelUpdate()
         {
-            if (_updateCTS == null || !svnManager.IsUpdateRunning)
-                return;
+            if (_updateCTS == null || !svnManager.IsUpdateRunning) return;
 
-            SVNLogBridge.LogLine(
-                "<color=orange><b>[SVN]</b> Cancel requested...</color>",
-                false
-            );
+            SVNLogBridge.LogLine("<color=orange><b>[SVN]</b> Cancel requested...</color>", false);
 
             svnManager.WasUpdateCanceled = true;
             svnManager.IsUpdateRunning = false;
@@ -371,11 +362,7 @@ namespace SVN.Core
 
             try { _updateCTS?.Cancel(); } catch { }
 
-            _runningTask = null;
             _sessionId = Guid.NewGuid();
-
-            _lastLiveLine = "";
-            _hasNewLine = false;
 
             svnManager.OperationInfo = new SVNOperationInfo
             {
@@ -385,30 +372,17 @@ namespace SVN.Core
             };
 
             var snapshot = svnManager.CurrentSnapshot;
-
             string statusColor = "#FFAA00";
 
-            string projectName =
-                snapshot?.ProjectName ??
+            string projectName = snapshot?.ProjectName ??
                 (string.IsNullOrEmpty(svnManager.WorkingDir)
                     ? "Unknown project"
                     : Path.GetFileName(svnManager.WorkingDir.TrimEnd('/', '\\')));
 
-            string user =
-                snapshot?.CurrentUser ??
-                svnManager.CurrentUserName ??
-                "Unknown";
-
-            string branch =
-                snapshot?.Branch ?? "unknown";
-
-            string revision =
-                snapshot?.Revision ?? "unknown";
-
-            string repo =
-                Uri.TryCreate(svnManager.RepositoryUrl, UriKind.Absolute, out var uri)
-                    ? uri.Host
-                    : "Unknown repo";
+            string user = snapshot?.CurrentUser ?? svnManager.CurrentUserName ?? "Unknown";
+            string branch = snapshot?.Branch ?? "unknown";
+            string revision = snapshot?.Revision ?? "unknown";
+            string repo = Uri.TryCreate(svnManager.RepositoryUrl, UriKind.Absolute, out var uri) ? uri.Host : "Unknown repo";
 
             string line =
                 $"<size=150%><color={statusColor}>●</color></size> " +
@@ -420,12 +394,7 @@ namespace SVN.Core
                 $"<color=#E6E6E6>Srv:{repo}</color> | " +
                 $"<color=#E6E6E6>Update Interrupted</color>";
 
-            SVNLogBridge.UpdateUIField(
-                svnUI.StatusInfoText,
-                line,
-                "INFO",
-                append: false
-            );
+            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, line, "INFO", append: false);
         }
 
         public string ParseRevisionFromInfo(string infoOutput)
@@ -465,7 +434,8 @@ namespace SVN.Core
                         {
                             remoteChangesCount++;
                             string pathPart = line.Substring(9).Trim();
-                            string cleanPath = Regex.Replace(pathPart, @"^\d+\s+", "");
+                            pathPart = Regex.Replace(pathPart, @"^\d+\s+", "");
+                            string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart);
                             string changeMsg = $"<color=orange>Update available:</color> {cleanPath}";
                             SVNLogBridge.LogLine(changeMsg);
                             uiBuilder.AppendLine(changeMsg);

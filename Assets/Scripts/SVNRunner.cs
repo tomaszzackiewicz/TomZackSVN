@@ -778,5 +778,33 @@ namespace SVN.Core
             var allowed = new System.Collections.Generic.HashSet<char>("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 :/\\-_.");
             return new string(path.Where(c => allowed.Contains(c)).ToArray()).Trim();
         }
+
+        public static string NormalizeRepositoryPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return string.Empty;
+
+            path = new string(path
+                .Where(c => !char.IsControl(c) && c != '\u00A0')
+                .ToArray());
+
+            path = path.Replace('\\', '/').Trim();
+
+            string[] roots =
+            {
+        "trunk/",
+        "branches/",
+        "tags/"
+    };
+
+            foreach (string root in roots)
+            {
+                int index = path.IndexOf(root, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0)
+                    return path.Substring(index);
+            }
+
+            return path;
+        }
     }
 }
