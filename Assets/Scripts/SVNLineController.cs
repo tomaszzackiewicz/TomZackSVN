@@ -1,6 +1,5 @@
 using SVN.Core;
 using System;
-using System.Collections;
 using System.Threading;
 using TMPro;
 using UnityEngine;
@@ -166,10 +165,7 @@ public class SvnLineController : MonoBehaviour
         if (isRootMeta)
         {
             fullRowButton.interactable = true;
-            fullRowButton.onClick.AddListener(() =>
-            {
-                SVNManager.Instance?.GetModule<SVNLog>()?.ShowLogForPath(".");
-            });
+            fullRowButton.onClick.AddListener(() => SVNManager.Instance?.GetModule<SVNLog>()?.ShowLogForPath("."));
             BindHover(fullRowButton, "Repository root change (M .)");
             statusText.text = "[ROOT]";
             return;
@@ -179,17 +175,21 @@ public class SvnLineController : MonoBehaviour
         {
             fullRowButton.interactable = true;
             fullRowButton.onClick.AddListener(OnFullRowClick);
-            BindHover(fullRowButton, "Click: Preview | Double-Click: External Diff");
 
-            var hoverHandler = fullRowButton.gameObject.GetComponent<SVNHoverHandler>();
-            if (!hoverHandler) hoverHandler = fullRowButton.gameObject.AddComponent<SVNHoverHandler>();
+            string tooltip = $"Path: {_element.FullPath} | Status: {_element.Status}";
+            if (!string.IsNullOrEmpty(_element.Size))
+                tooltip += $" | Size: {_element.Size}";
+            if (_element.LockedByMe)
+                tooltip += " | Locked by you";
+            else if (_element.LockedByOther)
+                tooltip += " | Locked by another user";
 
-            hoverHandler.OnHoverEnter += () => _hoverCoroutine = StartCoroutine(LoadDiffPreview(_element.FullPath));
-            hoverHandler.OnHoverExit += () =>
-            {
-                if (_hoverCoroutine != null) { StopCoroutine(_hoverCoroutine); _hoverCoroutine = null; }
-                SVNLogBridge.ClearTooltip();
-            };
+            if (_element.DiffStatsLoaded)
+                tooltip += $" | Diff: +{_element.AddedLines} -{_element.RemovedLines}";
+
+            tooltip += " | Click: Preview | Double-Click: External Diff";
+
+            BindHover(fullRowButton, tooltip);
         }
         else if (isFolder)
         {
@@ -344,47 +344,6 @@ public class SvnLineController : MonoBehaviour
         "I" => new Color(0.3f, 0.3f, 0.3f, 0.05f),
         _ => new Color(0, 0, 0, 0)
     };
-
-    private IEnumerator LoadDiffPreview(string relativePath)
-    {
-        _diffHoverCts?.Cancel();
-        _diffHoverCts = new CancellationTokenSource();
-        var token = _diffHoverCts.Token;
-        yield return new WaitForSeconds(0.5f);
-        if (token.IsCancellationRequested) yield break;
-
-        if (_element.Status == "?")
-        {
-            SVNLogBridge.LogTooltip("File is not under version control.");
-            yield break;
-        }
-
-        var task = SvnRunner.RunAsync($"diff \"{relativePath}\"", SVNManager.Instance.WorkingDir, false, token);
-        yield return new WaitUntil(() => task.IsCompleted || token.IsCancellationRequested);
-        if (token.IsCancellationRequested) yield break;
-
-        if (task.IsFaulted || string.IsNullOrEmpty(task.Result))
-        {
-            SVNLogBridge.LogTooltip("No local changes.");
-            yield break;
-        }
-
-        string diff = task.Result;
-        var lines = diff.Split('\n');
-        var preview = new System.Text.StringBuilder();
-        int count = 0;
-        foreach (var line in lines)
-        {
-            if (line.StartsWith("@@") || line.StartsWith("---") || line.StartsWith("+++")) continue;
-            if (count >= 3) break;
-            if (!string.IsNullOrWhiteSpace(line))
-            {
-                preview.AppendLine(line.Trim());
-                count++;
-            }
-        }
-        SVNLogBridge.LogTooltip(preview.Length > 0 ? preview.ToString() : "No changes in this file.");
-    }
 
     public void ApplyFilter(string filterText)
     {

@@ -368,6 +368,61 @@ namespace SVN.Core
             }
         }
 
+        public static async Task<int> RunStreamedAsync(string arguments, string workingDirectory, Action<string> onOutput, CancellationToken token)
+        {
+            SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER] Starting SVN: svn {arguments}</color>", append: true);
+            SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER] Working Directory: {workingDirectory}</color>", append: true);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "svn.exe",
+                Arguments = arguments,
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+
+            string sshKeyPath = KeyPath;
+            if (!string.IsNullOrWhiteSpace(sshKeyPath))
+            {
+                string safeKeyPath = sshKeyPath.Trim().Trim('"').Replace("\\", "/");
+                startInfo.EnvironmentVariables["SVN_SSH"] =
+                    $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=QUIET";
+            }
+
+            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (string.IsNullOrEmpty(e.Data)) return;
+                onOutput?.Invoke(e.Data);
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (string.IsNullOrEmpty(e.Data)) return;
+                onOutput?.Invoke($"<color=red>{e.Data}</color>");
+            };
+
+            try
+            {
+                if (!process.Start()) throw new Exception("Process.Start() returned false.");
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                await WaitForExitAsync(process, token);
+                process.WaitForExit();
+                return process.ExitCode;
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited) try { process.Kill(); } catch { }
+                throw;
+            }
+        }
+
         private static async Task WaitForExitAsync(Process process, CancellationToken token)
         {
             var tcs = new TaskCompletionSource<bool>();

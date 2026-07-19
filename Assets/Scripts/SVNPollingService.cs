@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -7,6 +8,7 @@ namespace SVN.Core
     public class SVNPollingService : MonoBehaviour
     {
         private int _lastKnownRemoteRevision = -1;
+        private string _lastValidWorkingDir = "";
 
         [Header("Focus Settings")]
         public float focusCheckCooldownSeconds = 180f;
@@ -28,17 +30,39 @@ namespace SVN.Core
             }
         }
 
+        public void ResetRevisionTracking()
+        {
+            _lastKnownRemoteRevision = -1;
+            _lastValidWorkingDir = "";
+        }
+
         public async Task CheckForRemoteCommitsAsync()
         {
             try
             {
                 SVNManager manager = SVNManager.Instance;
-                if (manager == null || string.IsNullOrEmpty(manager.WorkingDir))
+                if (manager == null)
                     return;
+
+                string wd = manager.WorkingDir;
+                if (string.IsNullOrEmpty(wd))
+                    return;
+
+                if (!Directory.Exists(wd) || !Directory.Exists(Path.Combine(wd, ".svn")))
+                {
+                    if (showDebugLogs)
+                        SVNLogBridge.LogLine("<color=grey>[Polling]</color> Skipped – no valid working copy.");
+                    return;
+                }
+
+                if (!string.Equals(wd, _lastValidWorkingDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    _lastKnownRemoteRevision = -1;
+                    _lastValidWorkingDir = wd;
+                }
 
                 await manager.CancelBackgroundTasksAsync();
 
-                string wd = manager.WorkingDir;
                 string revOutput = await SvnRunner.RunAsync(
                     "info -r HEAD --show-item last-changed-revision", wd);
 

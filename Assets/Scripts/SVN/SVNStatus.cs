@@ -635,11 +635,6 @@ namespace SVN.Core
 
                 foreach (var line in lines)
                 {
-                    Debug.Log($"SVN STATUS RAW = [{line}]");
-                }
-
-                foreach (var line in lines)
-                {
                     cancellationToken.ThrowIfCancellationRequested();
 
                     if (line.Length < svnStatusPrefixLength)

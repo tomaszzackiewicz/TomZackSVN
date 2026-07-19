@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.UIElements;
 
 namespace SVN.Core
 {
@@ -14,6 +15,7 @@ namespace SVN.Core
         [Header("Logs")]
         [SerializeField] private TextMeshProUGUI logText;
         [SerializeField] private TMP_InputField logCountInputField;
+        [SerializeField] private TMP_InputField updateRevisionInput;
         [Header("Add New Project Settings (Popup)")]
         [SerializeField] private TMP_InputField addProjectNameInput;
         [SerializeField] private TMP_InputField addProjectRepoUrlInput;
@@ -56,7 +58,7 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI commitTreeDisplay;
         [SerializeField] private TextMeshProUGUI commitStatsText;
         [SerializeField] private TextMeshProUGUI commitConsoleContent;
-        [SerializeField] private Slider operationProgressBar;
+        [SerializeField] private UnityEngine.UI.Slider operationProgressBar;
         [Header("Loading Indicator")]
         [SerializeField] private GameObject loadingOverlay;
         [SerializeField] private TextMeshProUGUI treeDisplay;
@@ -69,6 +71,7 @@ namespace SVN.Core
         [SerializeField] private TMP_InputField settingsMergeToolPathInput;
         [Header("Terminal")]
         [SerializeField] private TMP_InputField terminalInputField;
+        [SerializeField] private TextMeshProUGUI terminalConsoleOutput;
         [SerializeField] private ScrollRect logScrollRect;
         [Header("Shelves")]
         [SerializeField] private TMP_InputField shelfNameInput;
@@ -104,6 +107,7 @@ namespace SVN.Core
         public TextMeshProUGUI TooltipText => tooltipText;
         public TextMeshProUGUI LogText => logText;
         public TMP_InputField LogCountInputField => logCountInputField;
+        public TMP_InputField UpdateRevisionInput => updateRevisionInput;
         public TMP_InputField AddProjectNameInput => addProjectNameInput;
         public TMP_InputField AddProjectRepoUrlInput => addProjectRepoUrlInput;
         public TMP_InputField AddProjectFolderPathInput => addProjectFolderPathInput;
@@ -151,13 +155,14 @@ namespace SVN.Core
         public TextMeshProUGUI StatsText => statsText;
         public TextMeshProUGUI CommitStatsText => commitStatsText;
         public TextMeshProUGUI CommitConsoleContent => commitConsoleContent;
-        public Slider OperationProgressBar => operationProgressBar;
+        public UnityEngine.UI.Slider OperationProgressBar => operationProgressBar;
         public GameObject ConflictGroup => conflictGroup;
         public TMP_InputField SettingsRepoUrlInput => settingsRepoUrlInput;
         public TMP_InputField SettingsWorkingDirInput => settingsWorkingDirInput;
         public TMP_InputField SettingsSshKeyPathInput => settingsSshKeyPathInput;
         public TMP_InputField SettingsMergeToolPathInput => settingsMergeToolPathInput;
         public TMP_InputField TerminalInputField => terminalInputField;
+        public TextMeshProUGUI TerminalConsoleOutput => terminalConsoleOutput;
         public ScrollRect LogScrollRect => logScrollRect;
         public TMP_InputField ShelfNameInput => shelfNameInput;
         public ScrollRect ShelfListContainer => shelfListContainer;

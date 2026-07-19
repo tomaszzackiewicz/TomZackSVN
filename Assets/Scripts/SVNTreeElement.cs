@@ -19,6 +19,9 @@ namespace SVN.Core
         public bool LockedByMe;
         public bool LockedByOther;
         public bool IsRootChange;
+        public int AddedLines;
+        public int RemovedLines;
+        public bool DiffStatsLoaded;
 
         public SvnTreeElement Clone()
         {
