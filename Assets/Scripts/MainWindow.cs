@@ -131,5 +131,11 @@ namespace SVN.Core
                     append: true);
             }
         }
+
+        public void Button_ExportRevision()
+        {
+            string rev = svnUI.UpdateRevisionInput?.text?.Trim();
+            svnManager.GetModule<SVNCheckout>().ExportRevision(rev);
+        }
     }
 }

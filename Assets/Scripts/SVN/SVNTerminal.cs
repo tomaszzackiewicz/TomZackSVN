@@ -11,7 +11,6 @@ namespace SVN.Core
     {
         private const int MaxHistory = 50;
         private const int MaxConsoleLines = 10;
-
         private readonly List<string> commandHistory = new();
         private int historyIndex = -1;
         private CancellationTokenSource _cts;
@@ -20,10 +19,7 @@ namespace SVN.Core
 
         public SVNTerminal(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        public void SetInputField(TMP_InputField inputField)
-        {
-            _terminalInputField = inputField;
-        }
+        public void SetInputField(TMP_InputField inputField) => _terminalInputField = inputField;
 
         public void SetConsoleOutput(TMP_Text consoleOutput)
         {
@@ -74,6 +70,9 @@ namespace SVN.Core
                 return;
             }
 
+            // Zapamiętaj oryginalną komendę (przed dodaniem flag) do późniejszego parsowania checkout args
+            string originalCmd = cmd;
+
             if (!TryExtractKeyPath(ref cmd, out string keyPath)) return;
             if (!string.IsNullOrWhiteSpace(keyPath))
             {
@@ -95,22 +94,38 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
                 workDir = Path.GetTempPath();
 
+            // Jeśli to checkout, spróbuj sparsować URL i ścieżkę lokalną (do rejestracji po sukcesie)
+            string checkoutUrl = null, checkoutLocalPath = null;
+            string firstWord = GetFirstWord(originalCmd);
+            if (firstWord.Equals("checkout", StringComparison.OrdinalIgnoreCase) ||
+                firstWord.Equals("co", StringComparison.OrdinalIgnoreCase))
+            {
+                TryParseCheckoutArgs(originalCmd, out checkoutUrl, out checkoutLocalPath);
+            }
+
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
 
                 int exitCode = await SvnRunner.RunStreamedAsync(cmd, workDir,
-                    line =>
-                    {
-                        if (!string.IsNullOrWhiteSpace(line))
-                            TerminalWriteLine(line);
-                    },
+                    line => { if (!string.IsNullOrWhiteSpace(line)) TerminalWriteLine(line); },
                     token);
 
                 if (exitCode != 0)
+                {
                     TerminalWriteLine($"<color=#FF0000>Command exited with code {exitCode}</color>");
+                }
                 else
+                {
                     TerminalWriteLine("<color=#00FF00>Command completed successfully.</color>");
+
+                    // Rejestracja projektu po udanym checkoucie
+                    if (!string.IsNullOrEmpty(checkoutUrl) && !string.IsNullOrEmpty(checkoutLocalPath) &&
+                        Directory.Exists(Path.Combine(checkoutLocalPath, ".svn")))
+                    {
+                        RegisterProjectAfterCheckout(checkoutUrl, checkoutLocalPath, keyPath);
+                    }
+                }
 
                 if (ShouldRefresh(GetCommandName(cmd)))
                     await svnManager.RefreshStatus();
@@ -133,6 +148,130 @@ namespace SVN.Core
             }
         }
 
+        private void TryParseCheckoutArgs(string cmd, out string url, out string localPath)
+        {
+            url = null;
+            localPath = null;
+            string[] tokens = cmd.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length < 2) return;
+
+            int urlIdx = -1;
+            for (int i = 1; i < tokens.Length; i++)
+            {
+                if (tokens[i].Contains("://"))
+                {
+                    urlIdx = i;
+                    break;
+                }
+            }
+            if (urlIdx < 0) return;
+            url = tokens[urlIdx].Trim('"');
+
+            if (urlIdx + 1 < tokens.Length)
+            {
+                localPath = tokens[urlIdx + 1].Trim('"');
+                if (!Path.IsPathRooted(localPath))
+                    localPath = Path.GetFullPath(Path.Combine(svnManager.WorkingDir ?? "", localPath));
+            }
+        }
+
+        private void RegisterProjectAfterCheckout(string url, string localPath, string keyPath)
+        {
+            try
+            {
+                string projectName = Path.GetFileName(localPath.TrimEnd('/', '\\'));
+                var project = new SVNProject
+                {
+                    projectName = projectName,
+                    repoUrl = url,
+                    workingDir = localPath,
+                    privateKeyPath = keyPath ?? SvnRunner.KeyPath,
+                    lastOpened = DateTime.Now
+                };
+
+                SVNManager.Instance?.SetActiveProject(project);
+                SVNManager.Instance?.ProjectSelectionPanel?.RefreshList();
+
+                if (SVNManager.Instance != null)
+                {
+                    var pollingService = SVNManager.Instance.GetComponent<SVNPollingService>();
+                    pollingService?.ResetRevisionTracking();
+                }
+
+                RegisterProjectInSettings(localPath, url, keyPath);
+                SVNLogBridge.LogLine($"<color=green>Project '{projectName}' loaded successfully.</color>", append: true);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=red>Failed to load project after checkout: {ex.Message}</color>", append: true);
+            }
+        }
+
+        private void RegisterProjectInSettings(string path, string url, string keyPath)
+        {
+            string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
+            var projects = ProjectSettings.LoadProjects();
+            int idx = projects.FindIndex(p =>
+                !string.IsNullOrEmpty(p.workingDir) &&
+                string.Equals(p.workingDir.Replace("\\", "/").TrimEnd('/'), normalizedPath, StringComparison.OrdinalIgnoreCase));
+
+            string projectName = GetRepoNameFromUrl(url);
+            if (idx >= 0)
+            {
+                projects[idx].repoUrl = url;
+                projects[idx].lastOpened = DateTime.Now;
+                projects[idx].privateKeyPath = keyPath;
+            }
+            else
+            {
+                projects.Add(new SVNProject
+                {
+                    projectName = projectName,
+                    repoUrl = url,
+                    workingDir = normalizedPath,
+                    privateKeyPath = keyPath,
+                    lastOpened = DateTime.Now
+                });
+            }
+            ProjectSettings.SaveProjects(projects);
+            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
+            PlayerPrefs.Save();
+        }
+
+        private string GetRepoNameFromUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return "Repository";
+            url = url.TrimEnd('/');
+            if (url.EndsWith("/trunk", StringComparison.OrdinalIgnoreCase)) url = url[..^"/trunk".Length];
+            if (url.EndsWith("/branches", StringComparison.OrdinalIgnoreCase)) url = url[..^"/branches".Length];
+            if (url.EndsWith("/tags", StringComparison.OrdinalIgnoreCase)) url = url[..^"/tags".Length];
+            int slash = url.LastIndexOf('/');
+            return slash >= 0 && slash < url.Length - 1 ? url[(slash + 1)..] : url;
+        }
+
+        private string GetFirstWord(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "";
+            int idx = text.IndexOf(' ');
+            return idx < 0 ? text : text[..idx];
+        }
+
+        private string AddIfMissing(string cmd, string arg)
+        {
+            if (string.IsNullOrWhiteSpace(cmd)) return arg;
+            return cmd.IndexOf(arg, StringComparison.OrdinalIgnoreCase) >= 0 ? cmd : $"{cmd} {arg}";
+        }
+
+        private string GetCommandName(string cmd)
+        {
+            if (string.IsNullOrWhiteSpace(cmd)) return "";
+            string[] tokens = cmd.TrimStart().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            return tokens.Length > 0 ? tokens[0].Trim().ToLowerInvariant() : "";
+        }
+
+        private bool ShouldRefresh(string cmdName)
+            => cmdName is "checkout" or "update" or "commit" or "revert" or "cleanup" or "switch" or "merge";
+
         private void TerminalWriteLine(string message)
         {
             if (_consoleOutput != null)
@@ -151,18 +290,10 @@ namespace SVN.Core
         {
             if (_consoleOutput == null) return;
             string text = _consoleOutput.text;
-
             int lineCount = 0;
-            int lastNewLine = -1;
             for (int i = 0; i < text.Length; i++)
-            {
-                if (text[i] == '\n')
-                {
-                    lineCount++;
-                    lastNewLine = i;
-                }
-            }
-            
+                if (text[i] == '\n') lineCount++;
+
             if (lineCount > MaxConsoleLines)
             {
                 int linesToRemove = lineCount - MaxConsoleLines;
@@ -172,7 +303,7 @@ namespace SVN.Core
                     cutIndex = text.IndexOf('\n', cutIndex) + 1;
                     if (cutIndex == 0) break;
                 }
-                _consoleOutput.text = text.Substring(cutIndex);
+                _consoleOutput.text = text[cutIndex..];
             }
         }
 
@@ -206,14 +337,14 @@ namespace SVN.Core
                     TerminalWriteLine("<color=#FF0000>Missing closing quote for --key path.</color>");
                     return false;
                 }
-                keyPath = command.Substring(pathStart, pathEnd - pathStart);
+                keyPath = command[pathStart..pathEnd];
                 pathEnd++;
             }
             else
             {
                 pathEnd = pathStart;
                 while (pathEnd < command.Length && !char.IsWhiteSpace(command[pathEnd])) pathEnd++;
-                keyPath = command.Substring(pathStart, pathEnd - pathStart);
+                keyPath = command[pathStart..pathEnd];
             }
 
             keyPath = keyPath.Trim();
@@ -239,22 +370,6 @@ namespace SVN.Core
             command = command.Remove(idx, removeLen).Trim();
             return true;
         }
-
-        private string AddIfMissing(string cmd, string arg)
-        {
-            if (string.IsNullOrWhiteSpace(cmd)) return arg;
-            return cmd.IndexOf(arg, StringComparison.OrdinalIgnoreCase) >= 0 ? cmd : $"{cmd} {arg}";
-        }
-
-        private string GetCommandName(string cmd)
-        {
-            if (string.IsNullOrWhiteSpace(cmd)) return "";
-            string[] tokens = cmd.TrimStart().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-            return tokens.Length > 0 ? tokens[0].Trim().ToLowerInvariant() : "";
-        }
-
-        private bool ShouldRefresh(string cmdName)
-            => cmdName is "checkout" or "update" or "commit" or "revert" or "cleanup" or "switch" or "merge";
 
         public void HandleHistoryNavigation()
         {

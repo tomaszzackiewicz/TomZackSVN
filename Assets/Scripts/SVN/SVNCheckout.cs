@@ -220,35 +220,15 @@ namespace SVN.Core
                 return;
             }
 
-            string fullPath;
-            try { fullPath = Path.GetFullPath(path); }
-            catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return; }
+            if (!TryValidatePath(path, out string fullPath)) return;
 
-            try
+            if (Directory.Exists(fullPath) && Directory.GetFileSystemEntries(fullPath).Length > 0)
             {
-                string root = Path.GetPathRoot(fullPath);
-                if (!string.IsNullOrEmpty(root))
-                {
-                    DriveInfo drive = new DriveInfo(root);
-                    if (!drive.IsReady)
-                    {
-                        ShowError($"The drive {root} is not ready. Please choose a valid location.");
-                        return;
-                    }
-                }
-            }
-            catch (Exception ex) { ShowError($"Cannot access destination drive: {ex.Message}"); return; }
-
-            if (Directory.Exists(fullPath))
-            {
-                if (Directory.GetFileSystemEntries(fullPath).Length > 0)
-                {
-                    if (Directory.Exists(Path.Combine(fullPath, ".svn")))
-                        ShowError("Destination already contains an SVN working copy. Use Resume instead.");
-                    else
-                        ShowError("Destination folder is not empty.");
-                    return;
-                }
+                if (Directory.Exists(Path.Combine(fullPath, ".svn")))
+                    ShowError("Destination already contains an SVN working copy. Use Resume instead.");
+                else
+                    ShowError("Destination folder is not empty.");
+                return;
             }
 
             string keyPath = ResolveAndValidateKeyPath();
@@ -268,7 +248,7 @@ namespace SVN.Core
                 _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url, sshConfig);
 
                 string checkoutArgs = $"checkout \"{url}\" \"{fullPath}\" --non-interactive --trust-server-cert" + sshConfig;
-                await ExecuteSvnOperation(url, fullPath, checkoutArgs, false, keyPath);
+                await ExecuteSvnOperation(url, fullPath, checkoutArgs, false, keyPath, "Downloading");
             }
             catch (Exception ex)
             {
@@ -297,24 +277,7 @@ namespace SVN.Core
                 return;
             }
 
-            string fullPath;
-            try { fullPath = Path.GetFullPath(path); }
-            catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return; }
-
-            try
-            {
-                string root = Path.GetPathRoot(fullPath);
-                if (!string.IsNullOrEmpty(root))
-                {
-                    DriveInfo drive = new DriveInfo(root);
-                    if (!drive.IsReady)
-                    {
-                        ShowError($"The drive {root} is not ready. Please choose a valid location.");
-                        return;
-                    }
-                }
-            }
-            catch (Exception ex) { ShowError($"Cannot access destination drive: {ex.Message}"); return; }
+            if (!TryValidatePath(path, out string fullPath)) return;
 
             if (!Directory.Exists(Path.Combine(fullPath, ".svn")))
             {
@@ -334,7 +297,7 @@ namespace SVN.Core
                     _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url, sshConfig);
 
                 string updateArgs = "update --non-interactive --trust-server-cert" + sshConfig;
-                await ExecuteSvnOperation(url, fullPath, updateArgs, true, keyPath);
+                await ExecuteSvnOperation(url, fullPath, updateArgs, true, keyPath, "Resuming");
             }
             catch (Exception ex)
             {
@@ -392,7 +355,7 @@ namespace SVN.Core
             }
         }
 
-        private async Task ExecuteSvnOperation(string url, string path, string command, bool isResume, string keyPath)
+        private async Task ExecuteSvnOperation(string url, string path, string command, bool isResume, string keyPath, string operationType)
         {
             if (IsProcessing)
             {
@@ -472,8 +435,7 @@ namespace SVN.Core
                             string stateText = _state switch
                             {
                                 OperationState.Pausing => "Pausing",
-                                _ when isResume => "Resuming",
-                                _ => "Downloading"
+                                _ => operationType
                             };
 
                             string color = _state == OperationState.Pausing ? "yellow" : silentSeconds > 15 ? "yellow" : "green";
@@ -518,22 +480,35 @@ namespace SVN.Core
                                  result.Contains("exception", StringComparison.OrdinalIgnoreCase) ||
                                  result.Contains("failed", StringComparison.OrdinalIgnoreCase));
 
-                if (!hasWorkingCopy || hasError)
+                // Dla eksportu nie oczekujemy .svn – traktujemy sukces jeśli brak błędu
+                if (operationType == "Exporting")
+                {
+                    if (hasError)
+                    {
+                        _state = OperationState.Failed;
+                        PostToMainThread(() => SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
+                            "<color=red><b>Export Failed</b></color>\nCheck console for details.", "SVN"));
+                        return;
+                    }
+                }
+                else if (!hasWorkingCopy || hasError)
                 {
                     _state = OperationState.Failed;
                     PostToMainThread(() => SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
-                        "<color=red><b>Checkout Failed</b></color>\nCheck console for details.", "SVN"));
+                        "<color=red><b>Operation Failed</b></color>\nCheck console for details.", "SVN"));
                     return;
                 }
 
                 _state = OperationState.Completed;
-                SVNLogBridge.LogLine("<color=green><b>[Checkout]</b> Finished successfully.</color>");
+                SVNLogBridge.LogLine($"<color=green><b>[{operationType}]</b> Finished successfully.</color>");
 
                 PostToMainThread(() =>
                 {
                     SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
-                        "<color=green><b>Checkout completed successfully</b></color>", "SVN");
-                    SVNManager.Instance?.ProjectSelectionPanel?.RefreshList();
+                        $"<color=green><b>{operationType} completed successfully</b></color>", "SVN");
+
+                    if (operationType != "Exporting")
+                        SVNManager.Instance?.ProjectSelectionPanel?.RefreshList();
                 });
 
                 if (SVNManager.Instance != null)
@@ -542,16 +517,20 @@ namespace SVN.Core
                     if (pollingService != null) pollingService.ResetRevisionTracking();
                 }
 
-                var activeProject = new SVNProject
+                // Rejestracja projektu tylko dla checkout / resume
+                if (operationType != "Exporting")
                 {
-                    projectName = Path.GetFileName(path.TrimEnd('/', '\\')),
-                    repoUrl = url,
-                    workingDir = path,
-                    privateKeyPath = keyPath ?? _resolvedKeyPath,
-                    lastOpened = DateTime.Now
-                };
-                SVNManager.Instance?.SetActiveProject(activeProject);
-                RegisterProjectInList(path, url, keyPath ?? _resolvedKeyPath);
+                    var activeProject = new SVNProject
+                    {
+                        projectName = Path.GetFileName(path.TrimEnd('/', '\\')),
+                        repoUrl = url,
+                        workingDir = path,
+                        privateKeyPath = keyPath ?? _resolvedKeyPath,
+                        lastOpened = DateTime.Now
+                    };
+                    SVNManager.Instance?.SetActiveProject(activeProject);
+                    RegisterProjectInList(path, url, keyPath ?? _resolvedKeyPath);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -691,6 +670,129 @@ namespace SVN.Core
             if (url.EndsWith("/tags", StringComparison.OrdinalIgnoreCase)) url = url.Substring(0, url.Length - "/tags".Length);
             int slash = url.LastIndexOf('/');
             return slash >= 0 && slash < url.Length - 1 ? url.Substring(slash + 1) : url;
+        }
+
+        public async void ExportRepository()
+        {
+            if (!CanStartOperation()) return;
+
+            string url = svnUI.CheckoutRepoUrlInput.text.Trim().TrimEnd('/');
+            string path = svnUI.CheckoutDestFolderInput.text.Trim();
+
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(path))
+            {
+                ShowError("Repository URL and destination path cannot be empty.");
+                return;
+            }
+
+            if (!IsValidSvnUrl(url))
+            {
+                ShowError("Invalid SVN URL. Expected svn://, svn+ssh://, http:// or https://.");
+                return;
+            }
+
+            if (!TryValidatePath(path, out string fullPath)) return;
+
+            // Eksport wymaga pustego katalogu (lub nieistniejącego)
+            if (Directory.Exists(fullPath) && Directory.GetFileSystemEntries(fullPath).Length > 0)
+            {
+                ShowError("Destination folder must be empty or non‑existent for export.");
+                return;
+            }
+
+            string keyPath = ResolveAndValidateKeyPath();
+            if (url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(keyPath))
+            {
+                ShowError("SSH repository requires a valid private key.");
+                return;
+            }
+
+            try
+            {
+                _state = OperationState.Running;
+                _canResume = false;
+
+                string sshConfig = BuildSshConfigOption(keyPath);
+                string exportArgs = $"export \"{url}\" \"{fullPath}\" --non-interactive --trust-server-cert" + sshConfig;
+                await ExecuteSvnOperation(url, fullPath, exportArgs, false, keyPath, "Exporting");
+            }
+            catch (Exception ex)
+            {
+                _state = OperationState.Failed;
+                IsProcessing = false;
+                SVNLogBridge.LogError($"[SVN] Export failed:\n{ex}");
+                ShowError(ex.Message);
+            }
+        }
+
+        private bool TryValidatePath(string inputPath, out string fullPath)
+        {
+            fullPath = null;
+            try { fullPath = Path.GetFullPath(inputPath); }
+            catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return false; }
+
+            try
+            {
+                string root = Path.GetPathRoot(fullPath);
+                if (!string.IsNullOrEmpty(root))
+                {
+                    DriveInfo drive = new DriveInfo(root);
+                    if (!drive.IsReady)
+                    {
+                        ShowError($"The drive {root} is not ready. Please choose a valid location.");
+                        return false;
+                    }
+                }
+            }
+            catch (Exception ex) { ShowError($"Cannot access destination drive: {ex.Message}"); return false; }
+
+            return true;
+        }
+
+        public async void ExportRevision(string revision)
+        {
+            string url = svnUI.CheckoutRepoUrlInput.text.Trim().TrimEnd('/');
+            string path = svnUI.CheckoutDestFolderInput.text.Trim();
+
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(path))
+            {
+                ShowError("URL and destination path cannot be empty.");
+                return;
+            }
+
+            if (!IsValidSvnUrl(url)) { ShowError("Invalid URL."); return; }
+            if (!TryValidatePath(path, out string fullPath)) return;
+
+            if (Directory.Exists(fullPath) && Directory.GetFileSystemEntries(fullPath).Length > 0)
+            {
+                ShowError("Destination folder must be empty or non‑existent for export.");
+                return;
+            }
+
+            string keyPath = ResolveAndValidateKeyPath();
+            if (url.StartsWith("svn+ssh://") && string.IsNullOrWhiteSpace(keyPath))
+            {
+                ShowError("SSH repository requires a valid private key.");
+                return;
+            }
+
+            try
+            {
+                _state = OperationState.Running;
+                _canResume = false;
+
+                string revArg = string.IsNullOrWhiteSpace(revision) ? "" : $" -r {revision}";
+                string sshConfig = BuildSshConfigOption(keyPath);
+                string exportArgs = $"export{revArg} \"{url}\" \"{fullPath}\" --non-interactive --trust-server-cert" + sshConfig;
+                await ExecuteSvnOperation(url, fullPath, exportArgs, false, keyPath, "Exporting");
+            }
+            catch (Exception ex)
+            {
+                _state = OperationState.Failed;
+                IsProcessing = false;
+                SVNLogBridge.LogError($"[SVN] Export failed:\n{ex}");
+                ShowError(ex.Message);
+            }
         }
     }
 }

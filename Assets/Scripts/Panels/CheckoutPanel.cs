@@ -16,10 +16,9 @@ public class CheckoutPanel : MonoBehaviour
     public void Button_BrowsePrivateKey() => svnManager.GetModule<SVNExternal>().BrowsePrivateKeyPathCheckout();
 
     public void Button_UpdateProjectInfo() => svnManager.GetModule<SVNCheckout>().UpdateProjectInfo();
+    public void Button_Export() => svnManager.GetModule<SVNCheckout>().ExportRepository();
     public void Button_Checkout() => svnManager.GetModule<SVNCheckout>().StartCheckout();
-
     public void Button_Pause() => svnManager.GetModule<SVNCheckout>().PauseCheckout();
-
     public void Button_Cancel() => svnManager.GetModule<SVNCheckout>().CancelCheckout();
     public void Button_Resume() => svnManager.GetModule<SVNCheckout>().ResumeCheckout();
 }
