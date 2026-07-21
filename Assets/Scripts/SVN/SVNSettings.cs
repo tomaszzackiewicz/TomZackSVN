@@ -108,7 +108,7 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
-                    SVNLogBridge.LogLine($"<color=red>Error:</color> {ex.Message}");
+                    SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> {ex.Message}");
                 }
                 finally { IsProcessing = false; }
             }

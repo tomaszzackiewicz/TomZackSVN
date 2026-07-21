@@ -21,7 +21,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrEmpty(root) || !System.IO.Directory.Exists(root))
                 {
-                    SVNLogBridge.LogLine("<color=red>Error: Working directory is not set or does not exist!</color>");
+                    SVNLogBridge.LogLine("<color=#FFAA00>Error: Working directory is not set or does not exist!</color>");
                     return;
                 }
 
@@ -30,7 +30,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Explorer Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Explorer Error:</color> {ex.Message}");
             }
         }
 
@@ -47,7 +47,7 @@ namespace SVN.Core
 
             if (!System.IO.File.Exists(fullPath))
             {
-                SVNLogBridge.LogLine("<color=red>Error:</color> File not found on disk.");
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> File not found on disk.");
                 return;
             }
 
@@ -58,7 +58,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Diff Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Diff Error:</color> {ex.Message}");
             }
         }
 
@@ -256,7 +256,7 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
             {
-                SVNLogBridge.LogLine("<color=red>Error:</color> Working Directory is not set or does not exist!");
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Working Directory is not set or does not exist!");
                 return;
             }
 
@@ -324,7 +324,7 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
-                    SVNLogBridge.LogLine($"<color=red>Export Error:</color> {ex.Message}");
+                    SVNLogBridge.LogLine($"<color=#FFAA00>Export Error:</color> {ex.Message}");
                 }
             }
         }
@@ -349,7 +349,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Explorer Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Explorer Error:</color> {ex.Message}");
             }
         }
 

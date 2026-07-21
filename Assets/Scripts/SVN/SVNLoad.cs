@@ -32,7 +32,7 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
             {
-                SVNLogBridge.LogLine("<color=red>Error:</color> Invalid destination path!");
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid destination path!");
                 return;
             }
 
@@ -52,7 +52,7 @@ namespace SVN.Core
 
                 if (!hasSvnFolder && string.IsNullOrEmpty(manualUrl))
                 {
-                    SVNLogBridge.LogLine("<color=red>Error:</color> Path is not a repository and no URL provided!");
+                    SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Path is not a repository and no URL provided!");
                     return;
                 }
 
@@ -102,7 +102,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Operation Failed:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Operation Failed:</color> {ex.Message}");
                 SVNLogBridge.LogError($"[SVN] Load Error: {ex}");
             }
             finally

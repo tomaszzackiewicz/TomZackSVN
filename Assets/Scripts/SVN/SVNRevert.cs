@@ -15,19 +15,8 @@ namespace SVN.Core
 
         private void LogToConsole(string msg)
         {
-            if (string.IsNullOrWhiteSpace(msg))
-                return;
-
+            if (string.IsNullOrWhiteSpace(msg)) return;
             SVNLogBridge.LogLine(msg);
-
-            if (svnUI?.CommitConsoleContent != null)
-            {
-                SVNLogBridge.UpdateUIField(
-                    svnUI.CommitConsoleContent,
-                    msg,
-                    "REVERT",
-                    append: true);
-            }
         }
 
         private void ClearAllUI()
@@ -37,20 +26,12 @@ namespace SVN.Core
 
             if (svnUI?.TreeDisplay != null)
             {
-                SVNLogBridge.UpdateUIField(
-                    svnUI.TreeDisplay,
-                    "",
-                    "TREE",
-                    append: false);
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
             }
 
             if (svnUI?.CommitTreeDisplay != null)
             {
-                SVNLogBridge.UpdateUIField(
-                    svnUI.CommitTreeDisplay,
-                    "",
-                    "COMMIT_TREE",
-                    append: false);
+                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
             }
         }
 
@@ -65,19 +46,14 @@ namespace SVN.Core
             if (elapsed > ConfirmationWindow || lastClickTime < 0f)
             {
                 lastClickTime = now;
-
                 LogToConsole(warningMessage);
-
                 return false;
             }
 
             if (elapsed < MinDoubleClickDelay)
             {
                 lastClickTime = now;
-
-                LogToConsole(
-                    "<color=#FFAA00><b>[Revert]</b></color> Confirmation too fast — press the button once again.");
-
+                LogToConsole("<color=#FFAA00><b>[Revert]</b></color> Confirmation too fast — press the button once again.");
                 return false;
             }
 
@@ -87,8 +63,7 @@ namespace SVN.Core
 
         public async void RevertAll()
         {
-            if (IsProcessing)
-                return;
+            if (IsProcessing) return;
 
             await svnManager.CancelBackgroundTasksAsync();
 
@@ -102,21 +77,12 @@ namespace SVN.Core
 
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
             {
-                LogToConsole("<color=red>Error:</color> Working directory does not exist.");
+                LogToConsole("<color=#FFAA00>Error:</color> Working directory does not exist.");
                 return;
             }
 
-            try
-            {
-                _revertCts?.Cancel();
-            }
-            catch { }
-
-            try
-            {
-                _revertCts?.Dispose();
-            }
-            catch { }
+            try { _revertCts?.Cancel(); } catch { }
+            try { _revertCts?.Dispose(); } catch { }
 
             _revertCts = new CancellationTokenSource();
             CancellationToken token = _revertCts.Token;
@@ -128,28 +94,19 @@ namespace SVN.Core
                 LogToConsole("<color=#4FC3F7><b>[SVN]</b> Preparing revert...</color>");
 
                 token.ThrowIfCancellationRequested();
-
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
-
                 token.ThrowIfCancellationRequested();
 
-                await SvnRunner.RunAsync(
-                    "revert -R .",
-                    root,
-                    retryOnLock: true,
-                    token: token);
-
+                await SvnRunner.RunAsync("revert -R .", root, retryOnLock: true, token: token);
                 token.ThrowIfCancellationRequested();
 
                 svnManager._diskChangesDetected = true;
 
                 var status = svnManager.GetModule<SVNStatus>();
-
                 status?.ClearCurrentData();
                 status?.ClearSVNTreeView();
 
                 ClearAllUI();
-
                 await svnManager.RefreshStatus(force: true);
 
                 LogToConsole("<color=green><b>[SVN]</b> Revert completed successfully.</color>");
@@ -160,12 +117,11 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToConsole($"<color=red><b>[SVN]</b> Revert failed:</color>\n{ex.Message}");
+                LogToConsole($"<color=#FFAA00><b>[SVN]</b> Revert failed:</color>\n{ex.Message}");
             }
             finally
             {
                 IsProcessing = false;
-
                 _revertCts?.Dispose();
                 _revertCts = null;
             }
@@ -173,29 +129,19 @@ namespace SVN.Core
 
         public void CancelRevert()
         {
-            if (!IsProcessing)
-                return;
+            if (!IsProcessing) return;
 
             var cts = _revertCts;
-
-            if (cts == null || cts.IsCancellationRequested)
-                return;
+            if (cts == null || cts.IsCancellationRequested) return;
 
             LogToConsole("<color=orange><b>[Revert]</b></color> Cancel requested...");
 
-            try
-            {
-                cts.Cancel();
-            }
-            catch
-            {
-            }
+            try { cts.Cancel(); } catch { }
         }
 
         public async void RevertSingleItem(SvnTreeElement element)
         {
-            if (IsProcessing || element == null)
-                return;
+            if (IsProcessing || element == null) return;
 
             await svnManager.CancelBackgroundTasksAsync();
 
@@ -209,21 +155,12 @@ namespace SVN.Core
 
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
             {
-                LogToConsole("<color=red>Working directory not found.</color>");
+                LogToConsole("<color=#FFAA00>Working directory not found.</color>");
                 return;
             }
 
-            try
-            {
-                _revertCts?.Cancel();
-            }
-            catch { }
-
-            try
-            {
-                _revertCts?.Dispose();
-            }
-            catch { }
+            try { _revertCts?.Cancel(); } catch { }
+            try { _revertCts?.Dispose(); } catch { }
 
             _revertCts = new CancellationTokenSource();
             CancellationToken token = _revertCts.Token;
@@ -233,30 +170,21 @@ namespace SVN.Core
             try
             {
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
-
                 token.ThrowIfCancellationRequested();
 
                 string safePath = SvnRunner.NormalizeRepositoryPath(element.FullPath);
-
                 LogToConsole($"<b>Reverting:</b> {safePath}");
 
-                await SvnRunner.RunAsync(
-                    $"revert \"{safePath}\"",
-                    root,
-                    retryOnLock: true,
-                    token: token);
-
+                await SvnRunner.RunAsync($"revert \"{safePath}\"", root, retryOnLock: true, token: token);
                 token.ThrowIfCancellationRequested();
 
                 svnManager._diskChangesDetected = true;
 
                 var status = svnManager.GetModule<SVNStatus>();
-
                 status?.ClearCurrentData();
                 status?.ClearSVNTreeView();
 
                 ClearAllUI();
-
                 await svnManager.RefreshStatus(force: true);
 
                 LogToConsole($"<color=green>Successfully reverted:</color> {element.Name}");
@@ -267,12 +195,11 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToConsole($"<color=red>Revert Error:</color> {ex.Message}");
+                LogToConsole($"<color=#FFAA00>Revert Error:</color> {ex.Message}");
             }
             finally
             {
                 IsProcessing = false;
-
                 _revertCts?.Dispose();
                 _revertCts = null;
             }

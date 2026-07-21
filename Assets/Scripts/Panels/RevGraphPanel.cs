@@ -147,7 +147,7 @@ public class RevGraphPanel : MonoBehaviour
         {
             if (string.IsNullOrEmpty(svnManager.WorkingDir))
             {
-                SVNLogBridge.LogLine("<color=red>Please select a project first.</color>");
+                SVNLogBridge.LogLine("<color=#FFAA00>Please select a project first.</color>");
                 return;
             }
 
@@ -177,7 +177,7 @@ public class RevGraphPanel : MonoBehaviour
         catch (System.Exception ex)
         {
             SVNLogBridge.LogError($"[SVN Graph Error] {ex.Message}");
-            SVNLogBridge.LogLine($"<color=red>Error fetching graph:</color> {ex.Message}");
+            SVNLogBridge.LogLine($"<color=#FFAA00>Error fetching graph:</color> {ex.Message}");
         }
     }
 

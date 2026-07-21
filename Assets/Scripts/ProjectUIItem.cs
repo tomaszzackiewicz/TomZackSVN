@@ -7,4 +7,5 @@ public class ProjectUIItem : MonoBehaviour
     public TextMeshProUGUI projectNameText;
     public Button selectButton;
     public Button deleteButton;
+    public Button relocateButton;
 }

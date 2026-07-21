@@ -115,7 +115,7 @@ namespace SVN.Core
             sb.AppendLine($"<color=#555555>Config File:</color> <color=#FFFFFF>{ignoreFilePath}</color>");
 
             bool fileExists = File.Exists(ignoreFilePath);
-            string fileStatus = fileExists ? "<color=green>FOUND</color>" : "<color=red>NOT FOUND</color>";
+            string fileStatus = fileExists ? "<color=green>FOUND</color>" : "<color=#FFAA00>NOT FOUND</color>";
             sb.AppendLine($"<color=#555555>File Status:</color> {fileStatus}");
             sb.AppendLine("--------------------------------------------------\n");
 

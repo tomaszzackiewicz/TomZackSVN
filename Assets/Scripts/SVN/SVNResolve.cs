@@ -56,7 +56,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrWhiteSpace(root))
                 {
-                    LogBoth("<color=red>No working directory.</color>");
+                    LogBoth("<color=#FFAA00>No working directory.</color>");
                     return;
                 }
 
@@ -73,7 +73,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Refresh conflict list failed:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>Refresh conflict list failed:</color> {ex.Message}");
             }
             finally
             {
@@ -129,7 +129,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrWhiteSpace(xml))
                 {
-                    LogBoth("<color=red>[Resolve] Empty SVN XML</color>");
+                    LogBoth("<color=#FFAA00>[Resolve] Empty SVN XML</color>");
                     return new List<SVNConflictData>();
                 }
 
@@ -197,7 +197,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>GetConflicts error:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>GetConflicts error:</color> {ex.Message}");
                 return new List<SVNConflictData>();
             }
         }
@@ -230,7 +230,7 @@ namespace SVN.Core
                             content.Contains("=======") ||
                             content.Contains(">>>>>>>"))
                         {
-                            LogBoth($"<color=red>Abort:</color> {c.Path} still has markers");
+                            LogBoth($"<color=#FFAA00>Abort:</color> {c.Path} still has markers");
                             return;
                         }
                     }
@@ -242,7 +242,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Error:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>Error:</color> {ex.Message}");
             }
             finally
             {
@@ -281,7 +281,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>DeleteAllObstructions error:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>DeleteAllObstructions error:</color> {ex.Message}");
             }
             finally
             {
@@ -300,7 +300,7 @@ namespace SVN.Core
                 await ResolveMany(conflicts, "theirs-full");
                 LogBoth("<color=green>Theirs-full batch resolved.</color>");
             }
-            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}"); }
+            catch (Exception ex) { LogBoth($"<color=#FFAA00>Error:</color> {ex.Message}"); }
             finally { IsProcessing = false; }
         }
 
@@ -315,7 +315,7 @@ namespace SVN.Core
                 await ResolveMany(conflicts, "mine-full");
                 LogBoth("<color=green>Mine-full batch resolved.</color>");
             }
-            catch (Exception ex) { LogBoth($"<color=red>Error:</color> {ex.Message}"); }
+            catch (Exception ex) { LogBoth($"<color=#FFAA00>Error:</color> {ex.Message}"); }
             finally { IsProcessing = false; }
         }
 
@@ -337,7 +337,7 @@ namespace SVN.Core
                     editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
                     if (string.IsNullOrEmpty(editorPath))
                     {
-                        LogBoth("<color=red>Error:</color> Merge tool path is not set!");
+                        LogBoth("<color=#FFAA00>Error:</color> Merge tool path is not set!");
                         return;
                     }
                 }
@@ -405,7 +405,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Exception:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>Exception:</color> {ex.Message}");
             }
             finally
             {
@@ -445,7 +445,7 @@ namespace SVN.Core
                     var item = obj.GetComponent<SVNConflictItem>();
                     if (item == null)
                     {
-                        LogBoth("<color=red>SVNConflictItem missing!</color>");
+                        LogBoth("<color=#FFAA00>SVNConflictItem missing!</color>");
                         continue;
                     }
 
@@ -458,7 +458,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>RefreshConflictUI failed:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>RefreshConflictUI failed:</color> {ex.Message}");
             }
             finally
             {
@@ -598,7 +598,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Error resolving {path}:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>Error resolving {path}:</color> {ex.Message}");
             }
             finally
             {
@@ -623,7 +623,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrEmpty(editorPath))
                 {
-                    LogBoth("<color=red>Merge tool path missing!</color>");
+                    LogBoth("<color=#FFAA00>Merge tool path missing!</color>");
                     return;
                 }
             }
@@ -654,7 +654,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>{ex.Message}</color>");
+                LogBoth($"<color=#FFAA00>{ex.Message}</color>");
             }
         }
 
@@ -670,7 +670,7 @@ namespace SVN.Core
                     string content = await File.ReadAllTextAsync(fullPath);
                     if (content.Contains("<<<<<<<") || content.Contains("=======") || content.Contains(">>>>>>>"))
                     {
-                        LogBoth($"<color=red>Conflict markers still exist:</color> {path}");
+                        LogBoth($"<color=#FFAA00>Conflict markers still exist:</color> {path}");
                         return;
                     }
                 }
@@ -686,7 +686,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Error finalizing {path}:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>Error finalizing {path}:</color> {ex.Message}");
             }
             finally
             {
@@ -753,7 +753,7 @@ namespace SVN.Core
                         }
                         catch (Exception ex2)
                         {
-                            LogBoth($"<color=red>svn delete --force failed:</color> {ex2.Message}");
+                            LogBoth($"<color=#FFAA00>svn delete --force failed:</color> {ex2.Message}");
                         }
                     }
 
@@ -777,7 +777,7 @@ namespace SVN.Core
                         }
                         catch (Exception ex2)
                         {
-                            LogBoth($"<color=red>theirs-full failed:</color> {ex2.Message}");
+                            LogBoth($"<color=#FFAA00>theirs-full failed:</color> {ex2.Message}");
                         }
                     }
 
@@ -804,7 +804,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogBoth($"<color=red>Tree resolve error:</color> {ex.Message}");
+                LogBoth($"<color=#FFAA00>Tree resolve error:</color> {ex.Message}");
             }
             finally
             {

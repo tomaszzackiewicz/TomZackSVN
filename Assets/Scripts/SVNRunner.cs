@@ -404,7 +404,7 @@ namespace SVN.Core
             process.ErrorDataReceived += (_, e) =>
             {
                 if (string.IsNullOrEmpty(e.Data)) return;
-                onOutput?.Invoke($"<color=red>{e.Data}</color>");
+                onOutput?.Invoke($"<color=#FFAA00>{e.Data}</color>");
             };
 
             try

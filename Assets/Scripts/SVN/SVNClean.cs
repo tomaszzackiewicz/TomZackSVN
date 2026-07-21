@@ -64,7 +64,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
+                LogToClean($"<color=#FFAA00>Cleanup Failed:</color> {ex.Message}");
                 LogToClean("<color=yellow>Hint:</color> Close external SVN tools and try again.");
             }
             finally
@@ -135,7 +135,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
+                LogToClean($"<color=#FFAA00>Cleanup Failed:</color> {ex.Message}");
             }
             finally
             {
@@ -214,7 +214,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToClean($"<color=red>Repair Error:</color> {ex.Message}");
+                LogToClean($"<color=#FFAA00>Repair Error:</color> {ex.Message}");
             }
             finally
             {
@@ -280,7 +280,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToClean($"<color=red>Cleanup Failed:</color> {ex.Message}");
+                LogToClean($"<color=#FFAA00>Cleanup Failed:</color> {ex.Message}");
             }
             finally
             {
@@ -330,7 +330,7 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(targetPath)) return;
 
                 LogToClean("<b>[HARD RESET]</b> Cleaning project to match HEAD...", false);
-                LogToClean("<color=red>WARNING: All unversioned files will be permanently deleted!</color>");
+                LogToClean("<color=#FFAA00>WARNING: All unversioned files will be permanently deleted!</color>");
 
                 LogToClean("Step 1/2: Reverting all local modifications...");
                 token.ThrowIfCancellationRequested();
@@ -351,7 +351,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToClean($"<color=red>Hard Reset Failed:</color> {ex.Message}");
+                LogToClean($"<color=#FFAA00>Hard Reset Failed:</color> {ex.Message}");
             }
             finally
             {
@@ -418,7 +418,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToClean($"<color=red>Repair failed:</color> {ex.Message}");
+                LogToClean($"<color=#FFAA00>Repair failed:</color> {ex.Message}");
                 LogToClean("<color=yellow>Suggestion:</color> Perform a full fresh checkout.");
             }
             finally

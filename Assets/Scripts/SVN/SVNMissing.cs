@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using UnityEngine;
 
 namespace SVN.Core
 {
@@ -25,7 +24,7 @@ namespace SVN.Core
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
 
-            SVNLogBridge.LogLine("<b>[Missing Files]</b> Scanning for items removed from disk...", append: false);
+            SVNLogBridge.LogLine("<b>[Missing Files]</b> Scanning for items removed from disk...");
 
             try
             {
@@ -76,7 +75,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>FixMissing Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>FixMissing Error:</color> {ex.Message}");
                 SVNLogBridge.LogError($"[SVN] FixMissing: {ex}");
             }
             finally

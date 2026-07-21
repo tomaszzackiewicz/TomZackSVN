@@ -73,7 +73,7 @@ public class LockPanel : MonoBehaviour
         }
         catch (Exception ex)
         {
-            SVNLogBridge.LogLine($"<color=red>[Error]</color> Sync failed: {ex.Message}");
+            SVNLogBridge.LogLine($"<color=#FFAA00>[Error]</color> Sync failed: {ex.Message}");
         }
         finally
         {
@@ -128,7 +128,7 @@ public class LockPanel : MonoBehaviour
         }
         catch (Exception ex)
         {
-            SVNLogBridge.LogLine($"<color=red>[Error]</color> Operation failed: {ex.Message}");
+            SVNLogBridge.LogLine($"<color=#FFAA00>[Error]</color> Operation failed: {ex.Message}");
             isProcessing = false;
         }
     }

@@ -23,7 +23,7 @@ namespace SVN.Core
                     if (string.IsNullOrEmpty(workingDir) ||
                         !System.IO.Directory.Exists(workingDir))
                     {
-                        return "<color=red>Error: Working Directory is invalid or not set.</color>";
+                        return "<color=#FFAA00>Error: Working Directory is invalid or not set.</color>";
                     }
 
                     string finalArgs = arguments;
@@ -89,20 +89,20 @@ namespace SVN.Core
                         if (!string.IsNullOrEmpty(error))
                         {
                             outputBuilder.Append(
-                                $"\n<color=red>SVN Error: {error}</color>");
+                                $"\n<color=#FFAA00>SVN Error: {error}</color>");
                         }
 
                         if (outputBuilder.Length == 0 &&
                             process.ExitCode != 0)
                         {
                             outputBuilder.Append(
-                                $"<color=red>Process exited with code {process.ExitCode}.</color>");
+                                $"<color=#FFAA00>Process exited with code {process.ExitCode}.</color>");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    return $"<color=red>Critical Exception: {ex.Message}</color>";
+                    return $"<color=#FFAA00>Critical Exception: {ex.Message}</color>";
                 }
 
                 return string.IsNullOrEmpty(outputBuilder.ToString())

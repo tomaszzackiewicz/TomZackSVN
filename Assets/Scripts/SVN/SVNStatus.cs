@@ -34,6 +34,12 @@ namespace SVN.Core
             if (project == null) return;
             try
             {
+                _cts?.Cancel();
+                _cts?.Dispose();
+                _cts = null;
+
+                IsProcessing = false;
+
                 ClearCurrentData();
                 ClearSVNTreeView();
 
@@ -41,6 +47,7 @@ namespace SVN.Core
                 svnManager.RepositoryUrl = project.repoUrl;
                 svnManager.CurrentKey = project.privateKeyPath;
 
+                await Task.Delay(50);
                 await RefreshModifiedInternal();
             }
             catch (Exception ex)
@@ -123,10 +130,12 @@ namespace SVN.Core
             var oldCts = _cts;
             _cts = new CancellationTokenSource();
             CancellationToken token = _cts.Token;
-            oldCts?.Cancel();
-            oldCts?.Dispose();
+            if (oldCts != null)
+            {
+                oldCts.Cancel();
+                oldCts.Dispose();
+            }
 
-            if (IsProcessing && !force) return;
             IsProcessing = true;
 
             try
@@ -213,8 +222,7 @@ namespace SVN.Core
             }
             finally
             {
-                if (_cts != null && token == _cts.Token)
-                    IsProcessing = false;
+                IsProcessing = false;
             }
         }
 

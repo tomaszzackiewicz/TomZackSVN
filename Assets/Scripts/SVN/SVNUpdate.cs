@@ -249,8 +249,8 @@ namespace SVN.Core
                     if (cCount > 0)
                     {
                         report.AppendLine();
-                        report.AppendLine("  <color=red><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
-                        report.AppendLine($"    Conflicts: <b><color=red>{cCount}</color></b>");
+                        report.AppendLine("  <color=#FFAA00><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
+                        report.AppendLine($"    Conflicts: <b><color=#FFAA00>{cCount}</color></b>");
                         report.AppendLine("    Please resolve conflicts in working copy before compiling.");
                         await svnManager.GetModule<SVNResolve>().RefreshConflictUI();
                     }
@@ -413,18 +413,16 @@ namespace SVN.Core
 
             try
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<i>Checking remote...</i>", "REMOTE", append: false);
+                SVNLogBridge.LogLine("<i>Checking remote changes...</i>");
                 string output = await SvnRunner.RunAsync("status -u", root);
 
                 if (string.IsNullOrEmpty(output))
                 {
                     SVNLogBridge.LogLine("<color=green>No remote changes found.</color>");
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=green>No remote changes.</color>", "REMOTE", append: false);
                     return;
                 }
 
                 int remoteChangesCount = 0;
-                StringBuilder uiBuilder = new StringBuilder();
                 using (var reader = new StringReader(output))
                 {
                     string line;
@@ -436,39 +434,25 @@ namespace SVN.Core
                             string pathPart = line.Substring(9).Trim();
                             pathPart = Regex.Replace(pathPart, @"^\d+\s+", "");
                             string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart);
-                            string changeMsg = $"<color=orange>Update available:</color> {cleanPath}";
-                            SVNLogBridge.LogLine(changeMsg);
-                            uiBuilder.AppendLine(changeMsg);
+                            SVNLogBridge.LogLine($"<color=orange>Update available:</color> {cleanPath}");
                         }
                     }
                 }
 
                 if (remoteChangesCount > 0)
-                {
-                    string summary = $"\n<b>Summary:</b> Found <color=red>{remoteChangesCount}</color> items to update.";
-                    SVNLogBridge.LogLine(summary);
-                    uiBuilder.AppendLine(summary);
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, uiBuilder.ToString(), "REMOTE", append: false);
-                }
+                    SVNLogBridge.LogLine($"\n<b>Summary:</b> Found <color=#FFAA00>{remoteChangesCount}</color> items to update.");
                 else
-                {
-                    string upToDateMsg = "<color=green>Your working copy is up to date.</color>";
-                    SVNLogBridge.LogLine(upToDateMsg);
-                    SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, upToDateMsg, "REMOTE", append: false);
-                }
+                    SVNLogBridge.LogLine("<color=green>Your working copy is up to date.</color>");
             }
             catch (Exception ex)
             {
-                string errorMsg = $"<color=red>Remote Check Error:</color> {ex.Message}";
-                SVNLogBridge.LogError($"[SVN] {errorMsg}");
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, errorMsg, "REMOTE", append: false);
+                SVNLogBridge.LogError($"[SVN] Remote check error: {ex.Message}");
             }
             finally
             {
                 IsProcessing = false;
             }
         }
-
 
         public void UpdateToRevision(string revision)
         {
@@ -718,8 +702,8 @@ namespace SVN.Core
                     if (cCount > 0)
                     {
                         report.AppendLine();
-                        report.AppendLine("  <color=red><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
-                        report.AppendLine($"    Conflicts: <b><color=red>{cCount}</color></b>");
+                        report.AppendLine("  <color=#FFAA00><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
+                        report.AppendLine($"    Conflicts: <b><color=#FFAA00>{cCount}</color></b>");
                         report.AppendLine("    Please resolve conflicts in working copy before compiling.");
                         await svnManager.GetModule<SVNResolve>().RefreshConflictUI();
                     }

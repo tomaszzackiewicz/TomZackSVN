@@ -1,9 +1,4 @@
 using SVN.Core;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Unity.Burst.Intrinsics;
 using UnityEngine;
 
 public class DiffPanel : MonoBehaviour

@@ -203,7 +203,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Failed to load project after checkout: {ex.Message}</color>", append: true);
+                SVNLogBridge.LogLine($"<color=#FFAA00>Failed to load project after checkout: {ex.Message}</color>", append: true);
             }
         }
 

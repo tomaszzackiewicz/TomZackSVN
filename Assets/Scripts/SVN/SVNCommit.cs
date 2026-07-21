@@ -181,7 +181,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Revert Error:</color> {ex.Message}", append: true);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=#FFAA00>Revert Error:</color> {ex.Message}", append: true);
             }
             finally { IsProcessing = false; }
         }
@@ -191,7 +191,7 @@ namespace SVN.Core
             string message = svnUI.CommitMessageInput?.text;
             if (string.IsNullOrWhiteSpace(message))
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=red>Error:</color> Please enter a commit message!", append: true);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=#FFAA00>Error:</color> Please enter a commit message!", append: true);
                 return;
             }
             _ = ExecuteCommitSelected(message);
@@ -205,7 +205,7 @@ namespace SVN.Core
             string message = svnUI.CommitMessageInput?.text;
             if (string.IsNullOrWhiteSpace(message))
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=red>Error:</color> Commit message is empty!", append: true);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "<color=#FFAA00>Error:</color> Commit message is empty!", append: true);
                 return;
             }
 
@@ -300,7 +300,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=red>Error:</color> {ex.Message}", append: true);
+                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, $"\n<color=#FFAA00>Error:</color> {ex.Message}", append: true);
             }
             finally
             {
@@ -323,7 +323,7 @@ namespace SVN.Core
             var statusModule = svnManager.GetModule<SVNStatus>();
             if (statusModule == null)
             {
-                LogToConsole("\n<color=red>Error:</color> SVN Status module not found.");
+                LogToConsole("\n<color=#FFAA00>Error:</color> SVN Status module not found.");
                 return;
             }
 
@@ -417,7 +417,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                LogToConsole($"\n<color=red>Error:</color> {ex.Message}");
+                LogToConsole($"\n<color=#FFAA00>Error:</color> {ex.Message}");
             }
             finally
             {

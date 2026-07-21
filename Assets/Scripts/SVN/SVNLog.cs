@@ -25,7 +25,7 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root))
             {
-                SVNLogBridge.LogLine("<color=red>Error:</color> Path not found.");
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Path not found.");
                 return;
             }
 
@@ -65,7 +65,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Log Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Log Error:</color> {ex.Message}");
             }
             finally
             {
@@ -174,7 +174,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Log Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Log Error:</color> {ex.Message}");
             }
             finally
             {

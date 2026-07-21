@@ -118,7 +118,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    SVNLogBridge.LogLine($"<color=red>Lock Error:</color> {ex.Message}");
+                    SVNLogBridge.LogLine($"<color=#FFAA00>Lock Error:</color> {ex.Message}");
                 }
             }
             finally
@@ -168,7 +168,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Error:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> {ex.Message}");
             }
             finally
             {

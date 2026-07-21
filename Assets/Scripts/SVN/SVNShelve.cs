@@ -69,7 +69,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Delete failed:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Delete failed:</color> {ex.Message}");
             }
             finally
             {
@@ -120,7 +120,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Stash failed:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Stash failed:</color> {ex.Message}");
             }
             finally
             {
@@ -145,7 +145,7 @@ namespace SVN.Core
 
                 if (!File.Exists(patchFile))
                 {
-                    SVNLogBridge.LogLine($"<color=red>[Stash]</color> Shelf '{shelfName}' not found.");
+                    SVNLogBridge.LogLine($"<color=#FFAA00>[Stash]</color> Shelf '{shelfName}' not found.");
                     return;
                 }
 
@@ -161,7 +161,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=red>Restore failed:</color> {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FFAA00>Restore failed:</color> {ex.Message}");
             }
             finally
             {

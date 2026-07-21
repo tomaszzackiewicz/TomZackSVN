@@ -1,6 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -9,8 +7,6 @@ namespace SVN.Core
     public class SVNAdd : SVNBase
     {
         private CancellationTokenSource _activeCTS;
-        private const int MaxLogLines = 50;
-        private List<string> _logBuffer = new List<string>();
 
         public SVNAdd(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
@@ -29,21 +25,21 @@ namespace SVN.Core
                     return;
                 }
 
-                ClearAndLog("<b>[Recursive Add]</b> Scanning for unversioned items...");
+                SVNLogBridge.LogLine("<b>[Recursive Add]</b> Scanning for unversioned items...");
 
                 string rawStatus = await SvnRunner.RunAsync("status", root, true, token);
 
                 if (string.IsNullOrWhiteSpace(rawStatus) || !rawStatus.Contains("?"))
                 {
-                    UpdateLightLog("<color=yellow>Nothing to add. All items are already tracked or ignored.</color>");
+                    SVNLogBridge.LogLine("<color=yellow>Nothing to add. All items are already tracked or ignored.</color>");
                     return;
                 }
 
-                UpdateLightLog("Adding files to SVN (Local operation)...");
+                SVNLogBridge.LogLine("Adding files to SVN (Local operation)...");
 
                 await SvnRunner.RunAsync("add * --force --parents --depth infinity", root, true, token);
 
-                UpdateLightLog("<color=#4FC3F7>Rebuilding tree...</color>");
+                SVNLogBridge.LogLine("<color=#4FC3F7>Rebuilding tree...</color>");
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
                 if (statusModule != null)
@@ -53,16 +49,16 @@ namespace SVN.Core
                     await statusModule.RefreshModifiedInternal();
                 }
 
-                UpdateLightLog("\n<color=green><b>[SUCCESS]</b> Items marked as 'Added'.</color>");
-                UpdateLightLog("<color=white>Note: You still need to <b>Commit</b> to upload them to the server.</color>");
+                SVNLogBridge.LogLine("\n<color=green><b>[SUCCESS]</b> Items marked as 'Added'.</color>");
+                SVNLogBridge.LogLine("<color=white>Note: You still need to <b>Commit</b> to upload them to the server.</color>");
             }
             catch (OperationCanceledException)
             {
-                UpdateLightLog("<color=orange>Operation cancelled by user.</color>");
+                SVNLogBridge.LogLine("<color=orange>Operation cancelled by user.</color>");
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"\n<color=red>Error during AddAll: {ex.Message}</color>");
+                SVNLogBridge.LogError($"\n<color=#FFAA00>Error during AddAll: {ex.Message}</color>");
             }
             finally
             {
@@ -78,59 +74,33 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(root)) return;
 
             CancellationToken token = PrepareNewOperation();
-            ClearAndLog($"<b>[Add]</b> Adding item: {element.Name}...");
+            SVNLogBridge.LogLine($"<b>[Add]</b> Adding item: {element.Name}...");
 
             try
             {
                 await SvnRunner.RunAsync($"add \"{element.FullPath}\"", root, true, token);
 
-                UpdateLightLog($"<color=green>Successfully added:</color> {element.Name}");
+                SVNLogBridge.LogLine($"<color=green>Successfully added:</color> {element.Name}");
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
                 if (statusModule != null)
                 {
-                    UpdateLightLog("<color=#4FC3F7>Rebuilding tree...</color>");
+                    SVNLogBridge.LogLine("<color=#4FC3F7>Rebuilding tree...</color>");
                     await statusModule.RefreshModifiedInternal();
                 }
             }
             catch (OperationCanceledException)
             {
-                UpdateLightLog("<color=orange>Operation cancelled by user.</color>");
+                SVNLogBridge.LogLine("<color=orange>Operation cancelled by user.</color>");
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"<color=red>Add Error: {ex.Message}</color>");
+                SVNLogBridge.LogError($"<color=#FFAA00>Add Error: {ex.Message}</color>");
             }
             finally
             {
                 CleanUpOperation(token);
             }
-        }
-
-        private void ClearAndLog(string initialMessage)
-        {
-            _logBuffer.Clear();
-            _logBuffer.Add(initialMessage);
-            SyncBufferWithUI();
-        }
-
-        private void UpdateLightLog(string message)
-        {
-            _logBuffer.Add(message);
-            if (_logBuffer.Count > MaxLogLines)
-                _logBuffer.RemoveAt(1);
-            SyncBufferWithUI();
-        }
-
-        private void SyncBufferWithUI()
-        {
-            if (svnUI.CommitConsoleContent == null) return;
-
-            StringBuilder sb = new StringBuilder();
-            foreach (var line in _logBuffer)
-                sb.AppendLine(line);
-
-            SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, sb.ToString(), append: false);
         }
 
         private CancellationToken PrepareNewOperation()
