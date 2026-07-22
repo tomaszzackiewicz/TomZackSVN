@@ -180,7 +180,6 @@ namespace SVN.Core
                         process.BeginErrorReadLine();
 
                         await WaitForExitAsync(process, token);
-                        process.WaitForExit();
 
                         string err = errorBuilder.ToString().Trim();
 
@@ -413,12 +412,158 @@ namespace SVN.Core
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
                 await WaitForExitAsync(process, token);
-                process.WaitForExit();
                 return process.ExitCode;
             }
             catch (OperationCanceledException)
             {
                 if (!process.HasExited) try { process.Kill(); } catch { }
+                throw;
+            }
+        }
+
+        public static async Task<int> RunStreamedLiveAsync(
+    string arguments,
+    string workingDirectory,
+    Action<string> onOutput,
+    CancellationToken token)
+        {
+            SVNLogBridge.LogLine(
+                $"<color=#00FFFF>[RUNNER]</color> Starting SVN LIVE: svn {arguments}",
+                append: true);
+
+            SVNLogBridge.LogLine(
+                $"<color=#00FFFF>[RUNNER]</color> Working Directory: {workingDirectory}",
+                append: true);
+
+            string cleanWorkingDirectory = Path.GetFullPath(
+                (workingDirectory ?? string.Empty).Trim());
+
+            string finalArguments = arguments;
+
+            if (!finalArguments.Contains("--non-interactive"))
+                finalArguments += " --non-interactive";
+
+            if (!finalArguments.Contains("--trust-server-cert"))
+                finalArguments += " --trust-server-cert";
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "svn",
+                Arguments = finalArguments,
+                WorkingDirectory = cleanWorkingDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+
+            string sshKeyPath = KeyPath;
+
+            if (!string.IsNullOrWhiteSpace(sshKeyPath))
+            {
+                string safeKeyPath = sshKeyPath
+                    .Trim()
+                    .Trim('"')
+                    .Replace("\\", "/");
+
+                startInfo.EnvironmentVariables["SVN_SSH"] =
+                    $"ssh -i \"{safeKeyPath}\" " +
+                    "-o IdentitiesOnly=yes " +
+                    "-o StrictHostKeyChecking=no " +
+                    "-o BatchMode=yes " +
+                    "-o LogLevel=QUIET " +
+                    "-o ServerAliveInterval=15 " +
+                    "-o ServerAliveCountMax=10 " +
+                    "-o IPQoS=throughput";
+            }
+
+            using var process = new Process
+            {
+                StartInfo = startInfo,
+                EnableRaisingEvents = true
+            };
+
+            SvnProcessTracker.Register(process);
+
+            var outputTaskCompletion =
+                new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var errorTaskCompletion =
+                new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data == null)
+                {
+                    outputTaskCompletion.TrySetResult(true);
+                    return;
+                }
+
+                string line = e.Data;
+
+                SVNLogger.LogToFile(
+                    $"[SVN STDOUT] {line}",
+                    "DEBUG");
+
+                onOutput?.Invoke(line);
+            };
+
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data == null)
+                {
+                    errorTaskCompletion.TrySetResult(true);
+                    return;
+                }
+
+                string line = e.Data;
+
+                SVNLogger.LogToFile(
+                    $"[SVN STDERR] {line}",
+                    "ERROR");
+
+                onOutput?.Invoke(
+                    $"<color=#FFAA00>{line}</color>");
+            };
+
+            try
+            {
+                if (!process.Start())
+                    throw new Exception(
+                        "Process.Start() returned false.");
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                await WaitForExitAsync(
+                    process,
+                    token);
+
+                await Task.WhenAll(
+                    outputTaskCompletion.Task,
+                    errorTaskCompletion.Task);
+
+                token.ThrowIfCancellationRequested();
+
+                return process.ExitCode;
+            }
+            catch (OperationCanceledException)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill();
+                }
+                catch
+                {
+                    // Proces mógł zakończyć się dokładnie
+                    // w momencie anulowania.
+                }
+
                 throw;
             }
         }
@@ -490,17 +635,18 @@ namespace SVN.Core
             "import", "export"
         };
 
+        // OPT: Całkowity rewrite — bez LINQ, bez OrderBy, bez alokacji StringBuilder w pętli
         public static void BuildTreeString(
-    string currentDir,
-    string rootDir,
-    int indent,
-    Dictionary<string, (string status, string size)> statusDict,
-    StringBuilder sb,
-    SvnStats stats,
-    HashSet<string> expandedPaths,
-    bool[] parentIsLast,
-    bool showIgnored,
-    HashSet<string> foldersWithRelevantContent)
+            string currentDir,
+            string rootDir,
+            int indent,
+            Dictionary<string, (string status, string size)> statusDict,
+            StringBuilder sb,
+            SvnStats stats,
+            HashSet<string> expandedPaths,
+            bool[] parentIsLast,
+            bool showIgnored,
+            HashSet<string> foldersWithRelevantContent)
         {
             string normRootDir = rootDir.Replace('\\', '/').TrimEnd('/');
             string normCurrentDir = currentDir.Replace('\\', '/').TrimEnd('/');
@@ -511,7 +657,7 @@ namespace SVN.Core
                 currentRelDir = normCurrentDir.Substring(normRootDir.Length).TrimStart('/').Replace('\\', '/');
             }
 
-            HashSet<string> combinedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var combinedEntries = new List<string>(64);
 
             if (Directory.Exists(normCurrentDir))
             {
@@ -520,7 +666,8 @@ namespace SVN.Core
                     foreach (var fsEntry in Directory.GetFileSystemEntries(normCurrentDir))
                     {
                         string cleanFsEntry = fsEntry.Replace('\\', '/');
-                        combinedEntries.Add(cleanFsEntry);
+                        if (!cleanFsEntry.EndsWith(".meta") && !cleanFsEntry.EndsWith("/.svn") && !cleanFsEntry.EndsWith("\\.svn"))
+                            combinedEntries.Add(cleanFsEntry);
                     }
                 }
                 catch { }
@@ -529,14 +676,14 @@ namespace SVN.Core
             foreach (var kvp in statusDict)
             {
                 string svnPath = kvp.Key.Replace('\\', '/').Trim('/');
-
                 int lastSlash = svnPath.LastIndexOf('/');
                 string svnParent = (lastSlash == -1) ? "" : svnPath.Substring(0, lastSlash);
 
                 if (string.Equals(svnParent, currentRelDir, StringComparison.OrdinalIgnoreCase))
                 {
                     string fullPath = $"{normRootDir}/{svnPath}";
-                    combinedEntries.Add(fullPath);
+                    if (!combinedEntries.Contains(fullPath))
+                        combinedEntries.Add(fullPath);
                 }
             }
 
@@ -549,30 +696,29 @@ namespace SVN.Core
                 if (string.Equals(fParent, currentRelDir, StringComparison.OrdinalIgnoreCase))
                 {
                     string fullPath = $"{normRootDir}/{f}";
-                    combinedEntries.Add(fullPath);
+                    if (!combinedEntries.Contains(fullPath))
+                        combinedEntries.Add(fullPath);
                 }
             }
 
-            var allEntries = combinedEntries
-                .OrderBy(e =>
-                {
-                    string rP = e.Length > normRootDir.Length ? e.Substring(normRootDir.Length).TrimStart('/') : "";
-                    bool isDir = Directory.Exists(e) || foldersWithRelevantContent.Contains(rP) || string.IsNullOrEmpty(Path.GetExtension(e));
-                    return !isDir;
-                })
-                .ThenBy(e => e)
-                .ToArray();
-
-            for (int i = 0; i < allEntries.Length; i++)
+            // OPT: Ręczne sortowanie zamiast LINQ OrderBy (zero alokacji delegat)
+            combinedEntries.Sort((a, b) =>
             {
-                string entry = allEntries[i];
+                bool aIsDir = Directory.Exists(a) || string.IsNullOrEmpty(Path.GetExtension(a));
+                bool bIsDir = Directory.Exists(b) || string.IsNullOrEmpty(Path.GetExtension(b));
+                if (aIsDir != bIsDir) return aIsDir ? -1 : 1;
+                return string.CompareOrdinal(a, b);
+            });
+
+            for (int i = 0; i < combinedEntries.Count; i++)
+            {
+                string entry = combinedEntries[i];
                 string name = Path.GetFileName(entry);
                 if (string.IsNullOrEmpty(name) || name == ".svn" || name.EndsWith(".meta")) continue;
 
                 string relPath = entry.Length > normRootDir.Length
                     ? entry.Substring(normRootDir.Length).TrimStart('/')
                     : "";
-
                 relPath = relPath.Replace('\\', '/');
 
                 string status = "";
@@ -585,7 +731,7 @@ namespace SVN.Core
 
                 bool isDirectory = Directory.Exists(entry) || foldersWithRelevantContent.Contains(relPath) ||
                                   (string.IsNullOrEmpty(Path.GetExtension(name)) && (status == "!" || status == "D"));
-                bool isLast = (i == allEntries.Length - 1);
+                bool isLast = (i == combinedEntries.Count - 1);
 
                 if (!showIgnored)
                 {
@@ -615,12 +761,12 @@ namespace SVN.Core
                     if (status == "!" || status == "D") stats.DeletedCount++;
                 }
 
-                StringBuilder indentStr = new StringBuilder();
+                // OPT: Budujemy indent bez StringBuilder — string[] + reuse
                 for (int j = 0; j < indent - 1; j++)
-                    indentStr.Append(parentIsLast[j] ? "    " : "│   ");
+                    sb.Append(parentIsLast[j] ? "    " : "│   ");
 
                 if (indent > 0)
-                    indentStr.Append(isLast ? "└── " : "├── ");
+                    sb.Append(isLast ? "└── " : "├── ");
 
                 string expandIcon = isDirectory ? (expandedPaths.Contains(relPath) ? "[-] " : "[+] ") : "    ";
                 string statusIcon = GetStatusIcon(status);
@@ -628,7 +774,7 @@ namespace SVN.Core
                 string displayName = (status == "!" || status == "D") ? $"<color=#FF4444>{name}</color>" : name;
                 string sizeStr = (!isDirectory && !string.IsNullOrEmpty(sizeDisplay)) ? $" <color=#555555>({sizeDisplay})</color>" : "";
 
-                sb.AppendLine($"{indentStr}{statusIcon} {expandIcon}{typeTag} {displayName}{sizeStr}");
+                sb.AppendLine($"{statusIcon} {expandIcon}{typeTag} {displayName}{sizeStr}");
 
                 if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath) || foldersWithRelevantContent.Contains(relPath)))
                 {
@@ -658,8 +804,8 @@ namespace SVN.Core
         }
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(
-    string workingDir,
-    bool includeIgnored = true)
+            string workingDir,
+            bool includeIgnored = true)
         {
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
 
@@ -847,10 +993,10 @@ namespace SVN.Core
 
             string[] roots =
             {
-        "trunk/",
-        "branches/",
-        "tags/"
-    };
+                "trunk/",
+                "branches/",
+                "tags/"
+            };
 
             foreach (string root in roots)
             {

@@ -1,8 +1,10 @@
 using SVN.Core;
-using System.Collections.Generic;
-using UnityEngine;
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
 using TMPro;
+using UnityEngine;
 
 public class ProjectSelectionPanel : MonoBehaviour
 {
@@ -13,15 +15,20 @@ public class ProjectSelectionPanel : MonoBehaviour
     [Header("Add Project UI Container")]
     [SerializeField] private GameObject addProjectSubPanel;
 
-    // ===== NOWE POLA DLA RELOCATE =====
     [Header("Relocate Panel")]
-    [SerializeField] private GameObject relocateProjectSubPanel;          // nowy sub‑panel (podobny do addProjectSubPanel)
-    [SerializeField] private TMP_InputField relocateNewUrlInput;    // pole na nowy URL
+    [SerializeField] private GameObject relocateProjectSubPanel;
+    [SerializeField] private TMP_InputField relocateNewUrlInput;
 
     private SVNUI svnUI;
     private SVNManager svnManager;
     private List<SVNProject> projects = new List<SVNProject>();
-    private SVNProject _projectToRelocate;                      // aktualnie relokowany projekt
+    private SVNProject _projectToRelocate;
+
+    // OPT: Cache słów kluczowych SVN (HashSet dla O(1) Contains)
+    private static readonly HashSet<string> SvnKeywords = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+    {
+        "trunk", "branches", "tags"
+    };
 
     void Start()
     {
@@ -40,8 +47,13 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (svnUI == null) svnUI = SVNUI.Instance;
         projects = ProjectSettings.LoadProjects();
 
+        // OPT: Zbierz do listy i zniszcz poza pętlą (Transform iteration jest bezpieczniejszy)
+        var toDestroy = new List<GameObject>(container.childCount);
         foreach (Transform child in container)
-            Destroy(child.gameObject);
+            toDestroy.Add(child.gameObject);
+
+        foreach (var go in toDestroy)
+            Destroy(go);
 
         foreach (var project in projects)
         {
@@ -54,17 +66,14 @@ public class ProjectSelectionPanel : MonoBehaviour
                 uiItem.selectButton.onClick.AddListener(() => OnProjectSelected(project));
                 uiItem.deleteButton.onClick.AddListener(() => Button_DeleteProject(project));
 
-                // NOWA LINIA – podpięcie przycisku Relocate
                 if (uiItem.relocateButton != null)
                     uiItem.relocateButton.onClick.AddListener(() => Button_OpenRelocatePanel(project));
             }
         }
     }
 
-    // ----------------------------------------------------------------
-    // Istniejące metody (bez zmian)
-    // ----------------------------------------------------------------
-    private async void OnProjectSelected(SVNProject project)
+    // OPT: void + bezpieczne fire-and-forget zamiast async void
+    private void OnProjectSelected(SVNProject project)
     {
         if (project == null || svnManager == null || !svnManager.isActiveAndEnabled) return;
         if (svnManager.IsProcessing)
@@ -73,6 +82,15 @@ public class ProjectSelectionPanel : MonoBehaviour
             return;
         }
 
+        _ = OnProjectSelectedAsync(project).ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                SVNLogBridge.LogError($"[ProjectSelection] OnProjectSelected failed: {t.Exception?.InnerException?.Message}");
+        }, TaskScheduler.Default);
+    }
+
+    private async Task OnProjectSelectedAsync(SVNProject project)
+    {
         await svnManager.CancelBackgroundTasksAsync();
         svnManager.CurrentSnapshot = null;
         svnManager.IsUpdateRunning = false;
@@ -85,7 +103,14 @@ public class ProjectSelectionPanel : MonoBehaviour
             statusModule?.ClearSVNTreeView();
             svnManager.CurrentKey = string.IsNullOrWhiteSpace(project.privateKeyPath) ? "" : project.privateKeyPath;
             await svnManager.LoadProject(project);
-            gameObject.SetActive(false);
+
+            // Bezpieczne wywołanie na main thread
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (this != null)
+                    gameObject.SetActive(false);
+            });
+
             settingsModule?.UpdateUIFromManager();
         }
         catch (Exception ex)
@@ -149,17 +174,17 @@ public class ProjectSelectionPanel : MonoBehaviour
             svnUI.AddProjectNameInput.text = GetProjectNameFromUrl(url);
     }
 
+    // OPT: HashSet zamiast List + Span-like logic bez alokacji List
     private string GetProjectNameFromUrl(string url)
     {
         try
         {
             string cleanedUrl = url.Trim().TrimEnd('/', '\\');
-            string[] segments = cleanedUrl.Split(new char[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] segments = cleanedUrl.Split(new char[] { '/', '\\' }, System.StringSplitOptions.RemoveEmptyEntries);
             if (segments.Length > 0)
             {
                 string lastSegment = segments[segments.Length - 1];
-                List<string> svnKeywords = new List<string> { "trunk", "branches", "tags" };
-                if (svnKeywords.Contains(lastSegment.ToLower()) && segments.Length > 1)
+                if (SvnKeywords.Contains(lastSegment) && segments.Length > 1)
                     lastSegment = segments[segments.Length - 2];
                 if (lastSegment.EndsWith(".git")) lastSegment = lastSegment.Substring(0, lastSegment.Length - 4);
                 if (lastSegment.EndsWith(".svn")) lastSegment = lastSegment.Substring(0, lastSegment.Length - 4);
@@ -173,7 +198,7 @@ public class ProjectSelectionPanel : MonoBehaviour
     private void AddNewProject(string name, string url, string path, string key)
     {
         string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
-        var newProj = new SVNProject { projectName = name, repoUrl = url, workingDir = normalizedPath, privateKeyPath = key, lastOpened = DateTime.Now };
+        var newProj = new SVNProject { projectName = name, repoUrl = url, workingDir = normalizedPath, privateKeyPath = key, lastOpened = System.DateTime.Now };
         List<SVNProject> currentList = ProjectSettings.LoadProjects();
         int existingIndex = currentList.FindIndex(p => p.workingDir == normalizedPath);
         if (existingIndex != -1) currentList[existingIndex] = newProj;
@@ -186,25 +211,25 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     public void Button_DeleteProject(SVNProject project)
     {
+        if (project == null) return;
+
         ProjectSettings.DeleteProject(project.workingDir);
         if (PlayerPrefs.GetString("SVN_LastOpenedProjectPath") == project.workingDir)
             PlayerPrefs.DeleteKey("SVN_LastOpenedProjectPath");
+
         RefreshList();
     }
 
-    // ----------------------------------------------------------------
-    // NOWE METODY DLA RELOCATE
-    // ----------------------------------------------------------------
     public void Button_OpenRelocatePanel(SVNProject project)
     {
         if (project == null || string.IsNullOrEmpty(project.workingDir)) return;
 
         _projectToRelocate = project;
         if (relocateNewUrlInput != null)
-            relocateNewUrlInput.text = project.repoUrl;   // pokaż aktualny URL
+            relocateNewUrlInput.text = project.repoUrl;
 
         if (relocateProjectSubPanel != null)
-            relocateProjectSubPanel.SetActive(true);                // panel pokazuje się nad listą, lista pozostaje widoczna
+            relocateProjectSubPanel.SetActive(true);
     }
 
     public void Button_ConfirmRelocate()
@@ -218,8 +243,20 @@ public class ProjectSelectionPanel : MonoBehaviour
             return;
         }
 
-        _ = ExecuteRelocateAsync(_projectToRelocate, newUrl);
-        Button_CancelRelocate();   // zamknij panel po zatwierdzeniu
+        if (newUrl == _projectToRelocate.repoUrl)
+        {
+            SVNLogBridge.LogLine("<color=orange>New URL is the same as current. No changes made.</color>");
+            Button_CancelRelocate();
+            return;
+        }
+
+        _ = ExecuteRelocateAsync(_projectToRelocate, newUrl).ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                SVNLogBridge.LogError($"[Relocate] Failed: {t.Exception?.InnerException?.Message}");
+        }, TaskScheduler.Default);
+
+        Button_CancelRelocate();
     }
 
     public void Button_CancelRelocate()
@@ -228,12 +265,11 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (relocateProjectSubPanel != null) relocateProjectSubPanel.SetActive(false);
     }
 
-    private async System.Threading.Tasks.Task ExecuteRelocateAsync(SVNProject project, string newUrl)
+    private async Task ExecuteRelocateAsync(SVNProject project, string newUrl)
     {
         try
         {
-            // Walidacja, czy katalog roboczy istnieje
-            if (!System.IO.Directory.Exists(project.workingDir))
+            if (!Directory.Exists(project.workingDir))
             {
                 SVNLogBridge.LogError($"Working directory not found: {project.workingDir}");
                 return;
@@ -242,16 +278,23 @@ public class ProjectSelectionPanel : MonoBehaviour
             string result = await SvnRunner.RunAsync($"relocate {newUrl}", project.workingDir);
             SVNLogBridge.LogLine($"<color=green>Relocated successfully to {newUrl}</color>");
 
-            // Aktualizacja URL w zapisanych projektach
             var projects = ProjectSettings.LoadProjects();
-            var existing = projects.Find(p => p.workingDir == project.workingDir);
+            string normalizedDir = project.workingDir.Replace("\\", "/").TrimEnd('/');
+            var existing = projects.Find(p => !string.IsNullOrEmpty(p.workingDir) && p.workingDir.Replace("\\", "/").TrimEnd('/') == normalizedDir);
+
             if (existing != null)
             {
                 existing.repoUrl = newUrl;
                 ProjectSettings.SaveProjects(projects);
             }
 
-            RefreshList();   // odśwież listę, aby pokazać nowy URL
+            // OPT: Odśwież aktualny projekt w managerze jeśli to ten sam
+            if (svnManager?.CurrentProject?.workingDir == project.workingDir)
+            {
+                svnManager.RepositoryUrl = newUrl;
+            }
+
+            UnityMainThreadDispatcher.Enqueue(() => RefreshList());
         }
         catch (Exception ex)
         {

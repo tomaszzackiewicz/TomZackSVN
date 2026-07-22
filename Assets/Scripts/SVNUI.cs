@@ -59,6 +59,7 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI commitTreeDisplay;
         [SerializeField] private TextMeshProUGUI commitStatsText;
         [SerializeField] private TextMeshProUGUI commitConsoleContent;
+        [SerializeField] private TextMeshProUGUI commitFilesContent;
         [SerializeField] private UnityEngine.UI.Slider operationProgressBar;
         [Header("Loading Indicator")]
         [SerializeField] private GameObject loadingOverlay;
@@ -157,6 +158,7 @@ namespace SVN.Core
         public TextMeshProUGUI StatsText => statsText;
         public TextMeshProUGUI CommitStatsText => commitStatsText;
         public TextMeshProUGUI CommitConsoleContent => commitConsoleContent;
+        public TextMeshProUGUI CommitFilesContent => commitFilesContent;
         public UnityEngine.UI.Slider OperationProgressBar => operationProgressBar;
         public GameObject ConflictGroup => conflictGroup;
         public TMP_InputField SettingsRepoUrlInput => settingsRepoUrlInput;

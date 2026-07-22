@@ -94,6 +94,10 @@ namespace SVN.Core
                 Repo = svnManager.RepositoryUrl
             };
 
+            // OPT: Zliczanie na bieżąco zamiast regexu na całym outputcie
+            int uCount = 0, gCount = 0, aCount = 0, dCount = 0, cCount = 0, rCount = 0;
+            int processed = 0;
+
             try
             {
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
@@ -113,9 +117,7 @@ namespace SVN.Core
                 }
                 catch { }
 
-                int processed = 0;
                 SVNLogBridge.LogLine("<color=blue><b>[SVN]</b> Running update...</color>");
-                StringBuilder liveOutput = new StringBuilder();
 
                 string result = await SvnRunner.RunLiveAsync(
                     "update --accept postpone",
@@ -145,6 +147,17 @@ namespace SVN.Core
                             char status = friendlyLine[0];
                             string path = SvnRunner.NormalizeRepositoryPath(friendlyLine.Substring(1).TrimStart());
                             friendlyLine = $"{status} {path}";
+
+                            // OPT: Zliczanie na bieżąco — zero alokacji, zero regexu
+                            switch (status)
+                            {
+                                case 'U': uCount++; break;
+                                case 'G': gCount++; break;
+                                case 'A': aCount++; break;
+                                case 'D': dCount++; break;
+                                case 'C': cCount++; break;
+                                case 'R': rCount++; break;
+                            }
                         }
 
                         friendlyLine = friendlyLine
@@ -155,8 +168,6 @@ namespace SVN.Core
                             .Replace("C ", "x Conflict: ")
                             .Replace("G ", "~ Merged: ")
                             .Replace("R ", "↻ Replaced: ");
-
-                        liveOutput.AppendLine(line);
 
                         UnityMainThreadDispatcher.Enqueue(() =>
                         {
@@ -176,37 +187,15 @@ namespace SVN.Core
                 if (session != _sessionId || result == "Canceled")
                     throw new OperationCanceledException();
 
-                string finalOutput = liveOutput.ToString();
-
+                // OPT: Zamiast parsować output, bierzemy revision z svn info (jedno wywołanie, niezawodne)
                 string revision = "Unknown";
-                int uCount = 0, gCount = 0, aCount = 0, dCount = 0, cCount = 0, rCount = 0;
-
-                await Task.Run(() =>
+                try
                 {
-                    var matches = Regex.Matches(finalOutput, @"^([UGADCR])\s", RegexOptions.Multiline);
-                    foreach (Match m in matches)
-                    {
-                        switch (m.Groups[1].Value)
-                        {
-                            case "U": uCount++; break;
-                            case "G": gCount++; break;
-                            case "A": aCount++; break;
-                            case "D": dCount++; break;
-                            case "C": cCount++; break;
-                            case "R": rCount++; break;
-                        }
-                    }
-                    revision = svnManager.ParseRevision(finalOutput);
-                }, token);
-
-                token.ThrowIfCancellationRequested();
-
-                if (string.IsNullOrEmpty(revision) || revision == "Unknown")
-                {
-                    string infoOutput = await SvnRunner.GetInfoAsync(targetPath);
+                    string infoAfter = await SvnRunner.GetInfoAsync(targetPath);
                     token.ThrowIfCancellationRequested();
-                    revision = ParseRevisionFromInfo(infoOutput);
+                    revision = ParseRevisionFromInfo(infoAfter);
                 }
+                catch { revision = "Unknown"; }
 
                 stopwatch.Stop();
 
@@ -547,6 +536,9 @@ namespace SVN.Core
                 Repo = svnManager.RepositoryUrl
             };
 
+            int uCount = 0, gCount = 0, aCount = 0, dCount = 0, cCount = 0, rCount = 0;
+            int processed = 0;
+
             try
             {
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
@@ -566,9 +558,7 @@ namespace SVN.Core
                 }
                 catch { }
 
-                int processed = 0;
                 SVNLogBridge.LogLine($"<color=blue><b>[SVN]</b> Running update to revision {revision}...</color>");
-                StringBuilder liveOutput = new StringBuilder();
 
                 string result = await SvnRunner.RunLiveAsync(
                     $"update --accept postpone -r {revision}",
@@ -598,6 +588,16 @@ namespace SVN.Core
                             char status = friendlyLine[0];
                             string path = SvnRunner.NormalizeRepositoryPath(friendlyLine.Substring(1).TrimStart());
                             friendlyLine = $"{status} {path}";
+
+                            switch (status)
+                            {
+                                case 'U': uCount++; break;
+                                case 'G': gCount++; break;
+                                case 'A': aCount++; break;
+                                case 'D': dCount++; break;
+                                case 'C': cCount++; break;
+                                case 'R': rCount++; break;
+                            }
                         }
 
                         friendlyLine = friendlyLine
@@ -608,8 +608,6 @@ namespace SVN.Core
                             .Replace("C ", "x Conflict: ")
                             .Replace("G ", "~ Merged: ")
                             .Replace("R ", "↻ Replaced: ");
-
-                        liveOutput.AppendLine(line);
 
                         UnityMainThreadDispatcher.Enqueue(() =>
                         {
@@ -629,8 +627,6 @@ namespace SVN.Core
                 if (session != _sessionId || result == "Canceled")
                     throw new OperationCanceledException();
 
-                string finalOutput = liveOutput.ToString();
-
                 string newRevision = revision;
                 try
                 {
@@ -639,27 +635,6 @@ namespace SVN.Core
                     newRevision = ParseRevisionFromInfo(infoAfter);
                 }
                 catch { newRevision = revision; }
-
-                int uCount = 0, gCount = 0, aCount = 0, dCount = 0, cCount = 0, rCount = 0;
-
-                await Task.Run(() =>
-                {
-                    var matches = Regex.Matches(finalOutput, @"^([UGADCR])\s", RegexOptions.Multiline);
-                    foreach (Match m in matches)
-                    {
-                        switch (m.Groups[1].Value)
-                        {
-                            case "U": uCount++; break;
-                            case "G": gCount++; break;
-                            case "A": aCount++; break;
-                            case "D": dCount++; break;
-                            case "C": cCount++; break;
-                            case "R": rCount++; break;
-                        }
-                    }
-                }, token);
-
-                token.ThrowIfCancellationRequested();
 
                 stopwatch.Stop();
 

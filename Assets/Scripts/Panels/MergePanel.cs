@@ -1,128 +1,152 @@
 using SVN.Core;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
-using UnityEngine.UI;
 
 public class MergePanel : MonoBehaviour
 {
-    private SVNUI svnUI;
-    private SVNManager svnManager;
+    private SVNManager _svnManager;
+    private SVNUI _svnUI;
+    private SVNMerge _mergeModule;
 
-    void OnEnable()
+    private void Awake() => ResolveReferences();
+
+    private void OnEnable()
     {
-        svnUI = SVNUI.Instance;
-        svnManager = SVNManager.Instance;
+        if (_svnManager == null || _mergeModule == null)
+            ResolveReferences();
 
-        if (svnUI?.MergeBranchesDropdown != null)
-        {
-            svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
-            svnUI.MergeBranchesDropdown.onValueChanged.AddListener(Dropdown_OnBranchSelected);
-        }
-
-        var merge = svnManager.GetModule<SVNMerge>();
-        if (merge != null)
-        {
-            merge.OnDryRunCompleted -= HandleDryRunResult;
-            merge.OnDryRunCompleted += HandleDryRunResult;
-        }
-
+        SubscribeEvents();
         ClearMergeUI();
-        Button_RefreshBranchDropdown();
+        RefreshBranchDropdownAsync().Forget();
     }
 
     private void OnDisable()
     {
-        var merge = svnManager?.GetModule<SVNMerge>();
-        if (merge != null)
-            merge.OnDryRunCompleted -= HandleDryRunResult;
+        UnsubscribeEvents();
     }
 
-    private void ClearMergeUI()
+    private void OnDestroy()
     {
-        if (svnUI.MergeConsoleText != null)
-            SVNLogBridge.UpdateUIField(svnUI.MergeConsoleText, "", "MERGE", append: false);
+        UnsubscribeEvents();
+    }
 
-        if (svnUI.MergeFilesContainer != null)
+    private void ResolveReferences()
+    {
+        _svnUI = SVNUI.Instance;
+        _svnManager = SVNManager.Instance;
+
+        if (_svnManager == null)
         {
-            foreach (Transform child in svnUI.MergeFilesContainer)
-                Destroy(child.gameObject);
+            Debug.LogError("[MergePanel] SVNManager.Instance is null. Merge functionality will not work.", this);
+            return;
         }
+
+        _mergeModule = _svnManager.GetModule<SVNMerge>();
+        if (_mergeModule == null)
+        {
+            Debug.LogError("[MergePanel] SVNMerge module not found.", this);
+        }
+    }
+
+    private bool EnsureReady()
+    {
+        if (_mergeModule != null && _svnManager != null) return true;
+        ResolveReferences();
+        return _mergeModule != null;
+    }
+
+    private void SubscribeEvents()
+    {
+        if (_mergeModule == null) return;
+
+        _mergeModule.OnDryRunCompleted -= HandleDryRunResult;
+        _mergeModule.OnDryRunCompleted += HandleDryRunResult;
+
+        if (_svnUI?.MergeBranchesDropdown != null)
+        {
+            _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
+            _svnUI.MergeBranchesDropdown.onValueChanged.AddListener(OnBranchSelected);
+        }
+    }
+
+    private void UnsubscribeEvents()
+    {
+        if (_mergeModule != null)
+            _mergeModule.OnDryRunCompleted -= HandleDryRunResult;
+
+        if (_svnUI?.MergeBranchesDropdown != null)
+            _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
     }
 
     public void Button_CancelMerge()
     {
-        var merge = svnManager.GetModule<SVNMerge>();
-        merge?.CancelMerge();
+        if (EnsureReady()) _mergeModule.CancelMerge();
     }
 
-    public void Button_RefreshBranchDropdown() => _ = RefreshBranchDropdown();
+    public void Button_RefreshBranchDropdown() => SafeFireAndForget(RefreshBranchDropdownAsync);
 
-    public void Button_Compare() => _ = svnManager.GetModule<SVNMerge>().CompareWithTrunk();
+    public void Button_Compare() => SafeFireAndForget(() => _mergeModule.CompareWithTrunk());
 
-    public async void Button_SyncWithTrunk()
-    {
-        try { await AutoSync(); }
-        finally { Button_RefreshBranchDropdown(); }
-    }
+    public void Button_SyncWithTrunk() => SafeFireAndForget(AutoSyncAsync);
 
-    public void Button_RepairMergeHistory() => _ = svnManager.GetModule<SVNMerge>().RepairMergeHistory();
+    public void Button_RepairMergeHistory() => SafeFireAndForget(() => _mergeModule.RepairMergeHistory());
 
-    public async void Button_ForceMergeFromTrunk()
-    {
-        try { await svnManager.GetModule<SVNMerge>().ForceMergeFromTrunk(); }
-        finally { Button_RefreshBranchDropdown(); }
-    }
+    public void Button_ForceMergeFromTrunk() => SafeFireAndForget(ForceMergeFromTrunkAsync);
 
-    public async void Button_DryRunMerge()
-    {
-        HandleDryRunResult(new SVNMerge.MergeFileResult());
-        string source = GetSafeSource();
-        if (string.IsNullOrEmpty(source)) return;
+    public void Button_DryRunMerge() => SafeFireAndForget(DryRunMergeAsync);
 
-        try { await svnManager.GetModule<SVNMerge>().ExecuteMerge(source, true); }
-        finally { Button_RefreshBranchDropdown(); }
-    }
+    public void Button_ConfirmMerge() => SafeFireAndForget(ConfirmMergeAsync);
 
-    public async void Button_ConfirmMerge()
-    {
-        HandleDryRunResult(new SVNMerge.MergeFileResult());
-        string source = GetSafeSource();
-        if (string.IsNullOrEmpty(source)) return;
+    public void Button_CancelLocalMerge() => SafeFireAndForget(() => _mergeModule.CancelLocalMerge());
 
-        try { await svnManager.GetModule<SVNMerge>().ExecuteMerge(source, false); }
-        finally { Button_RefreshBranchDropdown(); }
-    }
+    public void Button_RevertToHead() => SafeFireAndForget(() => _mergeModule.RevertToHead());
 
-    public void Button_CancelLocalMerge() => _ = CancelLocalMergeInternal();
-    public void Button_RevertToHead() => _ = RevertToHead();
-    public void Button_UndoMerge() => _ = svnManager.GetModule<SVNMerge>().UndoLastMerge();
+    public void Button_UndoMerge() => SafeFireAndForget(() => _mergeModule.UndoLastMerge());
 
-    private async Task RefreshBranchDropdown()
+    private async void SafeFireAndForget(Func<Task> operation)
     {
         try
         {
-            var merge = svnManager.GetModule<SVNMerge>();
-            if (merge == null) return;
+            await operation().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            SVNLogBridge.LogError($"[MergePanel] Unhandled exception: {ex.Message}");
+            Debug.LogException(ex, this);
+        }
+    }
 
-            string[] branches = await merge.FetchAvailableBranches(true);
-            if (svnUI?.MergeBranchesDropdown == null) return;
+    private async Task RefreshBranchDropdownAsync()
+    {
+        if (!EnsureReady()) return;
+        if (_svnUI?.MergeBranchesDropdown == null) return;
+
+        try
+        {
+            string[] branches = await _mergeModule.FetchAvailableBranches(true).ConfigureAwait(false);
+
+            await Task.Yield();
+
+            if (this == null) return;
 
             var options = new List<string> { "trunk" };
             if (branches != null)
             {
-                options.AddRange(branches
-                    .Select(b => b.TrimEnd('/'))
-                    .Where(b => b.ToLower() != "trunk" && !string.IsNullOrEmpty(b)));
+                foreach (string b in branches)
+                {
+                    string clean = b?.TrimEnd('/');
+                    if (!string.IsNullOrEmpty(clean) && !clean.Equals("trunk", StringComparison.OrdinalIgnoreCase))
+                        options.Add(clean);
+                }
             }
 
-            svnUI.MergeBranchesDropdown.ClearOptions();
-            svnUI.MergeBranchesDropdown.AddOptions(options);
-            svnUI.MergeBranchesDropdown.RefreshShownValue();
+            _svnUI.MergeBranchesDropdown.ClearOptions();
+            _svnUI.MergeBranchesDropdown.AddOptions(options);
+            _svnUI.MergeBranchesDropdown.RefreshShownValue();
 
-            Dropdown_OnBranchSelected(0);
+            OnBranchSelected(0);
         }
         catch (Exception ex)
         {
@@ -130,55 +154,126 @@ public class MergePanel : MonoBehaviour
         }
     }
 
-    public void Dropdown_OnBranchSelected(int index)
+    private async Task DryRunMergeAsync()
     {
-        if (svnUI?.MergeBranchesDropdown == null) return;
-        if (svnUI.MergeBranchesDropdown.options.Count == 0) return;
-        if (index < 0 || index >= svnUI.MergeBranchesDropdown.options.Count) return;
+        if (!EnsureReady()) return;
 
-        string selectedName = svnUI.MergeBranchesDropdown.options[index].text;
-        if (!string.IsNullOrWhiteSpace(selectedName) && svnUI.MergeSourceInput != null)
-            svnUI.MergeSourceInput.text = selectedName;
-    }
-
-    private string GetSafeSource() => svnUI?.MergeSourceInput?.text?.Trim() ?? string.Empty;
-
-    private async Task CancelLocalMergeInternal()
-    {
-        var merge = svnManager.GetModule<SVNMerge>();
-        if (merge != null) await merge.CancelLocalMerge();
-    }
-
-    private async Task RevertToHead()
-    {
-        var merge = svnManager.GetModule<SVNMerge>();
-        if (merge != null) await merge.RevertToHead();
-    }
-
-    private async Task AutoSync()
-    {
-        var merge = svnManager.GetModule<SVNMerge>();
+        HandleDryRunResult(new SVNMerge.MergeFileResult());
         string source = GetSafeSource();
-        if (merge == null || string.IsNullOrWhiteSpace(source)) return;
+        if (string.IsNullOrEmpty(source)) return;
 
-        string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir);
+        try
+        {
+            await _mergeModule.ExecuteMerge(source, true).ConfigureAwait(false);
+        }
+        finally
+        {
+            await RefreshBranchDropdownAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task ConfirmMergeAsync()
+    {
+        if (!EnsureReady()) return;
+
+        HandleDryRunResult(new SVNMerge.MergeFileResult());
+        string source = GetSafeSource();
+        if (string.IsNullOrEmpty(source)) return;
+
+        try
+        {
+            await _mergeModule.ExecuteMerge(source, false).ConfigureAwait(false);
+        }
+        finally
+        {
+            await RefreshBranchDropdownAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task ForceMergeFromTrunkAsync()
+    {
+        if (!EnsureReady()) return;
+
+        try
+        {
+            await _mergeModule.ForceMergeFromTrunk().ConfigureAwait(false);
+        }
+        finally
+        {
+            await RefreshBranchDropdownAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task AutoSyncAsync()
+    {
+        if (!EnsureReady()) return;
+
+        string source = GetSafeSource();
+        if (string.IsNullOrWhiteSpace(source)) return;
+
+        string currentUrl = await SvnRunner.GetRepoUrlAsync(_svnManager.WorkingDir).ConfigureAwait(false);
         SVNLogBridge.LogLine($"[AutoSync] Current: {currentUrl}");
         SVNLogBridge.LogLine($"[AutoSync] Source : {source}");
 
-        await merge.ExecuteMerge(source, false);
+        await _mergeModule.ExecuteMerge(source, false).ConfigureAwait(false);
+    }
+
+    public void OnBranchSelected(int index)
+    {
+        if (_svnUI?.MergeBranchesDropdown == null) return;
+        if (_svnUI.MergeBranchesDropdown.options.Count == 0) return;
+        if (index < 0 || index >= _svnUI.MergeBranchesDropdown.options.Count) return;
+
+        string selectedName = _svnUI.MergeBranchesDropdown.options[index].text;
+        if (!string.IsNullOrWhiteSpace(selectedName) && _svnUI.MergeSourceInput != null)
+            _svnUI.MergeSourceInput.text = selectedName;
     }
 
     private void HandleDryRunResult(SVNMerge.MergeFileResult result)
     {
-        if (svnUI?.MergeFilesContainer == null || svnUI.MergeFileItemPrefab == null) return;
+        if (this == null) return;
+        if (_svnUI?.MergeFilesContainer == null || _svnUI.MergeFileItemPrefab == null) return;
 
-        foreach (Transform child in svnUI.MergeFilesContainer)
-            Destroy(child.gameObject);
+        for (int i = _svnUI.MergeFilesContainer.childCount - 1; i >= 0; i--)
+        {
+            Transform child = _svnUI.MergeFilesContainer.GetChild(i);
+            if (child != null) Destroy(child.gameObject);
+        }
+
+        if (result?.Files == null) return;
 
         foreach (SVNMerge.MergeFileInfo file in result.Files)
         {
-            MergeFileItem item = Instantiate(svnUI.MergeFileItemPrefab, svnUI.MergeFilesContainer);
+            if (file == null) continue;
+
+            MergeFileItem item = Instantiate(_svnUI.MergeFileItemPrefab, _svnUI.MergeFilesContainer);
             item.Setup(file);
         }
+    }
+
+    private void ClearMergeUI()
+    {
+        if (_svnUI?.MergeConsoleText != null)
+            SVNLogBridge.UpdateUIField(_svnUI.MergeConsoleText, "", "MERGE", append: false);
+
+        if (_svnUI?.MergeFilesContainer != null)
+        {
+            for (int i = _svnUI.MergeFilesContainer.childCount - 1; i >= 0; i--)
+            {
+                Transform child = _svnUI.MergeFilesContainer.GetChild(i);
+                if (child != null) Destroy(child.gameObject);
+            }
+        }
+    }
+
+    private string GetSafeSource() => _svnUI?.MergeSourceInput?.text?.Trim() ?? string.Empty;
+}
+
+internal static class TaskExtensions
+{
+    public static async void Forget(this Task task)
+    {
+        try { await task.ConfigureAwait(false); }
+        catch (Exception ex) { Debug.LogException(ex); }
     }
 }

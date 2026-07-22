@@ -44,6 +44,20 @@ namespace SVN.Core
         private int _isUpdatingSize = 0;
         public volatile bool _diskChangesDetected = false;
 
+        // OPT: Cache komponentów zamiast GetComponent w pętli/eventach
+        private SVNPollingService _cachedPoller;
+
+        // OPT: Zarządzanie CTS — jedno źródło anulowania per-refresh
+        private CancellationTokenSource _refreshStatusCts;
+        private CancellationTokenSource _projectSwitchDebounceCts;
+        private CancellationTokenSource _watcherRestartCts;
+        private CancellationTokenSource _diskDebounceCts;
+        private CancellationTokenSource _lifetimeCts; // anulowane w OnDestroy
+
+        // OPT: Debounce dla zapisu projektu (inputy mogą fire'ować co klawisz)
+        private CancellationTokenSource _saveProjectDebounceCts;
+        private SVNProject _pendingSaveProject;
+
         public string SessionToken { get; private set; } = Guid.NewGuid().ToString("N")[..8].ToUpper();
         public SVNProject CurrentProject { get; private set; }
         public bool WasUpdateCanceled { get; set; }
@@ -63,6 +77,7 @@ namespace SVN.Core
             CurrentStatusDict = data;
         }
 
+        // OPT: Mniej alokacji — reuse StringBuilder, szybsza filtracja
         public string WorkingDir
         {
             get => workingDir;
@@ -74,7 +89,7 @@ namespace SVN.Core
                     return;
                 }
 
-                var sb = new System.Text.StringBuilder();
+                var sb = new System.Text.StringBuilder(value.Length);
                 foreach (char c in value)
                 {
                     if (!char.IsControl(c) && c != '\u00A0' && c != '\u200B')
@@ -113,6 +128,8 @@ namespace SVN.Core
             }
             Instance = this;
 
+            _lifetimeCts = new CancellationTokenSource();
+
             MainThreadWorkingDir = this.WorkingDir;
             CachedUserName = this.CurrentUserName;
 
@@ -121,6 +138,9 @@ namespace SVN.Core
             InitializeAllModules();
 
             SVN.Core.SvnRunner.OnProcessingStateChanged += OnSvnProcessingChanged;
+
+            // OPT: Cache pollera raz
+            _cachedPoller = GetComponent<SVNPollingService>();
         }
 
         private void InitializeAllModules()
@@ -188,21 +208,17 @@ namespace SVN.Core
             WorkingDir = SVNAssetLocator.NormalizePath(path);
             SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
 
-            //InitFileSystemWatcher();
-
             await RefreshRepositoryInfo();
         }
 
-        private async void Start()
+        private void Start()
         {
-            try
+            // OPT: Bezpieczne fire-and-forget z logowaniem błędów — zamiast async void Start()
+            _ = StartAsync().ContinueWith(t =>
             {
-                await StartAsync();
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogException(ex);
-            }
+                if (t.IsFaulted)
+                    SVNLogBridge.LogException(t.Exception);
+            }, TaskScheduler.Default);
         }
 
         public void RaiseSnapshotChanged(SVNProjectInfoSnapshot snapshot)
@@ -258,6 +274,11 @@ namespace SVN.Core
             UpdateCurrentProjectData();
         }
 
+        private void UpdateCurrentProjectData()
+        {
+            UpdateCurrentProjectDataImmediate();
+        }
+
         public async Task<string> AutoDetectSvnUser()
         {
             currentUserName = "Detecting...";
@@ -310,7 +331,6 @@ namespace SVN.Core
 
             if (Directory.Exists(WorkingDir))
             {
-                //InitFileSystemWatcher();
                 await InitializeActiveProject(project);
             }
 
@@ -335,30 +355,37 @@ namespace SVN.Core
             if (this == null) return;
 
             SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
-            _ = RefreshStatusAsync();
+
+            // OPT: Bezpieczne fire-and-forget z obsługą błędów
+            _ = RefreshStatusAsync().ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    SVNLogBridge.LogError($"[Init] Background refresh failed: {t.Exception?.InnerException?.Message}");
+            }, TaskScheduler.Default);
 
             if (this == null) return;
-            var poller = GetComponent<SVNPollingService>();
         }
 
         private async Task RefreshStatusAsync()
         {
-            try
-            {
-                await RefreshStatus();
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError($"[Init] Background refresh failed: {ex.Message}");
-            }
+            await RefreshStatus();
         }
 
-        public async void SetActiveProject(SVNProject project)
+        // OPT: void + bezpieczne fire-and-forget zamiast async void (który połyka wyjątki)
+        public void SetActiveProject(SVNProject project)
         {
             CurrentProject = project;
 
-            await LoadProject(project);
+            _ = LoadAndNotifyAsync(project).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    SVNLogBridge.LogError($"[SetActiveProject] Failed: {t.Exception?.InnerException?.Message}");
+            }, TaskScheduler.Default);
+        }
 
+        private async Task LoadAndNotifyAsync(SVNProject project)
+        {
+            await LoadProject(project);
             OnProjectChanged?.Invoke(project);
         }
 
@@ -395,6 +422,13 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(WorkingDir)) return;
             if (IsProcessing && !force) return;
 
+            // OPT: Anuluj poprzedni refresh + dispose
+            var oldCts = Interlocked.Exchange(ref _refreshStatusCts, new CancellationTokenSource());
+            oldCts?.Cancel();
+            oldCts?.Dispose();
+
+            CancellationToken token = _refreshStatusCts.Token;
+
             try
             {
                 var statusModule = GetModule<SVNStatus>();
@@ -412,21 +446,24 @@ namespace SVN.Core
 
                 if (Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
                 {
+                    // OPT: Przekaż CT do background taska, aby anulować gdy projekt się zmieni
                     _ = Task.Run(async () =>
                     {
                         try
                         {
                             var bar = GetModule<SVNBar>();
-                            if (bar != null && CurrentSnapshot != null)
+                            if (bar != null && CurrentSnapshot != null && !token.IsCancellationRequested)
                             {
                                 string newSize = await bar.GetFolderSizeAsync(WorkingDir);
+                                if (token.IsCancellationRequested) return;
+
                                 if (CurrentSnapshot != null)
                                 {
                                     CurrentSnapshot.WorkingCopySize = newSize;
                                     UnityMainThreadDispatcher.Enqueue(() =>
                                     {
-                                        if (CurrentSnapshot != null)
-                                            bar.RenderSnapshot(CurrentSnapshot);
+                                        if (this == null || CurrentSnapshot == null) return;
+                                        bar.RenderSnapshot(CurrentSnapshot);
                                     });
                                 }
                             }
@@ -439,8 +476,12 @@ namespace SVN.Core
                         {
                             Interlocked.Exchange(ref _isUpdatingSize, 0);
                         }
-                    });
+                    }, token);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[SVN] RefreshStatus canceled.</color>");
             }
             catch (Exception e)
             {
@@ -508,7 +549,8 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
-        private async void OnApplicationFocus(bool hasFocus)
+        // OPT: void + bezpieczne fire-and-forget zamiast async void
+        private void OnApplicationFocus(bool hasFocus)
         {
             if (!hasFocus) return;
             if (_focusRefreshRunning) return;
@@ -519,21 +561,19 @@ namespace SVN.Core
             _lastFocusRefreshTime = Time.realtimeSinceStartup;
             _focusRefreshRunning = true;
 
-            try
-            {
-                var polling = GetComponent<SVNPollingService>();
-                if (polling != null)
-                {
-                    await polling.CheckForRemoteCommitsAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError($"Focus refresh failed: {ex.Message}");
-            }
-            finally
+            _ = FocusRefreshAsync().ContinueWith(t =>
             {
                 _focusRefreshRunning = false;
+                if (t.IsFaulted)
+                    SVNLogBridge.LogError($"Focus refresh failed: {t.Exception?.InnerException?.Message}");
+            }, TaskScheduler.Default);
+        }
+
+        private async Task FocusRefreshAsync()
+        {
+            if (_cachedPoller != null)
+            {
+                await _cachedPoller.CheckForRemoteCommitsAsync();
             }
         }
 
@@ -578,6 +618,7 @@ namespace SVN.Core
         public async Task CancelBackgroundTasksAsync()
         {
             GetModule<SVNStatus>()?.CancelCurrentRefresh();
+            _refreshStatusCts?.Cancel();
         }
 
         public void BroadcastWorkingDirChange(string path)
@@ -622,28 +663,28 @@ namespace SVN.Core
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
                 BroadcastUrlChange(v);
-                UpdateCurrentProjectData();
+                DebounceSaveProject();
             });
 
             svnUI.SettingsSshKeyPathInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
                 BroadcastSshKeyChange(v);
-                UpdateCurrentProjectData();
+                DebounceSaveProject();
             });
 
             svnUI.SettingsWorkingDirInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
                 BroadcastWorkingDirChange(v);
-                UpdateCurrentProjectData();
+                DebounceSaveProject();
             });
 
             svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
                 MergeToolPath = v.Trim();
-                UpdateCurrentProjectData();
+                DebounceSaveProject();
             });
 
             svnUI.CheckoutRepoUrlInput?.onValueChanged.AddListener(v =>
@@ -665,19 +706,42 @@ namespace SVN.Core
             });
         }
 
-        private void UpdateCurrentProjectData()
+        // OPT: Debounce zapisu projektu — nie zapisuj 10 razy przy wklejaniu tekstu
+        private void DebounceSaveProject()
         {
-            var projects = ProjectSettings.LoadProjects();
-            var current = projects.Find(p => p.workingDir == WorkingDir);
-            if (current != null)
+            _saveProjectDebounceCts?.Cancel();
+            _saveProjectDebounceCts?.Dispose();
+            _saveProjectDebounceCts = new CancellationTokenSource();
+            var token = _saveProjectDebounceCts.Token;
+
+            Task.Delay(500, token).ContinueWith(t =>
             {
-                current.repoUrl = RepositoryUrl;
-                current.privateKeyPath = CurrentKey;
-                current.mergeToolPath = MergeToolPath;
-                ProjectSettings.SaveProjects(projects);
+                if (!t.IsCanceled)
+                    UpdateCurrentProjectDataImmediate();
+            }, TaskScheduler.Default);
+        }
+
+        private void UpdateCurrentProjectDataImmediate()
+        {
+            try
+            {
+                var projects = ProjectSettings.LoadProjects();
+                var current = projects.Find(p => p.workingDir == WorkingDir);
+                if (current != null)
+                {
+                    current.repoUrl = RepositoryUrl;
+                    current.privateKeyPath = CurrentKey;
+                    current.mergeToolPath = MergeToolPath;
+                    ProjectSettings.SaveProjects(projects);
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[SVN] Save project failed: {ex.Message}");
             }
         }
 
+        // OPT: Cleanup cache tymczasowych plików (wyciek dysku)
         public async Task CatAndOpenFile(string relativePath, long revision)
         {
             if (string.IsNullOrEmpty(RepositoryUrl))
@@ -698,7 +762,9 @@ namespace SVN.Core
                 if (!Directory.Exists(cacheFolder))
                     Directory.CreateDirectory(cacheFolder);
 
+                // OPT: Usuń stary plik o tej samej nazwie jeśli istnieje
                 string tempPath = Path.Combine(cacheFolder, tempFileName);
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
 
                 string repoRoot = GetRepoRoot();
                 string fullUrl = repoRoot + (relativePath.StartsWith("/") ? "" : "/") + relativePath;
@@ -753,8 +819,7 @@ namespace SVN.Core
 
         private bool _restartingWatcher = false;
 
-        private CancellationTokenSource _watcherRestartCts;
-
+        // OPT: Inicjalizacja FSW z właściwym dispose i throttlingiem
         private void InitFileSystemWatcher()
         {
             if (_restartingWatcher)
@@ -762,12 +827,7 @@ namespace SVN.Core
 
             try
             {
-                if (_folderWatcher != null)
-                {
-                    _folderWatcher.EnableRaisingEvents = false;
-                    _folderWatcher.Dispose();
-                    _folderWatcher = null;
-                }
+                DisposeFileSystemWatcher();
 
                 string path = WorkingDir;
                 if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
@@ -777,7 +837,7 @@ namespace SVN.Core
                 {
                     IncludeSubdirectories = true,
                     NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
-                    InternalBufferSize = 256 * 1024
+                    InternalBufferSize = 64 * 1024 // OPT: 64KB wystarczy, mniej RAMu
                 };
 
                 _folderWatcher.Changed += OnDiskEvent;
@@ -793,6 +853,7 @@ namespace SVN.Core
                         SVNLogBridge.LogError($"[SVN Watcher] Buffer overflow/error: {ex.Message}. Will restart after cooldown."));
 
                     _watcherRestartCts?.Cancel();
+                    _watcherRestartCts?.Dispose();
                     _watcherRestartCts = new CancellationTokenSource();
 
                     Task.Delay(TimeSpan.FromSeconds(15), _watcherRestartCts.Token)
@@ -801,7 +862,7 @@ namespace SVN.Core
                             if (!t.IsCanceled)
                             {
                                 _restartingWatcher = false;
-                                InitFileSystemWatcher();
+                                UnityMainThreadDispatcher.Enqueue(() => InitFileSystemWatcher());
                             }
                         }, TaskScheduler.Default);
                 };
@@ -815,9 +876,24 @@ namespace SVN.Core
             }
         }
 
-        private DateTime _lastDiskEventTime = DateTime.MinValue;
-        private CancellationTokenSource _diskDebounceCts;
+        private void DisposeFileSystemWatcher()
+        {
+            if (_folderWatcher != null)
+            {
+                _folderWatcher.EnableRaisingEvents = false;
+                _folderWatcher.Changed -= OnDiskEvent;
+                _folderWatcher.Created -= OnDiskEvent;
+                _folderWatcher.Deleted -= OnDiskEvent;
+                _folderWatcher.Renamed -= OnDiskEvent;
+                _folderWatcher.Dispose();
+                _folderWatcher = null;
+            }
+        }
 
+        private DateTime _lastDiskEventTime = DateTime.MinValue;
+        private readonly object _diskDebounceLock = new object();
+
+        // OPT: Throttling zamiast lawiny tasków — tylko 1 debounce task na raz
         private void OnDiskEvent(object sender, FileSystemEventArgs e)
         {
             if (e.FullPath.Contains(".svn")) return;
@@ -825,51 +901,61 @@ namespace SVN.Core
             _diskChangesDetected = true;
             _lastDiskEventTime = DateTime.UtcNow;
 
-            _diskDebounceCts?.Cancel();
-            _diskDebounceCts = new CancellationTokenSource();
+            lock (_diskDebounceLock)
+            {
+                _diskDebounceCts?.Cancel();
+                _diskDebounceCts?.Dispose();
+                _diskDebounceCts = new CancellationTokenSource();
+                var token = _diskDebounceCts.Token;
 
-            Task.Delay(TimeSpan.FromSeconds(1.5), _diskDebounceCts.Token)
-                .ContinueWith(t =>
-                {
-                    if (!t.IsCanceled && _diskChangesDetected)
+                Task.Delay(TimeSpan.FromSeconds(1.5), token)
+                    .ContinueWith(t =>
                     {
-                        UnityMainThreadDispatcher.Enqueue(() =>
+                        if (!t.IsCanceled && _diskChangesDetected)
                         {
-                            if (gameObject.activeInHierarchy && !IsUpdateRunning)
-                                _ = GetModule<SVNStatus>().ExecuteRefreshWithAutoExpand(false);
-                        });
-                        _diskChangesDetected = false;
-                    }
-                }, TaskScheduler.Default);
+                            UnityMainThreadDispatcher.Enqueue(() =>
+                            {
+                                if (this == null || !gameObject.activeInHierarchy || IsUpdateRunning) return;
+                                var status = GetModule<SVNStatus>();
+                                if (status != null)
+                                    _ = status.ExecuteRefreshWithAutoExpand(false);
+                            });
+                            _diskChangesDetected = false;
+                        }
+                    }, TaskScheduler.Default);
+            }
         }
 
         private void OnDestroy()
         {
             SVN.Core.SvnRunner.OnProcessingStateChanged -= OnSvnProcessingChanged;
             SVNLogBridge.Shutdown();
-            if (_folderWatcher != null)
-            {
-                _folderWatcher.EnableRaisingEvents = false;
-                _folderWatcher.Dispose();
-            }
+
+            _lifetimeCts?.Cancel();
+            _lifetimeCts?.Dispose();
+
+            _refreshStatusCts?.Cancel();
+            _refreshStatusCts?.Dispose();
+
+            _projectSwitchDebounceCts?.Cancel();
+            _projectSwitchDebounceCts?.Dispose();
+
+            _watcherRestartCts?.Cancel();
+            _watcherRestartCts?.Dispose();
+
+            _diskDebounceCts?.Cancel();
+            _diskDebounceCts?.Dispose();
+
+            _saveProjectDebounceCts?.Cancel();
+            _saveProjectDebounceCts?.Dispose();
+
+            DisposeFileSystemWatcher();
+
+            var statusModule = GetModule<SVNStatus>();
+            if (statusModule is IDisposable disposable)
+                disposable.Dispose();
+
+            _modules.Clear();
         }
-    }
-
-    [Serializable]
-    public class SVNProject
-    {
-        public string projectId;
-        public string projectName;
-        public string repoUrl;
-        public string workingDir;
-        public string privateKeyPath;
-        public string mergeToolPath;
-        public DateTime lastOpened;
-    }
-
-    [Serializable]
-    public class SVNProjectList
-    {
-        public List<SVNProject> projects = new List<SVNProject>();
     }
 }

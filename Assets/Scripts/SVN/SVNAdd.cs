@@ -66,10 +66,19 @@ namespace SVN.Core
             }
         }
 
-        public async void AddSingleItem(SvnTreeElement element)
+        public void AddSingleItem(SvnTreeElement element)
         {
             if (IsProcessing || element == null) return;
 
+            _ = AddSingleItemAsync(element).ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    SVNLogBridge.LogError($"[SVNAdd] AddSingleItem failed: {t.Exception?.InnerException?.Message}");
+            }, TaskScheduler.Default);
+        }
+
+        private async Task AddSingleItemAsync(SvnTreeElement element)
+        {
             string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root)) return;
 
@@ -105,33 +114,51 @@ namespace SVN.Core
 
         private CancellationToken PrepareNewOperation()
         {
-            _activeCTS?.Cancel();
-            _activeCTS?.Dispose();
-            _activeCTS = new CancellationTokenSource();
+            var oldCts = Interlocked.Exchange(ref _activeCTS, new CancellationTokenSource());
+            oldCts?.Cancel();
+            try { oldCts?.Dispose(); } catch { }
+
             IsProcessing = true;
+
             if (svnUI.OperationProgressBar != null)
             {
                 svnUI.OperationProgressBar.gameObject.SetActive(true);
                 svnUI.OperationProgressBar.value = 0.1f;
             }
+
             return _activeCTS.Token;
         }
 
+        // POPRAWKA: Przechwytujemy _activeCTS do zmiennej lokalnej PRZED uruchomieniem ContinueWith.
+        // Bez tego, jeśli w międzyczasie nowa operacja podmieni _activeCTS, Dispose() zabije nowy token.
         private void CleanUpOperation(CancellationToken token)
         {
-            if (_activeCTS != null && _activeCTS.Token == token)
+            var capturedCts = _activeCTS;
+            if (capturedCts != null && capturedCts.Token == token)
             {
                 IsProcessing = false;
-                _activeCTS.Dispose();
-                _activeCTS = null;
-                HideProgressWithDelay(1.5f);
+
+                _ = HideProgressAsync(1.5f, capturedCts.Token).ContinueWith(t =>
+                {
+                    try { capturedCts?.Dispose(); } catch { }
+                }, TaskScheduler.Default);
             }
         }
 
-        private async void HideProgressWithDelay(float delay)
+        private async Task HideProgressAsync(float delay, CancellationToken token)
         {
-            await Task.Delay((int)(delay * 1000));
-            if (!IsProcessing && svnUI.OperationProgressBar != null)
+            try
+            {
+                await Task.Delay((int)(delay * 1000), token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (token.IsCancellationRequested) return;
+
+            if (!IsProcessing && svnUI?.OperationProgressBar != null)
                 svnUI.OperationProgressBar.gameObject.SetActive(false);
         }
     }
