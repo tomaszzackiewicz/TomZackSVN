@@ -174,7 +174,7 @@ namespace SVN.Core
                 {
                     await SvnRunner.RunAsync("update --force", targetPath, true, token).ConfigureAwait(false);
                 }
-                catch (Exception) when (!(token.IsCancellationRequested))
+                catch (Exception) when (!token.IsCancellationRequested)
                 {
                     LogToClean("<color=yellow>Timestamp repair skipped (using SVN fallback behavior).</color>");
                 }
