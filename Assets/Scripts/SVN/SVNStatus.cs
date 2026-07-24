@@ -17,6 +17,7 @@ namespace SVN.Core
         private long totalCommitBytes = 0;
         private CancellationTokenSource _cts;
         private const bool ENABLE_FILE_SIZES = true;
+        private readonly int _mainThreadId;
 
         private CancellationTokenSource _projectSwitchDebounceCts;
 
@@ -32,6 +33,7 @@ namespace SVN.Core
         {
             _mainThreadContext = SynchronizationContext.Current;
             manager.OnProjectChanged += HandleProjectChanged;
+            _mainThreadId = Thread.CurrentThread.ManagedThreadId;
         }
 
         public void Dispose()
@@ -46,10 +48,23 @@ namespace SVN.Core
             _projectSwitchDebounceCts?.Dispose();
         }
 
+        private bool IsMainThread => Thread.CurrentThread.ManagedThreadId == _mainThreadId;
+
         private void RunOnMainThread(Action action)
         {
-            if (_mainThreadContext != null)
-                _mainThreadContext.Post(_ => { try { action(); } catch (Exception ex) { Debug.LogException(ex); } }, null);
+            if (IsMainThread)
+            {
+                try { action(); }
+                catch (Exception ex) { Debug.LogException(ex); }
+            }
+            else if (_mainThreadContext != null)
+            {
+                _mainThreadContext.Post(_ =>
+                {
+                    try { action(); }
+                    catch (Exception ex) { Debug.LogException(ex); }
+                }, null);
+            }
         }
 
         private async void HandleProjectChanged(SVNProject project)
@@ -226,7 +241,14 @@ namespace SVN.Core
                     }
                 });
 
-                var buildResult = await Task.Run(() => BuildFlatTreeStructureText(root, statusDict), token);
+                var previousSelectionStates = new Dictionary<string, bool>(StringComparer.Ordinal);
+                foreach (var e in _flatTreeData)
+                {
+                    if (!string.IsNullOrEmpty(e.FullPath))
+                        previousSelectionStates[e.FullPath] = e.IsChecked;
+                }
+
+                var buildResult = await Task.Run(() => BuildFlatTreeStructureText(root, statusDict, previousSelectionStates), token);
                 token.ThrowIfCancellationRequested();
 
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
@@ -310,7 +332,6 @@ namespace SVN.Core
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
         }
 
-        // NAPRAWA: Bezwzględne izolowanie modyfikacji list na głównym wątku
         public void ClearCurrentData()
         {
             RunOnMainThread(() =>
@@ -323,7 +344,6 @@ namespace SVN.Core
             });
         }
 
-        // NAPRAWA: Bezwzględne izolowanie czyszczenia widoków na głównym wątku
         public void ClearSVNTreeView()
         {
             RunOnMainThread(() =>
@@ -333,7 +353,6 @@ namespace SVN.Core
             });
         }
 
-        // NAPRAWKA: Dla pełnej spójności izolujemy również operacje na UI
         public void ResetTreeView()
         {
             RunOnMainThread(() =>
@@ -366,7 +385,6 @@ namespace SVN.Core
                 }
             }
 
-            // Pola Ignored* pozostają zerami celowo (wymagałoby "svn status --no-ignore")
             return stats;
         }
 
@@ -398,38 +416,12 @@ namespace SVN.Core
             return result;
         }
 
-        private void ShowElementAndParents(SvnTreeElement element, Dictionary<string, SvnTreeElement> lookup)
-        {
-            element.IsVisible = true;
-
-            string parentPath = GetParentPath(element.FullPath);
-            if (string.IsNullOrEmpty(parentPath)) return;
-
-            if (lookup.TryGetValue(parentPath, out var parent))
-            {
-                if (!parent.IsVisible)
-                {
-                    ShowElementAndParents(parent, lookup);
-                }
-            }
-        }
-
         private (List<SvnTreeElement> Elements, long TotalBytes) BuildFlatTreeStructureText(
-            string root,
-            Dictionary<string, SvnChangeInfo> statusDict)
+    string root,
+    Dictionary<string, SvnChangeInfo> statusDict,
+    Dictionary<string, bool> previousSelectionStates)
         {
-            var previousSelectionStates = new Dictionary<string, bool>();
-
             bool hasRootChange = statusDict.ContainsKey(".");
-
-            if (_flatTreeData != null)
-            {
-                foreach (var e in _flatTreeData)
-                {
-                    if (!string.IsNullOrEmpty(e.FullPath))
-                        previousSelectionStates[e.FullPath] = e.IsChecked;
-                }
-            }
 
             int estimatedCount = statusDict.Count * 2;
             var elements = new List<SvnTreeElement>(estimatedCount);

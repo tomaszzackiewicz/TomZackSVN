@@ -11,7 +11,6 @@ namespace SVN.Core
 {
     public class SVNCommit : SVNBase
     {
-        // ─── Fields ─────────────────────────────────────────────
         private CancellationTokenSource _commitCts;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private List<SVNStatusElement> _items = new List<SVNStatusElement>();
@@ -24,14 +23,12 @@ namespace SVN.Core
         private readonly SynchronizationContext _mainThreadContext;
         private readonly int _mainThreadId;
 
-        // ─── Constructor ────────────────────────────────────────
         public SVNCommit(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
         }
 
-        // ─── Thread Helpers ────────────────────────────────────
         private bool IsMainThread => Thread.CurrentThread.ManagedThreadId == _mainThreadId;
 
         private void RunOnMainThread(Action action)
@@ -72,7 +69,6 @@ namespace SVN.Core
             return result;
         }
 
-        // ─── Logging ───────────────────────────────────────────
         private string TsTag() => $"<color=blue>[{DateTime.Now:HH:mm:ss}]</color>";
 
         private void LogLine(string message)
@@ -122,7 +118,6 @@ namespace SVN.Core
             LogLine($"<color=#FFAA00>Error:</color> {msg}");
         }
 
-        // ─── Public API ────────────────────────────────────────
         public async void ShowWhatWillBeCommitted()
         {
             try { await ShowWhatWillBeCommittedAsync(); }
@@ -167,7 +162,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Selection Helpers ─────────────────────────────────
         public List<SvnTreeElement> GetSelectedFiles()
         {
             var status = svnManager?.GetModule<SVNStatus>();
@@ -175,7 +169,6 @@ namespace SVN.Core
                    ?? new List<SvnTreeElement>();
         }
 
-        // ─── Commit Preview ────────────────────────────────────
         public void RenderCommitList(List<SVNStatusElement> items)
         {
             if (items == null || items.Count == 0)
@@ -219,7 +212,6 @@ namespace SVN.Core
             SetCommitConsole(sb.ToString(), append: false);
         }
 
-        // ─── Show What Will Be Committed ───────────────────────
         private async Task ShowWhatWillBeCommittedAsync()
         {
             if (svnManager == null)
@@ -249,7 +241,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Refresh Commit List ───────────────────────────────
         private async Task RefreshCommitListAsync()
         {
             bool hasLock = false;
@@ -302,7 +293,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Commit All ────────────────────────────────────────
         private async Task CommitAllAsync()
         {
             bool hasLock = false;
@@ -369,7 +359,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Commit Selected ───────────────────────────────────
         private async Task CommitSelectedAsync()
         {
             bool hasLock = false;
@@ -487,7 +476,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Required Parents ──────────────────────────────────
         private List<string> GetRequiredAddedParents(
             IEnumerable<string> selectedNewPaths,
             Dictionary<string, string> statusMap)
@@ -518,7 +506,6 @@ namespace SVN.Core
                 .ToList();
         }
 
-        // ─── Directory Tree Logic ──────────────────────────────
         private List<string> EnsureParentDirectoriesAreIncluded(
             List<string> paths,
             string root,
@@ -556,7 +543,6 @@ namespace SVN.Core
                 .ToList();
         }
 
-        // ─── Commit Execution ──────────────────────────────────
         private async Task<string> RunCommitAsync(string command, string root, CancellationToken token)
         {
             var sb = new StringBuilder();
@@ -609,7 +595,6 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(line))
                 return;
 
-            // Ignoruj ozdobne banery
             if (line.Length > 3 &&
                 (double)line.Count(c => "@*#=-_/\\|".Contains(c)) / line.Length > 0.75)
                 return;
@@ -621,7 +606,6 @@ namespace SVN.Core
                 lower.Contains("monitoring"))
                 return;
 
-            // Pomijaj listowanie plików
             if (line.StartsWith("Sending ") || line.StartsWith("Adding ") ||
                 line.StartsWith("Deleting ") || line.StartsWith("Replacing "))
                 return;
@@ -647,7 +631,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Result Handling ───────────────────────────────────
         private bool HandleCommitResult(string result)
         {
             if (result.Contains("Committed revision"))
@@ -703,7 +686,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Low-level Operations ─────────────────────────────
         private async Task<bool> CleanupWorkingCopyAsync(string root, CancellationToken token)
         {
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(CleanupTimeoutSeconds));
@@ -756,7 +738,6 @@ namespace SVN.Core
             return allPathsToAdd.Count;
         }
 
-        // ─── Revert Missing ────────────────────────────────────
         private async Task RevertAllMissingWrapperAsync()
         {
             await RevertAllMissingAsync();
@@ -819,7 +800,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Status Parsers ────────────────────────────────────
         private (List<string> Missing, List<string> Deleted, List<string> Unversioned)
             ParseStatusForCommitAll(string rawStatus)
         {
@@ -911,7 +891,6 @@ namespace SVN.Core
             return result;
         }
 
-        // ─── UI Cleanup ────────────────────────────────────────
         private void ClearCommitUI()
         {
             RunOnMainThread(() =>
@@ -972,7 +951,6 @@ namespace SVN.Core
             });
         }
 
-        // ─── Path Helpers ──────────────────────────────────────
         private string NormalizeRoot(string root) =>
             root?.Replace("\\", "/").TrimEnd('/') ?? "";
 
@@ -1012,7 +990,6 @@ namespace SVN.Core
             catch { }
         }
 
-        // ─── Formatting ────────────────────────────────────────
         private string FormatCommitSize(long bytes)
         {
             if (bytes == 0) return "0 B";
@@ -1032,7 +1009,6 @@ namespace SVN.Core
 
         private enum MessageType { Info, Success, Warning, Error }
 
-        // ─── Nested Data Class ─────────────────────────────────
         public class SVNStatusElement
         {
             public string FullPath;
