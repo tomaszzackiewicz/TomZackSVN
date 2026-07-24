@@ -82,6 +82,11 @@ namespace SVN.Core
         public void Button_BreakLocks() => svnManager.GetModule<SVNLock>().BreakAllLocksButton();
         public void Button_CheckRemoteModifications() => svnManager.GetModule<SVNUpdate>().CheckRemoteModificationsButton();
         public void Button_OpenLogs() => SVNLogger.OpenLogFolder();
+        public void Button_Revert() => svnManager.GetModule<SVNRevert>().RevertAll();
+        public void Button_CancelRevert() => svnManager.GetModule<SVNRevert>().CancelRevert();
+        public void Button_Add() => svnManager.GetModule<SVNAdd>().AddAll();
+        public void Button_FixMissing() => svnManager.GetModule<SVNMissing>().FixMissingFiles();
+        public void Button_DiscardUntracked() => svnManager.GetModule<SVNClean>().DiscardUnversioned();
         public void Button_ClearLocksView()
         {
             if (svnUI.LocksText != null)

@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace SVN.Core
 {
-    public class SVNStatus : SVNBase
+    public class SVNStatus : SVNBase, IDisposable
     {
         public event Action OnSelectionChanged;
 
@@ -26,9 +26,30 @@ namespace SVN.Core
 
         private static readonly string[] SIZE_UNITS = { "B", "KB", "MB", "GB", "TB" };
 
+        private readonly SynchronizationContext _mainThreadContext;
+
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
+            _mainThreadContext = SynchronizationContext.Current;
             manager.OnProjectChanged += HandleProjectChanged;
+        }
+
+        public void Dispose()
+        {
+            if (svnManager != null)
+            {
+                svnManager.OnProjectChanged -= HandleProjectChanged;
+            }
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _projectSwitchDebounceCts?.Cancel();
+            _projectSwitchDebounceCts?.Dispose();
+        }
+
+        private void RunOnMainThread(Action action)
+        {
+            if (_mainThreadContext != null)
+                _mainThreadContext.Post(_ => { try { action(); } catch (Exception ex) { Debug.LogException(ex); } }, null);
         }
 
         private async void HandleProjectChanged(SVNProject project)
@@ -67,7 +88,6 @@ namespace SVN.Core
             }
         }
 
-        // PRZYWRÓCONE: IndexOf(folder) — porównanie referencji, bezpieczne dla listy w porządku drzewa
         public void ToggleFolderVisibility(SvnTreeElement folder)
         {
             List<SvnTreeElement> targetData = folder.IsCommitDelegate ? _commitTreeData : _flatTreeData;
@@ -128,10 +148,13 @@ namespace SVN.Core
             svnManager.ExpandedPaths.Add("");
             ClearSVNTreeView();
 
-            if (svnUI.TreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
-            if (svnUI.CommitTreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
+            RunOnMainThread(() =>
+            {
+                if (svnUI.TreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Refreshing...", "TREE", append: false);
+                if (svnUI.CommitTreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
+            });
 
             _isCurrentViewIgnored = false;
             await ExecuteRefreshWithAutoExpand(force: true);
@@ -153,19 +176,22 @@ namespace SVN.Core
 
             try
             {
-                if (svnUI != null)
+                RunOnMainThread(() =>
                 {
-                    if (svnUI.TreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Scanning local changes...", "TREE", append: false);
-                    if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
-                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing commit list...", "COMMIT_TREE", append: false);
-                }
+                    if (svnUI != null)
+                    {
+                        if (svnUI.TreeDisplay != null)
+                            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Scanning local changes...", "TREE", append: false);
+                        if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
+                            SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing commit list...", "COMMIT_TREE", append: false);
+                    }
+
+                    svnUI?.SvnTreeView?.ClearView();
+                    svnUI?.SVNCommitTreeDisplay?.ClearView();
+                });
 
                 await Task.Yield();
                 token.ThrowIfCancellationRequested();
-
-                svnUI?.SvnTreeView?.ClearView();
-                svnUI?.SVNCommitTreeDisplay?.ClearView();
 
                 string root = svnManager.WorkingDir;
 
@@ -185,53 +211,64 @@ namespace SVN.Core
 
                 if (statusDict == null || statusDict.Count == 0)
                 {
-                    ShowEmptyState();
+                    RunOnMainThread(ShowEmptyState);
                     return;
                 }
 
-                if (svnUI != null)
+                RunOnMainThread(() =>
                 {
-                    if (svnUI.TreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-                    if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
-                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
-                }
+                    if (svnUI != null)
+                    {
+                        if (svnUI.TreeDisplay != null)
+                            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+                        if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
+                            SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+                    }
+                });
 
                 var buildResult = await Task.Run(() => BuildFlatTreeStructureText(root, statusDict), token);
                 token.ThrowIfCancellationRequested();
 
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
 
+                var newCommitData = await Task.Run(() => BuildCommitView(buildResult.Elements), token);
+                token.ThrowIfCancellationRequested();
+
+                if (svnManager.WorkingDir != expectedWorkingDir) return;
+
                 _flatTreeData = buildResult.Elements;
+                _commitTreeData = newCommitData;
                 totalCommitBytes = buildResult.TotalBytes;
 
                 if (lockDict != null && lockDict.Count > 0)
                     ApplyLockColors(_flatTreeData, lockDict);
 
-                var localData = _flatTreeData;
+                var localFlatData = _flatTreeData;
+                var localCommitData = _commitTreeData;
 
-                if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
+                RunOnMainThread(() =>
                 {
-                    foreach (var e in localData)
-                        e.IsCommitDelegate = false;
-                    svnUI.SvnTreeView.RefreshUI(localData, this);
-                }
+                    if (svnManager.WorkingDir != expectedWorkingDir) return;
 
-                token.ThrowIfCancellationRequested();
+                    if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
+                    {
+                        foreach (var e in localFlatData) e.IsCommitDelegate = false;
+                        svnUI.SvnTreeView.RefreshUI(localFlatData, this);
+                    }
 
-                if (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
-                {
-                    _commitTreeData = await Task.Run(() => BuildCommitView(localData), token);
-                    token.ThrowIfCancellationRequested();
+                    if (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
+                    {
+                        foreach (var e in localCommitData) e.IsCommitDelegate = true;
 
-                    if (svnUI.CommitTreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+                        if (svnUI.CommitTreeDisplay != null)
+                            SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
 
-                    svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-                    UpdateSelectedSizeDisplay();
-                }
+                        svnUI.SVNCommitTreeDisplay.RefreshUI(localCommitData, this);
+                        UpdateSelectedSizeDisplay();
+                    }
 
-                UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
+                    UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
+                });
             }
             catch (OperationCanceledException)
             {
@@ -273,24 +310,36 @@ namespace SVN.Core
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
         }
 
+        // NAPRAWA: Bezwzględne izolowanie modyfikacji list na głównym wątku
         public void ClearCurrentData()
         {
-            _flatTreeData?.Clear();
-            _commitTreeData?.Clear();
-            if (svnManager != null && svnManager.CurrentStatusDict != null)
-                svnManager.CurrentStatusDict.Clear();
-            totalCommitBytes = 0;
+            RunOnMainThread(() =>
+            {
+                _flatTreeData?.Clear();
+                _commitTreeData?.Clear();
+                if (svnManager != null && svnManager.CurrentStatusDict != null)
+                    svnManager.CurrentStatusDict.Clear();
+                totalCommitBytes = 0;
+            });
         }
 
+        // NAPRAWA: Bezwzględne izolowanie czyszczenia widoków na głównym wątku
         public void ClearSVNTreeView()
         {
-            foreach (var svnTreeView in svnUI.SVNTreeViews)
-                svnTreeView.ClearView();
+            RunOnMainThread(() =>
+            {
+                foreach (var svnTreeView in svnUI.SVNTreeViews)
+                    svnTreeView.ClearView();
+            });
         }
 
+        // NAPRAWKA: Dla pełnej spójności izolujemy również operacje na UI
         public void ResetTreeView()
         {
-            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected. (Everything up to date)</i>", "TREE", append: false);
+            RunOnMainThread(() =>
+            {
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected. (Everything up to date)</i>", "TREE", append: false);
+            });
         }
 
         private SvnStats CalculateStats(Dictionary<string, SvnChangeInfo> statusDict)
@@ -316,6 +365,8 @@ namespace SVN.Core
                     case "C": stats.ConflictsCount++; break;
                 }
             }
+
+            // Pola Ignored* pozostają zerami celowo (wymagałoby "svn status --no-ignore")
             return stats;
         }
 
@@ -341,7 +392,6 @@ namespace SVN.Core
             {
                 if (visible.Contains(e.FullPath))
                 {
-                    e.IsCommitDelegate = true;
                     result.Add(e);
                 }
             }
@@ -364,7 +414,6 @@ namespace SVN.Core
             }
         }
 
-        // OPT: pathToIndex — O(n) propagacja zaznaczenia, nie wymaga sortowania listy
         private (List<SvnTreeElement> Elements, long TotalBytes) BuildFlatTreeStructureText(
             string root,
             Dictionary<string, SvnChangeInfo> statusDict)
@@ -488,7 +537,6 @@ namespace SVN.Core
                 }
             }
 
-            // OPT: Propagacja zaznaczenia w O(n) — od liści do korzenia
             for (int i = elements.Count - 1; i >= 0; i--)
             {
                 var el = elements[i];
@@ -576,7 +624,6 @@ namespace SVN.Core
             }
         }
 
-        // OPT: Jedno wywołanie File.GetAttributes zamiast File.Exists + Directory.Exists
         public static async Task<Dictionary<string, SvnChangeInfo>> GetChangesDictionaryAsync(
             string workingDir,
             CancellationToken cancellationToken = default)
@@ -639,7 +686,7 @@ namespace SVN.Core
                         continue;
                     }
 
-                    string fullPath = Path.Combine(workingDir, cleanPath).Replace("\\", "/");
+                    string fullPath = (workingDir + "/" + cleanPath.TrimStart('/')).Replace("\\", "/");
 
                     bool isActuallyFile = false;
                     bool isActuallyDir = false;
@@ -708,7 +755,6 @@ namespace SVN.Core
             NotifySelectionChanged();
         }
 
-        // PRZYWRÓCONE: FindIndex — lista jest w porządku drzewa, nie alfabetycznym, więc binary search jest niebezpieczny
         private void UpdateListSelection(List<SvnTreeElement> list, string path, bool isChecked)
         {
             if (list == null || list.Count == 0) return;

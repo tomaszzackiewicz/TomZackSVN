@@ -13,7 +13,6 @@ public class CleanPanel : MonoBehaviour
     }
 
     public void Button_Clean() => svnManager.GetModule<SVNClean>().LightCleanup();
-    public void Button_DiscardUntracked() => svnManager.GetModule<SVNClean>().DiscardUnversioned();
     public void Button_Vacuum() => svnManager.GetModule<SVNClean>().VacuumCleanup();
     public void Button_DeepRepair() => svnManager.GetModule<SVNClean>().DeepRepair();
     public void Button_HardReset() => svnManager.GetModule<SVNClean>().HardReset();

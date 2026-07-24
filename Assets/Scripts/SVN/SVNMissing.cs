@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -100,19 +103,25 @@ namespace SVN.Core
 
             if (missingFiles.Count > 0)
             {
-                SVNLogBridge.LogLine($"Found <b>{missingFiles.Count}</b> missing files. Deleting from SVN index...");
+                SVNLogBridge.LogLine($"Found <b>{missingFiles.Count}</b> missing files. Removing from SVN index...");
 
                 int batchSize = 25;
-                for (int i = 0; i < missingFiles.Count; i += batchSize)
+                int total = missingFiles.Count;
+                int processed = 0;
+
+                for (int i = 0; i < total; i += batchSize)
                 {
                     token.ThrowIfCancellationRequested();
 
-                    var batch = missingFiles.Skip(i).Take(batchSize);
+                    var batch = missingFiles.Skip(i).Take(batchSize).ToList();
                     string filesArgs = string.Join(" ", batch.Select(f => $"\"{f}\""));
 
                     try
                     {
-                        await SvnRunner.RunAsync($"delete --force {filesArgs}", root, token: token);
+                        // Użyj cichego wykonania – brak jakiegokolwiek wyjścia
+                        await RunCommandSilently("svn", $"delete --force --quiet {filesArgs}", root);
+                        processed += batch.Count;
+                        SVNLogBridge.LogLine($"  Progress: {processed}/{total} files removed.");
                     }
                     catch (OperationCanceledException)
                     {
@@ -128,6 +137,32 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogLine("<color=yellow>No missing files (!) detected.</color>");
             }
+        }
+
+        // ─── Ciche wykonanie polecenia SVN (zero logów) ────────
+        private async Task RunCommandSilently(string fileName, string arguments, string workingDirectory)
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    WorkingDirectory = workingDirectory,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                },
+                EnableRaisingEvents = true
+            };
+
+            process.Start();
+
+            _ = Task.Run(() => process.StandardOutput.ReadToEnd());
+            _ = Task.Run(() => process.StandardError.ReadToEnd());
+
+            await Task.Run(() => process.WaitForExit());
         }
     }
 }
