@@ -209,17 +209,26 @@ namespace SVN.Core
         private List<string> EnsureParentDirectoriesAreIncluded(List<string> paths, string root)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var path in paths)
+
+            foreach (var rawPath in paths)
             {
-                result.Add(path);
-                string parentDir = Path.GetDirectoryName(path)?.Replace('\\', '/').TrimEnd('/');
-                while (!string.IsNullOrEmpty(parentDir) && parentDir.Length > root.Length)
+                string current = rawPath?.Replace('\\', '/').Trim('/');
+                if (string.IsNullOrEmpty(current))
+                    continue;
+
+                result.Add(current);
+
+                string parent = Path.GetDirectoryName(current)?.Replace('\\', '/').Trim('/');
+                while (!string.IsNullOrEmpty(parent))
                 {
-                    result.Add(parentDir);
-                    parentDir = Path.GetDirectoryName(parentDir)?.Replace('\\', '/').TrimEnd('/');
+                    result.Add(parent);
+                    parent = Path.GetDirectoryName(parent)?.Replace('\\', '/').Trim('/');
                 }
             }
-            return result.ToList();
+
+            return result.OrderBy(p => p.Count(c => c == '/'))
+                          .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
+                          .ToList();
         }
 
         // ─── Zarządzanie stanem ──────────────────────────────

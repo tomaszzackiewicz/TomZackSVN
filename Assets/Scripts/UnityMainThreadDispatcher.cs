@@ -20,25 +20,22 @@ namespace SVN.Core
 
         private void Update()
         {
-            if (ExecutionQueue.Count > 10)
-                SVNLogBridge.LogLine($"[Dispatcher] Queue size: {ExecutionQueue.Count}");
+            lock (ExecutionQueue)
+            {
+                if (ExecutionQueue.Count > 100)
+                    Debug.LogWarning($"[Dispatcher] Queue backlog: {ExecutionQueue.Count}");
+            }
 
             int processed = 0;
-
             while (processed < MAX_ACTIONS_PER_FRAME)
             {
                 Action action = null;
-
                 lock (ExecutionQueue)
                 {
-                    if (ExecutionQueue.Count == 0)
-                        break;
-
+                    if (ExecutionQueue.Count == 0) break;
                     action = ExecutionQueue.Dequeue();
                 }
-
                 action?.Invoke();
-
                 processed++;
             }
         }

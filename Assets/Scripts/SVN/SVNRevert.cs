@@ -22,6 +22,8 @@ namespace SVN.Core
             _mainThreadContext = SynchronizationContext.Current;
         }
 
+        private string TsTag() => $"<color=#9CA3AF>[{DateTime.Now:HH:mm:ss}]</color>";
+
         private void RunOnMainThread(Action action)
         {
             if (_mainThreadContext != null)
@@ -31,7 +33,7 @@ namespace SVN.Core
         private void LogToConsole(string msg)
         {
             if (string.IsNullOrWhiteSpace(msg)) return;
-            SVNLogBridge.LogLine(msg);
+            SVNLogBridge.LogLine($"{TsTag()} {msg}");
         }
 
         private void ClearAllUI()
@@ -60,12 +62,14 @@ namespace SVN.Core
                 LogToConsole(warningMessage);
                 return false;
             }
+
             if (elapsed < MinDoubleClickDelay)
             {
                 lastClickTime = now;
-                LogToConsole("<color=#FFAA00><b>[Revert]</b></color> Confirmation too fast — press the button once again.");
+                LogToConsole("<color=#FFAA00><b>[Revert]</b></color> Confirmation too fast — press once again.");
                 return false;
             }
+
             lastClickTime = -10f;
             return true;
         }
@@ -75,19 +79,29 @@ namespace SVN.Core
             LogToConsole("<b>[Cleanup]</b> Checking working copy locks...");
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(CleanupTimeoutSeconds));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, timeoutCts.Token);
+
             try
             {
                 await SvnRunner.RunAsync("cleanup", root, false, linkedCts.Token);
-                LogToConsole("<color=green>Working copy is clean.</color>");
+                LogToConsole("<color=green>[Cleanup]</color> Working copy is clean.");
                 return true;
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
             {
-                LogToConsole("<color=#FFAA00>Cleanup timed out (30s). Proceeding anyway...</color>");
+                LogToConsole("<color=#FFAA00>[Cleanup]</color> Timed out (30s), proceeding...");
                 return false;
             }
         }
 
+        private CancellationToken ResetAndGetToken()
+        {
+            var old = Interlocked.Exchange(ref _revertCts, null);
+            old?.Dispose();
+            _revertCts = new CancellationTokenSource();
+            return _revertCts.Token;
+        }
+
+        // ─── Revert All ────────────────────────────────────────
         public async void RevertAll()
         {
             bool hasLock = false;
@@ -99,7 +113,7 @@ namespace SVN.Core
                 await svnManager.CancelBackgroundTasksAsync();
 
                 if (!ConfirmAction(ref _lastRevertAllClickTime,
-                    "<color=#FFAA00><b>[Revert All]</b></color> Are you sure? This will discard <b>ALL local changes</b>!\n" +
+                    "<color=#FFAA00><b>[Revert All]</b></color> This will discard <b>ALL local changes</b>!\n" +
                     "Press the button again within <b>5 seconds</b> to confirm."))
                 {
                     if (hasLock) _operationLock.Release();
@@ -110,19 +124,19 @@ namespace SVN.Core
                 if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                 {
                     LogToConsole("<color=#FFAA00>Error:</color> Working directory does not exist.");
+                    if (hasLock) _operationLock.Release();
                     return;
                 }
 
                 IsProcessing = true;
-                var token = new CancellationTokenSource().Token;
+                var token = ResetAndGetToken();
+                var opStart = DateTime.UtcNow;
 
-                LogToConsole("<color=#4FC3F7><b>[SVN]</b> Starting revert of all changes...</color>");
-
-                // Zamiast niebezpiecznego WaitForSemaphoreFreeAsync, robimy asynchroniczny cleanup
+                LogToConsole("<b>[Revert All]</b> Starting revert of all changes...");
                 await CleanupWorkingCopyAsync(root, token);
 
-                // Usunięto retryOnLock: true, bo cleanup załatwił już blokady
-                await SvnRunner.RunAsync("revert -R .", root, false, token);
+                LogToConsole("<b>[Revert All]</b> Reverting all local modifications...");
+                string result = await SvnRunner.RunAsync("revert -R .", root, false, token);
 
                 svnManager._diskChangesDetected = true;
                 var status = svnManager.GetModule<SVNStatus>();
@@ -130,32 +144,27 @@ namespace SVN.Core
                 ClearAllUI();
                 await svnManager.RefreshStatus(force: true);
 
-                LogToConsole("<color=green><b>[SVN]</b> Revert completed successfully.</color>");
+                var durationMs = (long)(DateTime.UtcNow - opStart).TotalMilliseconds;
+                LogToConsole($"<color=green><b>[Revert All]</b> Completed. durationMs={durationMs}</color>");
             }
             catch (OperationCanceledException)
             {
-                LogToConsole("<color=orange><b>[SVN]</b> Revert cancelled.</color>");
+                LogToConsole("<color=orange><b>[Revert All]</b> Cancelled.</color>");
             }
             catch (Exception ex)
             {
-                LogToConsole($"<color=#FFAA00><b>[SVN]</b> Revert failed:</color>\n{ex.Message}");
+                LogToConsole($"<color=#FFAA00><b>[Revert All]</b> Failed:</color> {ex.Message}");
             }
             finally
             {
+                _revertCts?.Dispose();
+                _revertCts = null;
                 IsProcessing = false;
                 if (hasLock) _operationLock.Release();
             }
         }
 
-        public void CancelRevert()
-        {
-            if (_revertCts?.IsCancellationRequested == false)
-            {
-                try { _revertCts?.Cancel(); } catch { }
-                LogToConsole("<color=orange><b>[Revert]</b></color> Cancel requested...");
-            }
-        }
-
+        // ─── Revert Single Item ────────────────────────────────
         public async void RevertSingleItem(SvnTreeElement element)
         {
             bool hasLock = false;
@@ -167,7 +176,7 @@ namespace SVN.Core
                 await svnManager.CancelBackgroundTasksAsync();
 
                 if (!ConfirmAction(ref _lastRevertSingleClickTime,
-                    $"<color=#FFAA00><b>[Revert]</b></color> Are you sure you want to revert <b>{element.Name}</b>?\n" +
+                    $"<color=#FFAA00><b>[Revert]</b></color> Revert <b>{element.Name}</b>?\n" +
                     "Press the button again within <b>5 seconds</b> to confirm."))
                 {
                     if (hasLock) _operationLock.Release();
@@ -178,18 +187,18 @@ namespace SVN.Core
                 if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                 {
                     LogToConsole("<color=#FFAA00>Working directory not found.</color>");
+                    if (hasLock) _operationLock.Release();
                     return;
                 }
 
                 IsProcessing = true;
-                var token = new CancellationTokenSource().Token;
+                var token = ResetAndGetToken();
+                var opStart = DateTime.UtcNow;
 
                 await CleanupWorkingCopyAsync(root, token);
 
                 string safePath = SvnRunner.NormalizeRepositoryPath(element.FullPath);
-                LogToConsole($"<b>Reverting:</b> {safePath}");
-
-                // Usunięto retryOnLock: true
+                LogToConsole($"<b>[Revert]</b> Reverting: {safePath}...");
                 await SvnRunner.RunAsync($"revert \"{safePath}\"", root, false, token);
 
                 svnManager._diskChangesDetected = true;
@@ -198,20 +207,36 @@ namespace SVN.Core
                 ClearAllUI();
                 await svnManager.RefreshStatus(force: true);
 
-                LogToConsole($"<color=green>Successfully reverted:</color> {element.Name}");
+                var durationMs = (long)(DateTime.UtcNow - opStart).TotalMilliseconds;
+                LogToConsole($"<color=green><b>[Revert]</b> Reverted: {element.Name} durationMs={durationMs}</color>");
             }
             catch (OperationCanceledException)
             {
-                LogToConsole("<color=orange>[Revert]</color> Operation cancelled.");
+                LogToConsole("<color=orange><b>[Revert]</b> Cancelled.</color>");
             }
             catch (Exception ex)
             {
-                LogToConsole($"<color=#FFAA00>Revert Error:</color> {ex.Message}");
+                LogToConsole($"<color=#FFAA00><b>[Revert]</b> Failed:</color> {ex.Message}");
             }
             finally
             {
+                _revertCts?.Dispose();
+                _revertCts = null;
                 IsProcessing = false;
                 if (hasLock) _operationLock.Release();
+            }
+        }
+
+        // ─── Cancel ────────────────────────────────────────────
+        public void CancelRevert()
+        {
+            var cts = _revertCts;
+            if (cts?.IsCancellationRequested == false)
+            {
+                try { cts.Cancel(); }
+                catch (ObjectDisposedException) { }
+
+                LogToConsole("<color=orange><b>[Revert]</b> Cancel requested...</color>");
             }
         }
     }
