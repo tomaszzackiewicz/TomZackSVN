@@ -102,9 +102,11 @@ namespace SVN.Core
                     ? KeyPath.Trim().Replace("\"", "").Replace('\\', '/')
                     : "";
 
-                string finalArgs = args.Contains("--non-interactive")
-                    ? args
-                    : args + " --non-interactive";
+                string finalArgs = args;
+                if (!finalArgs.Contains("--non-interactive"))
+                    finalArgs += " --non-interactive";
+                if (!finalArgs.Contains("--trust-server-cert"))
+                    finalArgs += " --trust-server-cert";
 
                 int maxAttempts = retryOnLock ? 2 : 1;
 
@@ -367,57 +369,77 @@ namespace SVN.Core
             }
         }
 
-        public static async Task<int> RunStreamedAsync(string arguments, string workingDirectory, Action<string> onOutput, CancellationToken token)
+        public static async Task<int> RunStreamedAsync(
+    string arguments,
+    string workingDirectory,
+    Action<string> onOutput,
+    CancellationToken token)
         {
-            SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER] Starting SVN: svn {arguments}</color>", append: true);
-            SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER] Working Directory: {workingDirectory}</color>", append: true);
+            SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER]</color> Starting SVN: svn {arguments}");
+            SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER]</color> Working Directory: {workingDirectory}");
 
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "svn.exe",
-                Arguments = arguments,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-
-            string sshKeyPath = KeyPath;
-            if (!string.IsNullOrWhiteSpace(sshKeyPath))
-            {
-                string safeKeyPath = sshKeyPath.Trim().Trim('"').Replace("\\", "/");
-                startInfo.EnvironmentVariables["SVN_SSH"] =
-                    $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=QUIET";
-            }
-
-            using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (string.IsNullOrEmpty(e.Data)) return;
-                onOutput?.Invoke(e.Data);
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (string.IsNullOrEmpty(e.Data)) return;
-                onOutput?.Invoke($"<color=#FFAA00>{e.Data}</color>");
-            };
+            bool write = IsWriteCommand(arguments);
+            if (write) await _svnLock.EnterWriteAsync(token);
+            else await _svnLock.EnterReadAsync(token);
 
             try
             {
-                if (!process.Start()) throw new Exception("Process.Start() returned false.");
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                await WaitForExitAsync(process, token);
-                return process.ExitCode;
+                IncrementOperations();
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "svn.exe",
+                    Arguments = arguments.Contains("--non-interactive") ? arguments : arguments + " --non-interactive --trust-server-cert",
+                    WorkingDirectory = workingDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
+                };
+
+                string sshKeyPath = KeyPath;
+                if (!string.IsNullOrWhiteSpace(sshKeyPath))
+                {
+                    string safeKeyPath = sshKeyPath.Trim().Trim('"').Replace("\\", "/");
+                    startInfo.EnvironmentVariables["SVN_SSH"] =
+                        $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=QUIET";
+                }
+
+                using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+                SvnProcessTracker.Register(process);
+
+                process.OutputDataReceived += (_, e) =>
+                {
+                    if (string.IsNullOrEmpty(e.Data)) return;
+                    onOutput?.Invoke(e.Data);
+                };
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (string.IsNullOrEmpty(e.Data)) return;
+                    onOutput?.Invoke($"<color=#FFAA00>{e.Data}</color>");
+                };
+
+                try
+                {
+                    if (!process.Start()) throw new Exception("Process.Start() returned false.");
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                    await WaitForExitAsync(process, token);
+                    return process.ExitCode;
+                }
+                catch (OperationCanceledException)
+                {
+                    if (!process.HasExited) try { process.Kill(); } catch { }
+                    throw;
+                }
             }
-            catch (OperationCanceledException)
+            finally
             {
-                if (!process.HasExited) try { process.Kill(); } catch { }
-                throw;
+                if (write) _svnLock.ExitWrite();
+                else _svnLock.ExitRead();
+                DecrementOperations();
             }
         }
 
@@ -427,144 +449,93 @@ namespace SVN.Core
     Action<string> onOutput,
     CancellationToken token)
         {
-            SVNLogBridge.LogLine(
-                $"<color=#00FFFF>[RUNNER]</color> Starting SVN LIVE: svn {arguments}",
-                append: true);
+            SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER]</color> Starting SVN LIVE: svn {arguments}");
 
-            SVNLogBridge.LogLine(
-                $"<color=#00FFFF>[RUNNER]</color> Working Directory: {workingDirectory}",
-                append: true);
-
-            string cleanWorkingDirectory = Path.GetFullPath(
-                (workingDirectory ?? string.Empty).Trim());
-
-            string finalArguments = arguments;
-
-            if (!finalArguments.Contains("--non-interactive"))
-                finalArguments += " --non-interactive";
-
-            if (!finalArguments.Contains("--trust-server-cert"))
-                finalArguments += " --trust-server-cert";
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "svn",
-                Arguments = finalArguments,
-                WorkingDirectory = cleanWorkingDirectory,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-
-            string sshKeyPath = KeyPath;
-
-            if (!string.IsNullOrWhiteSpace(sshKeyPath))
-            {
-                string safeKeyPath = sshKeyPath
-                    .Trim()
-                    .Trim('"')
-                    .Replace("\\", "/");
-
-                startInfo.EnvironmentVariables["SVN_SSH"] =
-                    $"ssh -i \"{safeKeyPath}\" " +
-                    "-o IdentitiesOnly=yes " +
-                    "-o StrictHostKeyChecking=no " +
-                    "-o BatchMode=yes " +
-                    "-o LogLevel=QUIET " +
-                    "-o ServerAliveInterval=15 " +
-                    "-o ServerAliveCountMax=10 " +
-                    "-o IPQoS=throughput";
-            }
-
-            using var process = new Process
-            {
-                StartInfo = startInfo,
-                EnableRaisingEvents = true
-            };
-
-            SvnProcessTracker.Register(process);
-
-            var outputTaskCompletion =
-                new TaskCompletionSource<bool>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-
-            var errorTaskCompletion =
-                new TaskCompletionSource<bool>(
-                    TaskCreationOptions.RunContinuationsAsynchronously);
-
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data == null)
-                {
-                    outputTaskCompletion.TrySetResult(true);
-                    return;
-                }
-
-                string line = e.Data;
-
-                SVNLogger.LogToFile(
-                    $"[SVN STDOUT] {line}",
-                    "DEBUG");
-
-                onOutput?.Invoke(line);
-            };
-
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data == null)
-                {
-                    errorTaskCompletion.TrySetResult(true);
-                    return;
-                }
-
-                string line = e.Data;
-
-                SVNLogger.LogToFile(
-                    $"[SVN STDERR] {line}",
-                    "ERROR");
-
-                onOutput?.Invoke(
-                    $"<color=#FFAA00>{line}</color>");
-            };
+            bool write = IsWriteCommand(arguments);
+            if (write) await _svnLock.EnterWriteAsync(token);
+            else await _svnLock.EnterReadAsync(token);
 
             try
             {
-                if (!process.Start())
-                    throw new Exception(
-                        "Process.Start() returned false.");
+                IncrementOperations();
 
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                string cleanWorkingDirectory = Path.GetFullPath((workingDirectory ?? string.Empty).Trim());
 
-                await WaitForExitAsync(
-                    process,
-                    token);
+                string finalArguments = arguments;
+                if (!finalArguments.Contains("--non-interactive"))
+                    finalArguments += " --non-interactive";
+                if (!finalArguments.Contains("--trust-server-cert"))
+                    finalArguments += " --trust-server-cert";
 
-                await Task.WhenAll(
-                    outputTaskCompletion.Task,
-                    errorTaskCompletion.Task);
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "svn",
+                    Arguments = finalArguments,
+                    WorkingDirectory = cleanWorkingDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
+                };
 
-                token.ThrowIfCancellationRequested();
+                string sshKeyPath = KeyPath;
+                if (!string.IsNullOrWhiteSpace(sshKeyPath))
+                {
+                    string safeKeyPath = sshKeyPath.Trim().Trim('"').Replace("\\", "/");
+                    startInfo.EnvironmentVariables["SVN_SSH"] =
+                        $"ssh -i \"{safeKeyPath}\" " +
+                        "-o IdentitiesOnly=yes " +
+                        "-o StrictHostKeyChecking=no " +
+                        "-o BatchMode=yes " +
+                        "-o LogLevel=QUIET " +
+                        "-o ServerAliveInterval=15 " +
+                        "-o ServerAliveCountMax=10 " +
+                        "-o IPQoS=throughput";
+                }
 
-                return process.ExitCode;
-            }
-            catch (OperationCanceledException)
-            {
+                using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+                SvnProcessTracker.Register(process);
+
+                var outputTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var errorTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                process.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data == null) { outputTcs.TrySetResult(true); return; }
+                    SVNLogger.LogToFile($"[SVN STDOUT] {e.Data}", "DEBUG");
+                    onOutput?.Invoke(e.Data);
+                };
+
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data == null) { errorTcs.TrySetResult(true); return; }
+                    SVNLogger.LogToFile($"[SVN STDERR] {e.Data}", "ERROR");
+                    onOutput?.Invoke($"<color=#FFAA00>{e.Data}</color>");
+                };
+
                 try
                 {
-                    if (!process.HasExited)
-                        process.Kill();
+                    if (!process.Start()) throw new Exception("Process.Start() returned false.");
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
+                    await WaitForExitAsync(process, token);
+                    await Task.WhenAll(outputTcs.Task, errorTcs.Task);
+                    token.ThrowIfCancellationRequested();
+                    return process.ExitCode;
                 }
-                catch
+                catch (OperationCanceledException)
                 {
-                    // Proces mógł zakończyć się dokładnie
-                    // w momencie anulowania.
+                    try { if (!process.HasExited) process.Kill(); } catch { }
+                    throw;
                 }
-
-                throw;
+            }
+            finally
+            {
+                if (write) _svnLock.ExitWrite();
+                else _svnLock.ExitRead();
+                DecrementOperations();
             }
         }
 
@@ -596,21 +567,31 @@ namespace SVN.Core
             _svnLock.ExitWrite();
         }
 
+        private static readonly object _infoCacheLock = new object();
+
         public static async Task<string> GetInfoAsync(string workingDir, CancellationToken token = default)
         {
-            if (!string.IsNullOrWhiteSpace(_lastInfoCache))
+            lock (_infoCacheLock)
             {
-                TimeSpan age = DateTime.Now - _lastInfoCacheTime;
-                if (age < InfoCacheDuration)
+                if (!string.IsNullOrWhiteSpace(_lastInfoCache))
                 {
-                    SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
-                    return _lastInfoCache;
+                    TimeSpan age = DateTime.Now - _lastInfoCacheTime;
+                    if (age < InfoCacheDuration)
+                    {
+                        SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
+                        return _lastInfoCache;
+                    }
                 }
             }
 
             string result = await RunAsync("info", workingDir, true, token);
-            _lastInfoCache = result;
-            _lastInfoCacheTime = DateTime.Now;
+
+            lock (_infoCacheLock)
+            {
+                _lastInfoCache = result;
+                _lastInfoCacheTime = DateTime.Now;
+            }
+
             return result;
         }
 
