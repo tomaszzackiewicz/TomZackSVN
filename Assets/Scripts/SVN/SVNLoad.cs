@@ -7,13 +7,10 @@ using UnityEngine;
 
 namespace SVN.Core
 {
-    public class SVNLoad : SVNBase
+    public class SVNLoad : SVNBase, IDisposable
     {
-        // OPT: Thread-safe flaga zamiast bool
         private int _isBusy = 0;
         private CancellationTokenSource _loadCts;
-
-        // OPT: Cache panelu zamiast FindAnyObjectByType za każdym razem
         private ProjectSelectionPanel _cachedSelectionPanel;
 
         public SVNLoad(SVNUI ui, SVNManager manager) : base(ui, manager) { }
@@ -26,16 +23,25 @@ namespace SVN.Core
                 return;
             }
 
-            _loadCts?.Cancel();
-            _loadCts?.Dispose();
-            _loadCts = new CancellationTokenSource();
+            // Cancel previous operation, but don't dispose immediately
+            var oldCts = Interlocked.Exchange(ref _loadCts, new CancellationTokenSource());
+            oldCts?.Cancel();
 
             _ = LoadRepoPathAndRefreshAsync(_loadCts.Token).ContinueWith(t =>
             {
                 Interlocked.Exchange(ref _isBusy, 0);
-                if (t.IsFaulted)
-                    SVNLogBridge.LogError($"[SVNLoad] Operation failed: {t.Exception?.InnerException?.Message}");
-            }, TaskScheduler.Default);
+
+                // Dispose old CTS only after task completes
+                try { oldCts?.Dispose(); } catch { }
+
+                if (t.IsFaulted && t.Exception?.InnerException is not OperationCanceledException)
+                {
+                    var msg = t.Exception.InnerException?.Message ?? "Unknown error";
+                    // Log via dispatcher in case it touches UI
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                        SVNLogBridge.LogError($"[SVNLoad] Operation failed: {msg}"));
+                }
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
         }
 
         private async Task LoadRepoPathAndRefreshAsync(CancellationToken token)
@@ -57,6 +63,13 @@ namespace SVN.Core
                 return;
             }
 
+            // SECURITY: Validate URL before passing to shell
+            if (!string.IsNullOrEmpty(manualUrl) && !Uri.TryCreate(manualUrl, UriKind.Absolute, out _))
+            {
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid repository URL!");
+                return;
+            }
+
             svnManager.CurrentKey = keyPath;
             SvnRunner.KeyPath = keyPath;
 
@@ -67,7 +80,10 @@ namespace SVN.Core
                 token.ThrowIfCancellationRequested();
                 string normalizedPath = path.Replace("\\", "/");
                 svnManager.WorkingDir = normalizedPath;
-                svnUI.LoadDestFolderInput.text = normalizedPath;
+
+                // UI update on main thread
+                UnityMainThreadDispatcher.Enqueue(() =>
+                    svnUI.LoadDestFolderInput.text = normalizedPath);
 
                 bool hasSvnFolder = Directory.Exists(Path.Combine(normalizedPath, ".svn"));
 
@@ -79,13 +95,24 @@ namespace SVN.Core
 
                 if (!hasSvnFolder)
                 {
-                    // OPT: Enumerate zamiast GetFileSystemEntries (nie alokuje tablicy)
-                    bool isFolderEmpty = !Directory.EnumerateFileSystemEntries(normalizedPath).Any();
+                    bool isFolderEmpty = false;
+                    try
+                    {
+                        isFolderEmpty = !Directory.EnumerateFileSystemEntries(normalizedPath).Any();
+                    }
+                    catch (Exception ex)
+                    {
+                        SVNLogBridge.LogLine($"<color=orange>Warning:</color> Cannot read directory: {ex.Message}");
+                        isFolderEmpty = false;
+                    }
+
                     string forceFlag = isFolderEmpty ? "" : " --force";
                     if (!isFolderEmpty)
                         SVNLogBridge.LogLine("<color=orange>Note:</color> Folder not empty. Merging with existing files...");
 
                     SVNLogBridge.LogLine("<color=yellow>Starting Checkout...</color>");
+
+                    // SECURITY: Use safe escaping or ArgumentList in SvnRunner
                     await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath, token: token);
                     SVNLogBridge.LogLine("<color=green>Checkout completed!</color>");
                 }
@@ -99,15 +126,21 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(svnManager.RepositoryUrl) && !string.IsNullOrEmpty(manualUrl))
                     svnManager.RepositoryUrl = manualUrl;
 
-                if (svnUI.LoadRepoUrlInput != null)
-                    svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
+                // UI updates on main thread
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    if (svnUI.LoadRepoUrlInput != null)
+                        svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
+                });
 
                 RegisterProjectInList(normalizedPath, keyPath, svnManager.RepositoryUrl);
 
-                // OPT: Cache panelu
-                if (_cachedSelectionPanel == null)
-                    _cachedSelectionPanel = UnityEngine.Object.FindAnyObjectByType<ProjectSelectionPanel>();
-                _cachedSelectionPanel?.RefreshList();
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    if (_cachedSelectionPanel == null)
+                        _cachedSelectionPanel = UnityEngine.Object.FindAnyObjectByType<ProjectSelectionPanel>();
+                    _cachedSelectionPanel?.RefreshList();
+                });
 
                 var project = new SVNProject
                 {
@@ -124,7 +157,7 @@ namespace SVN.Core
                 if (svnManager.PanelHandler != null)
                 {
                     await Task.Delay(300, token);
-                    svnManager.PanelHandler.Button_CloseLoad();
+                    UnityMainThreadDispatcher.Enqueue(() => svnManager.PanelHandler?.Button_CloseLoad());
                 }
             }
             catch (OperationCanceledException)
@@ -153,7 +186,7 @@ namespace SVN.Core
             {
                 projects[index].repoUrl = url ?? string.Empty;
                 projects[index].privateKeyPath = key ?? string.Empty;
-                projects[index].lastOpened = DateTime.Now;
+                projects[index].lastOpened = DateTime.UtcNow;
             }
             else
             {
@@ -163,7 +196,7 @@ namespace SVN.Core
                     repoUrl = url ?? string.Empty,
                     workingDir = normalizedPath,
                     privateKeyPath = key ?? string.Empty,
-                    lastOpened = DateTime.Now
+                    lastOpened = DateTime.UtcNow
                 });
             }
 
@@ -177,6 +210,21 @@ namespace SVN.Core
             if (svnUI.LoadRepoUrlInput != null) svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl;
             if (svnUI.LoadDestFolderInput != null) svnUI.LoadDestFolderInput.text = svnManager.WorkingDir;
             if (svnUI.LoadPrivateKeyInput != null) svnUI.LoadPrivateKeyInput.text = svnManager.CurrentKey;
+        }
+
+        /// <summary>
+        /// Call when destroying UI / changing scene to avoid holding dead references.
+        /// </summary>
+        public void ClearSceneReferences()
+        {
+            _cachedSelectionPanel = null;
+        }
+
+        public void Dispose()
+        {
+            _loadCts?.Cancel();
+            _loadCts?.Dispose();
+            _loadCts = null;
         }
     }
 }

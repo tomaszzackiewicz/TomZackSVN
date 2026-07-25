@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -11,7 +12,7 @@ using UnityEngine;
 
 namespace SVN.Core
 {
-    public class SVNResolve : SVNBase
+    public class SVNResolve : SVNBase, IDisposable
     {
         private readonly SemaphoreSlim _resolveLock = new(1, 1);
         private int _processingFlag;
@@ -28,7 +29,8 @@ namespace SVN.Core
             public SVNConflictState State;
         }
 
-        private readonly Dictionary<string, SVNConflictData> _conflictCache = new();
+        // Thread-safe dictionary
+        private readonly ConcurrentDictionary<string, SVNConflictData> _conflictCache = new(StringComparer.OrdinalIgnoreCase);
 
         public SVNResolve(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
@@ -36,9 +38,13 @@ namespace SVN.Core
 
         private void LogBoth(string msg)
         {
-            SVNLogBridge.LogLine(msg);
-            if (svnUI?.ResolveLogConsole != null)
-                SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, msg, "RESOLVE", true);
+            // All UI logging must run on the main thread
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                SVNLogBridge.LogLine(msg);
+                if (svnUI?.ResolveLogConsole != null)
+                    SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, msg, "RESOLVE", true);
+            });
         }
 
         #endregion
@@ -77,10 +83,15 @@ namespace SVN.Core
         public void ResolveAllMine() => SafeFireAndForget(() => ResolveAllAsync("mine-full"));
         public void ResolveAllTheirs() => SafeFireAndForget(() => ResolveAllAsync("theirs-full"));
 
-        private async void SafeFireAndForget(Func<Task> operation)
+        private static void SafeFireAndForget(Func<Task> operation)
+        {
+            RunWithExceptionShield(operation);
+        }
+
+        private static async void RunWithExceptionShield(Func<Task> operation)
         {
             try { await operation().ConfigureAwait(false); }
-            catch (Exception ex) { LogBoth($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
+            catch (Exception ex) { SVNLogBridge.LogException(ex); }
         }
 
         #endregion
@@ -110,7 +121,7 @@ namespace SVN.Core
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                    try { await RefreshConflictUIAsync(); } // No ConfigureAwait(false) here!
                     finally { ExitUiRefresh(); }
                 }
             }
@@ -224,7 +235,7 @@ namespace SVN.Core
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                    try { await RefreshConflictUIAsync(); } // No ConfigureAwait(false)
                     finally { ExitUiRefresh(); }
                 }
 
@@ -282,10 +293,7 @@ namespace SVN.Core
                     var conflicts = await GetConflictsAsync(root).ConfigureAwait(false);
                     foreach (var c in conflicts)
                     {
-                        if (_conflictCache.TryGetValue(c.Path, out var cachedEntry))
-                            cachedEntry.Type = c.Type;
-                        else
-                            _conflictCache[c.Path] = c;
+                        _conflictCache.AddOrUpdate(c.Path, c, (_, __) => c);
                     }
                     targetFile = conflicts.FirstOrDefault()?.Path;
                 }
@@ -306,7 +314,14 @@ namespace SVN.Core
                 LogBoth($"Opening editor: <color=green>{targetFile}</color>");
 
                 var startInfo = new ProcessStartInfo(editorPath, $"\"{fullPath}\"");
-                using (Process.Start(startInfo)) { }
+                using (var process = Process.Start(startInfo))
+                {
+                    if (process == null)
+                    {
+                        LogBoth("<color=#FFAA00>Failed to start merge tool.</color>");
+                        return;
+                    }
+                }
 
                 var data = _conflictCache.TryGetValue(targetFile, out var conflictData) ? conflictData : new SVNConflictData { Path = targetFile };
                 data.Type = SVNConflictType.Manual;
@@ -315,7 +330,7 @@ namespace SVN.Core
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                    try { await RefreshConflictUIAsync(); } // No ConfigureAwait(false)
                     finally { ExitUiRefresh(); }
                 }
             }
@@ -349,7 +364,11 @@ namespace SVN.Core
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 using (var stringReader = new StringReader(xml))
-                using (var reader = XmlReader.Create(stringReader, new XmlReaderSettings { Async = true }))
+                using (var reader = XmlReader.Create(stringReader, new XmlReaderSettings
+                {
+                    Async = true,
+                    DtdProcessing = DtdProcessing.Prohibit // XXE protection
+                }))
                 {
                     string currentPath = null;
                     string item = null;
@@ -402,7 +421,7 @@ namespace SVN.Core
                 var valid = new HashSet<string>(result.Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
                 foreach (var key in _conflictCache.Keys.ToList())
                 {
-                    if (!valid.Contains(key)) _conflictCache.Remove(key);
+                    if (!valid.Contains(key)) _conflictCache.TryRemove(key, out _);
                 }
 
                 return result.OrderBy(x => x.Path).ToList();
@@ -451,7 +470,7 @@ namespace SVN.Core
 
             if (TryEnterUiRefresh())
             {
-                try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                try { await RefreshConflictUIAsync(); }
                 finally { ExitUiRefresh(); }
             }
         }
@@ -481,18 +500,25 @@ namespace SVN.Core
                     catch { /* best effort */ }
                 }
 
+                // Security: reject paths with quotes
+                if (path.Contains("\""))
+                {
+                    LogBoth($"<color=#FFAA00>Invalid path (contains quotes):</color> {path}");
+                    return;
+                }
+
                 await SvnRunner.RunAsync($"resolve --accept {strategy} \"{path}\"", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
                 await SvnRunner.RunAsync("cleanup", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
                 await SvnRunner.RunAsync($"resolve --accept working \"{path}\"", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
                 await SvnRunner.RunAsync("cleanup --remove-unversioned", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
 
-                _conflictCache.Remove(path);
+                _conflictCache.TryRemove(path, out _);
                 await svnManager.RefreshStatus().ConfigureAwait(false);
                 await Task.Delay(120).ConfigureAwait(false);
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                    try { await RefreshConflictUIAsync(); }
                     finally { ExitUiRefresh(); }
                 }
 
@@ -535,7 +561,11 @@ namespace SVN.Core
                 }
 
                 LogBoth($"Opening editor for: {path}");
-                using (Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\""))) { }
+                using (var process = Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\"")))
+                {
+                    if (process == null)
+                        LogBoth("<color=#FFAA00>Failed to start merge tool.</color>");
+                }
 
                 if (_conflictCache.TryGetValue(path, out var conflict))
                 {
@@ -545,7 +575,7 @@ namespace SVN.Core
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                    try { await RefreshConflictUIAsync(); }
                     finally { ExitUiRefresh(); }
                 }
             }
@@ -575,12 +605,12 @@ namespace SVN.Core
                 LogBoth($"[Resolve] Finalizing: {path}");
                 await SvnRunner.RunAsync($"resolve --accept working \"{path}\"", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
                 await SvnRunner.RunAsync("cleanup --remove-unversioned", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
-                _conflictCache.Remove(path);
+                _conflictCache.TryRemove(path, out _);
                 await Task.Delay(150).ConfigureAwait(false);
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                    try { await RefreshConflictUIAsync(); }
                     finally { ExitUiRefresh(); }
                 }
 
@@ -597,9 +627,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Backward-compatible wrapper dla istniejących skryptów (SVNConflictItem, SVNMerge, SVNUpdate, SVNManager).
-        /// </summary>
         public async Task DeleteObstruction(string path, bool refreshUi = true)
         {
             await DeleteObstructionAsync(path, refreshUi).ConfigureAwait(false);
@@ -613,6 +640,13 @@ namespace SVN.Core
             {
                 path = NormalizePath(path);
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
+                // Security: reject paths with quotes
+                if (path.Contains("\""))
+                {
+                    LogBoth($"<color=#FFAA00>Invalid path (contains quotes):</color> {path}");
+                    return;
+                }
 
                 string fullPath = Path.Combine(svnManager.WorkingDir, path);
                 bool fileExists = File.Exists(fullPath) || Directory.Exists(fullPath);
@@ -700,13 +734,13 @@ namespace SVN.Core
                 }
 
                 await SvnRunner.RunAsync("cleanup", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
-                _conflictCache.Remove(path);
+                _conflictCache.TryRemove(path, out _);
                 await svnManager.RefreshStatus().ConfigureAwait(false);
                 await Task.Delay(100).ConfigureAwait(false);
 
                 if (refreshUi && TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync().ConfigureAwait(false); }
+                    try { await RefreshConflictUIAsync(); }
                     finally { ExitUiRefresh(); }
                 }
 
@@ -727,9 +761,6 @@ namespace SVN.Core
 
         #region UI Layer
 
-        /// <summary>
-        /// Backward-compatible wrapper dla istniejących skryptów (SVNMerge, SVNUpdate, SVNManager).
-        /// </summary>
         public async Task RefreshConflictUI()
         {
             await RefreshConflictUIAsync().ConfigureAwait(false);
@@ -796,6 +827,11 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(path)) return "";
             return path.Replace('\\', '/').Replace("\r", "").Replace("\n", "").Trim();
+        }
+
+        public void Dispose()
+        {
+            _resolveLock?.Dispose();
         }
 
         #endregion
