@@ -48,11 +48,13 @@ namespace SVN.Core
 
         private void SafeFireAndForget(Func<Task> operation)
         {
-            _ = Task.Run(async () =>
-            {
-                try { await operation().ConfigureAwait(false); }
-                catch (Exception ex) { PostUI(() => SVNLogBridge.LogError($"[SVN] Unhandled: {ex.Message}")); }
-            });
+            _ = FireAndForget(operation);
+        }
+
+        private async Task FireAndForget(Func<Task> operation)
+        {
+            try { await operation().ConfigureAwait(false); }
+            catch (Exception ex) { PostUI(() => SVNLogBridge.LogError($"[SVN] Unhandled: {ex.Message}")); }
         }
 
         public void RefreshIgnoredPanel()

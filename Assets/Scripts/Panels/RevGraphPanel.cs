@@ -20,7 +20,6 @@ public class RevGraphPanel : MonoBehaviour
     private CancellationTokenSource _loadCts;
     private string _lastWorkingDir;
 
-    #region Lifecycle
     private void Awake()
     {
         _svnManager = SVNManager.Instance;
@@ -57,19 +56,21 @@ public class RevGraphPanel : MonoBehaviour
 
     private void OnDisable()
     {
+        StopAllCoroutines();
+        _debounceCoroutine = null;
         CancelLoading();
     }
 
     private void OnDestroy()
     {
+        StopAllCoroutines();
+        _debounceCoroutine = null;
         CancelLoading();
 
         if (branchFilterInput != null)
             branchFilterInput.onValueChanged.RemoveListener(OnFilterChanged);
     }
-    #endregion
 
-    #region Filter
     public void OnFilterChanged(string filterText)
     {
         if (_debounceCoroutine != null)
@@ -160,9 +161,7 @@ public class RevGraphPanel : MonoBehaviour
 
         return false;
     }
-    #endregion
 
-    #region Graph Loading
     public async Task LoadGraphAsync()
     {
         CancelLoading();
@@ -216,9 +215,7 @@ public class RevGraphPanel : MonoBehaviour
     public void Button_CollapseAll() => _graphModule?.CollapseAll();
     public void Button_ExpandAll() => _graphModule?.ExpandAll();
     public void Button_ExportHistoryToTxt() => _graphModule?.ExportHistoryToTxt();
-    #endregion
 
-    #region Helpers
     private bool CanLoadGraph()
     {
         if (_svnManager == null)
@@ -241,27 +238,28 @@ public class RevGraphPanel : MonoBehaviour
             _loadCts = null;
         }
     }
-    #endregion
 
-    #region SVN Log Parsing
     private async Task<List<SVNRevisionNode>> FetchLogEntriesAsync(CancellationToken token = default)
     {
         string xmlOutput = await SvnRunner.RunAsync("log --xml --verbose ^/", _svnManager.WorkingDir, token: token);
-        var nodes = new List<SVNRevisionNode>();
 
         if (string.IsNullOrEmpty(xmlOutput))
-            return nodes;
+            return new List<SVNRevisionNode>();
 
         try
         {
-            ParseLogXml(xmlOutput, nodes, token);
+            return await Task.Run(() =>
+            {
+                var nodes = new List<SVNRevisionNode>();
+                ParseLogXml(xmlOutput, nodes, token);
+                return nodes;
+            }, token);
         }
         catch (XmlException ex)
         {
             SVNLogBridge.LogError($"[SVN] Failed to parse log XML: {ex.Message}");
+            return new List<SVNRevisionNode>();
         }
-
-        return nodes;
     }
 
     private static void ParseLogXml(string xmlOutput, List<SVNRevisionNode> nodes, CancellationToken token)
@@ -320,9 +318,7 @@ public class RevGraphPanel : MonoBehaviour
         currentNode.ChangedPaths.Add($"{action} {filePath}");
 
         if (propMods == "true" && IsBranchPath(filePath))
-        {
             currentNode.HasMergeInfoChange = true;
-        }
     }
 
     private static bool IsBranchPath(string filePath)
@@ -331,5 +327,11 @@ public class RevGraphPanel : MonoBehaviour
                filePath.StartsWith("/branches/", StringComparison.OrdinalIgnoreCase) ||
                filePath.StartsWith("/tags/", StringComparison.OrdinalIgnoreCase);
     }
-    #endregion
+
+    public void ForceRefresh()
+    {
+        _graphLoaded = false;
+        if (gameObject.activeInHierarchy)
+            _ = LoadGraphAsync();
+    }
 }

@@ -7229,7 +7229,6 @@ MonoBehaviour:
   panelHandler: {fileID: 72008806}
   mainUIPanel: {fileID: 1232145530}
   projectSelectionPanel: {fileID: 217212063}
-  _diskChangesDetected: 0
 --- !u!114 &72008802
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -153772,7 +153771,7 @@ PrefabInstance:
       objectReference: {fileID: 1074149138}
     - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
-      value: Button_CollpaseAll
+      value: Button_CollapseAll
       objectReference: {fileID: 0}
     - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName

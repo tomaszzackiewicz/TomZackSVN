@@ -10,7 +10,7 @@ using UnityEngine.UI;
 
 namespace SVN.Core
 {
-    public class SVNShelve : SVNBase
+    public class SVNShelve : SVNBase, IDisposable
     {
         private readonly string _shelfFolder;
         private CancellationTokenSource _cts;
@@ -24,6 +24,15 @@ namespace SVN.Core
             _shelfFolder = Path.Combine(Application.persistentDataPath, "SVN_Shelves");
             Directory.CreateDirectory(_shelfFolder);
         }
+
+        public void Dispose()
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = null;
+        }
+
+        public void Cancel() => _cts?.Cancel();
 
         private bool TryEnterProcessing()
         {
@@ -48,14 +57,17 @@ namespace SVN.Core
 
         private void SafeFireAndForget(Func<Task> operation)
         {
-            _ = Task.Run(async () =>
-            {
-                try { await operation().ConfigureAwait(false); }
-                catch (Exception ex) { PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash] Unhandled:</color> {ex.Message}")); }
-            });
+            _ = FireAndForget(operation);
         }
 
-        public void Cancel() => _cts?.Cancel();
+        private async Task FireAndForget(Func<Task> operation)
+        {
+            try { await operation().ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash] Unhandled:</color> {ex.Message}"));
+            }
+        }
 
         public void ExecuteShelve()
         {
@@ -147,6 +159,8 @@ namespace SVN.Core
                 string patchFile = GetShelfFilePath(shelfName);
                 await File.WriteAllTextAsync(patchFile, diff, token).ConfigureAwait(false);
 
+                CleanupOldPatchFiles();
+
                 var statusModule = svnManager?.GetModule<SVNStatus>();
                 if (statusModule != null)
                 {
@@ -234,7 +248,6 @@ namespace SVN.Core
             }
         }
 
-
         public async Task<List<ShelfInfo>> GetShelvesList()
         {
             return await Task.Run(() =>
@@ -282,7 +295,6 @@ namespace SVN.Core
         public async void RefreshShelvesUI()
         {
             List<ShelfInfo> shelfInfos = await GetShelvesList().ConfigureAwait(false);
-
             PostUI(() => RefreshShelvesUIInternal(shelfInfos));
         }
 
@@ -295,14 +307,14 @@ namespace SVN.Core
             for (int i = container.childCount - 1; i >= 0; i--)
             {
                 var child = container.GetChild(i);
-                if (child != null) GameObject.Destroy(child.gameObject);  // <-- poprawione
+                if (child != null) GameObject.Destroy(child.gameObject);
             }
 
             if (shelfInfos.Count == 0)
             {
                 if (svnUI.ShelfItemPrefab != null)
                 {
-                    GameObject emptyItem = GameObject.Instantiate(svnUI.ShelfItemPrefab, container);  // <-- poprawione
+                    GameObject emptyItem = GameObject.Instantiate(svnUI.ShelfItemPrefab, container);
                     var ui = emptyItem.GetComponent<ShelfItemUI>();
                     if (ui != null)
                     {
@@ -332,7 +344,7 @@ namespace SVN.Core
                         continue;
                     }
 
-                    GameObject item = GameObject.Instantiate(svnUI.ShelfItemPrefab, container);  // <-- poprawione
+                    GameObject item = GameObject.Instantiate(svnUI.ShelfItemPrefab, container);
                     var ui = item.GetComponent<ShelfItemUI>();
                     if (ui != null)
                     {
@@ -356,6 +368,26 @@ namespace SVN.Core
 
             if (container is RectTransform rect)
                 LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+        }
+
+        private void CleanupOldPatchFiles()
+        {
+            try
+            {
+                if (!Directory.Exists(_shelfFolder)) return;
+
+                foreach (var file in Directory.EnumerateFiles(_shelfFolder, "*.patch"))
+                {
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        if (info.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-30))
+                            File.Delete(file);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         private string GetShelfFilePath(string name)

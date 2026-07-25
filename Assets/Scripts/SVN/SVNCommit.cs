@@ -640,7 +640,7 @@ namespace SVN.Core
                 LogLine($"<color=green><b>SUCCESS!</b></color> Revision: {rev}");
 
                 SVNStatus.ClearLockCache();
-                svnManager._diskChangesDetected = true;
+                svnManager.DiskChangesDetected = true;
                 ClearCommitUI();
 
                 RunOnMainThread(() =>

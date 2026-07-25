@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -27,7 +26,6 @@ namespace SVN.Core
 
     public class SVNRevGraph : SVNBase
     {
-        #region Constants
         private const string VERT_TRUNK = "│ ";
         private const string VERT_BRANCH = "│ ";
         private const string VERT_TAG = "│ ";
@@ -54,11 +52,9 @@ namespace SVN.Core
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly Regex HtmlTagRegex = new("<.*?>", RegexOptions.Compiled);
-        #endregion
 
         public SVNRevGraph(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        #region Fields
         private readonly List<GameObject> _instantiatedItems = new();
         private readonly Dictionary<string, NodeType> _branchTypes = new();
         private readonly HashSet<string> _mergedBranches = new();
@@ -68,9 +64,7 @@ namespace SVN.Core
         private readonly Dictionary<string, string> _branchColorCache = new();
 
         public IReadOnlyList<GameObject> InstantiatedItems => _instantiatedItems;
-        #endregion
 
-        #region RenderGraph
         public void RenderGraph(List<SVNRevisionNode> nodes)
         {
             if (nodes == null || nodes.Count == 0)
@@ -79,31 +73,24 @@ namespace SVN.Core
                 return;
             }
 
-            // Sort ascending for analysis phase
-            nodes.Sort((a, b) => a.Revision.CompareTo(b.Revision));
+            // Kopia listy, by nie mutować oryginału
+            var workingNodes = new List<SVNRevisionNode>(nodes);
+            workingNodes.Sort((a, b) => a.Revision.CompareTo(b.Revision));
 
             ClearGraph();
             ResetState();
 
-            // === PHASE 1: Analyze branches and columns ===
-            var branchColumns = AnalyzeBranches(nodes, out int columnCount);
+            var branchColumns = AnalyzeBranches(workingNodes, out int columnCount);
 
-            // Sort descending for rendering (newest first)
-            nodes.Sort((a, b) => b.Revision.CompareTo(a.Revision));
+            workingNodes.Sort((a, b) => b.Revision.CompareTo(a.Revision));
 
-            // Pre-compute branch colors
             foreach (var branch in branchColumns.Keys)
-            {
                 _branchColorCache[branch] = BranchColorSystem.GetColor(branch);
-            }
 
-            // === PHASE 2: Render nodes ===
             var columnBranches = BuildColumnLookup(branchColumns, columnCount);
 
-            foreach (var node in nodes)
-            {
+            foreach (var node in workingNodes)
                 RenderNode(node, branchColumns, columnBranches, columnCount);
-            }
 
             SVNLogBridge.LogLine($"[SVN] Render complete. {_instantiatedItems.Count} revisions rendered.");
         }
@@ -130,9 +117,7 @@ namespace SVN.Core
             _branchColorCache.Clear();
             BranchColorSystem.Reset();
         }
-        #endregion
 
-        #region Branch Analysis
         private Dictionary<string, int> AnalyzeBranches(List<SVNRevisionNode> nodes, out int columnCount)
         {
             var branchColumns = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -146,14 +131,10 @@ namespace SVN.Core
                 RegisterBranch(node, info, branchColumns, ref columnCount);
 
                 if (info.Type != NodeType.Trunk && _branchFirstRev[info.Name] == node.Revision)
-                {
                     DetectAndStoreBranchParent(node, info.Name);
-                }
 
                 if (IsMergeCommit(node))
-                {
                     DetectAndRegisterMergeSource(node, info.Name, branchColumns, ref columnCount);
-                }
             }
 
             return branchColumns;
@@ -185,7 +166,6 @@ namespace SVN.Core
 
             if (string.IsNullOrEmpty(mergeSrcBranch))
             {
-                // Fallback: use first other branch
                 foreach (var kv in branchColumns)
                 {
                     if (kv.Key != currentBranch)
@@ -196,19 +176,14 @@ namespace SVN.Core
                 }
             }
 
-            if (!string.IsNullOrEmpty(mergeSrcBranch))
-            {
-                _mergedBranches.Add(mergeSrcBranch);
+            if (string.IsNullOrEmpty(mergeSrcBranch)) return;
 
-                if (!branchColumns.ContainsKey(mergeSrcBranch))
-                {
-                    RegisterMergeSourceBranch(mergeSrcBranch, branchColumns, ref nextColumn, node.Revision);
-                }
-                else
-                {
-                    UpdateBranchLastRev(mergeSrcBranch, node.Revision);
-                }
-            }
+            _mergedBranches.Add(mergeSrcBranch);
+
+            if (!branchColumns.ContainsKey(mergeSrcBranch))
+                RegisterMergeSourceBranch(mergeSrcBranch, branchColumns, ref nextColumn, node.Revision);
+            else
+                UpdateBranchLastRev(mergeSrcBranch, node.Revision);
         }
 
         private void RegisterMergeSourceBranch(string branchName, Dictionary<string, int> branchColumns,
@@ -218,17 +193,11 @@ namespace SVN.Core
 
             NodeType type;
             if (branchName == "trunk")
-            {
                 type = NodeType.Trunk;
-            }
             else if (_branchTypes.TryGetValue(branchName, out var existingType) && existingType == NodeType.Tag)
-            {
                 type = NodeType.Tag;
-            }
             else
-            {
                 type = NodeType.Branch;
-            }
 
             _branchTypes[branchName] = type;
 
@@ -255,9 +224,7 @@ namespace SVN.Core
             }
             return result;
         }
-        #endregion
 
-        #region Node Rendering
         private void RenderNode(SVNRevisionNode node, Dictionary<string, int> branchColumns,
             string[] columnBranches, int columnCount)
         {
@@ -309,9 +276,7 @@ namespace SVN.Core
             }
 
             if (!string.IsNullOrEmpty(mergeSrcBranch))
-            {
                 prefix.Append($"<color={COLOR_BLACK}>[merged from {mergeSrcBranch}]</color> ");
-            }
 
             return prefix.ToString();
         }
@@ -416,13 +381,9 @@ namespace SVN.Core
             _instantiatedItems.Add(itemGo);
 
             if (itemGo.TryGetComponent<SVNGraphItem>(out var item))
-            {
                 item.Setup(graphText, node, branchName, colorHex, svnManager, prefix);
-            }
         }
-        #endregion
 
-        #region Branch Detection
         private string DetectBranchParent(SVNRevisionNode node, string currentBranch)
         {
             if (node.ChangedPaths == null) return null;
@@ -453,7 +414,6 @@ namespace SVN.Core
         {
             string msg = node.Message ?? "";
 
-            // Try regex on message first
             var pathMatches = MergePathRegex.Matches(msg);
             foreach (Match m in pathMatches)
             {
@@ -465,15 +425,13 @@ namespace SVN.Core
                     return found;
             }
 
-            // Try known branches by name
             foreach (string branch in knownBranches)
             {
                 if (branch == currentBranch) continue;
-                if (Regex.IsMatch(msg, $"\\b{Regex.Escape(branch)}\\b", RegexOptions.IgnoreCase))
+                if (WordContains(msg, branch))
                     return branch;
             }
 
-            // Try "branch 'name'" pattern
             var branchWordMatch = BranchQuoteRegex.Match(msg);
             if (branchWordMatch.Success)
             {
@@ -481,7 +439,6 @@ namespace SVN.Core
                 if (name != currentBranch) return name;
             }
 
-            // Try changed paths
             if (node.ChangedPaths != null)
             {
                 foreach (string path in node.ChangedPaths)
@@ -495,11 +452,28 @@ namespace SVN.Core
             return null;
         }
 
+        private static bool WordContains(string text, string word)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(word)) return false;
+
+            int idx = text.IndexOf(word, StringComparison.OrdinalIgnoreCase);
+            while (idx >= 0)
+            {
+                bool leftBoundary = idx == 0 || !char.IsLetterOrDigit(text[idx - 1]);
+                bool rightBoundary = idx + word.Length >= text.Length || !char.IsLetterOrDigit(text[idx + word.Length]);
+
+                if (leftBoundary && rightBoundary)
+                    return true;
+
+                idx = text.IndexOf(word, idx + 1, StringComparison.OrdinalIgnoreCase);
+            }
+            return false;
+        }
+
         private string ExtractBranchFromPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return null;
 
-            // Check for branches
             int branchesIdx = path.IndexOf("/branches/", StringComparison.OrdinalIgnoreCase);
             if (branchesIdx >= 0)
             {
@@ -508,16 +482,9 @@ namespace SVN.Core
                 return nextSlash > 0 ? afterBranches.Substring(0, nextSlash) : afterBranches;
             }
 
-            // Check for trunk - must be exact match
-            if (path.Equals("/trunk", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("/trunk/", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith("/trunk", StringComparison.OrdinalIgnoreCase) ||
-                path.Contains("/trunk/", StringComparison.OrdinalIgnoreCase))
-            {
+            if (IsExactTrunkPath(path))
                 return "trunk";
-            }
 
-            // Check for tags
             int tagsIdx = path.IndexOf("/tags/", StringComparison.OrdinalIgnoreCase);
             if (tagsIdx >= 0)
             {
@@ -528,39 +495,49 @@ namespace SVN.Core
 
             return null;
         }
-        #endregion
 
-        #region Merge Detection
+        private static bool IsExactTrunkPath(string path)
+        {
+            if (path.Equals("/trunk", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (path.StartsWith("/trunk/", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return false;
+        }
+
         private bool IsMergeCommit(SVNRevisionNode node)
         {
             if (node == null) return false;
             if (node.HasMergeInfoChange) return true;
 
-            if (!string.IsNullOrEmpty(node.Message))
+            string msg = node.Message;
+            if (!string.IsNullOrEmpty(msg))
             {
-                string msg = node.Message.ToLowerInvariant();
-                if (msg.Contains("merge") || msg.Contains("merged") || msg.Contains("reintegrate"))
+                string lower = msg.ToLowerInvariant();
+                if (lower.Contains("merge") || lower.Contains("merged") || lower.Contains("reintegrate"))
                     return true;
             }
 
             if (node.ChangedPaths != null)
             {
-                var branches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string firstBranch = null;
                 foreach (string path in node.ChangedPaths)
                 {
                     string b = ExtractBranchFromPath(path);
-                    if (!string.IsNullOrEmpty(b))
-                        branches.Add(b);
+                    if (string.IsNullOrEmpty(b)) continue;
+
+                    if (firstBranch == null)
+                        firstBranch = b;
+                    else if (!firstBranch.Equals(b, StringComparison.OrdinalIgnoreCase))
+                        return true;
                 }
-                if (branches.Count >= 2)
-                    return true;
             }
 
             return false;
         }
-        #endregion
 
-        #region Branch Info
         private BranchInfo GetBranchInfo(SVNRevisionNode node)
         {
             if (node.ChangedPaths == null || node.ChangedPaths.Count == 0)
@@ -568,7 +545,6 @@ namespace SVN.Core
 
             foreach (string path in node.ChangedPaths)
             {
-                // Check branches first
                 int branchesIdx = path.IndexOf("/branches/", StringComparison.OrdinalIgnoreCase);
                 if (branchesIdx >= 0)
                 {
@@ -578,7 +554,6 @@ namespace SVN.Core
                     return new BranchInfo(name, NodeType.Branch);
                 }
 
-                // Check tags
                 int tagsIdx = path.IndexOf("/tags/", StringComparison.OrdinalIgnoreCase);
                 if (tagsIdx >= 0)
                 {
@@ -588,60 +563,41 @@ namespace SVN.Core
                     return new BranchInfo(name, NodeType.Tag);
                 }
 
-                // Check trunk
-                if (path.Equals("/trunk", StringComparison.OrdinalIgnoreCase) ||
-                    path.StartsWith("/trunk/", StringComparison.OrdinalIgnoreCase) ||
-                    path.EndsWith("/trunk", StringComparison.OrdinalIgnoreCase) ||
-                    path.Contains("/trunk/", StringComparison.OrdinalIgnoreCase))
-                {
+                if (IsExactTrunkPath(path))
                     return BranchInfo.Trunk;
-                }
             }
 
             return BranchInfo.Trunk;
         }
-        #endregion
 
-        #region Expand/Collapse
-        public void CollapseAll()
-        {
-            ToggleAll(false);
-        }
-
-        public void ExpandAll()
-        {
-            ToggleAll(true);
-        }
+        public void CollapseAll() => ToggleAll(false);
+        public void ExpandAll() => ToggleAll(true);
 
         private void ToggleAll(bool expanded)
         {
-            bool anyChanged = false;
-
-            foreach (GameObject go in _instantiatedItems)
+            for (int i = _instantiatedItems.Count - 1; i >= 0; i--)
             {
-                if (go == null) continue;
+                var go = _instantiatedItems[i];
+                // Usuwamy z listy obiekty, które zostały zniszczone (np. przez ClearGraph)
+                if (go == null)
+                {
+                    _instantiatedItems.RemoveAt(i);
+                    continue;
+                }
 
                 if (go.TryGetComponent<SVNGraphItem>(out var item))
-                {
                     item.SetExpanded(expanded);
-                    anyChanged = true;
-                }
             }
 
-            if (anyChanged)
-                RefreshLayout();
+            RefreshLayout();
         }
 
         private void RefreshLayout()
         {
             if (svnUI.GraphContainer != null)
-            {
-                LayoutRebuilder.MarkLayoutForRebuild(svnUI.GraphContainer as RectTransform);
-            }
+                LayoutRebuilder.ForceRebuildLayoutImmediate(svnUI.GraphContainer as RectTransform);
         }
-        #endregion
 
-        #region Export
         public void ExportHistoryToTxt()
         {
             if (_instantiatedItems == null || _instantiatedItems.Count == 0)
@@ -685,9 +641,7 @@ namespace SVN.Core
             var external = svnManager.GetModule<SVNExternal>();
             external?.SaveHistoryToFile(sb.ToString());
         }
-        #endregion
 
-        #region Color System
         public static class BranchColorSystem
         {
             private static readonly Dictionary<string, string> _branchColors = new();
@@ -713,21 +667,8 @@ namespace SVN.Core
                 _index = 0;
             }
         }
-        #endregion
-
-        #region Internal Types
-        private class GraphNode
-        {
-            public SVNRevisionNode Revision;
-            public int Row;
-            public int Lane;
-            public List<GraphNode> Parents = new();
-            public string Branch;
-        }
-        #endregion
     }
 
-    #region Extension Methods
     public static class DictionaryExtensions
     {
         public static TValue GetValueOrDefault<TKey, TValue>(this Dictionary<TKey, TValue> dict, TKey key, TValue defaultValue)
@@ -735,5 +676,4 @@ namespace SVN.Core
             return dict.TryGetValue(key, out var value) ? value : defaultValue;
         }
     }
-    #endregion
 }

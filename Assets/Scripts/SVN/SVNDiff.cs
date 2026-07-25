@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -13,13 +14,12 @@ namespace SVN.Core
     {
         private int _processingFlag;
         private readonly SynchronizationContext _mainThreadContext;
+        private static readonly Regex DiffSectionRegex = new Regex(@"@@ -(\d+),?\d* \+(\d+),?\d* @@", RegexOptions.Compiled);
 
         public SVNDiff(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
         }
-
-        #region Logging & Thread Safety
 
         private void LogBoth(string msg)
         {
@@ -29,9 +29,6 @@ namespace SVN.Core
                 SVNLogBridge.UpdateUIField(console, msg, "DIFF", true);
         }
 
-        /// <summary>
-        /// Wykonuje log na głównym wątku Unity (bezpieczne dla UI).
-        /// </summary>
         private void PostLog(string msg)
         {
             if (_mainThreadContext != null)
@@ -40,9 +37,6 @@ namespace SVN.Core
                 LogBoth(msg);
         }
 
-        /// <summary>
-        /// Wykonuje akcję modyfikującą UI na głównym wątku Unity.
-        /// </summary>
         private void PostUI(Action action)
         {
             if (_mainThreadContext != null)
@@ -64,9 +58,6 @@ namespace SVN.Core
             Interlocked.Exchange(ref _processingFlag, 0);
         }
 
-        /// <summary>
-        /// Bezpieczny fire-and-forget bez Task.Run – zachowuje SynchronizationContext.
-        /// </summary>
         private void SafeFireAndForget(Func<Task> operation)
         {
             _ = FireAndForget(operation);
@@ -77,10 +68,6 @@ namespace SVN.Core
             try { await operation().ConfigureAwait(false); }
             catch (Exception ex) { PostLog($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
         }
-
-        #endregion
-
-        #region Public API
 
         public void Button_BrowseDiffFilePath()
         {
@@ -158,10 +145,6 @@ namespace SVN.Core
             SafeFireAndForget(() => ShowPreviewInUnity(element.FullPath));
         }
 
-        #endregion
-
-        #region Core Diff Logic
-
         private async Task ShowDiffInternal(string relativePath, bool openExternal)
         {
             try
@@ -187,7 +170,6 @@ namespace SVN.Core
 
                 PostLog($"Comparing: <color=green>{relativePath}</color>...");
 
-                // ─── Operacje SVN na wątku tła ───
                 string diffContent = await SvnRunner.RunAsync(
                     $"diff \"{EscapeSvnArg(relativePath)}\"",
                     svnManager.WorkingDir,
@@ -207,12 +189,11 @@ namespace SVN.Core
 
                     PostUI(() =>
                     {
-                        using (Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{explorerPath}\"") { UseShellExecute = true })) { }
+                        using var process = Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{explorerPath}\"") { UseShellExecute = true });
                     });
                     return;
                 }
 
-                // ─── Przetwarzanie danych (bez UI) ───
                 string formatted = FormatDiffForUnity(diffContent);
                 (int added, int removed) = CountDiffStats(diffContent);
 
@@ -228,7 +209,6 @@ namespace SVN.Core
                     }
                 }
 
-                // ─── Aktualizacja UI na głównym wątku ───
                 PostUI(() =>
                 {
                     var targetField = svnUI?.DiffConsoleText ?? svnUI?.CommitConsoleContent ?? svnUI?.LogText;
@@ -242,7 +222,6 @@ namespace SVN.Core
 
                 PostLog($"<color=#00D0FF><b>Diff Summary:</b></color> <color=#6AFF9E>+{added} lines added</color>, <color=#800020>-{removed} lines removed</color>");
 
-                // ─── Zewnętrzny edytor (opcjonalnie) ───
                 if (openExternal)
                 {
                     string editorPath = GetMergeToolPath();
@@ -256,9 +235,11 @@ namespace SVN.Core
                     string enrichedContent = FormatDiffForExternalEditor(diffContent);
                     await File.WriteAllTextAsync(tempDiffPath, enrichedContent).ConfigureAwait(false);
 
+                    CleanupOldDiffFiles();
+
                     PostUI(() =>
                     {
-                        using (Process.Start(new ProcessStartInfo(editorPath, $"\"{tempDiffPath}\"") { UseShellExecute = true })) { }
+                        using var process = Process.Start(new ProcessStartInfo(editorPath, $"\"{tempDiffPath}\"") { UseShellExecute = true });
                     });
                 }
             }
@@ -268,9 +249,24 @@ namespace SVN.Core
             }
         }
 
-        #endregion
-
-        #region Formatting
+        private void CleanupOldDiffFiles()
+        {
+            try
+            {
+                string cache = Application.temporaryCachePath;
+                foreach (var file in Directory.EnumerateFiles(cache, "svn_diff_preview*.diff"))
+                {
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        if (info.CreationTimeUtc < DateTime.UtcNow.AddHours(-24))
+                            File.Delete(file);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
 
         private string FormatDiffForExternalEditor(string rawDiff)
         {
@@ -358,7 +354,7 @@ namespace SVN.Core
 
                 if (line.StartsWith("@@"))
                 {
-                    var match = System.Text.RegularExpressions.Regex.Match(line, @"@@ -(\d+),?\d* \+(\d+),?\d* @@");
+                    var match = DiffSectionRegex.Match(line);
                     if (match.Success)
                     {
                         oldLine = int.Parse(match.Groups[1].Value);
@@ -423,10 +419,6 @@ namespace SVN.Core
             return header.ToString() + sb.ToString();
         }
 
-        #endregion
-
-        #region Stats & Helpers
-
         private static (int added, int removed) CountDiffStats(string diffContent)
         {
             if (string.IsNullOrEmpty(diffContent)) return (0, 0);
@@ -463,7 +455,5 @@ namespace SVN.Core
 
             return path?.Trim().Replace("\"", "");
         }
-
-        #endregion
     }
 }

@@ -137,7 +137,7 @@ namespace SVN.Core
                 LogToConsole("<b>[Revert All]</b> Reverting all local modifications...");
                 string result = await SvnRunner.RunAsync("revert -R .", root, false, token);
 
-                svnManager._diskChangesDetected = true;
+                svnManager.DiskChangesDetected = true;
                 var status = svnManager.GetModule<SVNStatus>();
                 status?.ClearCurrentData();
                 ClearAllUI();
@@ -199,7 +199,7 @@ namespace SVN.Core
                 LogToConsole($"<b>[Revert]</b> Reverting: {safePath}...");
                 await SvnRunner.RunAsync($"revert \"{safePath}\"", root, false, token);
 
-                svnManager._diskChangesDetected = true;
+                svnManager.DiskChangesDetected = true;
                 var status = svnManager.GetModule<SVNStatus>();
                 status?.ClearCurrentData();
                 ClearAllUI();

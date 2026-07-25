@@ -266,7 +266,7 @@ namespace SVN.Core
                 svnManager.LastUpdateSucceeded = true;
 
                 SVNStatus.ClearLockCache();
-                svnManager._diskChangesDetected = true;
+                svnManager.DiskChangesDetected = true;
 
                 StringBuilder report = new StringBuilder();
                 report.AppendLine("\n<color=blue><b>=========================================</b></color>");
@@ -558,7 +558,7 @@ namespace SVN.Core
                 svnManager.LastUpdateSucceeded = true;
 
                 SVNStatus.ClearLockCache();
-                svnManager._diskChangesDetected = true;
+                svnManager.DiskChangesDetected = true;
 
                 StringBuilder report = new StringBuilder();
                 report.AppendLine("\n<color=blue><b>=========================================</b></color>");

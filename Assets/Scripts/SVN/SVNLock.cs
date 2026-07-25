@@ -84,7 +84,7 @@ namespace SVN.Core
 
                     SVNLogBridge.LogLine("<color=green>Locking completed successfully.</color>");
 
-                    svnManager._diskChangesDetected = true;
+                    svnManager.DiskChangesDetected = true;
                     SVNStatus.ClearLockCache();
                     await RefreshLockCacheAsync(true);
 
@@ -151,7 +151,7 @@ namespace SVN.Core
                     await SvnRunner.RunAsync($"unlock --force {allPathsJoined}", root);
                     SVNLogBridge.LogLine("<color=green>Locks released successfully.</color>");
 
-                    svnManager._diskChangesDetected = true;
+                    svnManager.DiskChangesDetected = true;
 
                     SVNStatus.ClearLockCache();
 
@@ -230,7 +230,7 @@ namespace SVN.Core
         public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath, CancellationToken token = default)
         {
             List<SVNLockDetails> locks = new List<SVNLockDetails>();
-            
+
             string xmlOutput = await SvnRunner.RunAsync("status --xml -u --no-ignore", rootPath, token: token);
 
             if (string.IsNullOrEmpty(xmlOutput)) return locks;
@@ -253,9 +253,14 @@ namespace SVN.Core
                     string owner = lockNode.SelectSingleNode("owner")?.InnerText;
                     if (string.IsNullOrEmpty(owner)) continue;
 
+                    // POPRAWKA: Replace zamienia WSZYSTKIE wystąpienia — używamy Substring dla prefixu
+                    string relativePath = svnPath;
+                    if (svnPath.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+                        relativePath = svnPath.Substring(rootPath.Length);
+
                     locks.Add(new SVNLockDetails
                     {
-                        Path = svnPath.Replace(rootPath, "").TrimStart('\\', '/'),
+                        Path = relativePath.TrimStart('\\', '/'),
                         FullPath = svnPath,
                         Owner = owner,
                         Comment = lockNode.SelectSingleNode("comment")?.InnerText ?? "",
@@ -297,7 +302,7 @@ namespace SVN.Core
                 await svnManager.CancelBackgroundTasksAsync();
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                await SvnRunner.RunAsync(cmd, root, token: cts.Token);  // root jest już czysty
+                await SvnRunner.RunAsync(cmd, root, token: cts.Token);
 
                 SVNStatus.ClearLockCache();
 
@@ -363,7 +368,7 @@ namespace SVN.Core
                     return;
 
                 string root = svnManager.WorkingDir;
-          
+
                 var locks = await GetDetailedLocks(root, token);
 
                 svnManager.LockCache.Clear();

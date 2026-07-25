@@ -14,7 +14,6 @@ public class SvnLineController : MonoBehaviour
     public event Action OnHoverEnter;
     public event Action OnHoverExit;
 
-    #region Serialized Fields
     [SerializeField] private bool isCommitDelegate;
     [SerializeField] private TextMeshProUGUI indentText;
     [SerializeField] private TextMeshProUGUI statusText;
@@ -32,9 +31,7 @@ public class SvnLineController : MonoBehaviour
     [SerializeField] private Button blameBtn;
     [SerializeField] private Button resolveBtn;
     [SerializeField] private Button commitBtn;
-    #endregion
 
-    #region Cached Colors
     private static readonly Color RowBgModified = new(1f, 0.85f, 0f, 0.08f);
     private static readonly Color RowBgAdded = new(0f, 1f, 0f, 0.06f);
     private static readonly Color RowBgUnversioned = new(0f, 0.9f, 1f, 0.06f);
@@ -55,37 +52,31 @@ public class SvnLineController : MonoBehaviour
 
     private static readonly Color DirNameColor = new(0f, 0.2f, 0.4f);
     private static readonly string DirHex = "#003366";
-    #endregion
 
-    #region Private Fields
     private SvnTreeElement _element;
     private SVNStatus _svnStatus;
     private Image _rowBackground;
     private float _lastClickTime;
     private const float DoubleClickThreshold = 0.3f;
-    private CancellationTokenSource _diffHoverCts;
+    private CancellationTokenSource _destroyCts;
 
-    // Cached delegates to avoid closure allocations
     private UnityAction _onFoldClickDelegate;
     private UnityAction<bool> _onToggleChangedDelegate;
     private UnityAction _onFullRowClickDelegate;
     private UnityAction _onCommitClickDelegate;
     private UnityAction _onLockClickDelegate;
-    #endregion
 
-    #region Properties
     public SvnTreeElement Element => _element;
     public bool IsCommitDelegate => isCommitDelegate;
-    #endregion
 
-    #region Lifecycle
     private void Awake()
     {
+        _destroyCts = new CancellationTokenSource();
         _onFoldClickDelegate = OnFoldClick;
         _onToggleChangedDelegate = OnToggleChanged;
         _onFullRowClickDelegate = OnFullRowClick;
-        _onCommitClickDelegate = OnCommitClick;
-        _onLockClickDelegate = OnLockClick;
+        _onCommitClickDelegate = () => SafeFireAndForget(OnCommitClickAsync);
+        _onLockClickDelegate = () => SafeFireAndForget(OnLockClickAsync);
 
         if (!TryGetComponent(out _rowBackground))
             _rowBackground = gameObject.AddComponent<Image>();
@@ -93,14 +84,22 @@ public class SvnLineController : MonoBehaviour
 
     private void OnDestroy()
     {
-        _diffHoverCts?.Cancel();
-        _diffHoverCts?.Dispose();
-
+        _destroyCts?.Cancel();
+        _destroyCts?.Dispose();
         RemoveAllButtonListeners();
     }
-    #endregion
 
-    #region Setup
+    private void SafeFireAndForget(Func<Task> operation)
+    {
+        _ = FireAndForget(operation);
+    }
+
+    private async Task FireAndForget(Func<Task> operation)
+    {
+        try { await operation(); }
+        catch (Exception ex) { SVNLogBridge.LogError($"[SvnLine] {ex.Message}"); }
+    }
+
     public void Setup(SvnTreeElement element, SVNStatus manager)
     {
         _element = element ?? throw new ArgumentNullException(nameof(element));
@@ -127,9 +126,7 @@ public class SvnLineController : MonoBehaviour
         SetButtonActive(resolveBtn, false);
         SetButtonActive(commitBtn, false);
     }
-    #endregion
 
-    #region Rendering
     private void RenderIndent()
     {
         if (indentText == null) return;
@@ -196,9 +193,7 @@ public class SvnLineController : MonoBehaviour
                 sizeText.text = _element.IsCommitDelegate ? "" : _element.Size;
         }
     }
-    #endregion
 
-    #region Button Setup
     private void SetupFoldButton()
     {
         if (foldButton == null) return;
@@ -260,7 +255,7 @@ public class SvnLineController : MonoBehaviour
     {
         if (fullRowButton == null) return;
 
-        fullRowButton.onClick.RemoveListener(_onFullRowClickDelegate);
+        fullRowButton.onClick.RemoveAllListeners();
 
         bool isRootMeta = IsRootElement(_element.FullPath);
         bool isFolder = _element.IsFolder;
@@ -271,10 +266,8 @@ public class SvnLineController : MonoBehaviour
         if (isRootMeta)
         {
             fullRowButton.interactable = true;
-            fullRowButton.onClick.AddListener(() =>
-            {
-                SVNManager.Instance?.GetModule<SVNLog>()?.ShowLogForPath(".");
-            });
+            fullRowButton.onClick.AddListener(_onFullRowClickDelegate);
+
             BindHover(fullRowButton, "Repository root change (M .)");
             if (statusText != null)
                 statusText.text = "[ROOT]";
@@ -336,7 +329,6 @@ public class SvnLineController : MonoBehaviour
             return;
         }
 
-        // File with changes
         if (isUnversioned && addBtn != null)
         {
             ActivateButton(addBtn, () =>
@@ -450,36 +442,47 @@ public class SvnLineController : MonoBehaviour
         });
         BindHover(blameBtn, "See who last modified each line of this file.");
     }
-    #endregion
 
-    #region Button Actions
-    private async void OnCommitClick()
+    private async Task OnCommitClickAsync()
     {
+        if (_destroyCts.IsCancellationRequested) return;
+
         string msg = $"Commit {_element.Name}";
         try
         {
+            var manager = SVNManager.Instance;
+            if (manager == null) return;
+
             string result = await SvnRunner.RunAsync(
                 $"commit -m \"{msg}\" \"{_element.FullPath}\"",
-                SVNManager.Instance.WorkingDir);
+                manager.WorkingDir,
+                false,
+                _destroyCts.Token);
+
+            if (this == null) return;
 
             if (result.Contains("Committed revision"))
             {
                 SVNLogBridge.LogLine($"<color=green>Committed:</color> {_element.Name}");
-                await SVNManager.Instance.RefreshStatus();
+                await manager.RefreshStatus();
             }
             else
             {
                 SVNLogBridge.LogLine($"<color=yellow>Commit result:</color> {result}");
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            SVNLogBridge.LogError($"Commit failed: {ex.Message}");
+            if (this != null)
+                SVNLogBridge.LogError($"Commit failed: {ex.Message}");
         }
     }
 
-    private async void OnLockClick()
+    private async Task OnLockClickAsync()
     {
+        if (_destroyCts.IsCancellationRequested) return;
+
         var lockModule = SVNManager.Instance?.GetModule<SVNLock>();
         if (lockModule == null) return;
 
@@ -493,12 +496,15 @@ public class SvnLineController : MonoBehaviour
         {
             await lockModule.ToggleLockSingleItem(_element);
         }
+        catch (OperationCanceledException) { }
         finally
         {
-            if (lockBtn != null)
-                lockBtn.interactable = true;
-
-            UpdateLockButtonVisuals();
+            if (this != null)
+            {
+                if (lockBtn != null)
+                    lockBtn.interactable = true;
+                UpdateLockButtonVisuals();
+            }
         }
     }
 
@@ -509,9 +515,9 @@ public class SvnLineController : MonoBehaviour
         if (diffModule == null) return;
 
         if (elapsed <= DoubleClickThreshold)
-            _ = diffModule.ShowDiff(_element.FullPath);
+            SafeFireAndForget(() => diffModule.ShowDiff(_element.FullPath));
         else
-            _ = diffModule.ShowPreviewInUnity(_element.FullPath);
+            SafeFireAndForget(() => diffModule.ShowPreviewInUnity(_element.FullPath));
 
         _lastClickTime = Time.time;
     }
@@ -519,18 +525,14 @@ public class SvnLineController : MonoBehaviour
     private void OnFoldClick()
     {
         if (_svnStatus == null || _element == null) return;
-
         _element.IsExpanded = !_element.IsExpanded;
         _svnStatus.ToggleFolderVisibility(_element);
     }
-    #endregion
 
-    #region Hover & Tooltips
     private void BindHover(Button btn, string tooltipText)
     {
         if (btn == null) return;
 
-        // Remove old handler and add new one — events can't be cleared from outside
         var existingHandler = btn.GetComponent<SVNHoverHandler>();
         if (existingHandler != null)
             Destroy(existingHandler);
@@ -539,9 +541,7 @@ public class SvnLineController : MonoBehaviour
         handler.OnHoverEnter += () => SVNLogBridge.LogTooltip(tooltipText);
         handler.OnHoverExit += () => SVNLogBridge.ClearTooltip();
     }
-    #endregion
 
-    #region Background
     private void ApplyRowBackground()
     {
         if (_rowBackground != null)
@@ -558,9 +558,7 @@ public class SvnLineController : MonoBehaviour
         "I" => RowBgIgnored,
         _ => RowBgDefault
     };
-    #endregion
 
-    #region Filter
     public void ApplyFilter(string filterText)
     {
         if (string.IsNullOrWhiteSpace(filterText))
@@ -577,9 +575,7 @@ public class SvnLineController : MonoBehaviour
 
         gameObject.SetActive(matches);
     }
-    #endregion
 
-    #region Helpers
     private static bool IsRootElement(string fullPath) =>
         fullPath == ".svn-root" || fullPath == "__ROOT__";
 
@@ -633,5 +629,4 @@ public class SvnLineController : MonoBehaviour
         commitBtn?.onClick.RemoveListener(_onCommitClickDelegate);
         lockBtn?.onClick.RemoveListener(_onLockClickDelegate);
     }
-    #endregion
 }

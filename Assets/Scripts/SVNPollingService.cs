@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -9,6 +10,8 @@ namespace SVN.Core
     {
         private int _lastKnownRemoteRevision = -1;
         private string _lastValidWorkingDir = "";
+        private int _isCheckingFlag;
+        private CancellationTokenSource _lifetimeCts;
 
         [Header("Focus Settings")]
         public float focusCheckCooldownSeconds = 180f;
@@ -17,17 +20,32 @@ namespace SVN.Core
         [Header("Logging")]
         public bool showDebugLogs = false;
 
+        private void Awake()
+        {
+            _lifetimeCts = new CancellationTokenSource();
+        }
+
         private void OnApplicationFocus(bool hasFocus)
         {
-            if (hasFocus)
-            {
-                float currentTime = Time.realtimeSinceStartup;
-                if (currentTime - _lastFocusCheckTime >= focusCheckCooldownSeconds)
-                {
-                    _lastFocusCheckTime = currentTime;
-                    _ = CheckForRemoteCommitsAsync();
-                }
-            }
+            if (!hasFocus) return;
+
+            float currentTime = Time.realtimeSinceStartup;
+            if (currentTime - _lastFocusCheckTime < focusCheckCooldownSeconds)
+                return;
+
+            if (Interlocked.Exchange(ref _isCheckingFlag, 1) == 1)
+                return;
+
+            _lastFocusCheckTime = currentTime;
+            _ = CheckForRemoteCommitsAsync(_lifetimeCts.Token).ContinueWith(_ =>
+                Interlocked.Exchange(ref _isCheckingFlag, 0));
+        }
+
+        private void OnDestroy()
+        {
+            _lifetimeCts?.Cancel();
+            _lifetimeCts?.Dispose();
+            _lifetimeCts = null;
         }
 
         public void ResetRevisionTracking()
@@ -36,17 +54,15 @@ namespace SVN.Core
             _lastValidWorkingDir = "";
         }
 
-        public async Task CheckForRemoteCommitsAsync()
+        public async Task CheckForRemoteCommitsAsync(CancellationToken token = default)
         {
             try
             {
                 SVNManager manager = SVNManager.Instance;
-                if (manager == null)
-                    return;
+                if (manager == null) return;
 
                 string wd = manager.WorkingDir;
-                if (string.IsNullOrEmpty(wd))
-                    return;
+                if (string.IsNullOrEmpty(wd)) return;
 
                 if (!Directory.Exists(wd) || !Directory.Exists(Path.Combine(wd, ".svn")))
                 {
@@ -61,10 +77,10 @@ namespace SVN.Core
                     _lastValidWorkingDir = wd;
                 }
 
-                await manager.CancelBackgroundTasksAsync();
+                await manager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
                 string revOutput = await SvnRunner.RunAsync(
-                    "info -r HEAD --show-item last-changed-revision", wd);
+                    "info -r HEAD --show-item last-changed-revision", wd, false, token).ConfigureAwait(false);
 
                 if (!int.TryParse(revOutput.Trim(), out int remoteRev))
                     return;
@@ -75,38 +91,55 @@ namespace SVN.Core
                     return;
                 }
 
-                if (remoteRev > _lastKnownRemoteRevision)
+                if (remoteRev <= _lastKnownRemoteRevision)
+                    return;
+
+                _lastKnownRemoteRevision = remoteRev;
+
+                string author = await FetchAuthor(wd, token).ConfigureAwait(false);
+                string localUser = manager.CurrentUserName;
+
+                if (this == null) return;
+
+                if (!string.Equals(author.Trim(), localUser?.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
-                    _lastKnownRemoteRevision = remoteRev;
+                    string commitMsg = await FetchCleanCommitMessage(wd, remoteRev, token).ConfigureAwait(false);
 
-                    string author = await FetchAuthor(wd);
-                    string localUser = manager.CurrentUserName;
+                    if (this == null) return;
 
-                    if (!string.Equals(author.Trim(), localUser?.Trim(), StringComparison.OrdinalIgnoreCase))
+                    UnityMainThreadDispatcher.Enqueue(() =>
                     {
-                        string commitMsg = await FetchCleanCommitMessage(wd, remoteRev);
+                        if (this == null) return;
 
-                        UnityMainThreadDispatcher.Enqueue(() =>
-                        {
-                            if (SVNNotificationAudio.Instance != null)
-                                SVNNotificationAudio.Instance.PlayCommitSound();
+                        if (SVNNotificationAudio.Instance != null)
+                            SVNNotificationAudio.Instance.PlayCommitSound();
 
-                            SVNLogBridge.ShowNotification(
-                                $"<b>{author}</b> committed changes!\n" +
-                                $"Revision: <color=yellow>{remoteRev}</color>\n" +
-                                $"<i>\"{commitMsg}\"</i>");
+                        SVNLogBridge.ShowNotification(
+                            $"<b>{author}</b> committed changes!\n" +
+                            $"Revision: <color=yellow>{remoteRev}</color>\n" +
+                            $"<i>\"{commitMsg}\"</i>");
 
-                            _ = manager.RefreshStatus();
-                        });
-                    }
-                    else
-                    {
-                        if (showDebugLogs)
-                            SVNLogBridge.LogLine($"<color=green>[Polling]</color> Local commit detected (Rev {remoteRev}).");
-
-                        UnityMainThreadDispatcher.Enqueue(() => _ = manager.RefreshStatus());
-                    }
+                        if (SVNManager.Instance != null)
+                            _ = SVNManager.Instance.RefreshStatus();
+                    });
                 }
+                else
+                {
+                    if (showDebugLogs)
+                        SVNLogBridge.LogLine($"<color=green>[Polling]</color> Local commit detected (Rev {remoteRev}).");
+
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                    {
+                        if (this == null) return;
+                        if (SVNManager.Instance != null)
+                            _ = SVNManager.Instance.RefreshStatus();
+                    });
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                if (showDebugLogs)
+                    SVNLogBridge.LogLine("<color=grey>[Polling]</color> Cancelled.");
             }
             catch (Exception e)
             {
@@ -114,24 +147,24 @@ namespace SVN.Core
             }
         }
 
-        private async Task<string> FetchAuthor(string wd)
+        private async Task<string> FetchAuthor(string wd, CancellationToken token)
         {
             try
             {
-                string output = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-author", wd);
+                string output = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-author", wd, false, token).ConfigureAwait(false);
                 return string.IsNullOrWhiteSpace(output) ? "Someone" : output.Trim();
             }
             catch { return "Someone"; }
         }
 
-        private async Task<string> FetchCleanCommitMessage(string wd, int rev)
+        private async Task<string> FetchCleanCommitMessage(string wd, int rev, CancellationToken token)
         {
             try
             {
-                string logOutput = await SvnRunner.RunAsync($"log -r {rev} --incremental", wd);
+                string logOutput = await SvnRunner.RunAsync($"log -r {rev} --incremental", wd, false, token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(logOutput)) return "No message.";
 
-                string[] lines = logOutput.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                string[] lines = logOutput.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries);
                 string cleanMsg = (lines.Length > 1) ? string.Join(" ", lines, 1, lines.Length - 1).Trim() : lines[0].Trim();
                 return cleanMsg.Length > 120 ? cleanMsg.Substring(0, 117) + "..." : cleanMsg;
             }

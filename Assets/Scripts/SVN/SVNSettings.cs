@@ -28,19 +28,38 @@ namespace SVN.Core
 
         private void SafeFireAndForget(Func<Task> operation)
         {
-            _ = Task.Run(async () =>
-            {
-                try { await operation().ConfigureAwait(false); }
-                catch (Exception ex) { SVNLogBridge.LogLine($"<color=#FFAA00>Settings error:</color> {ex.Message}"); }
-            });
+            _ = FireAndForget(operation);
         }
 
-        public void SaveRepoUrl()
+        private async Task FireAndForget(Func<Task> operation)
+        {
+            try { await operation().ConfigureAwait(false); }
+            catch (Exception ex) { SVNLogBridge.LogLine($"<color=#FFAA00>Settings error:</color> {ex.Message}"); }
+        }
+
+        public void SaveRepoUrl() => SafeFireAndForget(SaveRepoUrlAsync);
+        public void SaveSSHKeyPath() => SafeFireAndForget(SaveSSHKeyPathAsync);
+        public void SaveMergeEditorPath() => SafeFireAndForget(SaveMergeEditorPathAsync);
+
+        public void SaveWorkingDir() => SafeFireAndForget(SaveWorkingDirAsync);
+        public void LoadSettings() => SafeFireAndForget(LoadSettingsAsync);
+
+        public void UpdateUIFromManager()
+        {
+            if (svnUI == null || svnManager == null) return;
+
+            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(svnManager.MergeToolPath ?? "");
+            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(svnManager.CurrentKey ?? "");
+            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(svnManager.WorkingDir ?? "");
+            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(svnManager.RepositoryUrl ?? "");
+        }
+
+        private async Task SaveRepoUrlAsync()
         {
             string newUrl = svnUI?.SettingsRepoUrlInput?.text?.Trim() ?? "";
             if (string.IsNullOrEmpty(newUrl)) return;
 
-            UpdateProjectInJson(svnManager?.WorkingDir, p => p.repoUrl = newUrl);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.repoUrl = newUrl);
 
             PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, newUrl);
             PlayerPrefs.Save();
@@ -51,11 +70,11 @@ namespace SVN.Core
             SVNLogBridge.LogLine($"Saved repo url = '{newUrl}'");
         }
 
-        public void SaveSSHKeyPath()
+        private async Task SaveSSHKeyPathAsync()
         {
             string path = svnUI?.SettingsSshKeyPathInput?.text?.Trim() ?? "";
 
-            UpdateProjectInJson(svnManager?.WorkingDir, p => p.privateKeyPath = path);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.privateKeyPath = path);
 
             PlayerPrefs.SetString(SVNManager.KEY_SSH_PATH, path);
             PlayerPrefs.Save();
@@ -69,11 +88,11 @@ namespace SVN.Core
             SVNLogBridge.LogLine($"Saved ssh key = '{path}'");
         }
 
-        public void SaveMergeEditorPath()
+        private async Task SaveMergeEditorPathAsync()
         {
             string newPath = svnUI?.SettingsMergeToolPathInput?.text?.Trim() ?? "";
 
-            UpdateProjectInJson(svnManager?.WorkingDir, p => p.mergeToolPath = newPath);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.mergeToolPath = newPath);
 
             PlayerPrefs.SetString(SVNManager.KEY_MERGE_TOOL, newPath);
             PlayerPrefs.Save();
@@ -82,31 +101,6 @@ namespace SVN.Core
                 svnManager.MergeToolPath = newPath;
 
             SVNLogBridge.LogLine($"Saved merge tool = '{newPath}'");
-        }
-
-        public void SaveWorkingDir()
-        {
-            SafeFireAndForget(SaveWorkingDirAsync);
-        }
-
-        public void LoadSettings()
-        {
-            SafeFireAndForget(LoadSettingsAsync);
-        }
-
-        public void LoadSettingAsync()
-        {
-            SafeFireAndForget(LoadSettingsAsync);
-        }
-
-        public void UpdateUIFromManager()
-        {
-            if (svnUI == null || svnManager == null) return;
-
-            svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(svnManager.MergeToolPath ?? "");
-            svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(svnManager.CurrentKey ?? "");
-            svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(svnManager.WorkingDir ?? "");
-            svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(svnManager.RepositoryUrl ?? "");
         }
 
         private async Task SaveWorkingDirAsync()
@@ -206,29 +200,32 @@ namespace SVN.Core
                 await svnManager.LoadProject(current).ConfigureAwait(false);
         }
 
-        private void UpdateProjectInJson(string workingDir, Action<SVNProject> updateAction)
+        private async Task UpdateProjectInJsonAsync(string workingDir, Action<SVNProject> updateAction)
         {
             if (string.IsNullOrEmpty(workingDir) || updateAction == null) return;
 
             try
             {
-                List<SVNProject> projects = ProjectSettings.LoadProjects();
-                string normalizedWd = NormalizePath(workingDir);
-
-                var project = projects.Find(p =>
-                    !string.IsNullOrEmpty(p.workingDir) &&
-                    NormalizePath(p.workingDir) == normalizedWd);
-
-                if (project != null)
+                await Task.Run(() =>
                 {
-                    updateAction(project);
+                    List<SVNProject> projects = ProjectSettings.LoadProjects();
+                    string normalizedWd = NormalizePath(workingDir);
 
-                    project.repoUrl ??= "";
-                    project.privateKeyPath ??= "";
-                    project.mergeToolPath ??= "";
+                    var project = projects.Find(p =>
+                        !string.IsNullOrEmpty(p.workingDir) &&
+                        NormalizePath(p.workingDir) == normalizedWd);
 
-                    ProjectSettings.SaveProjects(projects);
-                }
+                    if (project != null)
+                    {
+                        updateAction(project);
+
+                        project.repoUrl ??= "";
+                        project.privateKeyPath ??= "";
+                        project.mergeToolPath ??= "";
+
+                        ProjectSettings.SaveProjects(projects);
+                    }
+                }).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

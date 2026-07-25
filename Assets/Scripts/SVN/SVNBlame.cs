@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace SVN.Core
 {
-    public class SVNBlame : SVNBase
+    public class SVNBlame : SVNBase, IDisposable
     {
         private CancellationTokenSource _cts;
         private int _processingFlag;
@@ -21,7 +21,12 @@ namespace SVN.Core
             _mainThreadContext = SynchronizationContext.Current;
         }
 
-        #region Thread Safety & Lifecycle
+        public void Dispose()
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = null;
+        }
 
         public void Cancel() => _cts?.Cancel();
 
@@ -46,23 +51,18 @@ namespace SVN.Core
                 action();
         }
 
-        private void PostLog(string msg)
-        {
-            PostUI(() => LogBoth(msg));
-        }
+        private void PostLog(string msg) => PostUI(() => LogBoth(msg));
 
         private void SafeFireAndForget(Func<Task> operation)
         {
-            _ = Task.Run(async () =>
-            {
-                try { await operation().ConfigureAwait(false); }
-                catch (Exception ex) { PostLog($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
-            });
+            _ = FireAndForget(operation);
         }
 
-        #endregion
-
-        #region Logging
+        private async Task FireAndForget(Func<Task> operation)
+        {
+            try { await operation().ConfigureAwait(false); }
+            catch (Exception ex) { PostLog($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
+        }
 
         private void LogBoth(string msg)
         {
@@ -71,10 +71,6 @@ namespace SVN.Core
             if (console != null)
                 SVNLogBridge.UpdateUIField(console, msg, "BLAME", true);
         }
-
-        #endregion
-
-        #region Public API
 
         public void ExecuteBlame()
         {
@@ -148,10 +144,6 @@ namespace SVN.Core
             }
         }
 
-        #endregion
-
-        #region Core Logic
-
         private async Task ShowBlameInternal(string relativePath, CancellationToken token, bool outputToConsole, bool targetMainConsole = false)
         {
             if (string.IsNullOrWhiteSpace(svnManager?.WorkingDir))
@@ -183,11 +175,7 @@ namespace SVN.Core
             int xmlStart = raw.IndexOf("<?xml", StringComparison.Ordinal);
             if (xmlStart < 0) xmlStart = raw.IndexOf("<blame", StringComparison.Ordinal);
             if (xmlStart < 0) xmlStart = raw.IndexOf("<target", StringComparison.Ordinal);
-            if (xmlStart > 0)
-                raw = raw.Substring(xmlStart);
-
-            string logPreview = raw.Length > 300 ? raw.Substring(0, 300) + "…" : raw;
-            SVNLogBridge.LogLine($"<color=grey>[Blame] XML preview:</color> {logPreview}");
+            if (xmlStart > 0) raw = raw.Substring(xmlStart);
 
             XDocument doc;
             try
@@ -202,17 +190,12 @@ namespace SVN.Core
             }
 
             var entries = doc.Descendants("entry").ToList();
-            SVNLogBridge.LogLine($"<color=grey>[Blame] Entries found: {entries.Count}</color>");
-
             if (entries.Count == 0)
             {
                 bool isBinary = raw.IndexOf("Skipping binary file", StringComparison.OrdinalIgnoreCase) >= 0
                     || raw.Contains("<blame />") || raw.Contains("<blame/>");
-
                 PostUI(() => DisplayBlameMessage(
-                    isBinary
-                        ? "<color=orange>Binary file – blame not available.</color>"
-                        : "<color=yellow>No annotatable lines found (file may be binary or empty).</color>",
+                    isBinary ? "<color=orange>Binary file – blame not available.</color>" : "<color=yellow>No annotatable lines found (file may be binary or empty).</color>",
                     targetMainConsole));
                 return;
             }
@@ -277,6 +260,8 @@ namespace SVN.Core
             string tempPath = Path.Combine(cacheFolder, fileName);
             await File.WriteAllTextAsync(tempPath, plainReport.ToString(), token).ConfigureAwait(false);
 
+            CleanupOldBlameFiles();
+
             string absoluteTempPath = Path.GetFullPath(tempPath);
             string editorPath = GetMergeToolPath();
 
@@ -284,25 +269,41 @@ namespace SVN.Core
             {
                 if (!string.IsNullOrEmpty(editorPath) && File.Exists(editorPath))
                 {
-                    using (Process.Start(new ProcessStartInfo
+                    using var process = Process.Start(new ProcessStartInfo
                     {
                         FileName = editorPath,
                         Arguments = $"\"{absoluteTempPath}\"",
                         UseShellExecute = true
-                    })) { }
-                    LogBoth("<color=green>Blame file opened in configured editor.</color>");
+                    });
                 }
                 else
                 {
                     Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
-                    LogBoth("<color=yellow>Editor path invalid, opened with system default.</color>");
                 }
+                LogBoth("<color=green>Blame file opened.</color>");
             });
         }
 
-        #endregion
+        private void CleanupOldBlameFiles()
+        {
+            try
+            {
+                string cache = Path.Combine(Application.temporaryCachePath, "SVN_Cache");
+                if (!Directory.Exists(cache)) return;
 
-        #region UI Helpers
+                foreach (var file in Directory.EnumerateFiles(cache, "Blame_*.txt"))
+                {
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        if (info.CreationTimeUtc < DateTime.UtcNow.AddHours(-24))
+                            File.Delete(file);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
 
         private void DisplayBlameMessage(string message, bool targetMainConsole)
         {
@@ -310,48 +311,23 @@ namespace SVN.Core
             {
                 svnUI.LogText.text = message;
                 Canvas.ForceUpdateCanvases();
-                if (svnUI.LogText.GetComponentInParent<UnityEngine.UI.ScrollRect>() is { } scroll)
-                {
-                    scroll.StopMovement();
-                    scroll.verticalNormalizedPosition = 1f;
-                }
                 return;
             }
 
             if (svnUI?.BlameConsoleText != null)
-            {
                 svnUI.BlameConsoleText.text = message;
-                Canvas.ForceUpdateCanvases();
-            }
             else if (svnUI?.BlameDisplayArea != null)
-            {
                 svnUI.BlameDisplayArea.text = message;
-                Canvas.ForceUpdateCanvases();
-            }
+            else if (svnUI?.CommitConsoleContent != null)
+                svnUI.CommitConsoleContent.text = message;
             else
-            {
-                var fallback = svnUI?.CommitConsoleContent ?? svnUI?.LogText;
-                if (fallback != null)
-                {
-                    fallback.text = message;
-                    Canvas.ForceUpdateCanvases();
-                }
-                else
-                {
-                    SVNLogBridge.LogLine(message);
-                }
-            }
+                SVNLogBridge.LogLine(message);
+
+            Canvas.ForceUpdateCanvases();
         }
 
-        #endregion
-
-        #region Helpers
-
-        private static string EscapeSvnArg(string arg)
-        {
-            if (string.IsNullOrWhiteSpace(arg)) return arg;
-            return arg.Replace("\"", "\\\"");
-        }
+        private static string EscapeSvnArg(string arg) =>
+            string.IsNullOrWhiteSpace(arg) ? arg : arg.Replace("\"", "\\\"");
 
         private string GetMergeToolPath()
         {
@@ -363,7 +339,5 @@ namespace SVN.Core
 
             return path?.Trim().Replace("\"", "");
         }
-
-        #endregion
     }
 }

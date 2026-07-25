@@ -319,6 +319,9 @@ namespace SVN.Core
             if (revGraphPanel != null)
             {
                 revGraphPanel.SetActive(true);
+                var graph = revGraphPanel.GetComponent<RevGraphPanel>();
+                if (graph != null)
+                    graph.ForceRefresh();
             }
         }
 

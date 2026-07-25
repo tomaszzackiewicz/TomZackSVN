@@ -32,8 +32,7 @@ namespace SVN.Core
         private static bool _processingState = false;
         private static readonly object _processingLock = new();
 
-        private static DateTime _lastInfoCacheTime = DateTime.MinValue;
-        private static string _lastInfoCache = "";
+        private static readonly Dictionary<string, (string output, DateTime time)> _infoCache = new();
         private static readonly TimeSpan InfoCacheDuration = TimeSpan.FromSeconds(2);
         private static readonly object _infoCacheLock = new();
 
@@ -88,6 +87,19 @@ namespace SVN.Core
             return "\"" + arg.Replace("\"", "\\\"") + "\"";
         }
 
+        // Poprawione – pomija opcje (zaczynające się od -) i szuka właściwej komendy SVN
+        private static bool IsWriteCommand(IEnumerable<string> args)
+        {
+            if (args == null) return false;
+            foreach (var arg in args)
+            {
+                if (string.IsNullOrWhiteSpace(arg)) continue;
+                if (arg.StartsWith("-")) continue; // pomiń opcje
+                return WriteCommands.Contains(arg.ToLowerInvariant());
+            }
+            return false;
+        }
+
         public static async Task<string> RunAsync(
             string command,
             string workingDir,
@@ -107,7 +119,7 @@ namespace SVN.Core
             string safeArgs = BuildSafeArguments(args);
             SVNLogBridge.LogLine($"[SVN QUEUE] Waiting: svn {safeArgs}", false);
 
-            bool write = IsWriteCommand(args.FirstOrDefault());
+            bool write = IsWriteCommand(args);
             if (write)
                 await _svnLock.EnterWriteAsync(token);
             else
@@ -248,8 +260,15 @@ namespace SVN.Core
             }
             finally
             {
-                if (write) _svnLock.ExitWrite();
-                else _svnLock.ExitRead();
+                try
+                {
+                    if (write) _svnLock.ExitWrite();
+                    else _svnLock.ExitRead();
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogError($"[SvnRunner] Lock release failed: {ex.Message}");
+                }
                 DecrementOperations();
             }
         }
@@ -258,9 +277,11 @@ namespace SVN.Core
         {
             var args = new List<string>();
             if (string.IsNullOrWhiteSpace(command)) return args;
-            var reader = new StringReader(command.Trim());
+
+            using var reader = new StringReader(command.Trim());
             var current = new StringBuilder();
             bool inQuotes = false;
+
             while (true)
             {
                 int ch = reader.Read();
@@ -297,7 +318,7 @@ namespace SVN.Core
             string safeArgs = BuildSafeArguments(args);
             SVNLogBridge.LogLine($"[SVN QUEUE] Waiting LIVE: svn {safeArgs}");
 
-            bool write = IsWriteCommand(args.FirstOrDefault());
+            bool write = IsWriteCommand(args);
             if (write) await _svnLock.EnterWriteAsync(token);
             else await _svnLock.EnterReadAsync(token);
 
@@ -402,8 +423,15 @@ namespace SVN.Core
                     try { process.CancelErrorRead(); } catch { }
                     try { process.Dispose(); } catch { }
                 }
-                if (write) _svnLock.ExitWrite();
-                else _svnLock.ExitRead();
+                try
+                {
+                    if (write) _svnLock.ExitWrite();
+                    else _svnLock.ExitRead();
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogError($"[SvnRunner] Lock release failed: {ex.Message}");
+                }
                 DecrementOperations();
             }
         }
@@ -426,7 +454,7 @@ namespace SVN.Core
         {
             SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER]</color> Starting SVN STREAMED: svn {BuildSafeArguments(args)}");
 
-            bool write = IsWriteCommand(args.FirstOrDefault());
+            bool write = IsWriteCommand(args);
             if (write) await _svnLock.EnterWriteAsync(token);
             else await _svnLock.EnterReadAsync(token);
 
@@ -495,8 +523,15 @@ namespace SVN.Core
             }
             finally
             {
-                if (write) _svnLock.ExitWrite();
-                else _svnLock.ExitRead();
+                try
+                {
+                    if (write) _svnLock.ExitWrite();
+                    else _svnLock.ExitRead();
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogError($"[SvnRunner] Lock release failed: {ex.Message}");
+                }
                 DecrementOperations();
             }
         }
@@ -519,7 +554,7 @@ namespace SVN.Core
         {
             SVNLogBridge.LogLine($"<color=#00FFFF>[RUNNER]</color> Starting SVN LIVE STREAMED: svn {BuildSafeArguments(args)}");
 
-            bool write = IsWriteCommand(args.FirstOrDefault());
+            bool write = IsWriteCommand(args);
             if (write) await _svnLock.EnterWriteAsync(token);
             else await _svnLock.EnterReadAsync(token);
 
@@ -603,8 +638,15 @@ namespace SVN.Core
             }
             finally
             {
-                if (write) _svnLock.ExitWrite();
-                else _svnLock.ExitRead();
+                try
+                {
+                    if (write) _svnLock.ExitWrite();
+                    else _svnLock.ExitRead();
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogError($"[SvnRunner] Lock release failed: {ex.Message}");
+                }
                 DecrementOperations();
             }
         }
@@ -645,46 +687,28 @@ namespace SVN.Core
 
         public static async Task<string> GetInfoAsync(string workingDir, CancellationToken token = default)
         {
+            string cleanWd = string.IsNullOrEmpty(workingDir) ? "" : Path.GetFullPath(workingDir.Trim());
+
             lock (_infoCacheLock)
             {
-                if (!string.IsNullOrWhiteSpace(_lastInfoCache))
+                if (_infoCache.TryGetValue(cleanWd, out var cached))
                 {
-                    TimeSpan age = DateTime.UtcNow - _lastInfoCacheTime;
-                    if (age < InfoCacheDuration)
+                    if (DateTime.UtcNow - cached.time < InfoCacheDuration)
                     {
                         SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
-                        return _lastInfoCache;
+                        return cached.output;
                     }
                 }
             }
 
-            string result = await RunAsync("info", workingDir, true, token);
+            string result = await RunAsync("info", cleanWd, true, token).ConfigureAwait(false);
 
             lock (_infoCacheLock)
             {
-                _lastInfoCache = result;
-                _lastInfoCacheTime = DateTime.UtcNow;
+                _infoCache[cleanWd] = (result, DateTime.UtcNow);
             }
 
             return result;
-        }
-
-        public static async Task<string> GetInfoAsync(string workingDir)
-        {
-            return await GetInfoAsync(workingDir, CancellationToken.None);
-        }
-
-        private static bool IsWriteCommand(string firstTokenOrArgs)
-        {
-            if (string.IsNullOrWhiteSpace(firstTokenOrArgs)) return false;
-
-            string token = firstTokenOrArgs.Trim();
-
-            int space = token.IndexOf(' ');
-            if (space > 0)
-                token = token.Substring(0, space);
-
-            return WriteCommands.Contains(token.ToLowerInvariant());
         }
 
         private static readonly HashSet<string> WriteCommands = new(StringComparer.OrdinalIgnoreCase)
@@ -1001,9 +1025,9 @@ namespace SVN.Core
                          .ToArray();
         }
 
-        public static async Task<string> GetRepoUrlAsync(string workingDir)
+        public static async Task<string> GetRepoUrlAsync(string workingDir, CancellationToken token = default)
         {
-            string output = await RunAsync("info --xml", workingDir);
+            string output = await RunAsync("info --xml", workingDir, true, token).ConfigureAwait(false);
 
             if (!string.IsNullOrEmpty(output) && output.Contains("<url>"))
             {

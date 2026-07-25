@@ -27,6 +27,8 @@ namespace SVN.Core
         [SerializeField] private GameObject mainUIPanel;
         [SerializeField] private ProjectSelectionPanel projectSelectionPanel;
 
+        private static readonly AsyncReaderWriterLock _managerLock = new();
+
         private bool _ignoreSync;
         private float _lastFocusRefreshTime;
         private string currentUserName = "Unknown";
@@ -42,7 +44,7 @@ namespace SVN.Core
         private FileSystemWatcher _folderWatcher;
         private float _lastAutoRefreshTime;
         private int _isUpdatingSize = 0;
-        public volatile bool _diskChangesDetected = false;
+        private int _diskChangesDetectedFlag = 0;
 
         private SVNPollingService _cachedPoller;
 
@@ -92,6 +94,18 @@ namespace SVN.Core
                         sb.Append(c);
                 }
                 workingDir = sb.ToString().Trim();
+            }
+        }
+
+        public bool DiskChangesDetected
+        {
+            get => Interlocked.CompareExchange(ref _diskChangesDetectedFlag, 0, 0) == 1;
+            set
+            {
+                if (value)
+                    Interlocked.Exchange(ref _diskChangesDetectedFlag, 1);
+                else
+                    Interlocked.Exchange(ref _diskChangesDetectedFlag, 0);
             }
         }
 
@@ -195,15 +209,22 @@ namespace SVN.Core
 
         public async Task SetWorkingDirectory(string path)
         {
-            if (string.IsNullOrEmpty(path))
+            await _managerLock.EnterWriteAsync(CancellationToken.None);
+            try
             {
-                CurrentProject = null;
-                return;
+                if (string.IsNullOrEmpty(path))
+                {
+                    CurrentProject = null;
+                    return;
+                }
+                WorkingDir = SVNAssetLocator.NormalizePath(path);
+                SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
+                await RefreshRepositoryInfo();
             }
-            WorkingDir = SVNAssetLocator.NormalizePath(path);
-            SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
-
-            await RefreshRepositoryInfo();
+            finally
+            {
+                _managerLock.ExitWrite();
+            }
         }
 
         private void Start()
@@ -299,7 +320,28 @@ namespace SVN.Core
 
         public async Task LoadProject(SVNProject project)
         {
-            CurrentProject = project;
+            await _managerLock.EnterWriteAsync(_lifetimeCts.Token);
+            try
+            {
+                CurrentProject = project;
+
+                WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
+                workingDir = SvnRunner.ForceCleanPath(workingDir);
+
+                RepositoryUrl = project.repoUrl;
+                CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
+                MergeToolPath = SVNAssetLocator.NormalizePath(project.mergeToolPath);
+                SvnRunner.KeyPath = CurrentKey;
+
+                SyncUIToCurrentState();
+                PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
+                PlayerPrefs.SetString("SVN_LastOpenedProjectId", project.projectId);
+                PlayerPrefs.Save();
+            }
+            finally
+            {
+                _managerLock.ExitWrite();
+            }
 
             SVNLogBridge.UpdateUIField(
                 svnUI.StatusInfoText,
@@ -308,21 +350,7 @@ namespace SVN.Core
                 append: false);
 
             var statusModule = GetModule<SVNStatus>();
-            statusModule.ClearCurrentData();
-
-            WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
-
-            workingDir = SvnRunner.ForceCleanPath(workingDir);
-
-            RepositoryUrl = project.repoUrl;
-            CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
-            MergeToolPath = SVNAssetLocator.NormalizePath(project.mergeToolPath);
-            SvnRunner.KeyPath = CurrentKey;
-
-            SyncUIToCurrentState();
-            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
-            PlayerPrefs.SetString("SVN_LastOpenedProjectId", project.projectId);
-            PlayerPrefs.Save();
+            statusModule?.ClearCurrentData();
 
             if (Directory.Exists(WorkingDir))
             {
@@ -351,7 +379,6 @@ namespace SVN.Core
 
             SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
 
-            // OPT: Bezpieczne fire-and-forget z obsługą błędów
             _ = RefreshStatusAsync().ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -366,7 +393,6 @@ namespace SVN.Core
             await RefreshStatus();
         }
 
-        // OPT: void + bezpieczne fire-and-forget zamiast async void (który połyka wyjątki)
         public void SetActiveProject(SVNProject project)
         {
             CurrentProject = project;
@@ -417,14 +443,15 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(WorkingDir)) return;
             if (IsProcessing && !force) return;
 
-            var oldCts = Interlocked.Exchange(ref _refreshStatusCts, new CancellationTokenSource());
-            oldCts?.Cancel();
-            oldCts?.Dispose();
-
-            CancellationToken token = _refreshStatusCts.Token;
-
+            await _managerLock.EnterWriteAsync(_lifetimeCts.Token);
             try
             {
+                var oldCts = Interlocked.Exchange(ref _refreshStatusCts, new CancellationTokenSource());
+                oldCts?.Cancel();
+                oldCts?.Dispose();
+
+                CancellationToken token = _refreshStatusCts.Token;
+
                 var statusModule = GetModule<SVNStatus>();
                 if (statusModule == null) return;
 
@@ -479,6 +506,10 @@ namespace SVN.Core
             catch (Exception e)
             {
                 LogToUI($"[SVN] Refresh Error: {e.Message}", "red");
+            }
+            finally
+            {
+                _managerLock.ExitWrite();
             }
         }
 
@@ -611,6 +642,7 @@ namespace SVN.Core
         {
             GetModule<SVNStatus>()?.CancelCurrentRefresh();
             _refreshStatusCts?.Cancel();
+            await Task.Yield();
         }
 
         public void BroadcastWorkingDirChange(string path)
@@ -767,7 +799,9 @@ namespace SVN.Core
                     return;
                 }
 
-                File.WriteAllText(tempPath, fileContent);
+                await File.WriteAllTextAsync(tempPath, fileContent);
+
+                CleanupOldCacheFiles(cacheFolder, "r*_");
 
                 string absoluteTempPath = Path.GetFullPath(tempPath);
 
@@ -775,7 +809,7 @@ namespace SVN.Core
                 {
                     try
                     {
-                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
+                        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
                         {
                             FileName = MergeToolPath,
                             Arguments = $"\"{absoluteTempPath}\"",
@@ -806,6 +840,24 @@ namespace SVN.Core
             }
         }
 
+        private static void CleanupOldCacheFiles(string cacheFolder, string searchPattern)
+        {
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(cacheFolder, searchPattern))
+                {
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        if (info.CreationTimeUtc < DateTime.UtcNow.AddHours(-24))
+                            File.Delete(file);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
         private bool _restartingWatcher = false;
 
         private void InitFileSystemWatcher()
@@ -825,7 +877,7 @@ namespace SVN.Core
                 {
                     IncludeSubdirectories = true,
                     NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
-                    InternalBufferSize = 64 * 1024 // OPT: 64KB RAM enough
+                    InternalBufferSize = 64 * 1024
                 };
 
                 _folderWatcher.Changed += OnDiskEvent;
@@ -885,7 +937,7 @@ namespace SVN.Core
         {
             if (e.FullPath.Contains(".svn")) return;
 
-            _diskChangesDetected = true;
+            Interlocked.Exchange(ref _diskChangesDetectedFlag, 1);
             _lastDiskEventTime = DateTime.UtcNow;
 
             lock (_diskDebounceLock)
@@ -898,7 +950,7 @@ namespace SVN.Core
                 Task.Delay(TimeSpan.FromSeconds(1.5), token)
                     .ContinueWith(t =>
                     {
-                        if (!t.IsCanceled && _diskChangesDetected)
+                        if (!t.IsCanceled && Interlocked.CompareExchange(ref _diskChangesDetectedFlag, 0, 1) == 1)
                         {
                             UnityMainThreadDispatcher.Enqueue(() =>
                             {
@@ -907,7 +959,6 @@ namespace SVN.Core
                                 if (status != null)
                                     _ = status.ExecuteRefreshWithAutoExpand(false);
                             });
-                            _diskChangesDetected = false;
                         }
                     }, TaskScheduler.Default);
             }
@@ -945,6 +996,8 @@ namespace SVN.Core
             }
 
             _modules.Clear();
+
+            _managerLock?.Dispose();
         }
     }
 }
