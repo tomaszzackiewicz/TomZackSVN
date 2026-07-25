@@ -17,7 +17,10 @@ public class BranchPanel : MonoBehaviour
             SVNLogBridge.UpdateUIField(svnUI.BranchTagConsoleText, "", "BRANCH_TAG", append: false);
         }
 
-        _ = svnManager.GetModule<SVNBranchTag>().RefreshUnifiedList();
+        //_ = svnManager.GetModule<SVNBranchTag>().RefreshUnifiedList();
+        var branchTag = SVNManager.Instance?.GetModule<SVNBranchTag>();
+        if (branchTag != null)
+            _ = branchTag.RefreshIfEmpty();
     }
 
     public void Button_CreateBranchFromTrunk()

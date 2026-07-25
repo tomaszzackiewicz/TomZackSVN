@@ -19,7 +19,11 @@ public class MergePanel : MonoBehaviour
 
         SubscribeEvents();
         ClearMergeUI();
-        RefreshBranchDropdownAsync().Forget();
+
+        if (_svnManager?.CurrentProject != null && _mergeModule != null)
+        {
+            _ = RefreshBranchDropdownAsync(false);
+        }
     }
 
     private void OnDisable()
@@ -64,6 +68,12 @@ public class MergePanel : MonoBehaviour
         _mergeModule.OnDryRunCompleted -= HandleDryRunResult;
         _mergeModule.OnDryRunCompleted += HandleDryRunResult;
 
+        if (_svnManager != null)
+        {
+            _svnManager.OnProjectChanged -= OnProjectChanged;
+            _svnManager.OnProjectChanged += OnProjectChanged;
+        }
+
         if (_svnUI?.MergeBranchesDropdown != null)
         {
             _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
@@ -71,10 +81,19 @@ public class MergePanel : MonoBehaviour
         }
     }
 
+    private void OnProjectChanged(SVNProject project)
+    {
+        if (project == null) return;
+        _ = RefreshBranchDropdownAsync(true);
+    }
+
     private void UnsubscribeEvents()
     {
         if (_mergeModule != null)
             _mergeModule.OnDryRunCompleted -= HandleDryRunResult;
+
+        if (_svnManager != null)
+            _svnManager.OnProjectChanged -= OnProjectChanged;
 
         if (_svnUI?.MergeBranchesDropdown != null)
             _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
@@ -85,7 +104,7 @@ public class MergePanel : MonoBehaviour
         if (EnsureReady()) _mergeModule.CancelMerge();
     }
 
-    public void Button_RefreshBranchDropdown() => SafeFireAndForget(RefreshBranchDropdownAsync);
+    public void Button_RefreshBranchDropdown() => SafeFireAndForget(() => RefreshBranchDropdownAsync(true));
 
     public void Button_Compare() => SafeFireAndForget(() => _mergeModule.CompareWithTrunk());
 
@@ -118,14 +137,14 @@ public class MergePanel : MonoBehaviour
         }
     }
 
-    private async Task RefreshBranchDropdownAsync()
+    private async Task RefreshBranchDropdownAsync(bool force = true)
     {
         if (!EnsureReady()) return;
         if (_svnUI?.MergeBranchesDropdown == null) return;
 
         try
         {
-            string[] branches = await _mergeModule.FetchAvailableBranches(true).ConfigureAwait(false);
+            string[] branches = await _mergeModule.FetchAvailableBranches(force).ConfigureAwait(false);
 
             await Task.Yield();
 

@@ -29,16 +29,12 @@ namespace SVN.Core
             public SVNConflictState State;
         }
 
-        // Thread-safe dictionary
         private readonly ConcurrentDictionary<string, SVNConflictData> _conflictCache = new(StringComparer.OrdinalIgnoreCase);
 
         public SVNResolve(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        #region Logging
-
         private void LogBoth(string msg)
         {
-            // All UI logging must run on the main thread
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 SVNLogBridge.LogLine(msg);
@@ -46,10 +42,6 @@ namespace SVN.Core
                     SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, msg, "RESOLVE", true);
             });
         }
-
-        #endregion
-
-        #region Thread-Safe Flags
 
         private bool TryEnterProcessing()
         {
@@ -70,10 +62,6 @@ namespace SVN.Core
         private bool TryEnterUiRefresh() => Interlocked.Exchange(ref _uiRefreshingFlag, 1) == 0;
         private void ExitUiRefresh() => Interlocked.Exchange(ref _uiRefreshingFlag, 0);
 
-        #endregion
-
-        #region Public API (Unity-safe wrappers)
-
         public void AutoRefreshConflictList() => SafeFireAndForget(AutoRefreshConflictListAsync);
         public void MarkAsResolved() => SafeFireAndForget(MarkAsResolvedAsync);
         public void DeleteAllObstructions() => SafeFireAndForget(DeleteAllObstructionsAsync);
@@ -93,10 +81,6 @@ namespace SVN.Core
             try { await operation().ConfigureAwait(false); }
             catch (Exception ex) { SVNLogBridge.LogException(ex); }
         }
-
-        #endregion
-
-        #region Core Operations
 
         private async Task AutoRefreshConflictListAsync()
         {
@@ -121,7 +105,7 @@ namespace SVN.Core
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync(); } // No ConfigureAwait(false) here!
+                    try { await RefreshConflictUIAsync(); }
                     finally { ExitUiRefresh(); }
                 }
             }
@@ -235,7 +219,7 @@ namespace SVN.Core
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync(); } // No ConfigureAwait(false)
+                    try { await RefreshConflictUIAsync(); }
                     finally { ExitUiRefresh(); }
                 }
 
@@ -330,7 +314,7 @@ namespace SVN.Core
 
                 if (TryEnterUiRefresh())
                 {
-                    try { await RefreshConflictUIAsync(); } // No ConfigureAwait(false)
+                    try { await RefreshConflictUIAsync(); }
                     finally { ExitUiRefresh(); }
                 }
             }
@@ -343,10 +327,6 @@ namespace SVN.Core
                 ExitProcessing();
             }
         }
-
-        #endregion
-
-        #region Data Layer
 
         private async Task<List<SVNConflictData>> GetConflictsAsync(string root)
         {
@@ -367,7 +347,7 @@ namespace SVN.Core
                 using (var reader = XmlReader.Create(stringReader, new XmlReaderSettings
                 {
                     Async = true,
-                    DtdProcessing = DtdProcessing.Prohibit // XXE protection
+                    DtdProcessing = DtdProcessing.Prohibit
                 }))
                 {
                     string currentPath = null;
@@ -500,7 +480,6 @@ namespace SVN.Core
                     catch { /* best effort */ }
                 }
 
-                // Security: reject paths with quotes
                 if (path.Contains("\""))
                 {
                     LogBoth($"<color=#FFAA00>Invalid path (contains quotes):</color> {path}");
@@ -641,7 +620,6 @@ namespace SVN.Core
                 path = NormalizePath(path);
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
-                // Security: reject paths with quotes
                 if (path.Contains("\""))
                 {
                     LogBoth($"<color=#FFAA00>Invalid path (contains quotes):</color> {path}");
@@ -757,10 +735,6 @@ namespace SVN.Core
             }
         }
 
-        #endregion
-
-        #region UI Layer
-
         public async Task RefreshConflictUI()
         {
             await RefreshConflictUIAsync().ConfigureAwait(false);
@@ -811,10 +785,6 @@ namespace SVN.Core
             _ => SVNConflictItem.ConflictType.Text,
         };
 
-        #endregion
-
-        #region Helpers
-
         private List<string> GetActiveConflictPaths()
         {
             return _conflictCache.Values
@@ -833,7 +803,5 @@ namespace SVN.Core
         {
             _resolveLock?.Dispose();
         }
-
-        #endregion
     }
 }

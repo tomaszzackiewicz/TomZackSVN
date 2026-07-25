@@ -41,8 +41,6 @@ namespace SVN.Core
             _mainThreadContext = SynchronizationContext.Current;
         }
 
-        #region Key & SSH Configuration
-
         private static string TsNow() => DateTime.Now.ToString("HH:mm:ss");
 
         private string ResolveAndValidateKeyPath()
@@ -103,10 +101,6 @@ namespace SVN.Core
             string sshCommand = $"ssh -i \"{normalizedKeyPath}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile={nullDevice}";
             return $" --config-option config:tunnels:ssh=\"{sshCommand}\"";
         }
-
-        #endregion
-
-        #region Project Info
 
         public async void UpdateProjectInfo()
         {
@@ -232,10 +226,6 @@ namespace SVN.Core
             }
             catch { return 0; }
         }
-
-        #endregion
-
-        #region Checkout & Resume
 
         public async void StartCheckout()
         {
@@ -377,10 +367,6 @@ namespace SVN.Core
             cts?.Cancel();
         }
 
-        #endregion
-
-        #region Size Calculation
-
         private long _cachedRepoSizeBytes;
         private string _cachedRepoSizeUrl;
         private readonly object _repoSizeLock = new object();
@@ -435,10 +421,6 @@ namespace SVN.Core
             }
         }
 
-        #endregion
-
-        #region Core Execution
-
         private async Task ExecuteSvnOperationAsync(string url, string path, string command, bool isResume, string keyPath, string operationType)
         {
             if (IsProcessing)
@@ -474,7 +456,6 @@ namespace SVN.Core
                 if (!isExport && !Directory.Exists(path))
                     Directory.CreateDirectory(path);
 
-                // ─── Start log ─────────────────────────────────────────
                 PostToMainThread(() =>
                 {
                     SVNLogBridge.LogCheckoutConsole($"[{TsNow()}] <b>[{operationType}]</b> Starting...\n");
@@ -482,7 +463,6 @@ namespace SVN.Core
                     SVNLogBridge.LogCheckoutConsole($"[{TsNow()}] <b>[Dest]</b> {path}\n\n");
                 });
 
-                // ─── Cleanup (resume) ──────────────────────────────────
                 if (isResume)
                 {
                     PostToMainThread(() =>
@@ -511,7 +491,6 @@ namespace SVN.Core
                     if (token.IsCancellationRequested) throw new OperationCanceledException(token);
                 }
 
-                // ─── Flush thread ──────────────────────────────────────
                 logFlushTask = Task.Run(async () =>
                 {
                     try
@@ -525,7 +504,6 @@ namespace SVN.Core
                     catch (OperationCanceledException) { FlushLogBuffer(logBuffer); }
                 }, token);
 
-                // ─── Monitor thread ────────────────────────────────────
                 monitorTask = Task.Run(async () =>
                 {
                     try
@@ -589,7 +567,6 @@ namespace SVN.Core
                     catch (OperationCanceledException) { }
                 }, token);
 
-                // ─── Execute SVN ───────────────────────────────────────
                 string workingDirectory = isResume ? path : Path.GetDirectoryName(path);
                 if (string.IsNullOrWhiteSpace(workingDirectory)) workingDirectory = Path.GetTempPath();
 
@@ -649,7 +626,6 @@ namespace SVN.Core
 
                 if (token.IsCancellationRequested) throw new OperationCanceledException(token);
 
-                // ─── Verify ────────────────────────────────────────────
                 bool hasWorkingCopy = Directory.Exists(Path.Combine(path, ".svn"));
                 bool hasError = !string.IsNullOrWhiteSpace(result) &&
                                 (result.Contains("error", StringComparison.OrdinalIgnoreCase) ||
@@ -674,7 +650,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // ─── Success ───────────────────────────────────────────
                 lock (_stateLock) { _state = OperationState.Completed; }
 
                 var elapsed = DateTime.Now - startTime;
@@ -797,10 +772,6 @@ namespace SVN.Core
             }
         }
 
-        #endregion
-
-        #region Export
-
         public async void ExportRepository()
         {
             try { await ExportRepositoryAsync().ConfigureAwait(false); }
@@ -906,10 +877,6 @@ namespace SVN.Core
 
             return true;
         }
-
-        #endregion
-
-        #region Helpers
 
         private bool CanStartOperation()
         {
@@ -1069,7 +1036,5 @@ namespace SVN.Core
             int slash = url.LastIndexOf('/');
             return slash >= 0 && slash < url.Length - 1 ? url.Substring(slash + 1) : url;
         }
-
-        #endregion
     }
 }

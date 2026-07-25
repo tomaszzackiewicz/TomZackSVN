@@ -13,9 +13,8 @@ namespace SVN.Core
     {
         private CancellationTokenSource _activeCTS;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
-        private const int CleanupTimeoutSeconds = 30; // Timeout dla cleanupu
+        private const int CleanupTimeoutSeconds = 30;
 
-        // Bezpieczeństwo wątków UI
         private readonly SynchronizationContext _mainThreadContext;
         private readonly int _mainThreadId;
 
@@ -36,7 +35,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Public API ───────────────────────────────────────
         public async void AddAll() { try { await AddAllAsync(); } catch (Exception ex) { Debug.LogException(ex); } }
 
         public void AddSingleItem(SvnTreeElement element)
@@ -58,7 +56,6 @@ namespace SVN.Core
             HideProgressBarAfterDelay(0);
         }
 
-        // ─── Core Logic ───────────────────────────────────────
         private async Task AddAllAsync()
         {
             bool hasLock = false;
@@ -78,7 +75,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // NOWOŚĆ: Automatyczny cleanup odblokowujący Working Copy
                 if (!await CleanupWorkingCopyAsync(root, token))
                 {
                     SVNLogBridge.LogLine("<color=#FFAA00>Warning: Cleanup timed out. Proceeding anyway...</color>");
@@ -155,7 +151,6 @@ namespace SVN.Core
                 string root = svnManager.WorkingDir;
                 if (string.IsNullOrEmpty(root)) return;
 
-                // NOWOŚĆ: Automatyczny cleanup przed dodaniem pojedynczego pliku
                 if (!await CleanupWorkingCopyAsync(root, token))
                 {
                     SVNLogBridge.LogLine("<color=#FFAA00>Warning: Cleanup timed out. Proceeding anyway...</color>");
@@ -163,7 +158,7 @@ namespace SVN.Core
 
                 SVNLogBridge.LogLine($"<b>[Add]</b> Adding item: {element.Name}...");
 
-                string normalizedRoot = root.Replace("\\", "/").TrimEnd('/'); // TUTAJ JEST POPRAWKA
+                string normalizedRoot = root.Replace("\\", "/").TrimEnd('/');
                 var paths = EnsureParentDirectoriesAreIncluded(new List<string> { element.FullPath }, normalizedRoot);
 
                 string tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_single_{Guid.NewGuid():N}.txt");
@@ -186,7 +181,6 @@ namespace SVN.Core
             finally { FinalizeOperation(hasLock); }
         }
 
-        // ─── NOWOŚĆ: Logika naprawy blokad ───────────────────
         private async Task<bool> CleanupWorkingCopyAsync(string root, CancellationToken token)
         {
             SVNLogBridge.LogLine("Checking working copy locks...");
@@ -200,12 +194,10 @@ namespace SVN.Core
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
             {
-                // Zabezpieczenie: jeśli cleanup zawiesi się na zepsutym pliku, nie blokujemy narzędzia na zawsze
                 return false;
             }
         }
 
-        // ─── Współdzielona logika drzewa ─────────────────────
         private List<string> EnsureParentDirectoriesAreIncluded(List<string> paths, string root)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -231,7 +223,6 @@ namespace SVN.Core
                           .ToList();
         }
 
-        // ─── Zarządzanie stanem ──────────────────────────────
         private CancellationToken ResetAndGetToken()
         {
             var oldCts = Interlocked.Exchange(ref _activeCTS, null);

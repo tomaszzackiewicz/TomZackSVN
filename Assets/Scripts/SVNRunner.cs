@@ -68,7 +68,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Bezpieczne budowanie argumentów (escapowanie) ────
         private static string BuildSafeArguments(IEnumerable<string> args)
         {
             var escaped = new List<string>();
@@ -84,21 +83,17 @@ namespace SVN.Core
 
         private static string EscapeSingleArgument(string arg)
         {
-            // Jeśli nie zawiera spacji ani cudzysłowów, nie ma potrzeby cytowania
             if (!arg.Contains(' ') && !arg.Contains('"'))
                 return arg;
-            // W przeciwnym razie otaczamy cudzysłowami i escapujemy wewnętrzne cudzysłowy
             return "\"" + arg.Replace("\"", "\\\"") + "\"";
         }
 
-        // ─── Główny interfejs ─────────────────────────────────
         public static async Task<string> RunAsync(
             string command,
             string workingDir,
             bool retryOnLock = true,
             CancellationToken token = default)
         {
-            // Rozbijamy command na tokeny – w przyszłości lepiej przyjmować IEnumerable<string>
             var parts = SplitArguments(command);
             return await RunAsync(parts, workingDir, retryOnLock, token);
         }
@@ -132,7 +127,6 @@ namespace SVN.Core
                     ? KeyPath.Trim().Replace("\"", "").Replace('\\', '/')
                     : "";
 
-                // Dodajemy standardowe flagi
                 var finalArgs = new List<string>(args);
                 if (!finalArgs.Contains("--non-interactive"))
                     finalArgs.Add("--non-interactive");
@@ -157,7 +151,6 @@ namespace SVN.Core
                         StandardErrorEncoding = Encoding.UTF8
                     };
 
-                    // Bezpieczne argumenty
                     foreach (var arg in finalArgs)
                         psi.ArgumentList.Add(arg);
 
@@ -261,7 +254,6 @@ namespace SVN.Core
             }
         }
 
-        // Pomocnicze rozbijanie stringu na argumenty (uproszczone)
         private static List<string> SplitArguments(string command)
         {
             var args = new List<string>();
@@ -286,14 +278,12 @@ namespace SVN.Core
             return args;
         }
 
-        // ─── Live / Streamed (przyjmują już string args – pozostają dla kompatybilności) ───
         public static async Task<string> RunLiveAsync(
             string args,
             string workingDir,
             Action<string> onLineReceived,
             CancellationToken token = default)
         {
-            // Używamy przeciążenia z IEnumerable, bo mamy string – musimy go bezpiecznie przekazać
             var argList = SplitArguments(args);
             return await RunLiveAsync(argList, workingDir, onLineReceived, token);
         }
@@ -511,7 +501,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── RunStreamedLiveAsync ──────────────────────────────
         public static async Task<int> RunStreamedLiveAsync(
             string arguments,
             string workingDirectory,
@@ -620,7 +609,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── WaitForExitAsync bez race condition ──────────────
         private static async Task WaitForExitAsync(Process process, CancellationToken token, TimeSpan timeout)
         {
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -631,14 +619,11 @@ namespace SVN.Core
 
             try
             {
-                // Rejestrujemy anulację
                 using (token.Register(() => tcs.TrySetCanceled(token)))
                 {
-                    // Jeśli proces już zakończył się przed subskrypcją – nie przegapimy
                     if (process.HasExited)
                         tcs.TrySetResult(true);
 
-                    // Czekamy z timeoutem
                     using var timeoutCts = new CancellationTokenSource(timeout);
                     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, timeoutCts.Token);
                     linkedCts.Token.Register(() => tcs.TrySetCanceled(linkedCts.Token));
@@ -658,7 +643,6 @@ namespace SVN.Core
             _svnLock.ExitWrite();
         }
 
-        // ─── GetInfoAsync z poprawkami ────────────────────────
         public static async Task<string> GetInfoAsync(string workingDir, CancellationToken token = default)
         {
             lock (_infoCacheLock)
@@ -690,13 +674,17 @@ namespace SVN.Core
             return await GetInfoAsync(workingDir, CancellationToken.None);
         }
 
-        // ─── IsWriteCommand ────────────────────────────────────
-        private static bool IsWriteCommand(string args)
+        private static bool IsWriteCommand(string firstTokenOrArgs)
         {
-            if (string.IsNullOrWhiteSpace(args)) return false;
-            string firstToken = args.TrimStart().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-            if (firstToken == null) return false;
-            return WriteCommands.Contains(firstToken.ToLowerInvariant());
+            if (string.IsNullOrWhiteSpace(firstTokenOrArgs)) return false;
+
+            string token = firstTokenOrArgs.Trim();
+
+            int space = token.IndexOf(' ');
+            if (space > 0)
+                token = token.Substring(0, space);
+
+            return WriteCommands.Contains(token.ToLowerInvariant());
         }
 
         private static readonly HashSet<string> WriteCommands = new(StringComparer.OrdinalIgnoreCase)
@@ -707,15 +695,12 @@ namespace SVN.Core
             "import", "export"
         };
 
-        // ─── ForceCleanPath (bez niszczenia ścieżek) ──────────
         public static string ForceCleanPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return string.Empty;
-            // Usuwamy tylko znaki kontrolne (oprócz spacji) i inne niedrukowalne
             return new string(path.Where(c => !char.IsControl(c) || c == ' ').ToArray()).Trim();
         }
 
-        // OPT: Całkowity rewrite — bez LINQ, bez OrderBy, bez alokacji StringBuilder w pętli
         public static void BuildTreeString(
             string currentDir,
             string rootDir,
@@ -781,7 +766,6 @@ namespace SVN.Core
                 }
             }
 
-            // OPT: Ręczne sortowanie zamiast LINQ OrderBy (zero alokacji delegat)
             combinedEntries.Sort((a, b) =>
             {
                 bool aIsDir = Directory.Exists(a) || string.IsNullOrEmpty(Path.GetExtension(a));
@@ -841,7 +825,6 @@ namespace SVN.Core
                     if (status == "!" || status == "D") stats.DeletedCount++;
                 }
 
-                // OPT: Budujemy indent bez StringBuilder — string[] + reuse
                 for (int j = 0; j < indent - 1; j++)
                     sb.Append(parentIsLast[j] ? "    " : "│   ");
 

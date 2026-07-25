@@ -101,7 +101,6 @@ namespace SVN.Core
             return _revertCts.Token;
         }
 
-        // ─── Revert All ────────────────────────────────────────
         public async void RevertAll()
         {
             bool hasLock = false;
@@ -164,7 +163,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Revert Single Item ────────────────────────────────
         public async void RevertSingleItem(SvnTreeElement element)
         {
             bool hasLock = false;
@@ -227,7 +225,6 @@ namespace SVN.Core
             }
         }
 
-        // ─── Cancel ────────────────────────────────────────────
         public void CancelRevert()
         {
             var cts = _revertCts;

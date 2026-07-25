@@ -31,7 +31,6 @@ namespace SVN.Core
                 if (IsProcessing) return;
                 IsProcessing = true;
 
-                // Reset tokena, aby mieć świeży mechanizm anulowania
                 _cts?.Cancel();
                 _cts?.Dispose();
                 _cts = new CancellationTokenSource();
@@ -50,7 +49,6 @@ namespace SVN.Core
                 {
                     statusModule.ClearCurrentData();
 
-                    // Bezpieczne czyszczenie UI – wywoływane po zakończeniu asynchronicznej logiki
                     svnUI.SvnTreeView?.ClearView();
                     svnUI.SVNCommitTreeDisplay?.ClearView();
 
@@ -107,8 +105,6 @@ namespace SVN.Core
                 .Where(x => x.Value.status.Contains("!"))
                 .Select(x => x.Key)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                // Sortuj od najgłębszych ścieżek do rodziców, aby uniknąć błędów
-                // "parent is not known to exist" podczas usuwania dzieci.
                 .OrderByDescending(x => x.Length)
                 .ToList();
 
@@ -129,10 +125,8 @@ namespace SVN.Core
 
                 try
                 {
-                    // Zapisujemy bez BOM, aby uniknąć problemów z pierwszą ścieżką
                     File.WriteAllLines(tempFile, batch, new UTF8Encoding(false));
 
-                    // Używamy SvnRunner, aby zachować globalny lock, konfigurację SSH i retry.
                     await SvnRunner.RunAsync($"delete --force --targets \"{tempFile}\"", root, false, token);
                     processed += batch.Count;
                 }
@@ -144,14 +138,12 @@ namespace SVN.Core
                 {
                     failed += batch.Count;
                     SVNLogBridge.LogError($"[SVN] Batch delete error: {ex.Message}");
-                    // Nie przerywamy całej operacji – próbujemy kontynuować z następną partią
                 }
                 finally
                 {
                     if (File.Exists(tempFile)) File.Delete(tempFile);
                 }
 
-                // Logujemy postęp nawet przy częściowych błędach
                 SVNLogBridge.LogLine($"  Progress: {processed}/{total} files removed.");
             }
 

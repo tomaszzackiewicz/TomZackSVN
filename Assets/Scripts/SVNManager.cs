@@ -44,17 +44,14 @@ namespace SVN.Core
         private int _isUpdatingSize = 0;
         public volatile bool _diskChangesDetected = false;
 
-        // OPT: Cache komponentów zamiast GetComponent w pętli/eventach
         private SVNPollingService _cachedPoller;
 
-        // OPT: Zarządzanie CTS — jedno źródło anulowania per-refresh
         private CancellationTokenSource _refreshStatusCts;
         private CancellationTokenSource _projectSwitchDebounceCts;
         private CancellationTokenSource _watcherRestartCts;
         private CancellationTokenSource _diskDebounceCts;
-        private CancellationTokenSource _lifetimeCts; // anulowane w OnDestroy
+        private CancellationTokenSource _lifetimeCts;
 
-        // OPT: Debounce dla zapisu projektu (inputy mogą fire'ować co klawisz)
         private CancellationTokenSource _saveProjectDebounceCts;
         private SVNProject _pendingSaveProject;
 
@@ -77,7 +74,6 @@ namespace SVN.Core
             CurrentStatusDict = data;
         }
 
-        // OPT: Mniej alokacji — reuse StringBuilder, szybsza filtracja
         public string WorkingDir
         {
             get => workingDir;
@@ -139,7 +135,6 @@ namespace SVN.Core
 
             SVN.Core.SvnRunner.OnProcessingStateChanged += OnSvnProcessingChanged;
 
-            // OPT: Cache pollera raz
             _cachedPoller = GetComponent<SVNPollingService>();
         }
 
@@ -213,7 +208,6 @@ namespace SVN.Core
 
         private void Start()
         {
-            // OPT: Bezpieczne fire-and-forget z logowaniem błędów — zamiast async void Start()
             _ = StartAsync().ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -242,6 +236,7 @@ namespace SVN.Core
                 if (lastProject != null && Directory.Exists(lastProject.workingDir))
                 {
                     await LoadProject(lastProject);
+                    OnProjectChanged?.Invoke(lastProject);
 
                     if (projectSelectionPanel != null)
                     {
@@ -422,7 +417,6 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(WorkingDir)) return;
             if (IsProcessing && !force) return;
 
-            // OPT: Anuluj poprzedni refresh + dispose
             var oldCts = Interlocked.Exchange(ref _refreshStatusCts, new CancellationTokenSource());
             oldCts?.Cancel();
             oldCts?.Dispose();
@@ -446,7 +440,6 @@ namespace SVN.Core
 
                 if (Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
                 {
-                    // OPT: Przekaż CT do background taska, aby anulować gdy projekt się zmieni
                     _ = Task.Run(async () =>
                     {
                         try
@@ -549,7 +542,6 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
-        // OPT: void + bezpieczne fire-and-forget zamiast async void
         private void OnApplicationFocus(bool hasFocus)
         {
             if (!hasFocus) return;
@@ -706,7 +698,6 @@ namespace SVN.Core
             });
         }
 
-        // OPT: Debounce zapisu projektu — nie zapisuj 10 razy przy wklejaniu tekstu
         private void DebounceSaveProject()
         {
             _saveProjectDebounceCts?.Cancel();
@@ -741,7 +732,6 @@ namespace SVN.Core
             }
         }
 
-        // OPT: Cleanup cache tymczasowych plików (wyciek dysku)
         public async Task CatAndOpenFile(string relativePath, long revision)
         {
             if (string.IsNullOrEmpty(RepositoryUrl))
@@ -762,7 +752,6 @@ namespace SVN.Core
                 if (!Directory.Exists(cacheFolder))
                     Directory.CreateDirectory(cacheFolder);
 
-                // OPT: Usuń stary plik o tej samej nazwie jeśli istnieje
                 string tempPath = Path.Combine(cacheFolder, tempFileName);
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
 
@@ -819,7 +808,6 @@ namespace SVN.Core
 
         private bool _restartingWatcher = false;
 
-        // OPT: Inicjalizacja FSW z właściwym dispose i throttlingiem
         private void InitFileSystemWatcher()
         {
             if (_restartingWatcher)
@@ -837,7 +825,7 @@ namespace SVN.Core
                 {
                     IncludeSubdirectories = true,
                     NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
-                    InternalBufferSize = 64 * 1024 // OPT: 64KB wystarczy, mniej RAMu
+                    InternalBufferSize = 64 * 1024 // OPT: 64KB RAM enough
                 };
 
                 _folderWatcher.Changed += OnDiskEvent;
@@ -893,7 +881,6 @@ namespace SVN.Core
         private DateTime _lastDiskEventTime = DateTime.MinValue;
         private readonly object _diskDebounceLock = new object();
 
-        // OPT: Throttling zamiast lawiny tasków — tylko 1 debounce task na raz
         private void OnDiskEvent(object sender, FileSystemEventArgs e)
         {
             if (e.FullPath.Contains(".svn")) return;
@@ -951,9 +938,11 @@ namespace SVN.Core
 
             DisposeFileSystemWatcher();
 
-            var statusModule = GetModule<SVNStatus>();
-            if (statusModule is IDisposable disposable)
-                disposable.Dispose();
+            foreach (var module in _modules.Values)
+            {
+                if (module is IDisposable disposable)
+                    disposable.Dispose();
+            }
 
             _modules.Clear();
         }
