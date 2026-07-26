@@ -333,6 +333,17 @@ namespace SVN.Core
                 MergeToolPath = SVNAssetLocator.NormalizePath(project.mergeToolPath);
                 SvnRunner.KeyPath = CurrentKey;
 
+                var projects = ProjectSettings.LoadProjects();
+                string normalizedDir = WorkingDir.Replace("\\", "/").TrimEnd('/');
+                var proj = projects.Find(p =>
+                    !string.IsNullOrEmpty(p.workingDir) &&
+                    p.workingDir.Replace("\\", "/").TrimEnd('/') == normalizedDir);
+                if (proj != null)
+                {
+                    proj.lastOpened = DateTime.UtcNow;
+                    ProjectSettings.SaveProjects(projects);
+                }
+
                 SyncUIToCurrentState();
                 PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
                 PlayerPrefs.SetString("SVN_LastOpenedProjectId", project.projectId);

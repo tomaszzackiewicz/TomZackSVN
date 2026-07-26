@@ -141,7 +141,7 @@ namespace SVN.Core
 
             try
             {
-                List<SVNProject> projects = ProjectSettings.LoadProjects();
+                List<SVNProject> projects = await Task.Run(() => ProjectSettings.LoadProjects());
                 string normalizedPath = newPath.TrimEnd('/');
 
                 var existing = projects.Find(p =>
@@ -154,9 +154,9 @@ namespace SVN.Core
                     {
                         projectName = Path.GetFileName(newPath),
                         workingDir = normalizedPath,
-                        lastOpened = DateTime.Now
+                        lastOpened = DateTime.UtcNow
                     });
-                    ProjectSettings.SaveProjects(projects);
+                    await Task.Run(() => ProjectSettings.SaveProjects(projects));
                 }
 
                 PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
@@ -189,7 +189,7 @@ namespace SVN.Core
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
             if (string.IsNullOrEmpty(lastPath)) return;
 
-            var projects = ProjectSettings.LoadProjects();
+            List<SVNProject> projects = await Task.Run(() => ProjectSettings.LoadProjects());
             string normalizedLast = NormalizePath(lastPath);
 
             var current = projects.Find(p =>
