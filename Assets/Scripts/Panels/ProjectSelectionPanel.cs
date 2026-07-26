@@ -96,43 +96,36 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (svnUI == null) svnUI = SVNUI.Instance;
         var allProjects = ProjectSettings.LoadProjects();
 
-        // --- JEDNORAZOWA AUTONAPRAWA STARYCH PROJEKTÓW ---
         bool needsMigrationSave = false;
         int i = 0;
         foreach (var p in allProjects)
         {
-            // Jeśli projekt nie ma daty (stare wpisy z pliku JSON)
             if (p.lastOpened == default(DateTime) || p.lastOpened.Year < 2000)
             {
-                // Rozrzucamy daty o 1 sekundę do tyłu, żeby nie miały wszystkich dokładnie tego samego czasu
                 p.lastOpened = DateTime.UtcNow.AddSeconds(-i);
                 needsMigrationSave = true;
             }
             i++;
         }
 
-        // Zapisujemy do pliku TYLKO RAZ, jeśli jakikolwiek projekt wymagał naprawy
         if (needsMigrationSave)
         {
             try { ProjectSettings.SaveProjects(allProjects); }
-            catch { /* cicho, nie blokujemy UI */ }
+            catch {}
         }
 
-        // --- SORTOWANIE ---
         bool sortByDate = sortDropdown != null && sortDropdown.value == 1;
         if (sortByDate)
             allProjects = allProjects.OrderByDescending(p => p.lastOpened).ToList();
         else
             allProjects = allProjects.OrderBy(p => p.projectName).ToList();
 
-        // --- FILTROWANIE ---
         string filter = searchInput?.text?.Trim() ?? "";
         if (!string.IsNullOrEmpty(filter))
             allProjects = allProjects.Where(p => p.projectName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
 
         projects = allProjects;
 
-        // Usuwamy stare elementy z UI
         var toDestroy = new List<GameObject>(container.childCount);
         foreach (Transform child in container)
             toDestroy.Add(child.gameObject);
@@ -141,7 +134,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         if (projectButtonPrefab == null || container == null) return;
 
-        // --- RYSOWANIE LISTY ---
         foreach (var project in projects)
         {
             GameObject itemObj = Instantiate(projectButtonPrefab, container);
@@ -151,7 +143,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             {
                 uiItem.projectNameText.text = project.projectName;
 
-                // W tym miejscu data jest już na 100% poprawna
                 if (uiItem.dateText != null)
                 {
                     uiItem.dateText.text = project.lastOpened.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
@@ -169,7 +160,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
     }
 
-    // ──────────── RENAME ────────────
     public void Button_OpenRenamePanel(SVNProject project)
     {
         if (project == null) return;
@@ -252,7 +242,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
     }
 
-    // ──────────── RELOCATE ────────────
     public void Button_OpenRelocatePanel(SVNProject project)
     {
         if (project == null || string.IsNullOrEmpty(project.workingDir)) return;
@@ -361,7 +350,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
     }
 
-    // ──────────── ADD / DELETE / SELECT ────────────
     private void OnProjectSelected(SVNProject project)
     {
         if (project == null || svnManager == null || !svnManager.isActiveAndEnabled) return;
@@ -388,9 +376,8 @@ public class ProjectSelectionPanel : MonoBehaviour
         svnManager.CurrentSnapshot = null;
         svnManager.IsUpdateRunning = false;
 
-        // 1. Aktualizujemy datę od razu, aby LoadProject jej nie nadpisał starymi danymi z pliku
         project.lastOpened = DateTime.UtcNow;
-        UpdateProjectLastOpened(project);      // zapis do pliku + RefreshList()
+        UpdateProjectLastOpened(project);
 
         try
         {
@@ -400,10 +387,8 @@ public class ProjectSelectionPanel : MonoBehaviour
             statusModule?.ClearSVNTreeView();
             svnManager.CurrentKey = string.IsNullOrWhiteSpace(project.privateKeyPath) ? "" : project.privateKeyPath;
 
-            // 2. Ładujemy projekt
             await svnManager.LoadProject(project);
 
-            // 3. Panel jest ukrywany
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (this != null)
@@ -433,7 +418,6 @@ public class ProjectSelectionPanel : MonoBehaviour
                 existing.lastOpened = DateTime.UtcNow;
                 ProjectSettings.SaveProjects(projects);
 
-                // Odśwież listę natychmiast
                 RefreshList();
             }
         }

@@ -16,7 +16,6 @@ namespace SVN.Core
 
         public SVNExternal(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        // ═══════════════ EXPLORER ═══════════════
         public void OpenInExplorer()
         {
             try
@@ -52,7 +51,6 @@ namespace SVN.Core
             catch (Exception ex) { SVNLogBridge.LogLine($"<color=#FFAA00>Explorer Error:</color> {ex.Message}"); }
         }
 
-        // ═══════════════ DIFF ═══════════════
         public async void ShowChangesForSelected(string relativePath)
         {
             try { await ShowChangesForSelectedAsync(relativePath); }
@@ -73,7 +71,6 @@ namespace SVN.Core
             catch (Exception ex) { SVNLogBridge.LogLine($"<color=#FFAA00>Diff Error:</color> {ex.Message}"); }
         }
 
-        // ═══════════════ BROWSERS ═══════════════
         public void BrowseDestinationFolderPathLoad()
         {
             string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select SVN Working Directory", "", false);
@@ -194,7 +191,6 @@ namespace SVN.Core
             }
         }
 
-        // ═══════════════ TORTOISE / SAVE ═══════════════
         public void OpenTortoiseLog()
         {
             string root = svnManager.WorkingDir;
@@ -224,7 +220,6 @@ namespace SVN.Core
             }
         }
 
-        // ═══════════════ SHELL / ICONS ═══════════════
         [DllImport("shell32.dll", CharSet = CharSet.Auto)]
         private static extern void SHChangeNotify(long wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
         private const long SHCNE_UPDATEDIR = 0x00001000L;
@@ -249,10 +244,8 @@ namespace SVN.Core
             catch (Exception ex) { LogBoth($"[Shell Error] Failed to refresh icons: {ex.Message}"); }
         }
 
-        // ═══════════════ TEST CONNECTION (Z POSTĘPEM W LOGU) ═══════════════
         public async void TestConnection()
         {
-            // Tymczasowo wyświetl informację, że diagnostyka ruszyła
             if (SVNUI.Instance != null && SVNUI.Instance.LogText != null)
                 SVNLogBridge.LogLine($"[{DateTime.Now:HH:mm:ss}] [INFO] Starting connection diagnostics...");
 
@@ -293,7 +286,6 @@ namespace SVN.Core
                 bool validUrl = true;
                 int targetPort = 22;
 
-                // --- Krok 0: URL ---
                 SVNLogBridge.LogLine("[DIAG] [0/10] Checking repository URL...");
                 report.AppendLine($"<color={colSTEP}>[0/10] CHECKING REPOSITORY URL...</color>");
                 try
@@ -325,14 +317,12 @@ namespace SVN.Core
                     return;
                 }
 
-                // [1/10] SVN client
                 SVNLogBridge.LogLine("[DIAG] [1/10] Checking SVN client...");
                 report.AppendLine($"<color={colSTEP}>[1/10] CHECKING SVN CLIENT...</color>");
                 try { string ver = await SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir); report.AppendLine($"<color={colOK}>[OK]</color>   SVN client version : {ver.Trim()}"); }
                 catch (Exception ex) { hadErrors = true; report.AppendLine($"<color={colERR}>[ERROR]</color> Unable to detect SVN client: {ex.Message}"); }
                 report.AppendLine();
 
-                // [2/10] OpenSSH
                 SVNLogBridge.LogLine("[DIAG] [2/10] Checking OpenSSH...");
                 report.AppendLine($"<color={colSTEP}>[2/10] CHECKING OPENSSH CLIENT...</color>");
                 try
@@ -344,7 +334,6 @@ namespace SVN.Core
                 catch (Exception ex) { report.AppendLine($"<color={colWARN}>[WARN]</color> Could not detect OpenSSH version: {ex.Message}"); }
                 report.AppendLine();
 
-                // [3/10] SSH key
                 SVNLogBridge.LogLine("[DIAG] [3/10] Checking SSH key...");
                 report.AppendLine($"<color={colSTEP}>[3/10] CHECKING SSH KEY...</color>");
                 string keyPath = SvnRunner.KeyPath;
@@ -361,14 +350,12 @@ namespace SVN.Core
                 else report.AppendLine($"<color={colWARN}>[WARN]</color> No SSH key configured.");
                 report.AppendLine();
 
-                // [4/10] DNS
                 SVNLogBridge.LogLine("[DIAG] [4/10] Testing DNS resolution...");
                 report.AppendLine($"<color={colSTEP}>[4/10] TESTING DNS RESOLUTION...</color>");
                 try { var addrs = await System.Net.Dns.GetHostAddressesAsync(host); foreach (var a in addrs) report.AppendLine($"<color={colOK}>[OK]</color>   DNS resolved → {a}"); }
                 catch (Exception ex) { hadErrors = true; report.AppendLine($"<color={colERR}>[ERROR]</color> DNS resolution failed: {ex.Message}"); }
                 report.AppendLine();
 
-                // [5/10] Ping
                 SVNLogBridge.LogLine("[DIAG] [5/10] Pinging host...");
                 report.AppendLine($"<color={colSTEP}>[5/10] TESTING HOST REACHABILITY (ICMP)...</color>");
                 try
@@ -382,7 +369,6 @@ namespace SVN.Core
                 catch (Exception ex) { report.AppendLine($"<color=black>[INFO]</color> Ping unavailable: {ex.Message}"); }
                 report.AppendLine();
 
-                // [6/10] TCP
                 SVNLogBridge.LogLine("[DIAG] [6/10] Testing TCP port...");
                 report.AppendLine($"<color={colSTEP}>[6/10] TESTING TCP PORT {targetPort}...</color>");
                 try
@@ -398,7 +384,6 @@ namespace SVN.Core
                 catch (Exception ex) { hadErrors = true; report.AppendLine($"<color={colERR}>[ERROR]</color> TCP test failed: {ex.Message}"); }
                 report.AppendLine();
 
-                // [7/10] SSH handshake – corrected
                 SVNLogBridge.LogLine("[DIAG] [7/10] Testing SSH connection...");
                 report.AppendLine($"<color={colSTEP}>[7/10] TESTING DIRECT SSH CONNECTION...</color>");
                 if (!string.IsNullOrEmpty(keyPath))
@@ -435,7 +420,6 @@ namespace SVN.Core
                 }
                 report.AppendLine();
 
-                // [8/10] SVN auth
                 SVNLogBridge.LogLine("[DIAG] [8/10] Authenticating to repository...");
                 report.AppendLine($"<color={colSTEP}>[8/10] TESTING SVN AUTHENTICATION...</color>");
                 var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -451,7 +435,6 @@ namespace SVN.Core
                 catch (Exception ex) { sw.Stop(); hadErrors = true; report.AppendLine($"<color={colERR}>[ERROR]</color> Authentication failed: {ex.Message}"); }
                 report.AppendLine();
 
-                // [9/10] Working copy
                 SVNLogBridge.LogLine("[DIAG] [9/10] Checking working copy...");
                 report.AppendLine($"<color={colSTEP}>[9/10] CHECKING WORKING COPY STATE...</color>");
                 try
@@ -466,7 +449,6 @@ namespace SVN.Core
                 catch (Exception ex) { report.AppendLine($"<color={colWARN}>[WARN]</color> Could not check working copy state: {ex.Message}"); }
                 report.AppendLine();
 
-                // [10/10] Speed
                 SVNLogBridge.LogLine("[DIAG] [10/10] Measuring response speed...");
                 report.AppendLine($"<color={colSTEP}>[10/10] TESTING REPOSITORY RESPONSE SPEED...</color>");
                 sw.Restart();

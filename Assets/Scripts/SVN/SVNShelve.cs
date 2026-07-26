@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -74,9 +74,10 @@ namespace SVN.Core
             {
                 string name = svnUI?.ShelfNameInput?.text;
                 if (string.IsNullOrWhiteSpace(name))
-                    name = "Stash_" + DateTime.Now.ToString("HHmm");
+                    name = "Stash_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
-                await Shelve(name).ConfigureAwait(false);
+                bool success = await Shelve(name).ConfigureAwait(false);
+                if (!success) return;
 
                 PostUI(() =>
                 {
@@ -92,7 +93,6 @@ namespace SVN.Core
             SafeFireAndForget(async () =>
             {
                 if (!TryEnterProcessing()) return;
-
                 PostUI(() => RemoveShelfUI(shelfName));
 
                 try
@@ -122,9 +122,13 @@ namespace SVN.Core
 
         public void Button_RefreshShelvesUI() => RefreshShelvesUI();
 
-        public async Task Shelve(string shelfName)
+        public async Task<bool> Shelve(string shelfName, bool requireCleanWorkingCopy = true)
         {
-            if (!TryEnterProcessing()) return;
+            if (!TryEnterProcessing())
+            {
+                PostUI(() => SVNLogBridge.LogLine("<color=#FFAA00>[Stash] Another operation is already running.</color>"));
+                return false;
+            }
 
             using var cts = new CancellationTokenSource();
             _cts = cts;
@@ -134,60 +138,127 @@ namespace SVN.Core
             {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
                 string root = svnManager?.WorkingDir;
-                if (string.IsNullOrWhiteSpace(root)) return;
 
+                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                {
+                    PostUI(() => SVNLogBridge.LogLine("<color=#FF5555>[Stash] Invalid working directory.</color>"));
+                    return false;
+                }
+
+                shelfName = SanitizeShelfName(shelfName);
+                string patchPath = GetShelfFilePath(shelfName);
+                string addedFilesPath = GetAddedFilesFolder(shelfName);
+
+                PostUI(() => SVNLogBridge.LogLine($"[Stash] Working directory: {root}"));
+                PostUI(() => SVNLogBridge.LogLine($"[Stash] Shelf name: {shelfName}"));
+
+                PostUI(() => SVNLogBridge.LogLine("[Stash] Reading SVN status..."));
                 string statusOutput = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
-                List<string> addedPaths = ParseAddedFiles(statusOutput, root);
+                if (string.IsNullOrWhiteSpace(statusOutput))
+                {
+                    PostUI(() => SVNLogBridge.LogLine("<color=yellow>[Stash] No changes detected.</color>"));
+                    return true;
+                }
 
+                PostUI(() => SVNLogBridge.LogLine($"[Stash] SVN status:\n{statusOutput}"));
+                List<string> unversionedFiles = ParseUnversionedFiles(statusOutput, root);
+
+                PostUI(() => SVNLogBridge.LogLine("[Stash] Creating patch..."));
                 string diff = await SvnRunner.RunAsync("diff --git", root, false, token).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(diff))
+                bool hasTrackedChanges = !string.IsNullOrWhiteSpace(diff);
+                bool hasUnversionedFiles = unversionedFiles.Count > 0;
+
+                if (File.Exists(patchPath)) File.Delete(patchPath);
+                if (Directory.Exists(addedFilesPath)) Directory.Delete(addedFilesPath, true);
+                Directory.CreateDirectory(addedFilesPath);
+
+                if (hasTrackedChanges)
                 {
-                    PostUI(() => SVNLogBridge.LogLine("<color=yellow>[Stash]</color> No changes to shelve."));
-                    return;
+                    PostUI(() => SVNLogBridge.LogLine("[Stash] Saving tracked changes..."));
+                    await File.WriteAllTextAsync(patchPath, diff, token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await File.WriteAllTextAsync(patchPath, string.Empty, token).ConfigureAwait(false);
                 }
 
-                string patchFile = GetShelfFilePath(shelfName);
-                await File.WriteAllTextAsync(patchFile, diff, token).ConfigureAwait(false);
+                if (hasUnversionedFiles)
+                {
+                    PostUI(() => SVNLogBridge.LogLine($"[Stash] Saving {unversionedFiles.Count} unversioned files..."));
+                    foreach (string sourcePath in unversionedFiles)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath)) continue;
+
+                        string relativePath = Path.GetRelativePath(root, sourcePath);
+                        string destinationPath = Path.Combine(addedFilesPath, relativePath);
+                        string destinationDirectory = Path.GetDirectoryName(destinationPath);
+
+                        if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                            Directory.CreateDirectory(destinationDirectory);
+
+                        if (File.Exists(sourcePath))
+                            File.Copy(sourcePath, destinationPath, true);
+                        else if (Directory.Exists(sourcePath))
+                            CopyDirectory(sourcePath, destinationPath);
+                    }
+                }
+
+                PostUI(() => SVNLogBridge.LogLine("[Stash] Reverting tracked changes..."));
+                string revertOutput = await SvnRunner.RunAsync("revert -R .", root, true, token).ConfigureAwait(false);
+                PostUI(() => SVNLogBridge.LogLine($"[Stash] Revert result:\n{revertOutput}"));
+
+                foreach (string path in unversionedFiles)
+                {
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (File.Exists(path))
+                        {
+                            File.Delete(path);
+                            string metaPath = path + ".meta";
+                            if (File.Exists(metaPath)) File.Delete(metaPath);
+                        }
+                        else if (Directory.Exists(path))
+                        {
+                            Directory.Delete(path, true);
+                            string metaPath = path + ".meta";
+                            if (File.Exists(metaPath)) File.Delete(metaPath);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash] Could not remove {path}: {ex.Message}</color>"));
+                    }
+                }
+
+                string finalStatus = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(finalStatus))
+                {
+                    if (requireCleanWorkingCopy)
+                    {
+                        PostUI(() => SVNLogBridge.LogLine($"<color=#FF5555>[Stash] Working copy is still dirty:\n{finalStatus}</color>"));
+                        return false;
+                    }
+                    else
+                    {
+                        PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash] Working copy still has unversioned items (non‑critical).</color>"));
+                    }
+                }
+
+                PostUI(() => SVNLogBridge.LogLine($"<color=#55FF55>[Stash] Successfully saved: {shelfName}</color>"));
                 CleanupOldPatchFiles();
-
-                await SvnRunner.RunAsync("revert -R .", root, true, token).ConfigureAwait(false);
-
-                foreach (string path in addedPaths)
-                {
-                    if (File.Exists(path))
-                    {
-                        File.Delete(path);
-                        if (File.Exists(path + ".meta"))
-                            File.Delete(path + ".meta");
-                    }
-                    else if (Directory.Exists(path))
-                    {
-                        Directory.Delete(path, true);
-                        if (File.Exists(path + ".meta"))
-                            File.Delete(path + ".meta");
-                    }
-                }
-
-                var statusModule = svnManager?.GetModule<SVNStatus>();
-                if (statusModule != null)
-                {
-                    PostUI(() =>
-                    {
-                        statusModule.ClearSVNTreeView();
-                        statusModule.ClearCurrentData();
-                    });
-                    await statusModule.RefreshAfterAction().ConfigureAwait(false);
-                }
-
-                PostUI(() => SVNLogBridge.LogLine($"<color=green>[Stash]</color> Saved as: {shelfName}"));
+                return true;
             }
             catch (OperationCanceledException)
             {
                 PostUI(() => SVNLogBridge.LogLine("<color=orange>[Stash] Cancelled.</color>"));
+                return false;
             }
             catch (Exception ex)
             {
-                PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>Stash failed:</color> {ex.Message}"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=#FF5555>[Stash] FAILED:\n{ex}</color>"));
+                return false;
             }
             finally
             {
@@ -196,37 +267,46 @@ namespace SVN.Core
             }
         }
 
-        private List<string> ParseAddedFiles(string statusOutput, string rootPath)
+        private List<string> ParseUnversionedFiles(string statusOutput, string rootPath)
         {
-            var addedFiles = new List<string>();
-            if (string.IsNullOrWhiteSpace(statusOutput)) return addedFiles;
+            var result = new List<string>();
+            if (string.IsNullOrWhiteSpace(statusOutput)) return result;
 
-            var lines = statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var line in lines)
+            foreach (string rawLine in statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
-                if (line.StartsWith("A") && line.Length > 8)
-                {
-                    string relativePath = line.Substring(8).Trim();
-                    string fullPath = Path.Combine(rootPath, relativePath);
-                    addedFiles.Add(fullPath);
-                }
+                if (string.IsNullOrWhiteSpace(rawLine)) continue;
+                string line = rawLine.TrimEnd();
+
+                if (line.Length < 8 || line[0] != '?') continue;
+
+                string relativePath = line.Substring(8).Trim();
+                if (string.IsNullOrWhiteSpace(relativePath)) continue;
+
+                string fullPath = Path.GetFullPath(Path.Combine(rootPath, relativePath));
+                if (!File.Exists(fullPath) && !Directory.Exists(fullPath)) continue;
+
+                result.Add(fullPath);
             }
-            return addedFiles;
+
+            return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         public void ExecuteUnshelve(string selectedShelf)
         {
             SafeFireAndForget(async () =>
             {
-                await Unshelve(selectedShelf).ConfigureAwait(false);
-
+                bool success = await Unshelve(selectedShelf).ConfigureAwait(false);
                 PostUI(() => RefreshShelvesUI());
             });
         }
 
-        public async Task Unshelve(string shelfName)
+        public async Task<bool> Unshelve(string shelfName)
         {
-            if (!TryEnterProcessing()) return;
+            if (!TryEnterProcessing())
+            {
+                PostUI(() => SVNLogBridge.LogLine("<color=#FFAA00>[Stash] Another operation is already running.</color>"));
+                return false;
+            }
 
             using var cts = new CancellationTokenSource();
             _cts = cts;
@@ -236,37 +316,50 @@ namespace SVN.Core
             {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
                 string root = svnManager?.WorkingDir;
-                if (string.IsNullOrWhiteSpace(root)) return;
+                string patchPath = GetShelfFilePath(shelfName);
+                string addedFilesPath = GetAddedFilesFolder(shelfName);
 
-                string patchFile = GetShelfFilePath(shelfName);
-                if (!File.Exists(patchFile))
+                if (!File.Exists(patchPath))
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash]</color> Shelf '{shelfName}' not found."));
-                    return;
+                    PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash] Shelf not found: {shelfName}</color>"));
+                    return false;
                 }
 
-                string patchCommand = $"patch \"{EscapeSvnArg(patchFile)}\" \"{EscapeSvnArg(root)}\"";
+                string output = await SvnRunner.RunAsync($"patch \"{patchPath}\" \"{root}\"", root, true, token).ConfigureAwait(false);
+                string safeOutput = output ?? string.Empty;
+                bool patchFailed = safeOutput.Contains("rejected", StringComparison.OrdinalIgnoreCase) ||
+                                   safeOutput.Contains("failed", StringComparison.OrdinalIgnoreCase);
 
-                string output = await SvnRunner.RunAsync(patchCommand, root, true, token).ConfigureAwait(false);
-
-                if (!string.IsNullOrEmpty(output) && (output.Contains("rejected") || output.Contains("skipped")))
+                if (patchFailed)
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash] Ostrzeżenie:</color> Niektóre zmiany z '{shelfName}' zostały odrzucone lub pominięte (konflikt?). Patch NIE został usunięty."));
-                    return;
+                    PostUI(() => SVNLogBridge.LogLine("<color=#FFAA00>[Stash] Patch could not be fully restored.</color>"));
+                    return false;
                 }
 
-                File.Delete(patchFile);
-                PostUI(() => SVNLogBridge.LogLine($"<color=green>[Stash]</color> Restored: {shelfName}"));
+                if (Directory.Exists(addedFilesPath))
+                    CopyDirectory(addedFilesPath, root);
+
+                try
+                {
+                    File.Delete(patchPath);
+                    if (Directory.Exists(addedFilesPath))
+                        Directory.Delete(addedFilesPath, true);
+                }
+                catch { }
 
                 await svnManager.RefreshStatus().ConfigureAwait(false);
+                PostUI(() => SVNLogBridge.LogLine($"<color=green>[Stash] Restored: {shelfName}</color>"));
+                return true;
             }
             catch (OperationCanceledException)
             {
-                PostUI(() => SVNLogBridge.LogLine("<color=orange>[Stash] Unshelve cancelled.</color>"));
+                PostUI(() => SVNLogBridge.LogLine("<color=orange>[Stash] Restore cancelled.</color>"));
+                return false;
             }
             catch (Exception ex)
             {
-                PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>Restore failed:</color> {ex.Message}"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Stash] Restore failed: {ex.Message}</color>"));
+                return false;
             }
             finally
             {
@@ -315,21 +408,14 @@ namespace SVN.Core
                         {
                             int fileCount = 0;
                             using var reader = new StreamReader(fileInfo.FullName);
-
                             string line;
                             while ((line = reader.ReadLine()) != null)
                             {
-                                if (line.StartsWith("Index: "))
-                                {
-                                    fileCount++;
-                                }
+                                if (line.StartsWith("Index: ")) fileCount++;
                             }
                             info.FileCount = fileCount;
                         }
-                        catch
-                        {
-                            info.FileCount = 0;
-                        }
+                        catch { info.FileCount = 0; }
 
                         result.Add(info);
                     }
@@ -349,7 +435,6 @@ namespace SVN.Core
         private void RefreshShelvesUIInternal(List<ShelfInfo> shelfInfos)
         {
             if (svnUI?.ShelfListContainer == null) return;
-
             Transform container = svnUI.ShelfListContainer.content;
 
             for (int i = container.childCount - 1; i >= 0; i--)
@@ -384,7 +469,6 @@ namespace SVN.Core
                 foreach (var info in shelfInfos)
                 {
                     if (svnUI.ShelfItemPrefab == null) break;
-
                     string filePath = GetShelfFilePath(info.Name);
                     if (!File.Exists(filePath))
                     {
@@ -418,12 +502,11 @@ namespace SVN.Core
                 LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
         }
 
-        private void CleanupOldPatchFiles()
+        public void CleanupOldPatchFiles()
         {
             try
             {
                 if (!Directory.Exists(_shelfFolder)) return;
-
                 foreach (var file in Directory.EnumerateFiles(_shelfFolder, "*.patch"))
                 {
                     try
@@ -438,12 +521,6 @@ namespace SVN.Core
             catch { }
         }
 
-        private string GetShelfFilePath(string name)
-        {
-            string safeName = string.Join("_", name.Split(Path.GetInvalidFileNameChars()));
-            return Path.Combine(_shelfFolder, safeName + ".patch");
-        }
-
         private static string FormatSize(long bytes)
         {
             if (bytes <= 0) return "0 B";
@@ -453,10 +530,51 @@ namespace SVN.Core
             return value.ToString("F1") + " " + units[digit];
         }
 
-        private static string EscapeSvnArg(string arg)
+        private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
         {
-            if (string.IsNullOrWhiteSpace(arg)) return arg;
-            return arg.Replace("\"", "\\\"");
+            if (!Directory.Exists(sourceDirectory)) return;
+            Directory.CreateDirectory(destinationDirectory);
+
+            foreach (string file in Directory.GetFiles(sourceDirectory))
+            {
+                string destinationFile = Path.Combine(destinationDirectory, Path.GetFileName(file));
+                File.Copy(file, destinationFile, true);
+            }
+
+            foreach (string directory in Directory.GetDirectories(sourceDirectory))
+            {
+                string destinationSubDirectory = Path.Combine(destinationDirectory, Path.GetFileName(directory));
+                CopyDirectory(directory, destinationSubDirectory);
+            }
+        }
+
+        private string GetAddedFilesFolder(string shelfName)
+        {
+            string safeName = SanitizeShelfName(shelfName);
+            return Path.Combine(_shelfFolder, safeName + "_Files");
+        }
+
+        private string GetShelfFilePath(string name)
+        {
+            string safeName = SanitizeShelfName(name);
+            return Path.Combine(_shelfFolder, safeName + ".patch");
+        }
+
+        private static string SanitizeShelfName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return $"Shelf_{DateTime.Now:yyyyMMdd_HHmmss}";
+
+            char[] invalidChars = Path.GetInvalidFileNameChars();
+            var builder = new StringBuilder(name.Length);
+
+            foreach (char c in name)
+                builder.Append(invalidChars.Contains(c) ? '_' : c);
+
+            string result = builder.ToString().Trim();
+            return string.IsNullOrWhiteSpace(result)
+                ? $"Shelf_{DateTime.Now:yyyyMMdd_HHmmss}"
+                : result;
         }
 
         public class ShelfInfo

@@ -23,7 +23,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Cancel previous operation, but don't dispose immediately
             var oldCts = Interlocked.Exchange(ref _loadCts, new CancellationTokenSource());
             oldCts?.Cancel();
 
@@ -31,13 +30,11 @@ namespace SVN.Core
             {
                 Interlocked.Exchange(ref _isBusy, 0);
 
-                // Dispose old CTS only after task completes
                 try { oldCts?.Dispose(); } catch { }
 
                 if (t.IsFaulted && t.Exception?.InnerException is not OperationCanceledException)
                 {
                     var msg = t.Exception.InnerException?.Message ?? "Unknown error";
-                    // Log via dispatcher in case it touches UI
                     UnityMainThreadDispatcher.Enqueue(() =>
                         SVNLogBridge.LogError($"[SVNLoad] Operation failed: {msg}"));
                 }
@@ -63,7 +60,6 @@ namespace SVN.Core
                 return;
             }
 
-            // SECURITY: Validate URL before passing to shell
             if (!string.IsNullOrEmpty(manualUrl) && !Uri.TryCreate(manualUrl, UriKind.Absolute, out _))
             {
                 SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid repository URL!");
@@ -81,7 +77,6 @@ namespace SVN.Core
                 string normalizedPath = path.Replace("\\", "/");
                 svnManager.WorkingDir = normalizedPath;
 
-                // UI update on main thread
                 UnityMainThreadDispatcher.Enqueue(() =>
                     svnUI.LoadDestFolderInput.text = normalizedPath);
 
@@ -112,7 +107,6 @@ namespace SVN.Core
 
                     SVNLogBridge.LogLine("<color=yellow>Starting Checkout...</color>");
 
-                    // SECURITY: Use safe escaping or ArgumentList in SvnRunner
                     await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath, token: token);
                     SVNLogBridge.LogLine("<color=green>Checkout completed!</color>");
                 }
@@ -126,7 +120,6 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(svnManager.RepositoryUrl) && !string.IsNullOrEmpty(manualUrl))
                     svnManager.RepositoryUrl = manualUrl;
 
-                // UI updates on main thread
                 UnityMainThreadDispatcher.Enqueue(() =>
                 {
                     if (svnUI.LoadRepoUrlInput != null)
@@ -212,9 +205,6 @@ namespace SVN.Core
             if (svnUI.LoadPrivateKeyInput != null) svnUI.LoadPrivateKeyInput.text = svnManager.CurrentKey;
         }
 
-        /// <summary>
-        /// Call when destroying UI / changing scene to avoid holding dead references.
-        /// </summary>
         public void ClearSceneReferences()
         {
             _cachedSelectionPanel = null;
