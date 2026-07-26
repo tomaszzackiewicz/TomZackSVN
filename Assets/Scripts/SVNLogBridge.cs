@@ -25,6 +25,14 @@ namespace SVN.Core
         private static string _fullLogText = "";
         private static List<string> _allLines = new();
 
+        // NOWOŚĆ: logowanie wyłącznie do pliku — nie dotyka UI
+        public static void LogToFile(string message, string level = "INFO")
+        {
+            if (string.IsNullOrEmpty(message)) return;
+            string cleanMessage = StripRichText(message);
+            _ = Task.Run(() => SVNLogger.LogToFile(cleanMessage, level));
+        }
+
         public static void LogLine(string message, bool append = true, string level = "INFO")
         {
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
@@ -134,7 +142,7 @@ namespace SVN.Core
             SetLogText(_fullLogText, scroll: true);
         }
 
-        private static void FlushImmediate(string singleMessage = null, bool clear = false)
+        public static void FlushImmediate(string singleMessage = null, bool clear = false)
         {
             _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
             _flushScheduled = false;

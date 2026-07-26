@@ -18,6 +18,7 @@ namespace SVN.Core
         private float _lastFocusCheckTime = -100f;
 
         [Header("Logging")]
+        [Tooltip("Log debug info to file (not UI console)")]
         public bool showDebugLogs = false;
 
         private void Awake()
@@ -67,7 +68,7 @@ namespace SVN.Core
                 if (!Directory.Exists(wd) || !Directory.Exists(Path.Combine(wd, ".svn")))
                 {
                     if (showDebugLogs)
-                        SVNLogBridge.LogLine("<color=grey>[Polling]</color> Skipped – no valid working copy.");
+                        SVNLogBridge.LogToFile("[Polling] Skipped – no valid working copy.", "POLLING");
                     return;
                 }
 
@@ -107,6 +108,7 @@ namespace SVN.Core
 
                     if (this == null) return;
 
+                    // TO JEST JEDYNE CO IDZIE DO UI — powiadomienie o nowym commicie
                     UnityMainThreadDispatcher.Enqueue(() =>
                     {
                         if (this == null) return;
@@ -126,7 +128,7 @@ namespace SVN.Core
                 else
                 {
                     if (showDebugLogs)
-                        SVNLogBridge.LogLine($"<color=green>[Polling]</color> Local commit detected (Rev {remoteRev}).");
+                        SVNLogBridge.LogToFile($"[Polling] Local commit detected (Rev {remoteRev}).", "POLLING");
 
                     UnityMainThreadDispatcher.Enqueue(() =>
                     {
@@ -139,11 +141,12 @@ namespace SVN.Core
             catch (OperationCanceledException)
             {
                 if (showDebugLogs)
-                    SVNLogBridge.LogLine("<color=grey>[Polling]</color> Cancelled.");
+                    SVNLogBridge.LogToFile("[Polling] Cancelled.", "POLLING");
             }
             catch (Exception e)
             {
-                SVNLogBridge.LogError($"[SVN Polling Error] {e.Message}");
+                // Błędy pollingu idą wyłącznie do pliku — nie zaśmiecają UI
+                SVNLogBridge.LogToFile($"[SVN Polling Error] {e.Message}", "ERROR");
             }
         }
 

@@ -13,16 +13,6 @@ namespace SVN.Core
 {
     public static class SvnRunner
     {
-        public static string KeyPath
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(_keyPath))
-                    _keyPath = PlayerPrefs.GetString("SVN_SSHKeyPath", "");
-                return _keyPath;
-            }
-            set => _keyPath = value ?? "";
-        }
         private static string _keyPath = "";
 
         private static readonly AsyncReaderWriterLock _svnLock = new();
@@ -35,6 +25,22 @@ namespace SVN.Core
         private static readonly Dictionary<string, (string output, DateTime time)> _infoCache = new();
         private static readonly TimeSpan InfoCacheDuration = TimeSpan.FromSeconds(2);
         private static readonly object _infoCacheLock = new();
+
+        public static string KeyPath
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_keyPath))
+                    _keyPath = PlayerPrefs.GetString("SVN_SSHKeyPath", "");
+                return _keyPath;
+            }
+            set => _keyPath = value ?? "";
+        }
+
+        public static int ActiveOperationsCount
+        {
+            get { lock (_processingLock) { return _activeOperationsCount; } }
+        }
 
         private static void IncrementOperations()
         {
