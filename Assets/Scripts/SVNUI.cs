@@ -82,6 +82,7 @@ namespace SVN.Core
         [Header("Locks")]
         [SerializeField] private Transform locksContainer;
         [SerializeField] private TextMeshProUGUI stealLocksConsole;
+        [SerializeField] private TMP_InputField lockCommentInput;
         [Header("Notifications")]
         [SerializeField] private GameObject NotificationPanel;
         [SerializeField] private TextMeshProUGUI NotificationText;
@@ -173,6 +174,7 @@ namespace SVN.Core
         public GameObject ShelfItemPrefab => shelfItemPrefab;
         public Transform LocksContainer => locksContainer;
         public TextMeshProUGUI StealLocksConsole => stealLocksConsole;
+        public TMP_InputField LockCommentInput => lockCommentInput;
         public TMP_InputField ResolveTargetFileInput => resolveTargetFileInput;
         public TextMeshProUGUI ResolveConsoleContent => resolveConsoleContent;
         public TextMeshProUGUI ResolveLogConsole => resolveLogConsole;

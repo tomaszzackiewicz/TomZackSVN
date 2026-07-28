@@ -22,19 +22,13 @@ public class MergePanel : MonoBehaviour
 
         if (_svnManager?.CurrentProject != null && _mergeModule != null)
         {
-            _ = RefreshBranchDropdownAsync(false);
+            SafeFireAndForget(() => RefreshBranchDropdownAsync(false));
         }
     }
 
-    private void OnDisable()
-    {
-        UnsubscribeEvents();
-    }
+    private void OnDisable() => UnsubscribeEvents();
 
-    private void OnDestroy()
-    {
-        UnsubscribeEvents();
-    }
+    private void OnDestroy() => UnsubscribeEvents();
 
     private void ResolveReferences()
     {
@@ -79,12 +73,44 @@ public class MergePanel : MonoBehaviour
             _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
             _svnUI.MergeBranchesDropdown.onValueChanged.AddListener(OnBranchSelected);
         }
+
+        if (_svnUI?.MergeSourceInput != null)
+        {
+            _svnUI.MergeSourceInput.onEndEdit.RemoveAllListeners();
+            _svnUI.MergeSourceInput.onEndEdit.AddListener(OnManualSourceInput);
+        }
+    }
+
+    public void OnBranchSelected(int index)
+    {
+        if (_svnUI?.MergeBranchesDropdown == null) return;
+        if (_svnUI.MergeBranchesDropdown.options.Count == 0) return;
+        if (index < 0 || index >= _svnUI.MergeBranchesDropdown.options.Count) return;
+
+        string selectedName = _svnUI.MergeBranchesDropdown.options[index].text;
+        if (!string.IsNullOrWhiteSpace(selectedName) && _svnUI.MergeSourceInput != null)
+            _svnUI.MergeSourceInput.text = selectedName;
+    }
+
+    private void OnManualSourceInput(string input)
+    {
+        if (_svnUI?.MergeBranchesDropdown == null || string.IsNullOrWhiteSpace(input)) return;
+
+        string trimmedInput = input.Trim();
+
+        int index = _svnUI.MergeBranchesDropdown.options.FindIndex(
+            o => string.Equals(o.text, trimmedInput, StringComparison.OrdinalIgnoreCase));
+
+        if (index >= 0 && _svnUI.MergeBranchesDropdown.value != index)
+        {
+            _svnUI.MergeBranchesDropdown.value = index;
+        }
     }
 
     private void OnProjectChanged(SVNProject project)
     {
         if (project == null) return;
-        _ = RefreshBranchDropdownAsync(true);
+        SafeFireAndForget(() => RefreshBranchDropdownAsync(true));
     }
 
     private void UnsubscribeEvents()
@@ -97,6 +123,9 @@ public class MergePanel : MonoBehaviour
 
         if (_svnUI?.MergeBranchesDropdown != null)
             _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
+
+        if (_svnUI?.MergeSourceInput != null)
+            _svnUI.MergeSourceInput.onEndEdit.RemoveAllListeners();
     }
 
     public void Button_CancelMerge()
@@ -105,23 +134,14 @@ public class MergePanel : MonoBehaviour
     }
 
     public void Button_RefreshBranchDropdown() => SafeFireAndForget(() => RefreshBranchDropdownAsync(true));
-
     public void Button_Compare() => SafeFireAndForget(() => _mergeModule.CompareWithTrunk());
-
     public void Button_SyncWithTrunk() => SafeFireAndForget(AutoSyncAsync);
-
     public void Button_RepairMergeHistory() => SafeFireAndForget(() => _mergeModule.RepairMergeHistory());
-
     public void Button_ForceMergeFromTrunk() => SafeFireAndForget(ForceMergeFromTrunkAsync);
-
     public void Button_DryRunMerge() => SafeFireAndForget(DryRunMergeAsync);
-
     public void Button_ConfirmMerge() => SafeFireAndForget(ConfirmMergeAsync);
-
     public void Button_CancelLocalMerge() => SafeFireAndForget(() => _mergeModule.CancelLocalMerge());
-
     public void Button_RevertToHead() => SafeFireAndForget(() => _mergeModule.RevertToHead());
-
     public void Button_UndoMerge() => SafeFireAndForget(() => _mergeModule.UndoLastMerge());
 
     private async void SafeFireAndForget(Func<Task> operation)
@@ -142,13 +162,15 @@ public class MergePanel : MonoBehaviour
         if (!EnsureReady()) return;
         if (_svnUI?.MergeBranchesDropdown == null) return;
 
+        string currentSelection = null;
+        if (_svnUI.MergeBranchesDropdown.options.Count > 0 && _svnUI.MergeBranchesDropdown.value >= 0)
+        {
+            currentSelection = _svnUI.MergeBranchesDropdown.options[_svnUI.MergeBranchesDropdown.value].text;
+        }
+
         try
         {
             string[] branches = await _mergeModule.FetchAvailableBranches(force).ConfigureAwait(false);
-
-            await Task.Yield();
-
-            if (this == null) return;
 
             var options = new List<string> { "trunk" };
             if (branches != null)
@@ -161,11 +183,41 @@ public class MergePanel : MonoBehaviour
                 }
             }
 
-            _svnUI.MergeBranchesDropdown.ClearOptions();
-            _svnUI.MergeBranchesDropdown.AddOptions(options);
-            _svnUI.MergeBranchesDropdown.RefreshShownValue();
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            OnBranchSelected(0);
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                try
+                {
+                    if (this == null || _svnUI?.MergeBranchesDropdown == null)
+                    {
+                        tcs.SetResult(false);
+                        return;
+                    }
+
+                    _svnUI.MergeBranchesDropdown.ClearOptions();
+                    _svnUI.MergeBranchesDropdown.AddOptions(options);
+
+                    int indexToSelect = 0;
+                    if (!string.IsNullOrEmpty(currentSelection))
+                    {
+                        int foundIndex = options.FindIndex(o => string.Equals(o, currentSelection, StringComparison.OrdinalIgnoreCase));
+                        if (foundIndex >= 0) indexToSelect = foundIndex;
+                    }
+
+                    _svnUI.MergeBranchesDropdown.value = indexToSelect;
+                    _svnUI.MergeBranchesDropdown.RefreshShownValue();
+
+                    tcs.SetResult(true);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[MergePanel] UI Update Error: {ex.Message}");
+                    tcs.SetResult(false);
+                }
+            });
+
+            await tcs.Task.ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -237,17 +289,6 @@ public class MergePanel : MonoBehaviour
         await _mergeModule.ExecuteMerge(source, false).ConfigureAwait(false);
     }
 
-    public void OnBranchSelected(int index)
-    {
-        if (_svnUI?.MergeBranchesDropdown == null) return;
-        if (_svnUI.MergeBranchesDropdown.options.Count == 0) return;
-        if (index < 0 || index >= _svnUI.MergeBranchesDropdown.options.Count) return;
-
-        string selectedName = _svnUI.MergeBranchesDropdown.options[index].text;
-        if (!string.IsNullOrWhiteSpace(selectedName) && _svnUI.MergeSourceInput != null)
-            _svnUI.MergeSourceInput.text = selectedName;
-    }
-
     private void HandleDryRunResult(SVNMerge.MergeFileResult result)
     {
         if (this == null) return;
@@ -259,14 +300,37 @@ public class MergePanel : MonoBehaviour
             if (child != null) Destroy(child.gameObject);
         }
 
-        if (result?.Files == null) return;
+        if (result == null) return;
 
-        foreach (SVNMerge.MergeFileInfo file in result.Files)
+        if (result.RealChanges > 0 || result.Conflicts > 0)
         {
-            if (file == null) continue;
+            var headerObj = new GameObject("MergeSummaryHeader", typeof(TMPro.TextMeshProUGUI));
+            headerObj.transform.SetParent(_svnUI.MergeFilesContainer, false);
 
-            MergeFileItem item = Instantiate(_svnUI.MergeFileItemPrefab, _svnUI.MergeFilesContainer);
-            item.Setup(file);
+            var headerText = headerObj.GetComponent<TMPro.TextMeshProUGUI>();
+            headerText.richText = true;
+            headerText.fontSize = 13;
+
+            string summary = $"<b>Files to change: {result.RealChanges}</b>  |  " +
+                             $"<color=#55FF55>Added: {result.Added}</color>  |  " +
+                             $"<color=#FFFF55>Updated: {result.Updated}</color>  |  " +
+                             $"<color=#FF5555>Deleted: {result.Deleted}</color>";
+
+            if (result.Conflicts > 0)
+                summary += $"  |  <color=#FF0000><b>CONFLICTS: {result.Conflicts}</b></color>";
+
+            headerText.text = summary;
+        }
+
+        if (result.Files != null)
+        {
+            foreach (SVNMerge.MergeFileInfo file in result.Files)
+            {
+                if (file == null) continue;
+
+                MergeFileItem item = Instantiate(_svnUI.MergeFileItemPrefab, _svnUI.MergeFilesContainer);
+                item.Setup(file);
+            }
         }
     }
 
@@ -286,13 +350,4 @@ public class MergePanel : MonoBehaviour
     }
 
     private string GetSafeSource() => _svnUI?.MergeSourceInput?.text?.Trim() ?? string.Empty;
-}
-
-internal static class TaskExtensions
-{
-    public static async void Forget(this Task task)
-    {
-        try { await task.ConfigureAwait(false); }
-        catch (Exception ex) { Debug.LogException(ex); }
-    }
 }

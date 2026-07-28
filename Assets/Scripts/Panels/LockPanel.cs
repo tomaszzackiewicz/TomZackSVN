@@ -3,12 +3,15 @@ using SVN.Core;
 using System.Collections.Generic;
 using System.Linq;
 using System;
+using System.Threading.Tasks;
+using TMPro;
 
 public class LockPanel : MonoBehaviour
 {
     [Header("UI References")]
     [SerializeField] private GameObject lockEntryPrefab;
     [SerializeField] private Transform locksContainer;
+    [SerializeField] private TMP_Text stealLockConsole;
 
     private bool isProcessing = false;
     private SVNUI svnUI;
@@ -23,7 +26,7 @@ public class LockPanel : MonoBehaviour
     private void OnEnable()
     {
         if (!Application.isPlaying) return;
-        RefreshAndShow();
+        Button_RefreshLocks();
     }
 
     private void OnDisable()
@@ -31,26 +34,22 @@ public class LockPanel : MonoBehaviour
         ClearContainer();
     }
 
-    public void Button_RefreshLocks() => RefreshAndShow();
+    public void Button_RefreshLocks() => SafeFireAndForget(RefreshAndShowAsync);
 
-    public async void RefreshAndShow()
+    private async Task RefreshAndShowAsync()
     {
         if (isProcessing || !Application.isPlaying) return;
 
         isProcessing = true;
-
-        SVNLogBridge.LogLine("<color=orange>[System]</color> Preparing to fetch lock data...");
+        LogToPanel("<color=orange>[System]</color> Fetching locks...");
         ClearContainer();
 
         try
         {
             await svnManager.CancelBackgroundTasksAsync();
 
-            SVNLogBridge.LogLine("<color=#FFD700>[Process]</color> Querying SVN server (this may take a moment)...");
-
             var allLocks = await svnManager.GetModule<SVNLock>().GetDetailedLocks(svnManager.WorkingDir);
-
-            SVNLogBridge.LogLine($"<color=white>[Info]</color> Received {allLocks.Count} total locks from server.");
+            LogToPanel($"<color=white>[Info]</color> Found {allLocks.Count} total locks on server.");
 
             string currentUserName = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();
 
@@ -62,18 +61,18 @@ public class LockPanel : MonoBehaviour
 
             if (othersLocks.Count == 0)
             {
-                SVNLogBridge.LogLine("<color=yellow>[Info]</color> No locks from other users found.");
+                LogToPanel("<color=green>[Info]</color> No locks from other users found.");
             }
             else
             {
-                SVNLogBridge.LogLine($"<color=yellow>[UI]</color> Spawning {othersLocks.Count} entries...");
+                LogToPanel($"<color=yellow>[UI]</color> Spawning {othersLocks.Count} entries...");
                 Populate(othersLocks);
-                SVNLogBridge.LogLine("<color=green>[Success]</color> List updated.");
+                LogToPanel("<color=green>[Success]</color> List updated.");
             }
         }
         catch (Exception ex)
         {
-            SVNLogBridge.LogLine($"<color=#FFAA00>[Error]</color> Sync failed: {ex.Message}");
+            LogToPanel($"<color=#FFAA00>[Error]</color> Sync failed: {ex.Message}");
         }
         finally
         {
@@ -98,7 +97,9 @@ public class LockPanel : MonoBehaviour
                     lockItem.CreationDate,
                     lockItem.Comment,
                     false,
-                    () => ExecuteSteal(lockItem)
+                    () => ExecuteSteal(lockItem),
+                    () => ExecuteBreak(lockItem),
+                    stealLockConsole
                 );
             }
         }
@@ -109,8 +110,6 @@ public class LockPanel : MonoBehaviour
         if (isProcessing || lockDetails == null || !Application.isPlaying) return;
 
         isProcessing = true;
-        SVNLogBridge.LogLine($"<color=green>[Action]</color> Forcing break on: <b>{lockDetails.Path}</b>");
-
         try
         {
             await svnManager.CancelBackgroundTasksAsync();
@@ -118,17 +117,48 @@ public class LockPanel : MonoBehaviour
             string cmd = $"lock --force -m \"Administrative takeover by {svnManager.CurrentUserName}\" \"{lockDetails.FullPath}\"";
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
-            SVNLogBridge.LogLine($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
+            LogToPanel($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
+            await Task.Delay(600);
 
-            await System.Threading.Tasks.Task.Delay(600);
-            await svnManager.RefreshStatus();
+            SVNStatus.ClearLockCache();
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            if (statusModule != null) await statusModule.RefreshAfterAction();
 
             isProcessing = false;
-            RefreshAndShow();
+            Button_RefreshLocks();
         }
         catch (Exception ex)
         {
-            SVNLogBridge.LogLine($"<color=#FFAA00>[Error]</color> Operation failed: {ex.Message}");
+            LogToPanel($"<color=#FFAA00>[Error]</color> Steal failed: {ex.Message}");
+            isProcessing = false;
+        }
+    }
+
+    private async void ExecuteBreak(SVNLockDetails lockDetails)
+    {
+        if (isProcessing || lockDetails == null || !Application.isPlaying) return;
+
+        isProcessing = true;
+        try
+        {
+            await svnManager.CancelBackgroundTasksAsync();
+
+            string cmd = $"unlock --force \"{lockDetails.FullPath}\"";
+            await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+
+            LogToPanel($"<color=green>[Success]</color> Lock broken: {lockDetails.Path}");
+            await Task.Delay(600);
+
+            SVNStatus.ClearLockCache();
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            if (statusModule != null) await statusModule.RefreshAfterAction();
+
+            isProcessing = false;
+            Button_RefreshLocks();
+        }
+        catch (Exception ex)
+        {
+            LogToPanel($"<color=#FFAA00>[Error]</color> Break failed: {ex.Message}");
             isProcessing = false;
         }
     }
@@ -136,10 +166,18 @@ public class LockPanel : MonoBehaviour
     private void ClearContainer()
     {
         if (locksContainer == null) return;
+        foreach (Transform child in locksContainer) Destroy(child.gameObject);
+    }
 
-        foreach (Transform child in locksContainer)
-        {
-            Destroy(child.gameObject);
-        }
+    private void LogToPanel(string msg)
+    {
+        if (stealLockConsole != null) stealLockConsole.text += msg + "\n";
+    }
+
+    private static void SafeFireAndForget(Func<Task> operation) => _ = FireAndForgetInternal(operation);
+    private static async Task FireAndForgetInternal(Func<Task> operation)
+    {
+        try { await operation(); }
+        catch (Exception ex) { SVNLogBridge.LogError($"[LockPanel] Unhandled error: {ex.Message}"); }
     }
 }

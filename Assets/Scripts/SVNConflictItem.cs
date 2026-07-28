@@ -66,23 +66,20 @@ public class SVNConflictItem : MonoBehaviour
 
             mineButton.onClick.AddListener(async () =>
             {
-                await SVNManager.Instance
-                    .GetModule<SVNResolve>()
-                    .ResolveSingleMine(_path);
+                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleMine(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
 
             theirsButton.onClick.AddListener(async () =>
             {
-                await SVNManager.Instance
-                    .GetModule<SVNResolve>()
-                    .ResolveSingleTheirs(_path);
+                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleTheirs(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
 
             openButton.onClick.AddListener(async () =>
             {
-                await SVNManager.Instance
-                     .GetModule<SVNResolve>()
-                     .OpenSingle(_path);
+                try { await SVNManager.Instance.GetModule<SVNResolve>().OpenSingle(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
         }
 
@@ -93,18 +90,16 @@ public class SVNConflictItem : MonoBehaviour
 
             openButton.onClick.AddListener(async () =>
             {
-                await SVNManager.Instance
-                    .GetModule<SVNResolve>()
-                    .OpenSingle(_path);
+                try { await SVNManager.Instance.GetModule<SVNResolve>().OpenSingle(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
 
             resolvedButton.interactable = !hasMarkers;
 
             resolvedButton.onClick.AddListener(async () =>
             {
-                await SVNManager.Instance
-                    .GetModule<SVNResolve>()
-                    .MarkSingleResolved(_path);
+                try { await SVNManager.Instance.GetModule<SVNResolve>().MarkSingleResolved(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
         }
 
@@ -114,9 +109,8 @@ public class SVNConflictItem : MonoBehaviour
 
             deleteButton.onClick.AddListener(async () =>
             {
-                await SVNManager.Instance
-                    .GetModule<SVNResolve>()
-                    .DeleteObstruction(_path);
+                try { await SVNManager.Instance.GetModule<SVNResolve>().DeleteObstruction(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
         }
     }

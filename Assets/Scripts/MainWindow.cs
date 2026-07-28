@@ -79,7 +79,7 @@ namespace SVN.Core
         public void Button_Unlock() => svnManager.GetModule<SVNLock>().UnlockAllButton();
         public void Button_ShowToCommit() => svnManager.GetModule<SVNCommit>().ShowWhatWillBeCommitted();
         public void Button_ShowLocks() => svnManager.GetModule<SVNLock>().ShowAllLocksButton();
-        public void Button_BreakLocks() => svnManager.GetModule<SVNLock>().BreakAllLocksButton();
+        public void Button_CleanupLocks() => svnManager.GetModule<SVNLock>().CleanupLocksButton();
         public void Button_CheckRemoteModifications() => svnManager.GetModule<SVNUpdate>().CheckRemoteModificationsButton();
         public void Button_OpenLogs() => SVNLogger.OpenLogFolder();
         public void Button_Revert() => svnManager.GetModule<SVNRevert>().RevertAll();

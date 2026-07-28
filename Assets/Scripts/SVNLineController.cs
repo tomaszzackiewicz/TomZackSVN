@@ -1,6 +1,5 @@
 using SVN.Core;
 using System;
-using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -407,21 +406,24 @@ public class SvnLineController : MonoBehaviour
 
     private void UpdateLockButtonVisuals()
     {
-        if (lockBtnText == null) return;
+        if (lockBtnText == null || lockBtn == null) return;
 
         if (_element.LockedByOther)
         {
             lockBtnText.text = "<color=#FF4444>O</color>";
-            BindHover(lockBtn, "Locked by another user.");
+            lockBtn.interactable = false;
+            BindHover(lockBtn, "Locked by another user. Use the dedicated Lock Panel to force steal.");
         }
         else if (_element.LockedByMe)
         {
             lockBtnText.text = "<color=#00FF00>K</color>";
+            lockBtn.interactable = true;
             BindHover(lockBtn, "Click to unlock.");
         }
         else
         {
             lockBtnText.text = "<color=#E6E6E6>U</color>";
+            lockBtn.interactable = true;
             BindHover(lockBtn, "Click to lock.");
         }
     }

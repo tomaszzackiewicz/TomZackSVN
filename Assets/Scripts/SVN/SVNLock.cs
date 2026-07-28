@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
+using static Unity.Burst.Intrinsics.X86.Avx;
 
 namespace SVN.Core
 {
@@ -32,9 +33,9 @@ namespace SVN.Core
             await UnlockAll();
         }
 
-        public async void BreakAllLocksButton()
+        public async void CleanupLocksButton()
         {
-            await BreakAllLocks();
+            await CleanupLocks();
         }
 
         public async Task LockModified()
@@ -291,9 +292,20 @@ namespace SVN.Core
             string fullPath = Path.Combine(root, relative);
             fullPath = SvnRunner.ForceCleanPath(fullPath);
 
-            string cmd = isLocked
-                ? $"unlock --force \"{fullPath}\""
-                : $"lock --force \"{fullPath}\"";
+            string comment = GetAndClearLockComment();
+            string safeComment = comment.Replace("\"", "\\\"");
+
+            string cmd;
+            if (isLocked)
+            {
+                cmd = $"unlock --force \"{fullPath}\"";
+            }
+            else
+            {
+                cmd = string.IsNullOrEmpty(safeComment)
+                    ? $"lock --force \"{fullPath}\""
+                    : $"lock -m \"{safeComment}\" --force \"{fullPath}\"";
+            }
 
             SVNLogBridge.LogLine($"<color=#00E5FF>[Lock]</color> Request: {cmd}");
 
@@ -348,13 +360,40 @@ namespace SVN.Core
             return path.TrimStart('/');
         }
 
-        public async Task BreakAllLocks()
+        public async Task CleanupLocks()
         {
+            if (IsProcessing) return;
             string root = svnManager.WorkingDir;
-            SVNLogBridge.LogLine("<color=orange><b>[System]</b> Cleaning local database locks...</color>");
-            await SvnRunner.RunAsync("cleanup --remove-locks", root);
-            SVNLogBridge.LogLine("Local locks removed.");
-            SVNStatus.ClearLockCache();
+            IsProcessing = true;
+
+            SVNLogBridge.LogLine("<b>[Cleanup Locks]</b> Removing stale local lock tokens...", append: false);
+
+            try
+            {
+                await svnManager.CancelBackgroundTasksAsync();
+
+                await SvnRunner.RunAsync("cleanup --remove-locks", root);
+
+                SVNLogBridge.LogLine("<color=green>Local lock cleanup completed successfully.</color>");
+
+                SVNStatus.ClearLockCache();
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                    await statusModule.RefreshAfterAction();
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[Cleanup Locks] Operation cancelled.</color>");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
+            }
         }
 
         public async Task RefreshLockCacheAsync(bool force = false, CancellationToken token = default)
@@ -422,6 +461,15 @@ namespace SVN.Core
 
             if (refreshUI)
                 status.RefreshVisibleUIOnly();
+        }
+
+        private string GetAndClearLockComment()
+        {
+            if (svnUI?.LockCommentInput == null) return "";
+
+            string comment = svnUI.LockCommentInput.text;
+            svnUI.LockCommentInput.text = ""; 
+            return comment;
         }
     }
 }

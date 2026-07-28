@@ -104,7 +104,6 @@ namespace SVN.Core
             return true;
         }
 
-        // ─── Public API ────────────────────────────────────────
         public async Task CreateBranchFromTrunk()
         {
             if (!TryStart()) return;
@@ -214,8 +213,20 @@ namespace SVN.Core
                 await Task.WhenAll(branchesTask, tagsTask);
                 if (token.IsCancellationRequested) return;
 
-                UpdateDropdown(svnUI.BranchesDropdown, branchesTask.Result, "No branches", true);
-                UpdateDropdown(svnUI.TagsDropdown, tagsTask.Result, "No tags", false);
+                string actualCurrentBranch = null;
+                try
+                {
+                    string currentUrl = await SvnRunner.GetRepoUrlAsync(svnManager.WorkingDir).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(currentUrl))
+                    {
+                        actualCurrentBranch = GetBranchNameFromUrl(currentUrl, repoRoot);
+                    }
+                }
+                catch {  }
+
+                UpdateDropdown(svnUI.BranchesDropdown, branchesTask.Result, "No branches", true, actualCurrentBranch);
+                UpdateDropdown(svnUI.TagsDropdown, tagsTask.Result, "No tags", false, actualCurrentBranch);
+
                 LogSuccess("[Refresh Complete] UI synchronized.");
             }
             catch (OperationCanceledException) { LogWarning("[Refresh] Cancelled."); }
@@ -235,7 +246,6 @@ namespace SVN.Core
             if (!TryStart()) return;
             if (!IsReady()) { LogWarning("[Diff] SVN not ready."); End(); return; }
 
-            string tempFilePath = null;
             try
             {
                 await svnManager.CancelBackgroundTasksAsync();
@@ -289,20 +299,28 @@ namespace SVN.Core
                 sb.AppendLine($"Total: {added + modified + deleted}");
 
                 string fileName = $"Diff_{currentName}_vs_{selected}_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
-                tempFilePath = Path.Combine(Application.temporaryCachePath, fileName);
+                string tempFilePath = Path.Combine(Application.temporaryCachePath, fileName);
+
                 await File.WriteAllTextAsync(tempFilePath, sb.ToString());
 
-                try { using var process = Process.Start(new ProcessStartInfo(tempFilePath) { UseShellExecute = true }); }
-                catch (Exception ex) { LogWarning($"[Diff] Could not open file: {ex.Message}"); }
+                try
+                {
+                    using var process = Process.Start(new ProcessStartInfo(tempFilePath) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    LogWarning($"[Diff] Could not open file: {ex.Message}");
+                }
 
                 LogSuccess($"[Diff] Exported: {fileName}");
                 LogInfo($"<color=#55FF55>+{added}</color>  <color=#FFFF55>~{modified}</color>  <color=#FF5555>-{deleted}</color>");
             }
-            catch (Exception ex) { LogErrorLocal($"[Diff Error] {ex.Message}"); }
+            catch (Exception ex)
+            {
+                LogErrorLocal($"[Diff Error] {ex.Message}");
+            }
             finally
             {
-                if (!string.IsNullOrEmpty(tempFilePath))
-                { try { File.Delete(tempFilePath); } catch { } }
                 End();
             }
         }
@@ -331,8 +349,12 @@ namespace SVN.Core
 
                 LogInfo($"[Details] {selected} @ {branchUrl}");
 
-                string logOutput = await SvnRunner.RunAsync($"log \"{branchUrl}\" -r 1:HEAD --limit 1 --xml", svnManager.WorkingDir, false, CancellationToken.None);
+                string logOutput = await SvnRunner.RunAsync($"log \"{branchUrl}\" --stop-on-copy --limit 1 --verbose --xml", svnManager.WorkingDir, false, CancellationToken.None);
+
                 string firstAuthor = "unknown", firstDate = "unknown", sourceBranch = "trunk (default)";
+                string sourceRevision = "N/A";
+                string creationRev = "N/A";
+                string commitMsg = "N/A";
 
                 if (!string.IsNullOrWhiteSpace(logOutput))
                 {
@@ -340,27 +362,38 @@ namespace SVN.Core
                     {
                         using var sr = new StringReader(logOutput);
                         using var reader = System.Xml.XmlReader.Create(sr);
-                        if (reader.ReadToDescendant("logentry"))
-                        {
-                            if (reader.ReadToDescendant("author")) firstAuthor = reader.ReadElementContentAsString();
-                            if (reader.ReadToNextSibling("date")) firstDate = reader.ReadElementContentAsString();
-                        }
-                    }
-                    catch { }
 
-                    try
-                    {
-                        string verboseLog = await SvnRunner.RunAsync($"log \"{branchUrl}\" -r 1:HEAD --limit 1 --verbose --xml", svnManager.WorkingDir, false, CancellationToken.None);
-                        if (!string.IsNullOrWhiteSpace(verboseLog))
+                        while (reader.Read())
                         {
-                            using var sr = new StringReader(verboseLog);
-                            using var reader = System.Xml.XmlReader.Create(sr);
-                            while (reader.Read())
+                            if (reader.NodeType == System.Xml.XmlNodeType.Element)
                             {
-                                if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.Name == "path")
+                                if (reader.Name == "logentry")
+                                {
+                                    creationRev = $"r{reader.GetAttribute("revision")}";
+                                }
+                                else if (reader.Name == "author")
+                                {
+                                    firstAuthor = reader.ReadElementContentAsString();
+                                }
+                                else if (reader.Name == "date")
+                                {
+                                    firstDate = reader.ReadElementContentAsString();
+                                }
+                                else if (reader.Name == "msg")
+                                {
+                                    commitMsg = reader.ReadElementContentAsString().Replace("\n", " ").Trim();
+                                }
+                                else if (reader.Name == "path")
                                 {
                                     string copyFrom = reader.GetAttribute("copyfrom-path");
-                                    if (!string.IsNullOrEmpty(copyFrom)) { sourceBranch = ExtractBranchName(copyFrom); break; }
+                                    string copyRev = reader.GetAttribute("copyfrom-rev");
+
+                                    if (!string.IsNullOrEmpty(copyFrom))
+                                    {
+                                        sourceBranch = ExtractBranchName(copyFrom);
+                                        if (!string.IsNullOrEmpty(copyRev))
+                                            sourceRevision = $"r{copyRev}";
+                                    }
                                 }
                             }
                         }
@@ -369,13 +402,23 @@ namespace SVN.Core
                 }
 
                 LogSuccess($"Name       : {selected}");
+                LogInfo($"Created in : {creationRev}");
                 LogInfo($"Created by : {firstAuthor}");
+
                 if (DateTime.TryParseExact(firstDate, "yyyy-MM-ddTHH:mm:ss.fffffffZ",
                     System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AssumeUniversal, out DateTime parsed))
                     LogInfo($"Created on : {parsed.ToLocalTime():yyyy-MM-dd HH:mm:ss} (local)");
                 else LogInfo($"Created on : {firstDate}");
-                LogInfo($"Source     : {sourceBranch}");
+
+                LogInfo($"Source     : {sourceBranch} (at {sourceRevision})");
+
+                if (commitMsg != "N/A" && commitMsg.Length > 0)
+                {
+                    if (commitMsg.Length > 100) commitMsg = commitMsg.Substring(0, 100) + "...";
+                    LogInfo($"Message    : {commitMsg}");
+                }
+
             }
             catch (Exception ex) { LogErrorLocal($"[Details Error] {ex.Message}"); }
             finally { End(); }
@@ -447,7 +490,6 @@ namespace SVN.Core
             finally { End(); }
         }
 
-        // ─── Static Helpers ────────────────────────────────────
         public static async Task<SvnStats> GetStatsAsync(string workingDir, CancellationToken token = default)
         {
             string output = await SvnRunner.RunAsync("status", workingDir, false, token);
@@ -489,7 +531,6 @@ namespace SVN.Core
             return await SvnRunner.RunAsync(args, workingDir, false, token);
         }
 
-        // ─── Private Helpers ───────────────────────────────────
         private bool ValidateCreateInputs(out string name, out string subFolder)
         {
             name = svnUI?.BranchNameInput?.text?.Trim();
@@ -548,19 +589,15 @@ namespace SVN.Core
                     var shelve = svnManager.GetModule<SVNShelve>();
                     if (shelve == null) { LogErrorLocal("[Switch] Shelve module unavailable."); return; }
 
-                    // ----------------------------------------------------
-                    // NOWE: liberalne shelve – nie wymagamy w 100% czystego katalogu
                     bool shelveOk = await shelve.Shelve(shelfName, requireCleanWorkingCopy: false);
                     if (!shelveOk)
                     {
                         LogErrorLocal("[Switch] Failed to shelve local changes.");
                         return;
                     }
-                    // ----------------------------------------------------
 
                     LogSuccess($"[Switch] Local changes saved as: {shelfName}");
 
-                    // Po shelve sprawdzamy tylko czy nie ma konfliktów
                     SvnStats afterShelve = await GetStatsAsync(workingDir);
                     if (afterShelve.ConflictsCount > 0)
                     {
@@ -633,21 +670,47 @@ namespace SVN.Core
         private static bool IsProtectedBranch(string name) => string.Equals(name?.Trim(), "trunk", StringComparison.OrdinalIgnoreCase);
         private static bool IsPlaceholder(string text) => text?.Contains("Loading") == true || text?.Contains("No ") == true || text?.Contains("None") == true;
 
-        private static void UpdateDropdown(TMP_Dropdown dropdown, string[] items, string emptyMsg, bool includeTrunk)
+        private static void UpdateDropdown(TMP_Dropdown dropdown, string[] items, string emptyMsg, bool includeTrunk, string currentBranchName = null)
         {
             if (dropdown == null) return;
+
+            string currentSelection = null;
+            if (dropdown.options.Count > 0 && dropdown.value >= 0 && dropdown.value < dropdown.options.Count)
+            {
+                currentSelection = dropdown.options[dropdown.value].text;
+            }
+
             dropdown.ClearOptions();
             var options = new List<string>(capacity: (items?.Length ?? 0) + 2);
             if (includeTrunk) options.Add("trunk");
+
             if (items != null)
+            {
                 foreach (var item in items)
                 {
                     string clean = item?.Trim().TrimEnd('/');
                     if (!string.IsNullOrEmpty(clean) && !clean.Equals("trunk", StringComparison.OrdinalIgnoreCase))
                         options.Add(clean);
                 }
+            }
+
             if (options.Count == 0) options.Add(emptyMsg);
+
             dropdown.AddOptions(options);
+
+            string targetSelection = currentSelection ?? currentBranchName;
+
+            int indexToSelect = 0;
+            if (!string.IsNullOrEmpty(targetSelection))
+            {
+                int foundIndex = options.FindIndex(o => string.Equals(o, targetSelection, StringComparison.OrdinalIgnoreCase));
+                if (foundIndex >= 0)
+                {
+                    indexToSelect = foundIndex;
+                }
+            }
+
+            dropdown.value = indexToSelect;
             dropdown.RefreshShownValue();
         }
 
@@ -688,7 +751,6 @@ namespace SVN.Core
                 {
                     if (string.IsNullOrWhiteSpace(rawLine)) continue;
                     string line = rawLine.TrimEnd();
-                    // SVN status: 7 znaków stanu + 1 spacja = offset 8
                     if (line.Length < 8 || line[0] != '?') continue;
 
                     string relativePath = line.Substring(8).Trim();
@@ -703,7 +765,7 @@ namespace SVN.Core
                 LogInfo($"[Switch] Cleaning up {orphans.Count} orphaned item(s) left from previous branch...");
                 int removed = 0;
 
-                foreach (string path in orphans.OrderByDescending(p => p.Length)) // najpierw głębsze ścieżki (pliki przed folderami)
+                foreach (string path in orphans.OrderByDescending(p => p.Length))
                 {
                     token.ThrowIfCancellationRequested();
 
@@ -713,7 +775,6 @@ namespace SVN.Core
                         {
                             File.Delete(path);
                             removed++;
-                            // Unity meta
                             string metaPath = path + ".meta";
                             if (File.Exists(metaPath)) File.Delete(metaPath);
                         }
