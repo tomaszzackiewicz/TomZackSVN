@@ -257,7 +257,7 @@ public class RevGraphPanel : MonoBehaviour
         }
         catch (XmlException ex)
         {
-            SVNLogBridge.LogError($"[SVN] Failed to parse log XML: {ex.Message}");
+            SVNLogBridge.LogErrorToOutput($"[SVN] Failed to parse log XML: {ex.Message}");
             return new List<SVNRevisionNode>();
         }
     }

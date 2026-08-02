@@ -15,24 +15,15 @@ namespace SVN.Core
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private const int CleanupTimeoutSeconds = 30;
 
-        private readonly SynchronizationContext _mainThreadContext;
-        private readonly int _mainThreadId;
-
         public SVNAdd(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
-            _mainThreadContext = SynchronizationContext.Current;
-            _mainThreadId = Thread.CurrentThread.ManagedThreadId;
+            UnityMainThreadDispatcher.EnsureExists();
         }
 
-        private bool IsMainThread => Thread.CurrentThread.ManagedThreadId == _mainThreadId;
-
-        private void RunOnMainThread(Action action)
+        private void PostToMainThread(Action action)
         {
-            if (IsMainThread) { try { action(); } catch (Exception ex) { Debug.LogException(ex); } }
-            else if (_mainThreadContext != null)
-            {
-                _mainThreadContext.Post(_ => { try { action(); } catch (Exception ex) { Debug.LogException(ex); } }, null);
-            }
+            if (action == null) return;
+            UnityMainThreadDispatcher.Enqueue(action);
         }
 
         public async void AddAll() { try { await AddAllAsync(); } catch (Exception ex) { Debug.LogException(ex); } }
@@ -107,14 +98,45 @@ namespace SVN.Core
 
                 SVNLogBridge.LogLine($"Found {unversioned.Count} unversioned item(s). Preparing safe add...");
 
+                int skippedCount = 0;
+                var validUnversioned = new List<string>(unversioned.Count);
                 string normalizedRoot = root.Replace("\\", "/").TrimEnd('/');
-                var itemsToAdd = EnsureParentDirectoriesAreIncluded(unversioned, normalizedRoot);
+
+                await Task.Run(() =>
+                {
+                    foreach (var path in unversioned)
+                    {
+                        string fullPath = Path.Combine(normalizedRoot, path.Replace('/', Path.DirectorySeparatorChar));
+                        if (File.Exists(fullPath) || Directory.Exists(fullPath))
+                        {
+                            validUnversioned.Add(path);
+                        }
+                        else
+                        {
+                            skippedCount++;
+                        }
+                    }
+                });
+
+                if (skippedCount > 0)
+                {
+                    SVNLogBridge.LogLine($"<color=yellow>Warning: {skippedCount} item(s) disappeared from disk and were safely skipped.</color>");
+                }
+
+                if (validUnversioned.Count == 0)
+                {
+                    SVNLogBridge.LogLine("<color=yellow>No existing items to add.</color>");
+                    return;
+                }
+
+                var itemsToAdd = EnsureParentDirectoriesAreIncluded(validUnversioned, normalizedRoot);
 
                 string tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_all_{Guid.NewGuid():N}.txt");
 
                 try
                 {
-                    File.WriteAllLines(tempFile, itemsToAdd, new UTF8Encoding(false));
+                    await Task.Run(() => File.WriteAllLines(tempFile, itemsToAdd, new UTF8Encoding(false)));
+
                     await SvnRunner.RunAsync($"add --force --parents --targets \"{tempFile}\"", root, false, token);
                 }
                 finally { SafeDelete(tempFile); }
@@ -156,16 +178,24 @@ namespace SVN.Core
                     SVNLogBridge.LogLine("<color=#FFAA00>Warning: Cleanup timed out. Proceeding anyway...</color>");
                 }
 
+                string normalizedRoot = root.Replace("\\", "/").TrimEnd('/');
+                string fullPath = Path.Combine(normalizedRoot, element.FullPath.Replace('/', Path.DirectorySeparatorChar));
+
+                if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+                {
+                    SVNLogBridge.LogLine($"<color=yellow>Skipped: {element.Name} (file no longer exists on disk).</color>");
+                    return;
+                }
+
                 SVNLogBridge.LogLine($"<b>[Add]</b> Adding item: {element.Name}...");
 
-                string normalizedRoot = root.Replace("\\", "/").TrimEnd('/');
                 var paths = EnsureParentDirectoriesAreIncluded(new List<string> { element.FullPath }, normalizedRoot);
 
                 string tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_single_{Guid.NewGuid():N}.txt");
 
                 try
                 {
-                    File.WriteAllLines(tempFile, paths, new UTF8Encoding(false));
+                    await Task.Run(() => File.WriteAllLines(tempFile, paths, new UTF8Encoding(false)));
                     await SvnRunner.RunAsync($"add --force --parents --targets \"{tempFile}\"", root, false, token);
                 }
                 finally { SafeDelete(tempFile); }
@@ -249,7 +279,7 @@ namespace SVN.Core
 
         private void ShowProgressBar()
         {
-            RunOnMainThread(() =>
+            PostToMainThread(() =>
             {
                 if (svnUI?.OperationProgressBar != null)
                 {
@@ -264,7 +294,7 @@ namespace SVN.Core
             _ = Task.Run(async () =>
             {
                 try { await Task.Delay((int)(seconds * 1000)); } catch { }
-                RunOnMainThread(() =>
+                PostToMainThread(() =>
                 {
                     if (svnUI?.OperationProgressBar != null && !IsProcessing)
                     {

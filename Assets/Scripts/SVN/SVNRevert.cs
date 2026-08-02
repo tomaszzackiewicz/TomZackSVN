@@ -22,8 +22,6 @@ namespace SVN.Core
             _mainThreadContext = SynchronizationContext.Current;
         }
 
-        private string TsTag() => $"<color=#9CA3AF>[{DateTime.Now:HH:mm:ss}]</color>";
-
         private void RunOnMainThread(Action action)
         {
             if (_mainThreadContext != null)
@@ -33,7 +31,7 @@ namespace SVN.Core
         private void LogToConsole(string msg)
         {
             if (string.IsNullOrWhiteSpace(msg)) return;
-            SVNLogBridge.LogLine($"{TsTag()} {msg}");
+            SVNLogBridge.LogLine($"{msg}");
         }
 
         private void ClearAllUI()

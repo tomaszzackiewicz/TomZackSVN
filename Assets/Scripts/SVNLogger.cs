@@ -26,11 +26,11 @@ namespace SVN.Core
                 Application.logMessageReceived += HandleUnityLog;
                 initialized = true;
 
-                SVNLogBridge.LogLine("<color=green>[SVN] Logger initialized successfully.</color>");
+                SVNLogBridge.LogToOutput("<color=green>[SVN] Logger initialized successfully.</color>");
             }
             catch (Exception e)
             {
-                SVNLogBridge.LogError($"<color=#8B0000>[SVN] Critical Logger Error:</color> <color=#8B0000>{e.Message}</color>");
+                SVNLogBridge.LogErrorToOutput($"<color=#8B0000>[SVN] Critical Logger Error:</color> <color=#8B0000>{e.Message}</color>");
             }
         }
 

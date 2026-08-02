@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine; // Dodane dla atrybutu [SerializeField]
+using UnityEngine;
 
 namespace SVN.Core
 {
@@ -13,12 +13,13 @@ namespace SVN.Core
         public string workingDir;
         public string privateKeyPath;
         public string mergeToolPath;
+        public string resolveToolPath;
+        public string diffToolPath;
+        public string blameToolPath;
 
-        // To pole zostanie zapisane do JSONa przez Unity
         [SerializeField]
         private string lastOpenedString;
 
-        // Reszta Twojego kodu (ProjectSelectionPanel.cs) nadal używa "lastOpened" tak jak wcześniej
         public DateTime lastOpened
         {
             get
@@ -27,11 +28,10 @@ namespace SVN.Core
                 {
                     return dt;
                 }
-                return default(DateTime); // Zwraca 0001-01-01, jeśli string jest pusty/błędny
+                return default(DateTime);
             }
             set
             {
-                // Zapisujemy w formacie ISO 8601 ("o"), który jest najbezpieczniejszy przy konwersjach daty i czasu
                 lastOpenedString = value.ToString("o");
             }
         }

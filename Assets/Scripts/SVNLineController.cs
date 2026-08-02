@@ -195,7 +195,8 @@ public class SvnLineController : MonoBehaviour
 
     private void SetupFoldButton()
     {
-        if (foldButton == null) return;
+        // Dodano sprawdzenie _onFoldClickDelegate == null
+        if (foldButton == null || _onFoldClickDelegate == null) return;
 
         if (!foldButton.TryGetComponent(out CanvasGroup cg))
             cg = foldButton.gameObject.AddComponent<CanvasGroup>();
@@ -226,7 +227,7 @@ public class SvnLineController : MonoBehaviour
 
     private void SetupSelectionToggle()
     {
-        if (selectionToggle == null) return;
+        if (selectionToggle == null || _onToggleChangedDelegate == null) return;
 
         selectionToggle.onValueChanged.RemoveListener(_onToggleChangedDelegate);
         selectionToggle.SetIsOnWithoutNotify(_element.IsChecked);
@@ -252,7 +253,7 @@ public class SvnLineController : MonoBehaviour
 
     private void SetupFullRowButton()
     {
-        if (fullRowButton == null) return;
+        if (fullRowButton == null || _onFullRowClickDelegate == null) return;
 
         fullRowButton.onClick.RemoveAllListeners();
 
@@ -527,7 +528,10 @@ public class SvnLineController : MonoBehaviour
     private void OnFoldClick()
     {
         if (_svnStatus == null || _element == null) return;
-        _element.IsExpanded = !_element.IsExpanded;
+
+        // USUNIĘTO: _element.IsExpanded = !_element.IsExpanded; 
+        // Stan zmienia tylko SVNStatus.ToggleFolderVisibility, inaczej następuje podwójna negacja!
+
         _svnStatus.ToggleFolderVisibility(_element);
     }
 

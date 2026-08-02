@@ -25,7 +25,6 @@ namespace SVN.Core
         private static string _fullLogText = "";
         private static List<string> _allLines = new();
 
-        // NOWOŚĆ: logowanie wyłącznie do pliku — nie dotyka UI
         public static void LogToFile(string message, string level = "INFO")
         {
             if (string.IsNullOrEmpty(message)) return;
@@ -36,7 +35,7 @@ namespace SVN.Core
         public static void LogLine(string message, bool append = true, string level = "INFO")
         {
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
-            string uiMessage = $"[{timestamp}] {message}";
+            string uiMessage = $"<color=blue>[{timestamp}]</color> {message}";
             string cleanMessage = StripRichText(message);
 
             _ = Task.Run(() => SVNLogger.LogToFile(cleanMessage, level));
@@ -252,6 +251,37 @@ namespace SVN.Core
             FlushImmediate();
             _flushTimer?.Dispose();
             _flushTimer = null;
+        }
+
+        public static void LogToOutput(string message)
+        {
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (SVNUI.Instance == null || SVNUI.Instance.OutputText == null)
+                    return;
+
+                SVNUI.Instance.OutputText.text = message;
+                Canvas.ForceUpdateCanvases();
+            });
+        }
+
+        public static void LogErrorToOutput(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            string formattedMessage = message.StartsWith("<color=")
+                ? message
+                : $"<color=#FF5555>{message}</color>";
+
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (SVNUI.Instance == null || SVNUI.Instance.OutputText == null)
+                    return;
+
+                SVNUI.Instance.OutputText.text = formattedMessage;
+                Canvas.ForceUpdateCanvases();
+            });
         }
     }
 }

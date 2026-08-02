@@ -12,6 +12,9 @@ namespace SVN.Core
 {
     public class SVNUpdate : SVNBase
     {
+        private static readonly Regex RevisionRegex = new Regex(@"^Revision:\s+(\d+)", RegexOptions.Multiline | RegexOptions.Compiled);
+        private static readonly Regex RevisionPrefixRegex = new Regex(@"^\d+\s+", RegexOptions.Compiled);
+
         private CancellationTokenSource _updateCTS;
         private Task _runningTask;
         private Guid _sessionId = Guid.Empty;
@@ -22,13 +25,13 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(svnManager.WorkingDir) || !Directory.Exists(svnManager.WorkingDir))
             {
-                SVNLogBridge.LogError("[SVN] Working directory does not exist.");
+                SVNLogBridge.LogErrorToOutput("[SVN] Working directory does not exist.");
                 return;
             }
 
             if (_runningTask != null && !_runningTask.IsCompleted)
             {
-                SVNLogBridge.LogLine("<color=orange>Update already running...</color>", false);
+                SVNLogBridge.LogToOutput("<color=orange>Update already running...</color>");
                 return;
             }
 
@@ -55,7 +58,7 @@ namespace SVN.Core
 
             if (string.IsNullOrWhiteSpace(svnManager.WorkingDir) || !Directory.Exists(svnManager.WorkingDir))
             {
-                SVNLogBridge.LogError("[SVN] Working directory does not exist.");
+                SVNLogBridge.LogErrorToOutput("[SVN] Working directory does not exist.");
                 return;
             }
 
@@ -67,7 +70,7 @@ namespace SVN.Core
 
             if (!int.TryParse(revision, out _))
             {
-                SVNLogBridge.LogError($"[SVN] Invalid revision number: {revision}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] Invalid revision number: {revision}");
                 return;
             }
 
@@ -103,7 +106,7 @@ namespace SVN.Core
             string targetPath = svnManager.WorkingDir;
             if (string.IsNullOrWhiteSpace(targetPath))
             {
-                SVNLogBridge.LogError("[SVN] Working directory is empty.");
+                SVNLogBridge.LogErrorToOutput("[SVN] Working directory is empty.");
                 return;
             }
 
@@ -143,9 +146,9 @@ namespace SVN.Core
             {
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
 
-                SVNLogBridge.LogLine("<b>[SVN]</b> Pre-update cleanup...");
+                SVNLogBridge.LogToOutput("<b>[SVN]</b> Pre-update cleanup...");
                 await SVNClean.CleanupAsync(targetPath, token);
-                SVNLogBridge.LogLine("<b>[SVN]</b> Cleanup completed.");
+                SVNLogBridge.LogToOutput("<b>[SVN]</b> Cleanup completed.");
 
                 token.ThrowIfCancellationRequested();
                 if (session != _sessionId) throw new OperationCanceledException();
@@ -162,7 +165,7 @@ namespace SVN.Core
                     ? $"update --accept postpone -r {targetRevision}"
                     : "update --accept postpone";
 
-                SVNLogBridge.LogLine($"<color=blue><b>[SVN]</b> Running {commandLabel}...</color>");
+                SVNLogBridge.LogToOutput($"<color=blue><b>[SVN]</b> Running {commandLabel}...</color>");
 
                 string result = await SvnRunner.RunLiveAsync(
                     svnCommand,
@@ -191,7 +194,7 @@ namespace SVN.Core
                         {
                             displayLine = "Scanning repository...";
                         }
-                        else if (trimmed.Length > 1 && "UAGDCR ".Contains(trimmed[0]))
+                        else if (trimmed.Length > 2 && "UAGDCR ".Contains(trimmed[0]) && char.IsWhiteSpace(trimmed[1]) && char.IsWhiteSpace(trimmed[2]))
                         {
                             char status = trimmed[0];
                             string path = SvnRunner.NormalizeRepositoryPath(trimmed.Substring(1).TrimStart());
@@ -229,10 +232,8 @@ namespace SVN.Core
                             if (token.IsCancellationRequested) return;
                             if (session != _sessionId) return;
 
-                            SVNLogBridge.LogLine(
-                                $"<b>[SVN]</b> <color=blue>{displayLine}{progress}</color>",
-                                false
-                            );
+                            SVNLogBridge.LogToOutput(
+                                $"<b>[SVN]</b> <color=blue>{displayLine}{progress}</color>");
                         });
                     },
                     token
@@ -416,7 +417,7 @@ namespace SVN.Core
             string targetPath = svnManager.WorkingDir;
             if (string.IsNullOrWhiteSpace(targetPath))
             {
-                SVNLogBridge.LogError("[SVN] Working directory is empty.");
+                SVNLogBridge.LogErrorToOutput("[SVN] Working directory is empty.");
                 return;
             }
 
@@ -453,9 +454,9 @@ namespace SVN.Core
             {
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
 
-                SVNLogBridge.LogLine("<b>[SVN]</b> Pre-update cleanup...");
+                SVNLogBridge.LogToOutput("<b>[SVN]</b> Pre-update cleanup...");
                 await SVNClean.CleanupAsync(targetPath, token);
-                SVNLogBridge.LogLine("<b>[SVN]</b> Cleanup completed.");
+                SVNLogBridge.LogToOutput("<b>[SVN]</b> Cleanup completed.");
 
                 token.ThrowIfCancellationRequested();
                 if (session != _sessionId) throw new OperationCanceledException();
@@ -468,7 +469,7 @@ namespace SVN.Core
                 }
                 catch { }
 
-                SVNLogBridge.LogLine("<color=blue><b>[SVN]</b> Running update...</color>");
+                SVNLogBridge.LogToOutput("<color=blue><b>[SVN]</b> Running update...</color>");
 
                 string result = await SvnRunner.RunLiveAsync(
                     "update --accept postpone",
@@ -493,7 +494,7 @@ namespace SVN.Core
 
                         string friendlyLine = line;
 
-                        if (friendlyLine.Length > 1 && "UAGDCR ".Contains(friendlyLine[0]))
+                        if (friendlyLine.Length > 2 && "UAGDCR ".Contains(friendlyLine[0]) && char.IsWhiteSpace(friendlyLine[1]) && char.IsWhiteSpace(friendlyLine[2]))
                         {
                             char status = friendlyLine[0];
                             string path = SvnRunner.NormalizeRepositoryPath(friendlyLine.Substring(1).TrimStart());
@@ -524,10 +525,7 @@ namespace SVN.Core
                             if (token.IsCancellationRequested) return;
                             if (session != _sessionId) return;
 
-                            SVNLogBridge.LogLine(
-                                $"<b>[SVN]</b> <color=blue>{friendlyLine}{progress}</color>",
-                                false
-                            );
+                            SVNLogBridge.LogToOutput($"<b>[SVN]</b> <color=blue>{friendlyLine}{progress}</color>");
                         });
                     },
                     token
@@ -692,7 +690,7 @@ namespace SVN.Core
         {
             if (_updateCTS == null || !svnManager.IsUpdateRunning) return;
 
-            SVNLogBridge.LogLine("<color=orange><b>[SVN]</b> Cancel requested...</color>", false);
+            SVNLogBridge.LogToOutput("<color=orange><b>[SVN]</b> Cancel requested...</color>");
 
             svnManager.WasUpdateCanceled = true;
             svnManager.IsUpdateRunning = false;
@@ -737,7 +735,9 @@ namespace SVN.Core
 
         public string ParseRevisionFromInfo(string infoOutput)
         {
-            var match = Regex.Match(infoOutput, @"^Revision:\s+(\d+)", RegexOptions.Multiline);
+            if (string.IsNullOrWhiteSpace(infoOutput)) return "Unknown";
+
+            var match = RevisionRegex.Match(infoOutput);
             return match.Success ? match.Groups[1].Value : "Unknown";
         }
 
@@ -746,6 +746,7 @@ namespace SVN.Core
         public async Task ShowRemoteUpdatesInline()
         {
             if (IsProcessing) return;
+
             string root = svnManager.WorkingDir;
             IsProcessing = true;
 
@@ -754,7 +755,7 @@ namespace SVN.Core
                 SVNLogBridge.LogLine("<i>Checking remote changes...</i>");
                 string output = await SvnRunner.RunAsync("status -u", root);
 
-                if (string.IsNullOrEmpty(output))
+                if (string.IsNullOrWhiteSpace(output))
                 {
                     SVNLogBridge.LogLine("<color=green>No remote changes found.</color>");
                     return;
@@ -766,12 +767,16 @@ namespace SVN.Core
                     string line;
                     while ((line = reader.ReadLine()) != null)
                     {
+                        // Znak '*' pod indeksem 8 oznacza nowszą wersję na serwerze
                         if (line.Length > 8 && line[8] == '*')
                         {
                             remoteChangesCount++;
-                            string pathPart = line.Substring(9).Trim();
-                            pathPart = Regex.Replace(pathPart, @"^\d+\s+", "");
-                            string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart);
+                            string pathPart = line.Substring(9).TrimStart();
+
+                            // Używamy skompilowanego regexa
+                            pathPart = RevisionPrefixRegex.Replace(pathPart, "");
+                            string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart.TrimEnd());
+
                             SVNLogBridge.LogLine($"<color=orange>Update available:</color> {cleanPath}");
                         }
                     }
@@ -784,7 +789,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"[SVN] Remote check error: {ex.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] Remote check error: {ex.Message}");
             }
             finally
             {
@@ -800,15 +805,27 @@ namespace SVN.Core
                 if (string.IsNullOrWhiteSpace(output))
                     return false;
 
-                foreach (string line in output.Split('\n'))
+                using (var reader = new StringReader(output))
                 {
-                    if (line.Length > 0 && "MADRC!".Contains(line[0]))
-                        return true;
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (string.IsNullOrWhiteSpace(line))
+                            continue;
+
+                        char status = line[0];
+
+                        if ("MADRC!?".IndexOf(status) >= 0)
+                        {
+                            return true;
+                        }
+                    }
                 }
                 return false;
             }
-            catch
+            catch (Exception ex)
             {
+                SVNLogBridge.LogErrorToOutput($"[SVN] Error checking local modifications: {ex.Message}");
                 return true;
             }
         }

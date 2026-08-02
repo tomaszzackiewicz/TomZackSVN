@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
 
 namespace SVN.Core
@@ -20,31 +21,53 @@ namespace SVN.Core
 
         private void Update()
         {
+            var actionsToExecute = new List<Action>(MAX_ACTIONS_PER_FRAME);
+
             lock (ExecutionQueue)
             {
                 if (ExecutionQueue.Count > 100)
                     Debug.LogWarning($"[Dispatcher] Queue backlog: {ExecutionQueue.Count}");
+
+                int count = Mathf.Min(ExecutionQueue.Count, MAX_ACTIONS_PER_FRAME);
+                for (int i = 0; i < count; i++)
+                {
+                    actionsToExecute.Add(ExecutionQueue.Dequeue());
+                }
             }
 
-            int processed = 0;
-            while (processed < MAX_ACTIONS_PER_FRAME)
+            foreach (var action in actionsToExecute)
             {
-                Action action = null;
-                lock (ExecutionQueue)
+                try
                 {
-                    if (ExecutionQueue.Count == 0) break;
-                    action = ExecutionQueue.Dequeue();
+                    action?.Invoke();
                 }
-                action?.Invoke();
-                processed++;
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[UnityMainThreadDispatcher] Action failed: {ex}");
+                }
             }
         }
 
         public static void EnsureExists()
         {
             if (_instance != null) return;
-            _instance = new GameObject("SVN_MainThreadDispatcher").AddComponent<UnityMainThreadDispatcher>();
-            DontDestroyOnLoad(_instance.gameObject);
+
+            if (Thread.CurrentThread.ManagedThreadId == 1)
+            {
+                CreateInstance();
+            }
+            else
+            {
+                Enqueue(CreateInstance);
+            }
+        }
+
+        private static void CreateInstance()
+        {
+            if (_instance != null) return;
+            var go = new GameObject("SVN_MainThreadDispatcher");
+            _instance = go.AddComponent<UnityMainThreadDispatcher>();
+            DontDestroyOnLoad(go);
         }
     }
 }

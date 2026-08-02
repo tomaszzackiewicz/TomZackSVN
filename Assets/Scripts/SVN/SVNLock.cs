@@ -181,7 +181,7 @@ namespace SVN.Core
         {
             if (IsProcessing) return;
 
-            SVNLogBridge.UpdateUIField(svnUI.LocksText,
+            SVNLogBridge.UpdateUIField(svnUI.LogText,
                 "<b><color=orange>Fetching Repository Status...</color></b>", append: false);
 
             IsProcessing = true;
@@ -216,11 +216,11 @@ namespace SVN.Core
                     }
                 }
 
-                SVNLogBridge.UpdateUIField(svnUI.LocksText, summary, append: false);
+                SVNLogBridge.UpdateUIField(svnUI.LogText, summary, append: false);
             }
             catch (Exception ex)
             {
-                SVNLogBridge.UpdateUIField(svnUI.LocksText, $"Error: {ex.Message}", append: true);
+                SVNLogBridge.UpdateUIField(svnUI.LogText, $"Error: {ex.Message}", append: true);
             }
             finally
             {

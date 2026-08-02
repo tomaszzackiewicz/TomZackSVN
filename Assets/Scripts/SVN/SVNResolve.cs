@@ -95,6 +95,72 @@ namespace SVN.Core
             catch (Exception ex) { SVNLogBridge.LogException(ex); }
         }
 
+        private string GetResolveToolPath()
+        {
+            string path = svnManager?.ResolveToolPath;
+            if (string.IsNullOrWhiteSpace(path))
+                path = svnUI?.SettingsResolveToolPathInput?.text;
+            if (string.IsNullOrWhiteSpace(path))
+                path = PlayerPrefs.GetString(SVNManager.KEY_RESOLVE_TOOL, "");
+
+            return path?.Trim().Replace("\"", "");
+        }
+
+        private bool TryLaunchExternalResolveTool(string conflictedFullPath, string relativePath)
+        {
+            string toolPath = GetResolveToolPath();
+
+            if (string.IsNullOrEmpty(toolPath) || !File.Exists(toolPath))
+                return false;
+
+            try
+            {
+                string dir = Path.GetDirectoryName(conflictedFullPath);
+                string fileName = Path.GetFileName(conflictedFullPath);
+
+                string mineFile = conflictedFullPath + ".mine";
+
+                var revFiles = Directory.GetFiles(dir, $"{fileName}.r*")
+                                        .Where(f => !f.EndsWith(".mine"))
+                                        .OrderBy(f => f).ToList();
+
+                if (revFiles.Count < 2 || !File.Exists(mineFile))
+                {
+                    LogBoth($"<color=#FFAA00>Resolve Tool:</color> Missing .mine or .r* files for 3-way merge. Falling back.");
+                    return false;
+                }
+
+                string baseFile = revFiles.First();  // (Base)
+                string theirsFile = revFiles.Last(); // (Theirs)
+
+                string processArgs;
+
+                if (toolPath.IndexOf("TortoiseMerge", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    processArgs = $"/base:\"{baseFile}\" /mine:\"{mineFile}\" /theirs:\"{theirsFile}\" /merged:\"{conflictedFullPath}\"";
+                }
+                else
+                {
+                    processArgs = $"\"{baseFile}\" \"{mineFile}\" \"{theirsFile}\" \"{conflictedFullPath}\"";
+                }
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = toolPath,
+                    Arguments = processArgs,
+                    UseShellExecute = true
+                });
+
+                LogBoth($"<color=cyan>Launched 3-way resolve tool for:</color> {relativePath}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=#FFAA00>External resolve tool failed:</color> {ex.Message}. Falling back.");
+                return false;
+            }
+        }
+
         private async Task AutoRefreshConflictListAsync()
         {
             if (!TryEnterRefreshing()) return;
@@ -230,8 +296,9 @@ namespace SVN.Core
             if (!TryEnterProcessing()) return;
             try
             {
-                int initialCount = GetActiveConflictPaths().Count;
-                var paths = GetActiveConflictPaths();
+                var paths = GetActiveConflictPaths().ToList();
+                int initialCount = paths.Count;
+
                 await ResolveManyAsync(paths.Select(p => new SVNConflictData { Path = p }), strategy).ConfigureAwait(false);
 
                 int remainingCount = GetActiveConflictPaths().Count;
@@ -338,12 +405,6 @@ namespace SVN.Core
             {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
                 string root = svnManager.WorkingDir;
-                string editorPath = svnManager.MergeToolPath;
-                if (string.IsNullOrEmpty(editorPath))
-                {
-                    editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-                    if (string.IsNullOrEmpty(editorPath)) { LogBoth("<color=#FFAA00>Error:</color> Merge tool path is not set!"); return; }
-                }
 
                 string targetFile = null;
                 if (svnUI?.ResolveTargetFileInput != null && !string.IsNullOrWhiteSpace(svnUI.ResolveTargetFileInput.text))
@@ -366,9 +427,27 @@ namespace SVN.Core
                 string fullPath = Path.Combine(root, targetFile);
                 if (!File.Exists(fullPath)) { LogBoth($"<color=#FFAA00>File not found:</color> {targetFile}"); return; }
 
-                LogBoth($"Opening editor: <color=green>{targetFile}</color>");
-                var startInfo = new ProcessStartInfo(editorPath, $"\"{fullPath}\"");
-                using (var process = Process.Start(startInfo)) { if (process == null) LogBoth("<color=#FFAA00>Failed to start merge tool.</color>"); }
+                if (!TryLaunchExternalResolveTool(fullPath, targetFile))
+                {
+                    string editorPath = svnManager.MergeToolPath;
+                    if (string.IsNullOrEmpty(editorPath))
+                    {
+                        editorPath = PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
+                        if (string.IsNullOrEmpty(editorPath)) { LogBoth("<color=#FFAA00>Error:</color> Merge tool path is not set!"); return; }
+                    }
+
+                    LogBoth($"Opening editor: <color=green>{targetFile}</color>");
+
+                    var startInfo = new ProcessStartInfo(editorPath, $"\"{fullPath}\"")
+                    {
+                        UseShellExecute = true,
+                        CreateNoWindow = false
+                    };
+                    using (var process = Process.Start(startInfo))
+                    {
+                        if (process == null) LogBoth("<color=#FFAA00>Failed to start merge tool.</color>");
+                    }
+                }
 
                 var data = _conflictCache.TryGetValue(targetFile, out var existing) ? existing : new SVNConflictData { Path = targetFile };
                 data.Type = SVNConflictType.Manual; data.State = SVNConflictState.ManualEditing;
@@ -425,7 +504,7 @@ namespace SVN.Core
                     }
                     catch (Exception ex)
                     {
-                        LogWarning($"[Resolve UI] Render error: {ex.Message}");
+                        SVNLogBridge.LogError($"[Resolve UI] Render error: {ex.Message}");
                     }
                     finally
                     {
@@ -448,18 +527,29 @@ namespace SVN.Core
             if (!TryEnterProcessing()) return;
             try
             {
-                string editorPath = svnManager.MergeToolPath;
-                if (string.IsNullOrEmpty(editorPath))
-                {
-                    editorPath = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-                    if (string.IsNullOrEmpty(editorPath)) { LogBoth("<color=#FFAA00>Merge tool path missing!</color>"); return; }
-                }
-
                 string full = Path.Combine(svnManager.WorkingDir, path);
                 if (!File.Exists(full)) { LogBoth($"<color=#FFAA00>File not found:</color> {path}"); return; }
 
-                LogBoth($"Opening editor for: {path}");
-                using (var process = Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\""))) { if (process == null) LogBoth("<color=#FFAA00>Failed to start merge tool.</color>"); }
+                if (!TryLaunchExternalResolveTool(full, path))
+                {
+                    string editorPath = svnManager.MergeToolPath;
+                    if (string.IsNullOrEmpty(editorPath))
+                    {
+                        editorPath = PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
+                        if (string.IsNullOrEmpty(editorPath)) { LogBoth("<color=#FFAA00>Merge tool path missing!</color>"); return; }
+                    }
+
+                    LogBoth($"Opening editor for: {path}");
+
+                    using (var process = Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\"")
+                    {
+                        UseShellExecute = true,
+                        CreateNoWindow = false
+                    }))
+                    {
+                        if (process == null) LogBoth("<color=#FFAA00>Failed to start merge tool.</color>");
+                    }
+                }
 
                 if (_conflictCache.TryGetValue(path, out var conflict)) { conflict.Type = SVNConflictType.Manual; conflict.State = SVNConflictState.ManualEditing; }
                 await RefreshConflictUIAsync();
@@ -524,7 +614,7 @@ namespace SVN.Core
                             Directory.Delete(fullPath, true); removed = true;
                         }
                     }
-                    catch (Exception ex) { LogBoth($"<color=yellow>Physical delete failed:</color> {ex.Message} - using svn delete --force"); }
+                    catch (Exception ex) { LogBoth($"<color=#yellow>Physical delete failed:</color> {ex.Message} - using svn delete --force"); }
 
                     if (!removed)
                     {
@@ -543,7 +633,7 @@ namespace SVN.Core
                 {
                     LogBoth("[TREE RESOLVE] File missing locally - restoring from server...");
                     try { await SvnRunner.RunAsync($"revert \"{path}\"", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false); LogBoth("[TREE RESOLVE] SVN metadata cleared via revert."); }
-                    catch (Exception ex) { LogBoth($"<color=yellow>Revert failed:</color> {ex.Message} - trying theirs-full..."); try { await SvnRunner.RunAsync($"resolve --accept theirs-full \"{path}\"", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false); } catch (Exception ex2) { LogBoth($"<color=#FFAA00>theirs-full failed:</color> {ex2.Message}"); } }
+                    catch (Exception ex) { LogBoth($"<color=#FFFF00>Revert failed:</color> {ex.Message} - trying theirs-full..."); try { await SvnRunner.RunAsync($"resolve --accept theirs-full \"{path}\"", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false); } catch (Exception ex2) { LogBoth($"<color=#FFAA00>theirs-full failed:</color> {ex2.Message}"); } }
                     try { await SvnRunner.RunAsync($"resolve --accept working \"{path}\"", svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false); } catch { }
                 }
 
@@ -638,27 +728,33 @@ namespace SVN.Core
             if (!File.Exists(fullPath)) return false;
 
             var fileInfo = new FileInfo(fullPath);
-            if (fileInfo.Length > 5 * 1024 * 1024) // If the file is larger than 5 MB, skip it
+            if (fileInfo.Length > 5 * 1024 * 1024) // Ignore files bigger than 5 MB
                 return false;
 
             try
             {
-                using var stream = new StreamReader(fullPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096);
-                string line;
-                while ((line = await stream.ReadLineAsync().ConfigureAwait(false)) != null)
+                return await Task.Run(() =>
                 {
-                    string trimmed = line.Trim();
-
-                    if (trimmed.StartsWith("<<<<<<<") ||
-                        trimmed.StartsWith(">>>>>>>") ||
-                        trimmed.StartsWith("======="))
+                    using var stream = new StreamReader(fullPath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 8192);
+                    string line;
+                    while ((line = stream.ReadLine()) != null)
                     {
-                        return true;
+                        ReadOnlySpan<char> span = line.AsSpan().TrimStart();
+
+                        if (span.StartsWith("<<<<<<<") ||
+                            span.StartsWith(">>>>>>>") ||
+                            span.StartsWith("======="))
+                        {
+                            return true;
+                        }
                     }
-                }
+                    return false;
+                }).ConfigureAwait(false);
             }
-            catch { }
-            return false;
+            catch
+            {
+                return false;
+            }
         }
 
         private async Task RefreshMainUIAfterResolve()
@@ -670,7 +766,7 @@ namespace SVN.Core
                 {
                     SVNStatus.ClearLockCache();
 
-                    await statusModule.RefreshAfterAction().ConfigureAwait(false);
+                    await statusModule.RefreshAfterAction();
                 }
             }
             catch (Exception ex)
@@ -679,6 +775,10 @@ namespace SVN.Core
             }
         }
 
-        public void Dispose() => _resolveLock?.Dispose();
+        public void Dispose()
+        {
+            _resolveLock?.Dispose();
+            GC.SuppressFinalize(this);
+        }
     }
 }

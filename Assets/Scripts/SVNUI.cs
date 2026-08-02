@@ -2,7 +2,6 @@ using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.UIElements;
 
 namespace SVN.Core
 {
@@ -17,6 +16,7 @@ namespace SVN.Core
         [SerializeField] private TMP_InputField logCountInputField;
         [SerializeField] private TMP_InputField updateRevisionInput;
         [SerializeField] private TextMeshProUGUI checkoutConsoleText;
+        [SerializeField] private TextMeshProUGUI outputText;
         [Header("Add New Project Settings (Popup)")]
         [SerializeField] private TMP_InputField addProjectNameInput;
         [SerializeField] private TMP_InputField addProjectRepoUrlInput;
@@ -47,7 +47,6 @@ namespace SVN.Core
         [SerializeField] private MergeFileItem mergeFileItemPrefab;
         [Header("Status Info")]
         [SerializeField] private TextMeshProUGUI statusInfoText;
-        [SerializeField] private TextMeshProUGUI locksText;
         [SerializeField] private TMP_InputField commitMessageInput;
         [SerializeField] private TMP_InputField filterTreeViewInput;
         [SerializeField] private SvnTreeView svnTreeView;
@@ -59,10 +58,8 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI commitTreeDisplay;
         [SerializeField] private TextMeshProUGUI commitStatsText;
         [SerializeField] private TextMeshProUGUI commitConsoleContent;
-        [SerializeField] private TextMeshProUGUI commitFilesContent;
         [SerializeField] private UnityEngine.UI.Slider operationProgressBar;
         [Header("Loading Indicator")]
-        [SerializeField] private GameObject loadingOverlay;
         [SerializeField] private TextMeshProUGUI treeDisplay;
         [SerializeField] private TextMeshProUGUI statsText;
         [SerializeField] private GameObject conflictGroup;
@@ -71,6 +68,9 @@ namespace SVN.Core
         [SerializeField] private TMP_InputField settingsWorkingDirInput;
         [SerializeField] private TMP_InputField settingsSshKeyPathInput;
         [SerializeField] private TMP_InputField settingsMergeToolPathInput;
+        [SerializeField] private TMP_InputField settingsResolveToolPathInput;
+        [SerializeField] private TMP_InputField settingsDiffToolPathInput;
+        [SerializeField] private TMP_InputField settingsBlameToolPathInput;
         [Header("Terminal")]
         [SerializeField] private TMP_InputField terminalInputField;
         [SerializeField] private TextMeshProUGUI terminalConsoleOutput;
@@ -104,6 +104,12 @@ namespace SVN.Core
         [SerializeField] private Transform graphContainer;
         [SerializeField] public GameObject graphItemPrefab;
         [SerializeField] private List<SvnTreeView> svnTreeViews = new List<SvnTreeView>();
+        [Header("Repo Browser (Server Files)")]
+        [SerializeField] private Transform repoBrowserContentRoot;
+        [SerializeField] private GameObject repoBrowserItemPrefab;
+        [SerializeField] private TextMeshProUGUI repoBrowserCurrentPathText;
+        [SerializeField] private TMP_InputField repoBrowserFilterInput;
+        [SerializeField] private TMP_InputField repoBrowserNewFolderInput;
 
         private Coroutine _notificationCoroutine;
 
@@ -137,14 +143,12 @@ namespace SVN.Core
         public Transform MergeFilesContainer => mergeFilesContainer;
         public MergeFileItem MergeFileItemPrefab => mergeFileItemPrefab;
         public TextMeshProUGUI StatusInfoText => statusInfoText;
-        public TextMeshProUGUI LocksText => locksText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
         public TMP_InputField FilterTreeViewInput => filterTreeViewInput;
         public SvnTreeView SvnTreeView => svnTreeView;
         public SvnTreeView SVNCommitTreeDisplay => svnCommitTreeDisplay;
         public TextMeshProUGUI IgnoredText => ignoredText;
         public TextMeshProUGUI CommitSizeText => commitSizeText;
-        public GameObject LoadingOverlay => loadingOverlay;
         public TextMeshProUGUI TreeDisplay
         {
             get => treeDisplay;
@@ -159,13 +163,16 @@ namespace SVN.Core
         public TextMeshProUGUI StatsText => statsText;
         public TextMeshProUGUI CommitStatsText => commitStatsText;
         public TextMeshProUGUI CommitConsoleContent => commitConsoleContent;
-        public TextMeshProUGUI CommitFilesContent => commitFilesContent;
+        public TextMeshProUGUI OutputText => outputText;
         public UnityEngine.UI.Slider OperationProgressBar => operationProgressBar;
         public GameObject ConflictGroup => conflictGroup;
         public TMP_InputField SettingsRepoUrlInput => settingsRepoUrlInput;
         public TMP_InputField SettingsWorkingDirInput => settingsWorkingDirInput;
         public TMP_InputField SettingsSshKeyPathInput => settingsSshKeyPathInput;
+        public TMP_InputField SettingsResolveToolPathInput => settingsResolveToolPathInput;
         public TMP_InputField SettingsMergeToolPathInput => settingsMergeToolPathInput;
+        public TMP_InputField SettingsDiffToolPathInput => settingsDiffToolPathInput;
+        public TMP_InputField SettingsBlameToolPathInput => settingsBlameToolPathInput;
         public TMP_InputField TerminalInputField => terminalInputField;
         public TextMeshProUGUI TerminalConsoleOutput => terminalConsoleOutput;
         public ScrollRect LogScrollRect => logScrollRect;
@@ -188,6 +195,11 @@ namespace SVN.Core
         public Transform GraphContainer => graphContainer;
         public GameObject GraphItemPrefab => graphItemPrefab;
         public List<SvnTreeView> SVNTreeViews => svnTreeViews;
+        public Transform RepoBrowserContentRoot => repoBrowserContentRoot;
+        public GameObject RepoBrowserItemPrefab => repoBrowserItemPrefab;
+        public TextMeshProUGUI RepoBrowserCurrentPathText => repoBrowserCurrentPathText;
+        public TMP_InputField RepoBrowserFilterInput => repoBrowserFilterInput;
+        public TMP_InputField RepoBrowserNewFolderInput => repoBrowserNewFolderInput;
 
         private void Awake()
         {

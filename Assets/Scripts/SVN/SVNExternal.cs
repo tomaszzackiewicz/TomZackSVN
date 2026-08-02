@@ -152,9 +152,9 @@ namespace SVN.Core
             {
                 string sel = paths[0].Replace('\\', '/'), normRoot = root.Replace('\\', '/');
                 if (sel.StartsWith(normRoot, StringComparison.OrdinalIgnoreCase)) sel = sel.Substring(normRoot.Length).TrimStart('/');
-                else SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!");
+                else SVNLogBridge.LogToOutput("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!");
                 if (svnUI.ResolveTargetFileInput) { svnUI.ResolveTargetFileInput.text = sel; SVNLogBridge.LogLine($"<color=green>Resolve:</color> Selected target file: {sel}"); }
-                else SVNLogBridge.LogError("[SVN] ResolveTargetFileInput is not assigned in SVNUI!");
+                else SVNLogBridge.LogErrorToOutput("[SVN] ResolveTargetFileInput is not assigned in SVNUI!");
             }
         }
 
@@ -200,7 +200,7 @@ namespace SVN.Core
                 using var process = Process.Start("TortoiseProc.exe", $"/command:log /path:\"{root}\"");
                 SVNLogBridge.LogLine("<b>[External]</b> Opening TortoiseSVN Log...");
             }
-            catch (Exception ex) { SVNLogBridge.LogLine($"<color=#FFAA00>TortoiseSVN Error:</color> {ex.Message}"); }
+            catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"<color=#FFAA00>TortoiseSVN Error:</color> {ex.Message}"); }
         }
 
         public void SaveHistoryToFile(string content)

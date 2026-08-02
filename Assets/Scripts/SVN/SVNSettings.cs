@@ -26,7 +26,7 @@ namespace SVN.Core
             Interlocked.Exchange(ref _processingFlag, 0);
         }
 
-        private void SafeFireAndForget(Func<Task> operation)
+        public void SafeFireAndForget(Func<Task> operation)
         {
             _ = FireAndForget(operation);
         }
@@ -40,9 +40,11 @@ namespace SVN.Core
         public void SaveRepoUrl() => SafeFireAndForget(SaveRepoUrlAsync);
         public void SaveSSHKeyPath() => SafeFireAndForget(SaveSSHKeyPathAsync);
         public void SaveMergeEditorPath() => SafeFireAndForget(SaveMergeEditorPathAsync);
-
         public void SaveWorkingDir() => SafeFireAndForget(SaveWorkingDirAsync);
         public void LoadSettings() => SafeFireAndForget(LoadSettingsAsync);
+        public void SaveDiffToolPath() => SafeFireAndForget(SaveDiffToolPathAsync);
+        public void SaveResolveToolPath() => SafeFireAndForget(SaveResolveToolPathAsync);
+        public void SaveBlameToolPath() => SafeFireAndForget(SaveBlameToolPathAsync);
 
         public void UpdateUIFromManager()
         {
@@ -52,6 +54,10 @@ namespace SVN.Core
             svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(svnManager.CurrentKey ?? "");
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(svnManager.WorkingDir ?? "");
             svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(svnManager.RepositoryUrl ?? "");
+
+            svnUI.SettingsDiffToolPathInput?.SetTextWithoutNotify(svnManager.DiffToolPath ?? "");
+            svnUI.SettingsResolveToolPathInput?.SetTextWithoutNotify(svnManager.ResolveToolPath ?? "");
+            svnUI.SettingsBlameToolPathInput?.SetTextWithoutNotify(svnManager.BlameToolPath ?? "");
         }
 
         private async Task SaveRepoUrlAsync()
@@ -60,7 +66,6 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(newUrl)) return;
 
             await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.repoUrl = newUrl);
-
             PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, newUrl);
             PlayerPrefs.Save();
 
@@ -75,7 +80,6 @@ namespace SVN.Core
             string path = svnUI?.SettingsSshKeyPathInput?.text?.Trim() ?? "";
 
             await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.privateKeyPath = path);
-
             PlayerPrefs.SetString(SVNManager.KEY_SSH_PATH, path);
             PlayerPrefs.Save();
 
@@ -93,8 +97,7 @@ namespace SVN.Core
             string newPath = svnUI?.SettingsMergeToolPathInput?.text?.Trim() ?? "";
 
             await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.mergeToolPath = newPath);
-
-            PlayerPrefs.SetString(SVNManager.KEY_MERGE_TOOL, newPath);
+            PlayerPrefs.SetString(SVNManager.KEY_TEXTEDITOR_TOOL, newPath);
             PlayerPrefs.Save();
 
             if (svnManager != null)
@@ -222,6 +225,9 @@ namespace SVN.Core
                         project.repoUrl ??= "";
                         project.privateKeyPath ??= "";
                         project.mergeToolPath ??= "";
+                        project.diffToolPath ??= "";
+                        project.resolveToolPath ??= "";
+                        project.blameToolPath ??= "";
 
                         ProjectSettings.SaveProjects(projects);
                     }
@@ -237,6 +243,48 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(path)) return "";
             return path.Replace("\\", "/").TrimEnd('/');
+        }
+
+        private async Task SaveDiffToolPathAsync()
+        {
+            string newPath = svnUI?.SettingsDiffToolPathInput?.text?.Trim() ?? "";
+
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.diffToolPath = newPath);
+            PlayerPrefs.SetString(SVNManager.KEY_DIFF_TOOL, newPath);
+            PlayerPrefs.Save();
+
+            if (svnManager != null)
+                svnManager.DiffToolPath = newPath;
+
+            SVNLogBridge.LogLine($"Saved diff tool = '{newPath}'");
+        }
+
+        private async Task SaveResolveToolPathAsync()
+        {
+            string newPath = svnUI?.SettingsResolveToolPathInput?.text?.Trim() ?? "";
+
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.resolveToolPath = newPath);
+            PlayerPrefs.SetString(SVNManager.KEY_RESOLVE_TOOL, newPath);
+            PlayerPrefs.Save();
+
+            if (svnManager != null)
+                svnManager.ResolveToolPath = newPath;
+
+            SVNLogBridge.LogLine($"Saved resolve tool = '{newPath}'");
+        }
+
+        private async Task SaveBlameToolPathAsync()
+        {
+            string newPath = svnUI?.SettingsBlameToolPathInput?.text?.Trim() ?? "";
+
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.blameToolPath = newPath);
+            PlayerPrefs.SetString(SVNManager.KEY_BLAME_TOOL, newPath);
+            PlayerPrefs.Save();
+
+            if (svnManager != null)
+                svnManager.BlameToolPath = newPath;
+
+            SVNLogBridge.LogLine($"Saved blame tool = '{newPath}'");
         }
     }
 }

@@ -54,7 +54,7 @@ namespace SVN.Core
         private async Task FireAndForget(Func<Task> operation)
         {
             try { await operation().ConfigureAwait(false); }
-            catch (Exception ex) { PostUI(() => SVNLogBridge.LogError($"[SVN] Unhandled: {ex.Message}")); }
+            catch (Exception ex) { PostUI(() => SVNLogBridge.LogErrorToOutput($"[SVN] Unhandled: {ex.Message}")); }
         }
 
         public void RefreshIgnoredPanel()
@@ -67,7 +67,7 @@ namespace SVN.Core
             if (svnManager != null && !string.IsNullOrEmpty(svnManager.WorkingDir))
                 LoadIgnoreRulesFromFile(svnManager.WorkingDir);
             else
-                SVNLogBridge.LogError("[SVN] Cannot reload: WorkingDir is null or empty.");
+                SVNLogBridge.LogErrorToOutput("[SVN] Cannot reload: WorkingDir is null or empty.");
         }
 
         public void PushLocalRulesToSvn()
@@ -327,13 +327,13 @@ namespace SVN.Core
                                 _cachedIgnoreRules.Add(trimmed);
                             }
                         }
-                        SVNLogBridge.LogLine($"<color=#00FFFF>[SVN]</color> Loaded {_cachedIgnoreRules.Count} rules from .svnignore");
+                        SVNLogBridge.LogToOutput($"<color=#00FFFF>[SVN]</color> Loaded {_cachedIgnoreRules.Count} rules from .svnignore");
                     }
-                    catch (Exception e) { SVNLogBridge.LogError($"[SVN] File read error: {e.Message}"); }
+                    catch (Exception e) { SVNLogBridge.LogErrorToOutput($"[SVN] File read error: {e.Message}"); }
                 }
                 else
                 {
-                    SVNLogBridge.LogError($"[SVN] .svnignore file not found at: {workingDir}");
+                    SVNLogBridge.LogErrorToOutput($"[SVN] .svnignore file not found at: {workingDir}");
                 }
             }
         }

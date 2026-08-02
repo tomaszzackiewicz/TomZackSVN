@@ -1,11 +1,9 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Xml.Linq;
 using UnityEngine;
 
 namespace SVN.Core
@@ -53,10 +51,7 @@ namespace SVN.Core
 
         private void PostLog(string msg) => PostUI(() => LogBoth(msg));
 
-        private void SafeFireAndForget(Func<Task> operation)
-        {
-            _ = FireAndForget(operation);
-        }
+        private void SafeFireAndForget(Func<Task> operation) => _ = FireAndForget(operation);
 
         private async Task FireAndForget(Func<Task> operation)
         {
@@ -67,9 +62,8 @@ namespace SVN.Core
         private void LogBoth(string msg)
         {
             SVNLogBridge.LogLine(msg);
-            var console = svnUI?.BlameConsoleText ?? svnUI?.CommitConsoleContent;
-            if (console != null)
-                SVNLogBridge.UpdateUIField(console, msg, "BLAME", true);
+            if (svnUI?.BlameConsoleText != null)
+                SVNLogBridge.UpdateUIField(svnUI.BlameConsoleText, msg, "BLAME", true);
         }
 
         public void ExecuteBlame()
@@ -91,7 +85,7 @@ namespace SVN.Core
                 try
                 {
                     await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                    await ShowBlameInternal(relativePath, cts.Token, outputToConsole: true).ConfigureAwait(false);
+                    await ShowBlameInternal(relativePath, cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -107,7 +101,7 @@ namespace SVN.Core
 
         public async Task ShowBlame(string relativePath, CancellationToken token = default)
         {
-            await ShowBlameInternal(relativePath, token, outputToConsole: true).ConfigureAwait(false);
+            await ShowBlameInternal(relativePath, token).ConfigureAwait(false);
         }
 
         public async Task ShowBlameInExternalEditor(string relativePath)
@@ -118,7 +112,7 @@ namespace SVN.Core
             try
             {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                await ShowBlameInternal(relativePath, cts.Token, outputToConsole: false).ConfigureAwait(false);
+                await ShowBlameInternal(relativePath, cts.Token).ConfigureAwait(false);
             }
             finally
             {
@@ -135,7 +129,7 @@ namespace SVN.Core
             try
             {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                await ShowBlameInternal(relativePath, cts.Token, outputToConsole: true, targetMainConsole: true).ConfigureAwait(false);
+                await ShowBlameInternal(relativePath, cts.Token, forceMainConsole: true).ConfigureAwait(false);
             }
             finally
             {
@@ -144,9 +138,11 @@ namespace SVN.Core
             }
         }
 
-        private async Task ShowBlameInternal(string relativePath, CancellationToken token, bool outputToConsole, bool targetMainConsole = false)
+        private async Task ShowBlameInternal(string relativePath, CancellationToken token, bool forceMainConsole = false)
         {
-            if (string.IsNullOrWhiteSpace(svnManager?.WorkingDir))
+            bool isServerPath = relativePath.StartsWith("/") || relativePath.StartsWith("http");
+
+            if (string.IsNullOrWhiteSpace(svnManager?.WorkingDir) && !isServerPath)
             {
                 PostLog("<color=#FFAA00>Error:</color> Working Directory not set!");
                 return;
@@ -158,130 +154,297 @@ namespace SVN.Core
                 return;
             }
 
+            string fullPath = !isServerPath ? Path.GetFullPath(Path.Combine(svnManager.WorkingDir ?? "", relativePath)) : "";
+
             PostLog($"Fetching Annotations for: <color=green>{relativePath}</color>...");
 
-            string raw = await SvnRunner.RunAsync(
-                $"blame --xml \"{EscapeSvnArg(relativePath)}\"",
-                svnManager.WorkingDir,
-                false,
-                token).ConfigureAwait(false);
+            string commandArgs = "";
+            string workDir = svnManager.WorkingDir;
 
-            if (string.IsNullOrWhiteSpace(raw))
+            if (isServerPath)
             {
-                PostUI(() => DisplayBlameMessage("<color=yellow>Blame returned no data. The file may not be versioned or is empty.</color>", targetMainConsole));
-                return;
+                string repoUrl = svnManager.RepositoryUrl?.TrimEnd('/');
+                if (string.IsNullOrEmpty(repoUrl))
+                {
+                    PostUI(() => DisplayBlameMessage("<color=#FFAA00>Error:</color> Cannot blame server path, Repository URL is empty."));
+                    return;
+                }
+
+                string fullUrl = relativePath.StartsWith("http") ? relativePath : repoUrl + relativePath;
+                commandArgs = $"blame \"{fullUrl}\"";
+                workDir = workDir ?? Environment.CurrentDirectory;
+            }
+            else
+            {
+                commandArgs = $"blame \"{EscapeSvnArg(relativePath)}\"";
             }
 
-            int xmlStart = raw.IndexOf("<?xml", StringComparison.Ordinal);
-            if (xmlStart < 0) xmlStart = raw.IndexOf("<blame", StringComparison.Ordinal);
-            if (xmlStart < 0) xmlStart = raw.IndexOf("<target", StringComparison.Ordinal);
-            if (xmlStart > 0) raw = raw.Substring(xmlStart);
-
-            XDocument doc;
+            string raw;
             try
             {
-                doc = XDocument.Parse(raw);
+                raw = await SvnRunner.RunAsync(commandArgs, workDir, false, token).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=yellow>[Blame] XML parse error:</color> {ex.Message}");
-                PostUI(() => DisplayBlameMessage("<color=yellow>Could not parse blame output. See log for details.</color>", targetMainConsole));
+                PostUI(() => DisplayBlameMessage($"<color=#FF4444>SVN Error:</color> {ex.Message}"));
                 return;
             }
 
-            var entries = doc.Descendants("entry").ToList();
-            if (entries.Count == 0)
+            if (string.IsNullOrWhiteSpace(raw))
             {
-                bool isBinary = raw.IndexOf("Skipping binary file", StringComparison.OrdinalIgnoreCase) >= 0
-                    || raw.Contains("<blame />") || raw.Contains("<blame/>");
-                PostUI(() => DisplayBlameMessage(
-                    isBinary ? "<color=orange>Binary file – blame not available.</color>" : "<color=yellow>No annotatable lines found (file may be binary or empty).</color>",
-                    targetMainConsole));
+                PostUI(() => DisplayBlameMessage("<color=yellow>Blame returned no data. The file may be empty or not versioned.</color>"));
+                return;
+            }
+
+            if (raw.TrimStart().StartsWith("svn: E") || raw.TrimStart().StartsWith("svn: W"))
+            {
+                PostUI(() => DisplayBlameMessage($"<color=#FF4444>SVN Error:</color> {raw.Trim()}"));
+                return;
+            }
+
+            if (raw.Contains("Skipping binary file") || raw.Contains("is a binary file"))
+            {
+                PostUI(() => DisplayBlameMessage("<color=orange>Binary file – blame not available.</color>"));
                 return;
             }
 
             var richReport = new StringBuilder();
             var plainReport = new StringBuilder();
             const int maxDisplayLines = 500;
+            int totalLines = 0;
 
             richReport.AppendLine($"<size=120%><b>BLAME: {Path.GetFileName(relativePath)}</b></size>");
-            richReport.AppendLine("<color=#444444>LINE | REV   | AUTHOR       | CONTENT</color>");
+            richReport.AppendLine("<color=#444444> LINE | REV   | AUTHOR       | CONTENT</color>");
             richReport.AppendLine("--------------------------------------------------");
 
             plainReport.AppendLine("SVN BLAME REPORT");
             plainReport.AppendLine($"File: {relativePath}");
             plainReport.AppendLine($"Generated: {DateTime.Now}");
             plainReport.AppendLine(new string('-', 60));
-            plainReport.AppendLine("LINE |  REV  |   AUTHOR       | CONTENT");
+            plainReport.AppendLine(" LINE |  REV  |   AUTHOR       | CONTENT");
             plainReport.AppendLine(new string('-', 60));
 
-            int lineNumber = 1;
-            foreach (var entry in entries)
+            string[] lines = raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var rawLine in lines)
             {
                 token.ThrowIfCancellationRequested();
 
-                string rev = entry.Attribute("revision")?.Value ?? "-";
-                string author = entry.Element("author")?.Value ?? "unknown";
-                string content = entry.Element("line")?.Value ?? string.Empty;
-                string authorShort = author.Length > 12 ? author.Substring(0, 12) : author;
-                string authorPlain = author.Length > 14 ? author.Substring(0, 14) : author;
-
-                if (lineNumber <= maxDisplayLines)
+                if (ParseBlameLine(rawLine, out string rev, out string author, out string content))
                 {
-                    richReport.AppendLine(
-                        $"<color=#666666>{lineNumber:D3}</color> | " +
-                        $"<color=#FFD700>{rev.PadRight(5)}</color> | " +
-                        $"<color=#00E5FF>{authorShort.PadRight(12)}</color> | {content}");
+                    totalLines++;
+                    string lineNum = totalLines.ToString();
+
+                    string authorShort = author.Length > 12 ? author.Substring(0, 12) : author;
+                    string authorPlain = author.Length > 14 ? author.Substring(0, 14) : author;
+
+                    if (totalLines <= maxDisplayLines)
+                    {
+                        richReport.AppendLine(
+                            $"<color=#666666>{lineNum.PadLeft(4)}</color> | " +
+                            $"<color=#FFD700>{rev.PadRight(5)}</color> | " +
+                            $"<color=#00E5FF>{authorShort.PadRight(12)}</color> | {content}");
+
+                        plainReport.AppendLine($"{lineNum.PadLeft(4)} | {rev.PadLeft(5)} | {authorPlain.PadRight(14)} | {content}");
+                    }
                 }
-
-                plainReport.AppendLine($"{lineNumber:D3} | {rev,5} | {authorPlain,-14} | {content}");
-                lineNumber++;
             }
 
-            if (entries.Count > maxDisplayLines)
+            if (totalLines == 0)
             {
-                richReport.AppendLine("\n<color=#FFAA00>... Blame truncated. Full report opened in external editor.</color>");
-                plainReport.AppendLine("\n... (truncated)");
+                PostUI(() => DisplayBlameMessage("<color=#FFAA00>No annotatable lines found. File might be empty.</color>"));
+                return;
             }
 
-            if (outputToConsole)
+            if (totalLines > maxDisplayLines)
             {
-                PostUI(() =>
-                {
-                    DisplayBlameMessage(richReport.ToString(), targetMainConsole);
-                    LogBoth("<color=green>Blame displayed successfully.</color>");
-                });
+                richReport.AppendLine("\n<color=#FFAA00>... Blame truncated in preview.</color>");
+                plainReport.AppendLine($"\n... (truncated {totalLines - maxDisplayLines} lines)");
             }
 
-            string cacheFolder = Path.Combine(Application.temporaryCachePath, "SVN_Cache");
-            Directory.CreateDirectory(cacheFolder);
-
-            string fileName = $"Blame_{Path.GetFileNameWithoutExtension(relativePath)}.txt";
-            string tempPath = Path.Combine(cacheFolder, fileName);
-            await File.WriteAllTextAsync(tempPath, plainReport.ToString(), token).ConfigureAwait(false);
-
-            CleanupOldBlameFiles();
-
-            string absoluteTempPath = Path.GetFullPath(tempPath);
-            string editorPath = GetMergeToolPath();
+            richReport.AppendLine("\n<color=green>Blame displayed in console.</color>");
+            string finalReportString = richReport.ToString();
 
             PostUI(() =>
             {
-                if (!string.IsNullOrEmpty(editorPath) && File.Exists(editorPath))
+                if (svnUI?.LogText != null)
+                    svnUI.LogText.text = finalReportString;
+
+                if (svnUI?.BlameConsoleText != null)
+                    svnUI.BlameConsoleText.text = finalReportString;
+                else if (svnUI?.BlameDisplayArea != null)
+                    svnUI.BlameDisplayArea.text = finalReportString;
+
+                Canvas.ForceUpdateCanvases();
+            });
+
+            string blameToolPath = GetBlameToolPath();
+            bool fileExists = !string.IsNullOrEmpty(blameToolPath) && File.Exists(blameToolPath);
+
+            PostUI(() =>
+            {
+                string diagOutput = $"\n[DIAG] Blame Tool Path: '{blameToolPath}' | Exists: {fileExists}";
+
+                if (fileExists)
                 {
-                    using var process = Process.Start(new ProcessStartInfo
+                    string targetPathForBlame = fullPath;
+                    string processArguments = "";
+
+                    if (isServerPath)
                     {
-                        FileName = editorPath,
-                        Arguments = $"\"{absoluteTempPath}\"",
-                        UseShellExecute = true
-                    });
+                        string repoUrl = svnManager?.RepositoryUrl?.TrimEnd('/');
+                        targetPathForBlame = relativePath.StartsWith("http") ? relativePath : repoUrl + relativePath;
+                    }
+
+                    if (blameToolPath.IndexOf("TortoiseProc", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        processArguments = $"/command:blame /path:\"{targetPathForBlame}\"";
+                        diagOutput += $"\n[DIAG] Detected TortoiseProc. Using arguments: {processArguments}";
+                    }
+                    else
+                    {
+                        processArguments = $"\"{targetPathForBlame}\"";
+                        diagOutput += $"\n[DIAG] Trying to launch with arguments: {processArguments}";
+                    }
+
+                    try
+                    {
+                        using var process = Process.Start(new ProcessStartInfo
+                        {
+                            FileName = blameToolPath,
+                            Arguments = processArguments,
+                            UseShellExecute = true
+                        });
+                        diagOutput += "\n<color=green>[DIAG] SUCCESS! Process.Start launched without error.</color>";
+                    }
+                    catch (Exception ex)
+                    {
+                        diagOutput += $"\n<color=red>[DIAG] LAUNCH ERROR! Type: {ex.GetType().Name}, Message: {ex.Message}</color>";
+                    }
+                }
+                else if (!string.IsNullOrEmpty(blameToolPath))
+                {
+                    diagOutput += $"\n<color=red>[DIAG] Path is set, but the file DOES NOT EXIST on disk: {blameToolPath}</color>";
                 }
                 else
                 {
-                    Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
+                    diagOutput += "\n<color=yellow>[DIAG] Path is EMPTY. Moving to STEP 4.</color>";
                 }
-                LogBoth("<color=green>Blame file opened.</color>");
+
+                if (svnUI?.LogText != null)
+                {
+                    svnUI.LogText.text += diagOutput;
+                    Canvas.ForceUpdateCanvases();
+                }
             });
+
+            if (fileExists)
+            {
+                return;
+            }
+
+            string textEditorPath = GetTextEditorPath();
+
+            if (!string.IsNullOrEmpty(textEditorPath) && File.Exists(textEditorPath))
+            {
+                string cacheFolder = Path.Combine(Application.temporaryCachePath, "SVN_Cache");
+                Directory.CreateDirectory(cacheFolder);
+
+                string fileName = $"Blame_{Path.GetFileNameWithoutExtension(relativePath)}.txt";
+                string tempPath = Path.Combine(cacheFolder, fileName);
+                await File.WriteAllTextAsync(tempPath, plainReport.ToString()).ConfigureAwait(false);
+
+                CleanupOldBlameFiles();
+                string absoluteTempPath = Path.GetFullPath(tempPath);
+
+                PostUI(() =>
+                {
+                    try
+                    {
+                        using var process = Process.Start(new ProcessStartInfo
+                        {
+                            FileName = textEditorPath,
+                            Arguments = $"\"{absoluteTempPath}\"",
+                            UseShellExecute = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogError($"[SVN Blame] Failed to launch text editor: {ex.Message}");
+                    }
+                });
+            }
+        }
+
+        private string GetBlameToolPath()
+        {
+            string path = svnManager?.BlameToolPath;
+            if (string.IsNullOrWhiteSpace(path))
+                path = PlayerPrefs.GetString(SVNManager.KEY_BLAME_TOOL, "");
+
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                path = path.Trim().Replace("\"", "").Replace('/', '\\');
+            }
+
+            return path;
+        }
+
+        private string GetTextEditorPath()
+        {
+            string path = PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
+
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                path = svnManager?.MergeToolPath;
+                if (!string.IsNullOrEmpty(path) && path.IndexOf("TortoiseMerge", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    path = "";
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(path))
+                path = svnUI?.SettingsMergeToolPathInput?.text;
+
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                path = path.Trim().Replace("\"", "").Replace('/', '\\');
+            }
+
+            return path;
+        }
+
+        private bool ParseBlameLine(string rawLine, out string rev, out string author, out string content)
+        {
+            rev = "-"; author = ""; content = "";
+            if (string.IsNullOrWhiteSpace(rawLine)) return false;
+
+            int i = 0;
+            int len = rawLine.Length;
+
+            while (i < len && char.IsWhiteSpace(rawLine[i])) i++;
+            if (i >= len) return false;
+
+            int revStart = i;
+            while (i < len && !char.IsWhiteSpace(rawLine[i])) i++;
+            rev = rawLine.Substring(revStart, i - revStart);
+
+            if (rev != "-" && !int.TryParse(rev, out _)) return false;
+
+            while (i < len && char.IsWhiteSpace(rawLine[i])) i++;
+            if (i >= len) return false;
+
+            int authStart = i;
+            while (i < len && !char.IsWhiteSpace(rawLine[i])) i++;
+            author = rawLine.Substring(authStart, i - authStart);
+
+            if (i < len && rawLine[i] == ' ')
+            {
+                i++;
+            }
+
+            content = rawLine.Substring(i);
+            return true;
         }
 
         private void CleanupOldBlameFiles()
@@ -305,39 +468,38 @@ namespace SVN.Core
             catch { }
         }
 
-        private void DisplayBlameMessage(string message, bool targetMainConsole)
+        private void DisplayBlameMessage(string message, bool targetMainConsole = false)
         {
-            if (targetMainConsole && svnUI?.LogText != null)
+            bool updatedAny = false;
+
+            if (svnUI?.LogText != null)
             {
                 svnUI.LogText.text = message;
-                Canvas.ForceUpdateCanvases();
-                return;
+                updatedAny = true;
             }
 
             if (svnUI?.BlameConsoleText != null)
+            {
                 svnUI.BlameConsoleText.text = message;
+                updatedAny = true;
+            }
             else if (svnUI?.BlameDisplayArea != null)
+            {
                 svnUI.BlameDisplayArea.text = message;
-            else if (svnUI?.CommitConsoleContent != null)
-                svnUI.CommitConsoleContent.text = message;
-            else
-                SVNLogBridge.LogLine(message);
+                updatedAny = true;
+            }
 
-            Canvas.ForceUpdateCanvases();
+            if (!updatedAny)
+            {
+                SVNLogBridge.LogLine(message);
+            }
+            else
+            {
+                Canvas.ForceUpdateCanvases();
+            }
         }
 
         private static string EscapeSvnArg(string arg) =>
             string.IsNullOrWhiteSpace(arg) ? arg : arg.Replace("\"", "\\\"");
-
-        private string GetMergeToolPath()
-        {
-            string path = svnManager?.MergeToolPath;
-            if (string.IsNullOrWhiteSpace(path))
-                path = svnUI?.SettingsMergeToolPathInput?.text;
-            if (string.IsNullOrWhiteSpace(path))
-                path = PlayerPrefs.GetString(SVNManager.KEY_MERGE_TOOL, "");
-
-            return path?.Trim().Replace("\"", "");
-        }
     }
 }

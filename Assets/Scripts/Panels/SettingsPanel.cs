@@ -18,4 +18,7 @@ public class SettingsPanel : MonoBehaviour
     public void Button_SaveRepoUrl() => svnManager.GetModule<SVNSettings>().SaveRepoUrl();
     public void Button_SaveSSHKeyPath() => svnManager.GetModule<SVNSettings>().SaveSSHKeyPath();
     public void Button_SaveMergeEditorPath() => svnManager.GetModule<SVNSettings>().SaveMergeEditorPath();
+    public void Button_SaveDiffToolPath() => svnManager.GetModule<SVNSettings>().SaveDiffToolPath();
+    public void Button_SaveResolveToolPath() => svnManager.GetModule<SVNSettings>().SaveResolveToolPath();
+    public void Button_SaveBlameToolPath() => svnManager.GetModule<SVNSettings>().SaveBlameToolPath();
 }

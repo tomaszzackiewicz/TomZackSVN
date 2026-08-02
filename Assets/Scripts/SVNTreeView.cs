@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI; // To jest wymagane dla VerticalLayoutGroup
 using System.Collections.Generic;
 using SVN.Core;
 
@@ -8,19 +9,34 @@ public class SvnTreeView : MonoBehaviour
     public bool isCommitView;
 
     private List<GameObject> _pool = new List<GameObject>();
+    private VerticalLayoutGroup _layoutGroup;
+
+    private void Awake()
+    {
+        // Pobieramy komponent układu raz, przy starcie
+        _layoutGroup = GetComponent<VerticalLayoutGroup>();
+    }
 
     public void RefreshUI(List<SvnTreeElement> elements, SVNStatus manager)
     {
-        foreach (var obj in _pool)
-            obj.SetActive(false);
+        // 1. ZABEZPIECZENIE PRZED ZAWIESZENIEM: Wyłączamy Layout Group
+        if (_layoutGroup != null)
+            _layoutGroup.enabled = false;
 
-        int activeIndex = 0;
-        foreach (var element in elements)
+        // 2. Ukrywamy wszystko
+        foreach (var obj in _pool)
         {
+            if (obj.activeSelf) obj.SetActive(false);
+        }
+
+        // 3. Pokazujemy tylko to, co widoczne (pobierając z puli po kolei, BEZ SetSiblingIndex)
+        int poolIndex = 0;
+        for (int i = 0; i < elements.Count; i++)
+        {
+            var element = elements[i];
             if (!element.IsVisible) continue;
 
-            GameObject line = GetOrCreateLine();
-            line.transform.SetSiblingIndex(activeIndex);
+            GameObject line = GetOrCreateLineByIndex(poolIndex);
             line.SetActive(true);
 
             var controller = line.GetComponent<SvnLineController>();
@@ -29,28 +45,41 @@ public class SvnTreeView : MonoBehaviour
                 element.IsCommitDelegate = isCommitView;
                 controller.Setup(element, manager);
             }
-            activeIndex++;
+
+            poolIndex++;
         }
+
+        // 4. WŁĄCZAMY Layout Group z powrotem. 
+        // Unity przeliczy pozycje RAZ, szybko i bez zacinania się.
+        if (_layoutGroup != null)
+            _layoutGroup.enabled = true;
     }
 
-    private GameObject GetOrCreateLine()
+    private GameObject GetOrCreateLineByIndex(int index)
     {
-        for (int i = 0; i < _pool.Count; i++)
+        // Jeśli potrzebujemy więcej obiektów niż mamy w puli, tworzymy nowe
+        while (index >= _pool.Count)
         {
-            if (!_pool[i].activeSelf) return _pool[i];
+            GameObject newObj = Instantiate(linePrefab, transform);
+            newObj.SetActive(false);
+            _pool.Add(newObj);
         }
 
-        GameObject newObj = Instantiate(linePrefab, transform);
-        _pool.Add(newObj);
-        return newObj;
+        return _pool[index];
     }
 
     public void ClearView()
     {
+        // Tutaj też warto zabezpieczyć czyszczenie
+        if (_layoutGroup != null) _layoutGroup.enabled = false;
+
         foreach (var obj in _pool)
         {
-            if (obj != null) obj.SetActive(false);
+            if (obj != null && obj.activeSelf)
+                obj.SetActive(false);
         }
+
+        if (_layoutGroup != null) _layoutGroup.enabled = true;
     }
 
     public void FilterTree(string filterText)

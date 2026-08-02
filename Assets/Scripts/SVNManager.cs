@@ -18,7 +18,10 @@ namespace SVN.Core
         public const string KEY_REPO_URL = "SVN_Persisted_RepositoryURL";
         public const string KEY_WORKING_DIR = "SVN_Persisted_WorkingDir";
         public const string KEY_SSH_PATH = "SVN_Persisted_SSHKeyPath";
-        public const string KEY_MERGE_TOOL = "SVN_Persisted_MergeTool";
+        public const string KEY_TEXTEDITOR_TOOL = "SVN_Persisted_MergeTool";
+        public const string KEY_RESOLVE_TOOL = "SVN_Persisted_ResolveTool";
+        public const string KEY_DIFF_TOOL = "SVN_Persisted_DiffTool";
+        public const string KEY_BLAME_TOOL = "SVN_Persisted_BlameTool";
 
         [Header("UI References")]
         [SerializeField] private SVNUI svnUI = null;
@@ -70,6 +73,9 @@ namespace SVN.Core
         public ProjectSelectionPanel ProjectSelectionPanel => projectSelectionPanel;
         public GameObject MainUIPanel => mainUIPanel;
         public string CurrentUserName => currentUserName;
+        public string DiffToolPath { get; set; } = string.Empty;
+        public string ResolveToolPath { get; set; } = string.Empty;
+        public string BlameToolPath { get; set; } = string.Empty;
 
         public void SetCurrentStatus(Dictionary<string, (string status, string size)> data)
         {
@@ -181,12 +187,13 @@ namespace SVN.Core
                 RegisterModule(new SVNRevGraph(svnUI, this));
                 RegisterModule(new SVNBar(svnUI, this));
                 RegisterModule(new SVNIgnore(svnUI, this));
+                RegisterModule(new SVNRepoBrowser(svnUI, this));
 
-                SVNLogBridge.LogLine($"<color=green>[SVN] Successfully initialized {_modules.Count} modules manually.</color>");
+                SVNLogBridge.LogToOutput($"<color=green>[SVN] Successfully initialized {_modules.Count} modules manually.</color>");
             }
             catch (Exception e)
             {
-                SVNLogBridge.LogError($"[SVN] Manual initialization failed: {e.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] Manual initialization failed: {e.Message}");
             }
         }
 
@@ -218,7 +225,7 @@ namespace SVN.Core
                     return;
                 }
                 WorkingDir = SVNAssetLocator.NormalizePath(path);
-                SVNLogBridge.LogLine($"[SVN] Working Directory set to: {WorkingDir}");
+                SVNLogBridge.LogToOutput($"[SVN] Working Directory set to: {WorkingDir}");
                 await RefreshRepositoryInfo();
             }
             finally
@@ -330,7 +337,10 @@ namespace SVN.Core
 
                 RepositoryUrl = project.repoUrl;
                 CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
-                MergeToolPath = SVNAssetLocator.NormalizePath(project.mergeToolPath);
+                MergeToolPath = GetSettingWithFallback(project.mergeToolPath, KEY_TEXTEDITOR_TOOL);
+                DiffToolPath = GetSettingWithFallback(project.diffToolPath, KEY_DIFF_TOOL);
+                ResolveToolPath = GetSettingWithFallback(project.resolveToolPath, KEY_RESOLVE_TOOL);
+                BlameToolPath = GetSettingWithFallback(project.blameToolPath, KEY_BLAME_TOOL);
                 SvnRunner.KeyPath = CurrentKey;
 
                 var projects = ProjectSettings.LoadProjects();
@@ -396,6 +406,16 @@ namespace SVN.Core
                     SVNLogBridge.LogError($"[Init] Background refresh failed: {t.Exception?.InnerException?.Message}");
             }, TaskScheduler.Default);
 
+            var repoBrowser = GetModule<SVNRepoBrowser>();
+            if (repoBrowser != null)
+            {
+                _ = repoBrowser.LoadInitialTreeAsync().ContinueWith(t =>
+                {
+                    if (t.IsFaulted)
+                        SVNLogBridge.LogError($"[Init] Repo Browser load failed: {t.Exception?.InnerException?.Message}");
+                }, TaskScheduler.Default);
+            }
+
             if (this == null) return;
         }
 
@@ -427,6 +447,9 @@ namespace SVN.Core
             svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
             svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
             svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
+            svnUI.SettingsResolveToolPathInput?.SetTextWithoutNotify(ResolveToolPath);
+            svnUI.SettingsDiffToolPathInput?.SetTextWithoutNotify(DiffToolPath);
+            svnUI.SettingsBlameToolPathInput?.SetTextWithoutNotify(BlameToolPath);
         }
 
         public void ApplySettingsSnapshot()
@@ -437,6 +460,9 @@ namespace SVN.Core
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
             svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
             svnUI.SettingsMergeToolPathInput?.SetTextWithoutNotify(MergeToolPath);
+            svnUI.SettingsResolveToolPathInput?.SetTextWithoutNotify(ResolveToolPath);
+            svnUI.SettingsDiffToolPathInput?.SetTextWithoutNotify(DiffToolPath);
+            svnUI.SettingsBlameToolPathInput?.SetTextWithoutNotify(BlameToolPath);
 
             svnUI.CheckoutRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
             svnUI.CheckoutDestFolderInput?.SetTextWithoutNotify(WorkingDir);
@@ -454,14 +480,16 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(WorkingDir)) return;
             if (IsProcessing && !force) return;
 
+            GetModule<SVNStatus>()?.CancelCurrentRefresh();
+
+            var oldCts = Interlocked.Exchange(ref _refreshStatusCts, new CancellationTokenSource());
+            oldCts?.Cancel();
+            oldCts?.Dispose();
+            CancellationToken token = _refreshStatusCts.Token;
+
             await _managerLock.EnterWriteAsync(_lifetimeCts.Token);
             try
             {
-                var oldCts = Interlocked.Exchange(ref _refreshStatusCts, new CancellationTokenSource());
-                oldCts?.Cancel();
-                oldCts?.Dispose();
-
-                CancellationToken token = _refreshStatusCts.Token;
 
                 var statusModule = GetModule<SVNStatus>();
                 if (statusModule == null) return;
@@ -512,11 +540,11 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange>[SVN] RefreshStatus canceled.</color>");
+                SVNLogBridge.LogToOutput("<color=orange>[SVN] RefreshStatus canceled.</color>");
             }
             catch (Exception e)
             {
-                LogToUI($"[SVN] Refresh Error: {e.Message}", "red");
+                SVNLogBridge.LogErrorToOutput($"[SVN] Refresh Error: {e.Message}");
             }
             finally
             {
@@ -564,7 +592,7 @@ namespace SVN.Core
             }
             catch (Exception e)
             {
-                SVNLogBridge.LogError($"[SVN] RefreshLocksSafe failed: {e.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] RefreshLocksSafe failed: {e.Message}");
             }
         }
 
@@ -574,7 +602,8 @@ namespace SVN.Core
 
             if (statusDict?.Values.Any(v => v.status?.Contains("C") == true) == true)
             {
-                LogToUI("[SVN] Conflicts detected! Opening Resolve panel.", "orange");
+                SVNLogBridge.LogErrorToOutput("[SVN] Conflicts detected! Opening Resolve panel.");
+
                 panelHandler?.Button_OpenResolve();
                 await GetModule<SVNResolve>().RefreshConflictUI();
             }
@@ -632,11 +661,6 @@ namespace SVN.Core
                 var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
                 await barModule.ShowProjectInfo(lastProject, WorkingDir, isRefreshing: false);
             }
-        }
-
-        private void LogToUI(string message, string color, bool append = true)
-        {
-            SVNLogBridge.LogLine($"<color={color}>{message}</color>", append);
         }
 
         public string ExtractPathFromStatusLine(string line, string statusChar)
@@ -722,10 +746,31 @@ namespace SVN.Core
                 DebounceSaveProject();
             });
 
+            svnUI.SettingsResolveToolPathInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync || _isApplyingSnapshot) return;
+                ResolveToolPath = v.Trim();
+                DebounceSaveProject();
+            });
+
+            svnUI.SettingsDiffToolPathInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync || _isApplyingSnapshot) return;
+                DiffToolPath = v.Trim();
+                DebounceSaveProject();
+            });
+
             svnUI.CheckoutRepoUrlInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
                 SyncFromCheckoutUI();
+            });
+
+            svnUI.SettingsBlameToolPathInput?.onValueChanged.AddListener(v =>
+            {
+                if (_ignoreSync || _isApplyingSnapshot) return;
+                BlameToolPath = v.Trim();
+                DebounceSaveProject();
             });
 
             svnUI.CheckoutDestFolderInput?.onValueChanged.AddListener(v =>
@@ -766,12 +811,15 @@ namespace SVN.Core
                     current.repoUrl = RepositoryUrl;
                     current.privateKeyPath = CurrentKey;
                     current.mergeToolPath = MergeToolPath;
+                    current.diffToolPath = DiffToolPath;
+                    current.resolveToolPath = ResolveToolPath;
+                    current.blameToolPath = BlameToolPath;
                     ProjectSettings.SaveProjects(projects);
                 }
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"[SVN] Save project failed: {ex.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] Save project failed: {ex.Message}");
             }
         }
 
@@ -779,14 +827,14 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(RepositoryUrl))
             {
-                SVNLogBridge.LogError("[SVN] Repository URL is missing. Cannot perform 'cat'.");
+                SVNLogBridge.LogErrorToOutput("[SVN] Repository URL is missing. Cannot perform 'cat'.");
                 return;
             }
 
             try
             {
                 IsProcessing = true;
-                SVNLogBridge.LogLine($"<b>[SVN]</b> Fetching r{revision}: {relativePath}...", append: true);
+                SVNLogBridge.LogLine($"<b>[File]</b> Fetching r{revision}: {relativePath}...", append: true);
 
                 string fileName = Path.GetFileName(relativePath);
                 string tempFileName = $"r{revision}_{fileName}";
@@ -806,7 +854,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrEmpty(fileContent))
                 {
-                    SVNLogBridge.LogError($"[SVN] Failed to fetch content for {relativePath}");
+                    SVNLogBridge.LogErrorToOutput($"[SVN] Failed to fetch content for {relativePath}");
                     return;
                 }
 
@@ -831,7 +879,7 @@ namespace SVN.Core
                     }
                     catch (Exception ex)
                     {
-                        SVNLogBridge.LogError($"[SVN] Failed to open with MergeTool: {ex.Message}. Falling back to default.");
+                        SVNLogBridge.LogErrorToOutput($"[SVN] Failed to open with MergeTool: {ex.Message}. Falling back to default.");
                         Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
                     }
                 }
@@ -843,7 +891,7 @@ namespace SVN.Core
             }
             catch (Exception e)
             {
-                SVNLogBridge.LogError($"[SVN] CatAndOpenFile error: {e.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] CatAndOpenFile error: {e.Message}");
             }
             finally
             {
@@ -973,6 +1021,18 @@ namespace SVN.Core
                         }
                     }, TaskScheduler.Default);
             }
+        }
+
+        private string GetSettingWithFallback(string projectValue, string playerPrefsKey)
+        {
+            string normalized = SVNAssetLocator.NormalizePath(projectValue);
+
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                normalized = PlayerPrefs.GetString(playerPrefsKey, "");
+            }
+
+            return normalized;
         }
 
         private void OnDestroy()

@@ -496,7 +496,7 @@ public class ProjectSelectionPanel : MonoBehaviour
                 return lastSegment;
             }
         }
-        catch (Exception e) { SVNLogBridge.LogError($"[SVN] URL Parse failed: {e.Message}"); }
+        catch (Exception e) { SVNLogBridge.LogErrorToOutput($"[SVN] URL Parse failed: {e.Message}"); }
         return "New Project";
     }
 

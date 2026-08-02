@@ -83,8 +83,8 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=#FFAA00>FixMissing Error:</color> {ex.Message}");
-                SVNLogBridge.LogError($"[SVN] FixMissing: {ex}");
+                SVNLogBridge.LogToOutput($"<color=#FFAA00>FixMissing Error:</color> {ex.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] FixMissing: {ex}");
             }
             finally
             {
@@ -144,7 +144,7 @@ namespace SVN.Core
                     if (File.Exists(tempFile)) File.Delete(tempFile);
                 }
 
-                SVNLogBridge.LogLine($"  Progress: {processed}/{total} files removed.");
+                SVNLogBridge.LogLine($"  Progress: {processed}/{total} files removed.", false);
             }
 
             if (failed > 0)

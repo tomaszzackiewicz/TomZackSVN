@@ -1,4 +1,4 @@
-using System;
+using System.Linq;
 using UnityEngine;
 
 namespace SVN.Core
@@ -12,6 +12,7 @@ namespace SVN.Core
         private float _lastUpdateToRevClickTime;
         private const float DoubleClickThreshold = 5.0f;
         private string _pendingRevision = null;
+        private bool isExpanded = false;
 
         private void Start()
         {
@@ -40,6 +41,25 @@ namespace SVN.Core
                 (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)))
             {
                 ExecuteTerminalCommand();
+            }
+        }
+
+        public void Button_ToggleExpand()
+        {
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            var data = statusModule.GetCurrentData();
+
+            bool anyExpanded = data != null && data.Any(e => e.IsFolder && e.IsExpanded);
+
+            if (anyExpanded)
+            {
+                statusModule.CollapseAll();
+                isExpanded = false;
+            }
+            else
+            {
+                statusModule.ExpandAll();
+                isExpanded = true;
             }
         }
 
@@ -87,11 +107,13 @@ namespace SVN.Core
         public void Button_Add() => svnManager.GetModule<SVNAdd>().AddAll();
         public void Button_FixMissing() => svnManager.GetModule<SVNMissing>().FixMissingFiles();
         public void Button_DiscardUntracked() => svnManager.GetModule<SVNClean>().DiscardUnversioned();
+        public void Button_GoUpRepoBrowser() => svnManager.GetModule<SVNRepoBrowser>().GoUp();
+        public void Button_CollapsAll() => svnManager.GetModule<SVNRepoBrowser>().CollapseAllToRoot();
         public void Button_ClearLocksView()
         {
-            if (svnUI.LocksText != null)
+            if (svnUI.LogText != null)
             {
-                SVNLogBridge.UpdateUIField(svnUI.LocksText, string.Empty, "LOCKS_VIEW", append: false);
+                SVNLogBridge.UpdateUIField(svnUI.LogText, string.Empty, "LOCKS_VIEW", append: false);
                 SVNLogBridge.LogLine("<color=#777777>Locks view cleared.</color>");
             }
         }

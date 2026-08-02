@@ -8,18 +8,24 @@ namespace SVN.Core
     public class SVNClean : SVNBase
     {
         private SVNStatus _cachedStatusModule;
-        private int _operationRunning;
+        private CancellationTokenSource _cts;
 
-        public SVNClean(SVNUI ui, SVNManager manager) : base(ui, manager) { }
+        public SVNClean(SVNUI ui, SVNManager manager) : base(ui, manager)
+        {
+            UnityMainThreadDispatcher.EnsureExists();
+        }
 
         #region Logging
 
         private void LogToClean(string message, bool append = true)
         {
-            if (svnUI?.CleanText != null)
-                SVNLogBridge.UpdateUIField(svnUI.CleanText, message, "CLEAN", append);
-            else
-                SVNLogBridge.LogLine(message, append);
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (svnUI?.CleanText != null)
+                    SVNLogBridge.UpdateUIField(svnUI.CleanText, message, "CLEAN", append);
+                else
+                    SVNLogBridge.LogLine(message, append);
+            });
         }
 
         private void ClearLog() => LogToClean(string.Empty, append: false);
@@ -27,6 +33,12 @@ namespace SVN.Core
         #endregion
 
         #region Public API (Unity-safe async void wrappers)
+
+        public void CancelCurrentOperation()
+        {
+            _cts?.Cancel();
+            LogToClean("<color=yellow>Przesłano żądanie anulowania operacji...</color>");
+        }
 
         public void LightCleanup() => SafeFireAndForget(LightCleanupAsync);
         public void VacuumCleanup() => SafeFireAndForget(VacuumCleanupAsync);
@@ -37,8 +49,18 @@ namespace SVN.Core
 
         private async void SafeFireAndForget(Func<CancellationToken, Task> operation)
         {
-            try { await operation(default).ConfigureAwait(false); }
-            catch (Exception ex) { SVNLogBridge.LogException(ex); }
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = new CancellationTokenSource();
+
+            try
+            {
+                await operation(_cts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                UnityMainThreadDispatcher.Enqueue(() => SVNLogBridge.LogException(ex));
+            }
         }
 
         #endregion
@@ -62,12 +84,10 @@ namespace SVN.Core
                 LogToClean("<color=green>Cleanup Successful!</color>");
                 if (!string.IsNullOrWhiteSpace(output))
                     LogToClean(output);
-
-                await RefreshStatusAsync(token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                LogToClean("<color=yellow>Cleanup cancelled.</color>");
+                LogToClean("<color=yellow>Cleanup cancelled by user.</color>");
             }
             catch (Exception ex)
             {
@@ -77,6 +97,7 @@ namespace SVN.Core
             finally
             {
                 EndOperation();
+                await RefreshStatusSafeAsync().ConfigureAwait(false);
             }
         }
 
@@ -92,7 +113,9 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"[SVN] Standard cleanup failed, trying extended cleanup: {ex.Message}");
+                UnityMainThreadDispatcher.Enqueue(() =>
+                    SVNLogBridge.LogErrorToOutput($"[SVN] Standard cleanup failed, trying extended cleanup: {ex.Message}"));
+
                 token.ThrowIfCancellationRequested();
                 return await SvnRunner.RunAsync("cleanup --include-externals", workingDir, false, token).ConfigureAwait(false);
             }
@@ -116,12 +139,10 @@ namespace SVN.Core
                 LogToClean("<color=green>Vacuum Cleanup Successful!</color>");
                 if (!string.IsNullOrWhiteSpace(output))
                     LogToClean(output);
-
-                await RefreshStatusAsync(token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
-                LogToClean("<color=yellow>Vacuum cleanup cancelled.</color>");
+                LogToClean("<color=yellow>Vacuum cleanup cancelled by user.</color>");
             }
             catch (Exception ex)
             {
@@ -130,6 +151,7 @@ namespace SVN.Core
             finally
             {
                 EndOperation();
+                await RefreshStatusSafeAsync(CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -145,7 +167,9 @@ namespace SVN.Core
             }
             catch (Exception ex) when (ex.Message.Contains("invalid option"))
             {
-                SVNLogBridge.LogError("[SVN] Vacuum cleanup unsupported. Falling back to normal cleanup.");
+                UnityMainThreadDispatcher.Enqueue(() =>
+                    SVNLogBridge.LogErrorToOutput("[SVN] Vacuum cleanup unsupported. Falling back to normal cleanup."));
+
                 token.ThrowIfCancellationRequested();
                 return await SvnRunner.RunAsync("cleanup", workingDir, false, token).ConfigureAwait(false);
             }
@@ -187,7 +211,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToClean("<color=yellow>Repair cancelled.</color>");
+                LogToClean("<color=yellow>Repair cancelled by user.</color>");
             }
             catch (Exception ex)
             {
@@ -196,7 +220,7 @@ namespace SVN.Core
             finally
             {
                 EndOperation();
-                await RefreshStatusAsync(token).ConfigureAwait(false);
+                await RefreshStatusSafeAsync(CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -214,20 +238,23 @@ namespace SVN.Core
 
                 await SvnRunner.RunAsync("cleanup . --remove-unversioned", targetPath, false, token).ConfigureAwait(false);
 
-                svnUI.SvnTreeView?.ClearView();
-                svnUI.SVNCommitTreeDisplay?.ClearView();
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    svnUI.SvnTreeView?.ClearView();
+                    svnUI.SVNCommitTreeDisplay?.ClearView();
 
-                if (svnUI.TreeDisplay != null)
-                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, string.Empty, "TREE", append: false);
+                    if (svnUI.TreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, string.Empty, "TREE", append: false);
 
-                _cachedStatusModule ??= svnManager.GetModule<SVNStatus>();
-                _cachedStatusModule?.ClearCurrentData();
+                    _cachedStatusModule ??= svnManager.GetModule<SVNStatus>();
+                    _cachedStatusModule?.ClearCurrentData();
+                });
 
                 LogToClean("<color=green>Unversioned files removed successfully!</color>");
             }
             catch (OperationCanceledException)
             {
-                LogToClean("<color=yellow>Cleanup cancelled.</color>");
+                LogToClean("<color=yellow>Cleanup cancelled by user.</color>");
             }
             catch (Exception ex)
             {
@@ -236,7 +263,7 @@ namespace SVN.Core
             finally
             {
                 EndOperation();
-                await RefreshStatusAsync(token).ConfigureAwait(false);
+                await RefreshStatusSafeAsync(CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -269,7 +296,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToClean("<color=yellow>Hard reset cancelled.</color>");
+                LogToClean("<color=yellow>Hard reset cancelled by user.</color>");
             }
             catch (Exception ex)
             {
@@ -278,7 +305,7 @@ namespace SVN.Core
             finally
             {
                 EndOperation();
-                await RefreshStatusAsync(token).ConfigureAwait(false);
+                await RefreshStatusSafeAsync(CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -310,8 +337,7 @@ namespace SVN.Core
 
                 LogToClean("Re-aligning working copy structure...");
                 token.ThrowIfCancellationRequested();
-                string safeUrl = currentUrl.Replace("\"", "\\\"");
-                await SvnRunner.RunAsync($"switch \"{safeUrl}\" . --ignore-ancestry", targetPath, true, token).ConfigureAwait(false);
+                await SvnRunner.RunAsync($"switch \"{currentUrl}\" . --ignore-ancestry", targetPath, true, token).ConfigureAwait(false);
 
                 LogToClean("Synchronizing with repository...");
                 token.ThrowIfCancellationRequested();
@@ -325,7 +351,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToClean("<color=yellow>Repair cancelled.</color>");
+                LogToClean("<color=yellow>Repair cancelled by user.</color>");
             }
             catch (Exception ex)
             {
@@ -335,7 +361,7 @@ namespace SVN.Core
             finally
             {
                 EndOperation();
-                await RefreshStatusAsync(token).ConfigureAwait(false);
+                await RefreshStatusSafeAsync(CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -368,29 +394,32 @@ namespace SVN.Core
             return path;
         }
 
-        private async Task RefreshStatusAsync(CancellationToken token)
+        private async Task RefreshStatusSafeAsync(CancellationToken token = default)
         {
-            if (token.IsCancellationRequested) return;
-            try { await svnManager.RefreshStatus(force: true).ConfigureAwait(false); }
-            catch (Exception ex) { SVNLogBridge.LogError($"Failed to refresh status: {ex.Message}"); }
+            try
+            {
+                await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"Failed to refresh status: {ex.Message}");
+            }
         }
 
         private bool TryBeginOperation()
         {
-            if (Interlocked.Exchange(ref _operationRunning, 1) == 1)
+            if (!TryStart())
             {
                 LogToClean("<color=yellow>[SVN] Operation already running...</color>");
                 return false;
             }
 
-            IsProcessing = true;
             return true;
         }
 
         private void EndOperation()
         {
-            IsProcessing = false;
-            Interlocked.Exchange(ref _operationRunning, 0);
+            End();
         }
 
         #endregion

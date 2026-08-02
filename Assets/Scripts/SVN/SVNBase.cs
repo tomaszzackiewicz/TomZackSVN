@@ -1,6 +1,7 @@
 using System;
 using System.Text.RegularExpressions;
 using System.Threading;
+using TMPro;
 
 namespace SVN.Core
 {
@@ -9,29 +10,33 @@ namespace SVN.Core
         protected SVNManager svnManager;
         protected SVNUI svnUI;
 
-        private int _isProcessingFlag = 0;
+        private int _isProcessing = 0; // 0 = false, 1 = true
+
+        public bool IsProcessing
+        {
+            get => Interlocked.CompareExchange(ref _isProcessing, 0, 0) == 1;
+            set => Interlocked.Exchange(ref _isProcessing, value ? 1 : 0);
+        }
 
         protected bool TryStart()
-            => Interlocked.Exchange(ref _isProcessingFlag, 1) == 0;
+        {
+            return Interlocked.CompareExchange(ref _isProcessing, 1, 0) == 0;
+        }
 
         protected void End()
-            => Interlocked.Exchange(ref _isProcessingFlag, 0);
-
-        protected bool IsProcessing
         {
-            get => svnManager.IsProcessing;
-            set => svnManager.IsProcessing = value;
+            Interlocked.Exchange(ref _isProcessing, 0);
         }
 
         protected SVNBase(SVNUI ui, SVNManager manager)
         {
+            if (ui == null)
+                throw new ArgumentNullException(nameof(ui), $"{GetType().Name}: UI is NULL!");
+            if (manager == null)
+                throw new ArgumentNullException(nameof(manager), $"{GetType().Name}: Manager is NULL!");
+
             svnUI = ui;
             svnManager = manager;
-
-            if (ui == null || manager == null)
-            {
-                SVNLogBridge.LogError($"{GetType().Name}: UI or Manager is NULL!");
-            }
         }
 
         protected string StripBanner(string text)
@@ -45,7 +50,7 @@ namespace SVN.Core
                 new[] { "\n", "\r" },
                 StringSplitOptions.RemoveEmptyEntries);
 
-            var finalLines = new System.Collections.Generic.List<string>();
+            var finalLines = new System.Collections.Generic.List<string>(lines.Length);
 
             foreach (var line in lines)
             {
@@ -59,7 +64,7 @@ namespace SVN.Core
             return string.Join("\n", finalLines);
         }
 
-        protected virtual TMPro.TMP_Text GetConsole()
+        protected virtual TMP_Text GetConsole()
         {
             return null;
         }

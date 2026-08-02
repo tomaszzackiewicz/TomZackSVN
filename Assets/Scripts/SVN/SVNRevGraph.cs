@@ -69,7 +69,7 @@ namespace SVN.Core
         {
             if (nodes == null || nodes.Count == 0)
             {
-                SVNLogBridge.LogLine("[SVN] No revisions to render.");
+                SVNLogBridge.LogToOutput("[SVN] No revisions to render.");
                 return;
             }
 
@@ -92,7 +92,7 @@ namespace SVN.Core
             foreach (var node in workingNodes)
                 RenderNode(node, branchColumns, columnBranches, columnCount);
 
-            SVNLogBridge.LogLine($"[SVN] Render complete. {_instantiatedItems.Count} revisions rendered.");
+            SVNLogBridge.LogToOutput($"[SVN] Render complete. {_instantiatedItems.Count} revisions rendered.");
         }
 
         private void ClearGraph()
@@ -373,7 +373,7 @@ namespace SVN.Core
         {
             if (svnUI.GraphItemPrefab == null || svnUI.GraphContainer == null)
             {
-                SVNLogBridge.LogError("[SVN] GraphItemPrefab or GraphContainer is null.");
+                SVNLogBridge.LogErrorToOutput("[SVN] GraphItemPrefab or GraphContainer is null.");
                 return;
             }
 
@@ -602,7 +602,7 @@ namespace SVN.Core
         {
             if (_instantiatedItems == null || _instantiatedItems.Count == 0)
             {
-                SVNLogBridge.LogError("[SVN] Graph revision is empty.");
+                SVNLogBridge.LogErrorToOutput("[SVN] Graph revision is empty.");
                 return;
             }
 
