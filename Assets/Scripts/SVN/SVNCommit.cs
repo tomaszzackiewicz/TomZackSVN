@@ -552,7 +552,7 @@ namespace SVN.Core
             LogToConsole($"<b>[4/4]</b> Sending {list.Count} target(s) to server (please wait)...");
             string targetsFile = Path.Combine(Path.GetTempPath(), $"svn_targets_{Guid.NewGuid():N}.txt");
 
-            await Task.Run(() => File.WriteAllLines(targetsFile, list));
+            await Task.Run(() => File.WriteAllLines(targetsFile, list, new UTF8Encoding(false)));
 
             try
             {
@@ -582,7 +582,7 @@ namespace SVN.Core
                         errorSb.AppendLine(line);
 
                     ProcessCommitLiveLine(line);
-                }, token).ConfigureAwait(false);
+                }, token);
 
                 return success ? "Committed revision" : (errorSb.Length > 0 ? errorSb.ToString() : "Operation failed or cancelled.");
             }
@@ -703,7 +703,7 @@ namespace SVN.Core
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, timeoutCts.Token);
             try
             {
-                await SvnRunner.RunAsync("cleanup", root, false, linkedCts.Token).ConfigureAwait(false);
+                await SvnRunner.RunAsync("cleanup", root, false, linkedCts.Token);
                 LogToConsole("<color=green>Cleanup complete</color>");
                 return true;
             }
@@ -717,16 +717,55 @@ namespace SVN.Core
         private async Task ScheduleMissingForDeletion(string root, IEnumerable<string> files, CancellationToken token)
         {
             LogToConsole("<b>[2/4]</b> Scheduling missing files for deletion...");
-            var deletions = files.Select(FormatPathForSvn).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (deletions.Count == 0)
+
+            if (files == null || !files.Any())
             {
                 LogToConsole("<color=green>No missing files to delete.</color>");
                 return;
             }
 
-            LogToConsole($"Marking {deletions.Count} missing file(s) as deleted...");
+            List<string> filteredDeletions = null;
+            int rawCount = 0;
+
+            await Task.Run(() =>
+            {
+                var normalized = files
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Select(p => p.Trim().Replace('\\', '/').TrimEnd('/'))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                rawCount = normalized.Count;
+                filteredDeletions = new List<string>(rawCount);
+
+                foreach (var path in normalized)
+                {
+                    bool isNested = filteredDeletions.Any(parent =>
+                        path.StartsWith(parent + "/", StringComparison.OrdinalIgnoreCase));
+
+                    if (!isNested)
+                    {
+                        filteredDeletions.Add(path);
+                    }
+                }
+            }, token);
+
+            if (filteredDeletions.Count == 0)
+            {
+                LogToConsole("<color=green>No missing files to delete.</color>");
+                return;
+            }
+
+            int skippedNested = rawCount - filteredDeletions.Count;
+            LogToConsole($"Marking {filteredDeletions.Count} missing item(s) as deleted..." +
+                (skippedNested > 0 ? $" <color=yellow>(Optimized: skipped {skippedNested} nested item(s) to prevent SVN conflicts)</color>" : ""));
+
+            var formattedTargets = filteredDeletions.Select(FormatPathForSvn).ToList();
+
             string file = Path.Combine(Path.GetTempPath(), $"svn_delete_{Guid.NewGuid():N}.txt");
-            await Task.Run(() => File.WriteAllLines(file, deletions));
+
+            await Task.Run(() => File.WriteAllLines(file, formattedTargets, new UTF8Encoding(false)), token);
 
             try
             {
@@ -786,11 +825,11 @@ namespace SVN.Core
             string file = Path.Combine(Path.GetTempPath(), $"svn_add_{Guid.NewGuid():N}.txt");
 
             var escapedForSvn = validAdditions.Select(FormatPathForSvn).ToList();
-            await Task.Run(() => File.WriteAllLines(file, escapedForSvn));
+            await Task.Run(() => File.WriteAllLines(file, escapedForSvn, new UTF8Encoding(false)), token);
 
             try
             {
-                await SvnRunner.RunAsync($"add --force --parents --targets \"{file}\"", root, false, token).ConfigureAwait(false);
+                await SvnRunner.RunAsync($"add --force --parents --targets \"{file}\"", root, false, token);
             }
             finally
             {

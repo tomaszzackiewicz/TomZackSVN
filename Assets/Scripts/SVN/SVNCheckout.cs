@@ -807,7 +807,7 @@ namespace SVN.Core
             catch (Exception ex) { HandleOperationException(ex); }
         }
 
-        private async Task ExportRevisionAsync(string revision)
+        public async Task ExportRevisionAsync(string revision)
         {
             if (!TryValidateExportCommon(out string url, out string fullPath, out string keyPath, out string errorMsg))
             {

@@ -20,6 +20,8 @@ namespace SVN.Core
         [SerializeField] private GameObject blamePanel = null;
         [SerializeField] private GameObject revGraphPanel = null;
         [SerializeField] private GameObject cleanPanel = null;
+        [SerializeField] private GameObject lockPanel = null;
+        [SerializeField] private GameObject revisionPanel = null;
 
         private SVNUI svnUI;
         private SVNManager svnManager;
@@ -50,6 +52,7 @@ namespace SVN.Core
             Button_CloseBlame();
             Button_CloseRevGraph();
             Button_CloseClean();
+            Button_CloseLock();
         }
 
         public void Button_OpenHelp()
@@ -348,6 +351,42 @@ namespace SVN.Core
             if (cleanPanel != null)
             {
                 cleanPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenLock()
+        {
+            ResetAllPanels();
+
+            if (lockPanel != null)
+            {
+                lockPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseLock()
+        {
+            if (lockPanel != null)
+            {
+                lockPanel.SetActive(false);
+            }
+        }
+
+        public void Button_OpenRevision()
+        {
+            ResetAllPanels();
+
+            if (revisionPanel != null)
+            {
+                revisionPanel.SetActive(true);
+            }
+        }
+
+        public void Button_CloseRevision()
+        {
+            if (revisionPanel != null)
+            {
+                revisionPanel.SetActive(false);
             }
         }
 

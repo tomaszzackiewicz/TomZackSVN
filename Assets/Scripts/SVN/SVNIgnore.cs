@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -16,9 +17,6 @@ namespace SVN.Core
         private readonly object _cacheLock = new object();
         private int _processingFlag;
         private readonly SynchronizationContext _mainThreadContext;
-
-        private static readonly Regex IgnoreRuleRegex = new Regex(@"^[^\s]+$", RegexOptions.Compiled);
-        private static readonly Regex WildcardRegex = new Regex(@"[\*\?]", RegexOptions.Compiled);
 
         public SVNIgnore(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -60,6 +58,11 @@ namespace SVN.Core
         public void RefreshIgnoredPanel()
         {
             SafeFireAndForget(RefreshIgnoredPanelAsync);
+        }
+
+        public void OpenIgnoredFilesInEditor()
+        {
+            SafeFireAndForget(OpenIgnoredFilesInEditorAsync);
         }
 
         public void ReloadIgnoreRules()
@@ -185,29 +188,7 @@ namespace SVN.Core
                     }
                 }
 
-                sb.AppendLine("\n<color=#FF4444><b>Files currently ignored on disk:</b></color>");
-
-                int count = 0;
-                if (activeRules.Count > 0 && Directory.Exists(root))
-                {
-                    string[] allEntries = Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories);
-                    foreach (var entry in allEntries)
-                    {
-                        string name = Path.GetFileName(entry);
-                        string relPath = entry.Replace(root, "").TrimStart('\\', '/').Replace('\\', '/');
-                        if (relPath.Contains(".svn")) continue;
-
-                        if (IsIgnoredByRules(name, relPath, activeRules))
-                        {
-                            sb.AppendLine($"<color=#555555>[I]</color> <color=#FFFFFF>{relPath}</color>");
-                            count++;
-                            if (count > 200) { sb.AppendLine("<color=#FFFF00>... truncated</color>"); break; }
-                        }
-                    }
-                }
-
-                if (count == 0 && activeRules.Count > 0)
-                    sb.AppendLine("<color=green>No files match the active rules.</color>");
+                sb.AppendLine("\n<color=yellow><i>Use 'Open in Editor' to generate and view the full list of ignored files on disk.</i></color>");
 
                 string result = sb.ToString();
                 PostUI(() =>
@@ -219,6 +200,126 @@ namespace SVN.Core
             finally
             {
                 ExitProcessing();
+            }
+        }
+
+        private async Task OpenIgnoredFilesInEditorAsync()
+        {
+            if (!TryEnterProcessing())
+            {
+                PostUI(() => UpdateStatusInUI("<color=orange>Please wait... Another operation is currently running.</color>"));
+                return;
+            }
+
+            try
+            {
+                string root = svnManager?.WorkingDir;
+                if (string.IsNullOrWhiteSpace(root))
+                {
+                    PostUI(() => UpdateStatusInUI("Error: Working directory not set!"));
+                    return;
+                }
+
+                PostUI(() => UpdateStatusInUI("<color=yellow><b>[DISK SCAN]</b> Scanning all local files against ignore rules...\nThis may take 10-30 seconds for large projects. Please wait.</color>"));
+
+                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root).ConfigureAwait(false);
+                lock (_cacheLock)
+                {
+                    if (_cachedIgnoreRules != null)
+                    {
+                        foreach (var fileRule in _cachedIgnoreRules)
+                        {
+                            if (!activeRules.Contains(fileRule, StringComparer.OrdinalIgnoreCase))
+                                activeRules.Add(fileRule);
+                        }
+                    }
+                }
+
+                var fullIgnoredList = new List<string>();
+
+                if (activeRules.Count > 0 && Directory.Exists(root))
+                {
+                    await Task.Run(() =>
+                    {
+                        string[] allEntries = Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories);
+                        foreach (var entry in allEntries)
+                        {
+                            string name = Path.GetFileName(entry);
+                            string relPath = entry.Replace(root, "").TrimStart('\\', '/').Replace('\\', '/');
+                            if (relPath.Contains(".svn")) continue;
+
+                            if (IsIgnoredByRules(name, relPath, activeRules))
+                            {
+                                fullIgnoredList.Add(relPath);
+                            }
+                        }
+                    }).ConfigureAwait(false);
+                }
+
+                if (fullIgnoredList.Count == 0)
+                {
+                    PostUI(() => UpdateStatusInUI("No ignored files found to export."));
+                    return;
+                }
+
+                OpenFullIgnoredListInEditor(fullIgnoredList);
+
+                PostUI(() => UpdateStatusInUI($"<color=green>Success!</color> Exported {fullIgnoredList.Count} ignored files to text editor."));
+            }
+            catch (Exception ex)
+            {
+                PostUI(() => UpdateStatusInUI($"<color=red>Error opening editor:</color> {ex.Message}"));
+            }
+            finally
+            {
+                ExitProcessing();
+            }
+        }
+
+        private void OpenFullIgnoredListInEditor(List<string> ignoredFiles)
+        {
+            try
+            {
+                string tempFilePath = Path.Combine(Path.GetTempPath(), $"svn_ignored_list_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                var fileSb = new StringBuilder();
+
+                fileSb.AppendLine($"# SVN Ignored Files Report");
+                fileSb.AppendLine($"# Root: {svnManager?.WorkingDir}");
+                fileSb.AppendLine($"# Generated: {DateTime.Now:G}");
+                fileSb.AppendLine($"# Total ignored items: {ignoredFiles.Count}");
+                fileSb.AppendLine(new string('-', 60));
+
+                foreach (var path in ignoredFiles)
+                {
+                    fileSb.AppendLine(path);
+                }
+
+                File.WriteAllText(tempFilePath, fileSb.ToString(), new UTF8Encoding(false));
+
+                string editorPath = svnManager?.MergeToolPath;
+
+                if (!string.IsNullOrWhiteSpace(editorPath) && File.Exists(editorPath))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = editorPath,
+                        Arguments = $"\"{tempFilePath}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+                }
+                else
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = tempFilePath,
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN Ignore] Could not open text editor: {ex.Message}");
             }
         }
 

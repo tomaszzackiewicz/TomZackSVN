@@ -25,6 +25,59 @@ namespace SVN.Core
         private static string _fullLogText = "";
         private static List<string> _allLines = new();
 
+        // Flaga zabezpieczająca przed wielokrotną rejestracją eventów
+        private static bool _globalHandlingEnabled = false;
+
+        /// <summary>
+        /// Włącza globalne przechwytywanie wyjątków z Unity i wątków C#.
+        /// Wywołaj to np. w metodzie Awake() lub Start() głównego menedżera.
+        /// </summary>
+        public static void EnableGlobalExceptionHandling()
+        {
+            if (_globalHandlingEnabled) return;
+
+            Application.logMessageReceivedThreaded += HandleUnityLog;
+            AppDomain.CurrentDomain.UnhandledException += HandleAppDomainException;
+            TaskScheduler.UnobservedTaskException += HandleUnobservedTaskException;
+
+            _globalHandlingEnabled = true;
+            LogLine("<color=#00FF99>[SVNLogBridge] Global exception handling enabled.</color>", true, "INFO");
+        }
+
+        public static void DisableGlobalExceptionHandling()
+        {
+            if (!_globalHandlingEnabled) return;
+
+            Application.logMessageReceivedThreaded -= HandleUnityLog;
+            AppDomain.CurrentDomain.UnhandledException -= HandleAppDomainException;
+            TaskScheduler.UnobservedTaskException -= HandleUnobservedTaskException;
+
+            _globalHandlingEnabled = false;
+        }
+
+        private static void HandleUnityLog(string logString, string stackTrace, LogType type)
+        {
+            if (type == LogType.Exception || type == LogType.Error)
+            {
+                string msg = $"<color=#FF0000><b>[UNITY {type}]</b> {logString}</color>\n<color=#AAAAAA>{stackTrace}</color>";
+                LogLine(msg, true, type.ToString());
+            }
+        }
+
+        private static void HandleAppDomainException(object sender, UnhandledExceptionEventArgs e)
+        {
+            if (e.ExceptionObject is Exception ex)
+            {
+                LogException(ex, true, "UNHANDLED_DOMAIN");
+            }
+        }
+
+        private static void HandleUnobservedTaskException(object sender, UnobservedTaskExceptionEventArgs e)
+        {
+            LogException(e.Exception, true, "UNOBSERVED_TASK");
+            e.SetObserved(); // Zapobiega scrashowaniu aplikacji
+        }
+
         public static void LogToFile(string message, string level = "INFO")
         {
             if (string.IsNullOrEmpty(message)) return;
@@ -46,7 +99,7 @@ namespace SVN.Core
                 return;
             }
 
-            bool forceFlush = level == "ERROR" || level == "EXCEPTION";
+            bool forceFlush = level == "ERROR" || level == "EXCEPTION" || level == "UNHANDLED_DOMAIN" || level == "UNOBSERVED_TASK";
             int count;
             lock (_bufferLock)
             {
@@ -70,11 +123,35 @@ namespace SVN.Core
             LogLine(errorMessage, append, "ERROR");
         }
 
-        public static void LogException(Exception ex, bool append = true)
+        /// <summary>
+        /// Zmieniona i rozbudowana metoda LogException z obsługą InnerException.
+        /// </summary>
+        public static void LogException(Exception ex, bool append = true, string level = "EXCEPTION")
         {
             if (ex == null) return;
-            string message = $"<color=#FF8800><b>[EXCEPTION]</b> {ex.Message}</color>\n<color=#AAAAAA>{ex.StackTrace}</color>";
-            LogLine(message, append, "ERROR");
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine($"<color=#FF0000><b>[{level}] {ex.GetType().Name}:</b> {ex.Message}</color>");
+
+            if (ex.TargetSite != null)
+            {
+                sb.AppendLine($"<color=#FFAA00><b>Target:</b> {ex.TargetSite.DeclaringType?.Name}.{ex.TargetSite.Name}</color>");
+            }
+
+            sb.AppendLine($"<color=#AAAAAA>{ex.StackTrace}</color>");
+
+            // Rekursywne wyciąganie błędów wewnętrznych
+            Exception inner = ex.InnerException;
+            int depth = 1;
+            while (inner != null && depth <= 5) // Limit 5, aby zapobiec potencjalnym nieskończonym pętlom
+            {
+                sb.AppendLine($"<color=#FF5555><b>[INNER {depth}] {inner.GetType().Name}:</b> {inner.Message}</color>");
+                sb.AppendLine($"<color=#AAAAAA>{inner.StackTrace}</color>");
+                inner = inner.InnerException;
+                depth++;
+            }
+
+            LogLine(sb.ToString(), append, level);
         }
 
         public static void UpdateUIField(TextMeshProUGUI uiField, string content, string logLabel = "UI", bool append = false)
@@ -248,6 +325,7 @@ namespace SVN.Core
 
         public static void Shutdown()
         {
+            DisableGlobalExceptionHandling();
             FlushImmediate();
             _flushTimer?.Dispose();
             _flushTimer = null;

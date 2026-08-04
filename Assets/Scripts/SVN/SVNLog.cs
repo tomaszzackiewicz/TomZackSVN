@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -93,33 +94,49 @@ namespace SVN.Core
             }
 
             relativePath = SvnRunner.ForceCleanPath(relativePath);
-            root = SvnRunner.ForceCleanPath(root);
             if (string.IsNullOrWhiteSpace(relativePath))
             {
                 ExitProcessing();
                 return;
             }
 
-            string absolutePath = Path.Combine(root, relativePath);
-            absolutePath = SvnRunner.ForceCleanPath(absolutePath);
+            string targetPath;
+            bool isServerUrl = relativePath.StartsWith("http://") ||
+                               relativePath.StartsWith("https://") ||
+                               relativePath.StartsWith("svn://") ||
+                               relativePath.StartsWith("svn+ssh://");
+
+            if (isServerUrl)
+            {
+                targetPath = relativePath;
+            }
+            else
+            {
+                root = SvnRunner.ForceCleanPath(root);
+                targetPath = Path.Combine(root, relativePath);
+                targetPath = SvnRunner.ForceCleanPath(targetPath);
+            }
 
             int count = ParseLogCount();
             _logCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             var token = _logCts.Token;
 
-            SVNLogBridge.LogLine($"<color=#00FF99>Fetching history for: {absolutePath}</color>", append: false);
+            SVNLogBridge.LogLine($"<color=#00FF99>Fetching history for: {targetPath}</color>", append: false);
 
             try
             {
-                string statusCheck = await SvnRunner.RunAsync($"status \"{absolutePath}\"", root, token: token);
-
-                if (statusCheck != null && statusCheck.TrimStart().StartsWith("?"))
+                if (!isServerUrl)
                 {
-                    SVNLogBridge.LogLine("<color=yellow>File is not under version control – no history available.</color>");
-                    return;
+                    string statusCheck = await SvnRunner.RunAsync($"status \"{targetPath}\"", root, token: token);
+
+                    if (statusCheck != null && statusCheck.TrimStart().StartsWith("?"))
+                    {
+                        SVNLogBridge.LogLine("<color=yellow>File is not under version control – no history available.</color>");
+                        return;
+                    }
                 }
 
-                string output = await SvnRunner.RunAsync($"log -l {count} \"{absolutePath}\"", root, token: token);
+                string output = await SvnRunner.RunAsync($"log -l {count} \"{EscapeSvnArg(targetPath)}\"", root, token: token);
 
                 if (string.IsNullOrWhiteSpace(output))
                 {
@@ -146,6 +163,12 @@ namespace SVN.Core
             {
                 ExitProcessing();
             }
+        }
+
+        private static string EscapeSvnArg(string arg)
+        {
+            if (string.IsNullOrWhiteSpace(arg)) return arg;
+            return arg.Replace("\"", "\\\"");
         }
 
         public static async Task<string> LogAsync(string workingDir, int lastN = 10, CancellationToken token = default)

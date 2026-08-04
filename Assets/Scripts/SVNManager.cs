@@ -188,6 +188,8 @@ namespace SVN.Core
                 RegisterModule(new SVNBar(svnUI, this));
                 RegisterModule(new SVNIgnore(svnUI, this));
                 RegisterModule(new SVNRepoBrowser(svnUI, this));
+                RegisterModule(new SVNLock(svnUI, this));
+                RegisterModule(new SVNRevision(svnUI, this));
 
                 SVNLogBridge.LogToOutput($"<color=green>[SVN] Successfully initialized {_modules.Count} modules manually.</color>");
             }

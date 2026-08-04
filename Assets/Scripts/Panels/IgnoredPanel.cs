@@ -17,4 +17,5 @@ public class IgnoredPanel : MonoBehaviour
     public void Button_RefreshRules() => svnManager.GetModule<SVNIgnore>().RefreshIgnoredPanel();
     public void Button_ReloadIgnoreRules() => svnManager.GetModule<SVNIgnore>().ReloadIgnoreRules();
     public void Button_PushLocalRulesToSvn() => svnManager.GetModule<SVNIgnore>().PushLocalRulesToSvn();
+    public void Button_OpenIgnoredFilesInEditor() => SVNManager.Instance.GetModule<SVNIgnore>().OpenIgnoredFilesInEditor();
 }

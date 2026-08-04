@@ -767,13 +767,11 @@ namespace SVN.Core
                     string line;
                     while ((line = reader.ReadLine()) != null)
                     {
-                        // Znak '*' pod indeksem 8 oznacza nowszą wersję na serwerze
                         if (line.Length > 8 && line[8] == '*')
                         {
                             remoteChangesCount++;
                             string pathPart = line.Substring(9).TrimStart();
 
-                            // Używamy skompilowanego regexa
                             pathPart = RevisionPrefixRegex.Replace(pathPart, "");
                             string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart.TrimEnd());
 

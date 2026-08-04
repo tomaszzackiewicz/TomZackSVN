@@ -14,7 +14,6 @@ namespace SVN.Core
         [Header("Logs")]
         [SerializeField] private TextMeshProUGUI logText;
         [SerializeField] private TMP_InputField logCountInputField;
-        [SerializeField] private TMP_InputField updateRevisionInput;
         [SerializeField] private TextMeshProUGUI checkoutConsoleText;
         [SerializeField] private TextMeshProUGUI outputText;
         [Header("Add New Project Settings (Popup)")]
@@ -110,13 +109,17 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI repoBrowserCurrentPathText;
         [SerializeField] private TMP_InputField repoBrowserFilterInput;
         [SerializeField] private TMP_InputField repoBrowserNewFolderInput;
+        [Header("Lock References")]
+        [SerializeField] private TextMeshProUGUI lockDisplayArea;
+        [Header("Revision References")]
+        [SerializeField] private TMP_InputField updateRevisionInput;
+        [SerializeField] private TextMeshProUGUI revisionDisplayArea;
 
         private Coroutine _notificationCoroutine;
 
         public TextMeshProUGUI TooltipText => tooltipText;
         public TextMeshProUGUI LogText => logText;
         public TMP_InputField LogCountInputField => logCountInputField;
-        public TMP_InputField UpdateRevisionInput => updateRevisionInput;
         public TextMeshProUGUI CheckoutConsoleText => checkoutConsoleText;
         public TMP_InputField AddProjectNameInput => addProjectNameInput;
         public TMP_InputField AddProjectRepoUrlInput => addProjectRepoUrlInput;
@@ -200,6 +203,9 @@ namespace SVN.Core
         public TextMeshProUGUI RepoBrowserCurrentPathText => repoBrowserCurrentPathText;
         public TMP_InputField RepoBrowserFilterInput => repoBrowserFilterInput;
         public TMP_InputField RepoBrowserNewFolderInput => repoBrowserNewFolderInput;
+        public TextMeshProUGUI LockDisplayArea => lockDisplayArea;
+        public TMP_InputField UpdateRevisionInput => updateRevisionInput;
+        public TextMeshProUGUI RevisionDisplayArea => revisionDisplayArea;
 
         private void Awake()
         {

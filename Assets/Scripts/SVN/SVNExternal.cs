@@ -497,5 +497,66 @@ namespace SVN.Core
             SVNLogBridge.LogLine(msg);
             SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, msg, "RESOLVE", true);
         }
+
+        public async void ExportRevision(string revision, string relativePath = "")
+        {
+            try
+            {
+                await ExportRevisionAsync(revision, relativePath);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=#FFAA00>Export Critical Error:</color> {ex.Message}");
+            }
+        }
+
+        public async Task ExportRevisionAsync(string revision, string relativePath = "")
+        {
+            string root = svnManager.WorkingDir;
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+            {
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Working Directory is not set or does not exist!");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(revision))
+            {
+                SVNLogBridge.LogLine("<color=yellow>Warning:</color> No revision specified for export.");
+                return;
+            }
+
+            // 1. Otwarcie okna wyboru folderu docelowego
+            string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select Export Destination Directory", root, false);
+            if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0]))
+            {
+                SVNLogBridge.LogLine("Export revision canceled.");
+                return;
+            }
+
+            string exportFolder = paths[0].Replace('\\', '/');
+
+            // 2. Określenie ścieżki źródłowej (cały katalog roboczy lub konkretny plik/folder)
+            string sourcePath = string.IsNullOrEmpty(relativePath)
+                ? root
+                : Path.Combine(root, relativePath).Replace('\\', '/');
+
+            try
+            {
+                SVNLogBridge.LogLine($"<color=green>Exporting</color> revision r{revision} to: {exportFolder}...");
+
+                // Flaga --force zapobiega błędom, gdy katalog docelowy już istnieje
+                string cmd = $"export -r {revision} \"{sourcePath}\" \"{exportFolder}\" --force";
+                await SvnRunner.RunAsync(cmd, root);
+
+                SVNLogBridge.LogLine($"<color=green>Export Success:</color> Revision r{revision} exported successfully to {exportFolder}");
+
+                // Opcjonalne otwarcie folderu z wyeksportowanymi plikami w Eksploratorze Windows
+                using var process = Process.Start(new ProcessStartInfo("explorer.exe", exportFolder.Replace('/', '\\')) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogLine($"<color=#FFAA00>Export Error:</color> {ex.Message}");
+            }
+        }
     }
 }

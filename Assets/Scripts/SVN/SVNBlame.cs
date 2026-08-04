@@ -140,7 +140,7 @@ namespace SVN.Core
 
         private async Task ShowBlameInternal(string relativePath, CancellationToken token, bool forceMainConsole = false)
         {
-            bool isServerPath = relativePath.StartsWith("/") || relativePath.StartsWith("http");
+            bool isServerPath = relativePath.StartsWith("/") || relativePath.StartsWith("http") || relativePath.StartsWith("svn");
 
             if (string.IsNullOrWhiteSpace(svnManager?.WorkingDir) && !isServerPath)
             {
@@ -163,16 +163,24 @@ namespace SVN.Core
 
             if (isServerPath)
             {
-                string repoUrl = svnManager.RepositoryUrl?.TrimEnd('/');
-                if (string.IsNullOrEmpty(repoUrl))
+                string fullUrl;
+
+                if (relativePath.Contains("://"))
                 {
-                    PostUI(() => DisplayBlameMessage("<color=#FFAA00>Error:</color> Cannot blame server path, Repository URL is empty."));
-                    return;
+                    fullUrl = relativePath;
+                }
+                else
+                {
+                    string repoUrl = svnManager.RepositoryUrl?.TrimEnd('/');
+                    if (string.IsNullOrEmpty(repoUrl))
+                    {
+                        PostUI(() => DisplayBlameMessage("<color=#FFAA00>Error:</color> Cannot blame server path, Repository URL is empty."));
+                        return;
+                    }
+                    fullUrl = repoUrl + relativePath;
                 }
 
-                string fullUrl = relativePath.StartsWith("http") ? relativePath : repoUrl + relativePath;
-                commandArgs = $"blame \"{fullUrl}\"";
-                workDir = workDir ?? Environment.CurrentDirectory;
+                commandArgs = $"blame \"{EscapeSvnArg(fullUrl)}\"";
             }
             else
             {
@@ -292,8 +300,8 @@ namespace SVN.Core
 
                     if (isServerPath)
                     {
-                        string repoUrl = svnManager?.RepositoryUrl?.TrimEnd('/');
-                        targetPathForBlame = relativePath.StartsWith("http") ? relativePath : repoUrl + relativePath;
+                        if (relativePath.Contains("://")) targetPathForBlame = relativePath;
+                        else targetPathForBlame = svnManager.RepositoryUrl?.TrimEnd('/') + relativePath;
                     }
 
                     if (blameToolPath.IndexOf("TortoiseProc", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -375,6 +383,9 @@ namespace SVN.Core
                 });
             }
         }
+
+        private static string EscapeSvnArg(string arg) =>
+            string.IsNullOrWhiteSpace(arg) ? arg : arg.Replace("\"", "\\\"");
 
         private string GetBlameToolPath()
         {
@@ -498,8 +509,5 @@ namespace SVN.Core
                 Canvas.ForceUpdateCanvases();
             }
         }
-
-        private static string EscapeSvnArg(string arg) =>
-            string.IsNullOrWhiteSpace(arg) ? arg : arg.Replace("\"", "\\\"");
     }
 }

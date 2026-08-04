@@ -9,9 +9,6 @@ namespace SVN.Core
         private SVNManager svnManager;
         private SVNTerminal terminal;
 
-        private float _lastUpdateToRevClickTime;
-        private const float DoubleClickThreshold = 5.0f;
-        private string _pendingRevision = null;
         private bool isExpanded = false;
 
         private void Start()
@@ -63,12 +60,10 @@ namespace SVN.Core
             }
         }
 
-        public void ExecuteTerminalCommand()
-        {
-            terminal?.ExecuteTerminalCommand();
-        }
+        public void ExecuteTerminalCommand() => terminal?.ExecuteTerminalCommand();
 
         public void Button_TerminalSubmit() => ExecuteTerminalCommand();
+
         public void Button_CancelTerminalCommand()
         {
             terminal?.Cancel();
@@ -78,6 +73,7 @@ namespace SVN.Core
                 svnUI.TerminalInputField.ActivateInputField();
             }
         }
+
         public void Button_ClearTerminalLog()
         {
             terminal?.ClearLog();
@@ -87,6 +83,7 @@ namespace SVN.Core
                 svnUI.TerminalInputField.ActivateInputField();
             }
         }
+
         public void Button_Load() => svnManager.GetModule<SVNLoad>().LoadRepoPathAndRefresh();
         public void Button_Update() => svnManager.GetModule<SVNUpdate>().Update();
         public void Button_CancelUpdate() => svnManager.GetModule<SVNUpdate>().CancelUpdate();
@@ -95,11 +92,7 @@ namespace SVN.Core
         public void Button_RevertAllMissing() => svnManager.GetModule<SVNCommit>().ExecuteRevertAllMissing();
         public void Button_ShowOnlyIgnored() => svnManager.GetModule<SVNIgnore>().RefreshIgnoredPanel();
         public void Button_Explore() => svnManager.GetModule<SVNExternal>().OpenInExplorer();
-        public void Button_Lock() => svnManager.GetModule<SVNLock>().LockModifiedButton();
-        public void Button_Unlock() => svnManager.GetModule<SVNLock>().UnlockAllButton();
         public void Button_ShowToCommit() => svnManager.GetModule<SVNCommit>().ShowWhatWillBeCommitted();
-        public void Button_ShowLocks() => svnManager.GetModule<SVNLock>().ShowAllLocksButton();
-        public void Button_CleanupLocks() => svnManager.GetModule<SVNLock>().CleanupLocksButton();
         public void Button_CheckRemoteModifications() => svnManager.GetModule<SVNUpdate>().CheckRemoteModificationsButton();
         public void Button_OpenLogs() => SVNLogger.OpenLogFolder();
         public void Button_Revert() => svnManager.GetModule<SVNRevert>().RevertAll();
@@ -109,60 +102,6 @@ namespace SVN.Core
         public void Button_DiscardUntracked() => svnManager.GetModule<SVNClean>().DiscardUnversioned();
         public void Button_GoUpRepoBrowser() => svnManager.GetModule<SVNRepoBrowser>().GoUp();
         public void Button_CollapsAll() => svnManager.GetModule<SVNRepoBrowser>().CollapseAllToRoot();
-        public void Button_ClearLocksView()
-        {
-            if (svnUI.LogText != null)
-            {
-                SVNLogBridge.UpdateUIField(svnUI.LogText, string.Empty, "LOCKS_VIEW", append: false);
-                SVNLogBridge.LogLine("<color=#777777>Locks view cleared.</color>");
-            }
-        }
         public void Button_TestConnection() => svnManager.GetModule<SVNExternal>().TestConnection();
-
-        public async void Button_UpdateToRevision()
-        {
-            string rev = svnUI.UpdateRevisionInput?.text?.Trim();
-
-            if (string.IsNullOrWhiteSpace(rev))
-            {
-                svnManager.GetModule<SVNUpdate>().Update();
-                return;
-            }
-
-            var updateModule = svnManager.GetModule<SVNUpdate>();
-
-            bool hasModifications = await updateModule.HasLocalModificationsAsync(svnManager.WorkingDir);
-            if (hasModifications)
-            {
-                SVNLogBridge.LogLine(
-                    "<color=#FFAA00>Cannot update to a specific revision while you have uncommitted local changes. " +
-                    "Please commit or revert them first.</color>",
-                    append: true);
-                return;
-            }
-
-            float timeSinceLastClick = Time.time - _lastUpdateToRevClickTime;
-
-            if (timeSinceLastClick < DoubleClickThreshold && _pendingRevision == rev)
-            {
-                _pendingRevision = null;
-                updateModule.UpdateToRevision(rev);
-            }
-            else
-            {
-                _lastUpdateToRevClickTime = Time.time;
-                _pendingRevision = rev;
-                SVNLogBridge.LogLine(
-                    $"<color=#FFAA00>Click again within 5 seconds to confirm update to revision {rev}. " +
-                    "This will overwrite local files.</color>",
-                    append: true);
-            }
-        }
-
-        public void Button_ExportRevision()
-        {
-            string rev = svnUI.UpdateRevisionInput?.text?.Trim();
-            svnManager.GetModule<SVNCheckout>().ExportRevision(rev);
-        }
     }
 }

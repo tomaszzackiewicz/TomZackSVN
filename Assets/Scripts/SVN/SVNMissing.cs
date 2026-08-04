@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -105,28 +106,45 @@ namespace SVN.Core
                 .Where(x => x.Value.status.Contains("!"))
                 .Select(x => x.Key)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderByDescending(x => x.Length)
                 .ToList();
 
             if (missingFiles.Count == 0)
                 return 0;
 
-            SVNLogBridge.LogLine($"Found <b>{missingFiles.Count}</b> missing files. Removing from SVN index...");
+            var cleanMissingFiles = missingFiles
+                .Select(p => SvnRunner.NormalizeRepositoryPath(p.Trim().Replace('\\', '/')))
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .ToList();
 
-            int total = missingFiles.Count;
+            var sortedMissing = cleanMissingFiles.OrderBy(d => d, StringComparer.OrdinalIgnoreCase).ToList();
+
+            var filteredMissing = new List<string>(sortedMissing.Count);
+            foreach (var path in sortedMissing)
+            {
+                bool isNested = filteredMissing.Any(parent => path.StartsWith(parent + "/", StringComparison.OrdinalIgnoreCase));
+                if (!isNested)
+                {
+                    filteredMissing.Add(path);
+                }
+            }
+
+            int skippedNested = cleanMissingFiles.Count - filteredMissing.Count;
+            SVNLogBridge.LogLine($"Found <b>{cleanMissingFiles.Count}</b> missing items." + (skippedNested > 0 ? $" <color=yellow>(Optimized: skipped {skippedNested} nested files to prevent errors)</color>" : ""));
+            SVNLogBridge.LogLine("Removing from SVN index...");
+
+            int total = filteredMissing.Count;
             int processed = 0;
             int failed = 0;
 
             for (int i = 0; i < total; i += BatchSize)
             {
                 token.ThrowIfCancellationRequested();
-                var batch = missingFiles.Skip(i).Take(BatchSize).ToList();
+                var batch = filteredMissing.Skip(i).Take(BatchSize).ToList();
                 string tempFile = Path.Combine(Path.GetTempPath(), $"svn_missing_{Guid.NewGuid():N}.txt");
 
                 try
                 {
                     File.WriteAllLines(tempFile, batch, new UTF8Encoding(false));
-
                     await SvnRunner.RunAsync($"delete --force --targets \"{tempFile}\"", root, false, token);
                     processed += batch.Count;
                 }
@@ -136,8 +154,20 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
-                    failed += batch.Count;
-                    SVNLogBridge.LogError($"[SVN] Batch delete error: {ex.Message}");
+                    SVNLogBridge.LogLine($"<color=yellow>Batch failed ({ex.Message}). Retrying files individually...</color>");
+
+                    foreach (var singleFile in batch)
+                    {
+                        try
+                        {
+                            await SvnRunner.RunAsync($"delete --force \"{singleFile}\"", root, false, token);
+                            processed++;
+                        }
+                        catch
+                        {
+                            failed++;
+                        }
+                    }
                 }
                 finally
                 {
