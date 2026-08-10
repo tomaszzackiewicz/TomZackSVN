@@ -1,5 +1,4 @@
 using SVN.Core;
-using System;
 using UnityEngine;
 
 public class BranchPanel : MonoBehaviour
@@ -17,7 +16,6 @@ public class BranchPanel : MonoBehaviour
             SVNLogBridge.UpdateUIField(svnUI.BranchTagConsoleText, "", "BRANCH_TAG", append: false);
         }
 
-        //_ = svnManager.GetModule<SVNBranchTag>().RefreshUnifiedList();
         var branchTag = SVNManager.Instance?.GetModule<SVNBranchTag>();
         if (branchTag != null)
             _ = branchTag.RefreshIfEmpty();

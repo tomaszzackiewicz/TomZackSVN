@@ -264,7 +264,7 @@ namespace SVN.Core
 
                 string colOK = "#00E5FF";
                 string colWARN = "#FFCC00";
-                string colERR = "#FF5555";
+                string colERR = "#FF9900";
                 string colSTEP = "#00008B";
 
                 report.AppendLine($"Session Token: {svnManager.SessionToken}");
@@ -472,7 +472,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogLine($"<color=#FF5555>[ERROR]</color> Diagnostics crashed: {ex.Message}");
+                SVNLogBridge.LogLine($"<color=#FF9900>[ERROR]</color> Diagnostics crashed: {ex.Message}");
             }
             finally
             {
@@ -525,7 +525,6 @@ namespace SVN.Core
                 return;
             }
 
-            // 1. Otwarcie okna wyboru folderu docelowego
             string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select Export Destination Directory", root, false);
             if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0]))
             {
@@ -535,7 +534,6 @@ namespace SVN.Core
 
             string exportFolder = paths[0].Replace('\\', '/');
 
-            // 2. Określenie ścieżki źródłowej (cały katalog roboczy lub konkretny plik/folder)
             string sourcePath = string.IsNullOrEmpty(relativePath)
                 ? root
                 : Path.Combine(root, relativePath).Replace('\\', '/');
@@ -544,13 +542,11 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogLine($"<color=green>Exporting</color> revision r{revision} to: {exportFolder}...");
 
-                // Flaga --force zapobiega błędom, gdy katalog docelowy już istnieje
                 string cmd = $"export -r {revision} \"{sourcePath}\" \"{exportFolder}\" --force";
                 await SvnRunner.RunAsync(cmd, root);
 
                 SVNLogBridge.LogLine($"<color=green>Export Success:</color> Revision r{revision} exported successfully to {exportFolder}");
 
-                // Opcjonalne otwarcie folderu z wyeksportowanymi plikami w Eksploratorze Windows
                 using var process = Process.Start(new ProcessStartInfo("explorer.exe", exportFolder.Replace('/', '\\')) { UseShellExecute = true });
             }
             catch (Exception ex)

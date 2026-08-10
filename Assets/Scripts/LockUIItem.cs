@@ -11,20 +11,18 @@ public class LockUIItem : MonoBehaviour
 
     public Button stealButton;
     public TextMeshProUGUI stealButtonText;
-    public Button breakButton; // DODANO: Przypisz nowy przycisk z Inspectora
-    public TextMeshProUGUI breakButtonText; // DODANO: Przypisz text dziecka nowego przycisku
+    public Button breakButton;
+    public TextMeshProUGUI breakButtonText;
 
     private string _path;
     private Action _stealAction;
-    private Action _breakAction; // DODANO
+    private Action _breakAction;
     private TMP_Text _panelConsole;
 
-    // Zmienne dla Steal
     private bool _awaitingStealConfirmation = false;
     private float _stealTimer = 0f;
     private Color _originalStealColor;
 
-    // Zmienne dla Break
     private bool _awaitingBreakConfirmation = false;
     private float _breakTimer = 0f;
     private Color _originalBreakColor;
@@ -35,7 +33,7 @@ public class LockUIItem : MonoBehaviour
     {
         _path = path;
         _stealAction = onStealAction;
-        _breakAction = onBreakAction; // Przypisanie akcji Break
+        _breakAction = onBreakAction;
         _panelConsole = panelConsole;
 
         ResetStealState();
@@ -63,11 +61,9 @@ public class LockUIItem : MonoBehaviour
         if (commentText != null)
             commentText.text = string.IsNullOrEmpty(safeComment) ? "" : $"<i>\"{safeComment}\"</i>";
 
-        // Aktywacja przycisków tylko dla cudzych locków
         stealButton.gameObject.SetActive(!isMe);
         if (breakButton != null) breakButton.gameObject.SetActive(!isMe);
 
-        // Podpięcie kliknięć
         stealButton.onClick.RemoveAllListeners();
         stealButton.onClick.AddListener(OnStealClick);
 
@@ -76,7 +72,6 @@ public class LockUIItem : MonoBehaviour
             breakButton.onClick.RemoveAllListeners();
             breakButton.onClick.AddListener(OnBreakClick);
 
-            // Wymuszenie pełnej widoczności tła
             var colors = breakButton.colors;
             _originalBreakColor = colors.normalColor;
             _originalBreakColor.a = 1f;
@@ -84,7 +79,6 @@ public class LockUIItem : MonoBehaviour
             breakButton.colors = colors;
         }
 
-        // Zabezpieczenie widoczności dla Steal
         var stealColors = stealButton.colors;
         _originalStealColor = stealColors.normalColor;
         _originalStealColor.a = 1f;
@@ -113,11 +107,11 @@ public class LockUIItem : MonoBehaviour
         {
             _awaitingStealConfirmation = true;
             _stealTimer = ConfirmationTimeout;
-            ResetBreakState(); // Anuluj potwierdzenie Break jeśli było aktywne
+            ResetBreakState();
 
             if (stealButtonText != null) stealButtonText.text = "SURE?";
             var colors = stealButton.colors;
-            colors.normalColor = new Color(1f, 0f, 0f, 1f); // Czerwony
+            colors.normalColor = new Color(1f, 0f, 0f, 1f);
             stealButton.colors = colors;
 
             LogToPanel("<color=yellow>[Steal]</color> Click <b>SURE?</b> again to confirm force steal.");
@@ -136,11 +130,11 @@ public class LockUIItem : MonoBehaviour
         {
             _awaitingBreakConfirmation = true;
             _breakTimer = ConfirmationTimeout;
-            ResetStealState(); // Anuluj potwierdzenie Steal jeśli było aktywne
+            ResetStealState();
 
             if (breakButtonText != null) breakButtonText.text = "SURE?";
             var colors = breakButton.colors;
-            colors.normalColor = new Color(1f, 0.5f, 0f, 1f); // Pomarańczowy
+            colors.normalColor = new Color(1f, 0.5f, 0f, 1f);
             breakButton.colors = colors;
 
             LogToPanel("<color=yellow>[Break]</color> Click <b>SURE?</b> again to confirm force break.");

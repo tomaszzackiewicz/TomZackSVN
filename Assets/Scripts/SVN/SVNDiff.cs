@@ -202,7 +202,7 @@ namespace SVN.Core
 
                     if (!string.IsNullOrEmpty(diffToolPath) && File.Exists(diffToolPath))
                     {
-                        PostLog("<color=cyan>Launching external visual diff tool...</color>");
+                        PostLog("<color=yellow>Launching external visual diff tool...</color>");
                         try
                         {
                             string fileName = Path.GetFileName(relativePath);

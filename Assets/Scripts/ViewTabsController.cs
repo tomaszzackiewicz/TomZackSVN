@@ -37,7 +37,6 @@ public class ViewTabsController : MonoBehaviour
     {
         if (btn == null) return;
 
-        // Najpierw sprawdzamy TextMeshPro, a jeśli go nie ma, używamy standardowego Text
         var tmpText = btn.GetComponentInChildren<TextMeshProUGUI>();
         if (tmpText != null)
         {

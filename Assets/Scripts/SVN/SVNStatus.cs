@@ -175,7 +175,7 @@ namespace SVN.Core
                 foreach (var item in _flatTreeData)
                 {
                     if (item.IsFolder) item.IsExpanded = false;
-                    item.IsVisible = (item.Depth == 0);
+                    item.IsVisible = (item.Depth <= 1);
                 }
                 svnUI.SvnTreeView?.RefreshUI(_flatTreeData, this);
             }
@@ -185,7 +185,7 @@ namespace SVN.Core
                 foreach (var item in _commitTreeData)
                 {
                     if (item.IsFolder) item.IsExpanded = false;
-                    item.IsVisible = (item.Depth == 0);
+                    item.IsVisible = (item.Depth <= 1);
                 }
                 svnUI.SVNCommitTreeDisplay?.RefreshUI(_commitTreeData, this);
             }
@@ -324,8 +324,8 @@ namespace SVN.Core
                 _commitTreeData = newCommitData;
                 totalCommitBytes = buildResult.TotalBytes;
 
-                foreach (var e in _flatTreeData) e.IsVisible = (e.Depth == 0);
-                foreach (var e in _commitTreeData) e.IsVisible = (e.Depth == 0);
+                foreach (var e in _flatTreeData) e.IsVisible = (e.Depth <= 1);
+                foreach (var e in _commitTreeData) e.IsVisible = (e.Depth <= 1);
 
                 if (lockDict != null && lockDict.Count > 0)
                     ApplyLockColors(_flatTreeData, lockDict);
@@ -577,7 +577,7 @@ namespace SVN.Core
                     {
                         FullPath = currentPath,
                         Name = partName,
-                        Depth = i,
+                        Depth = i + 1,
                         Status = displayStatus,
                         IsFolder = isActuallyFolder,
                         IsChecked = isChecked,

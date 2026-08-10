@@ -151,7 +151,7 @@ namespace SVN.Core
                     UseShellExecute = true
                 });
 
-                LogBoth($"<color=cyan>Launched 3-way resolve tool for:</color> {relativePath}");
+                LogBoth($"<color=yellow>Launched 3-way resolve tool for:</color> {relativePath}");
                 return true;
             }
             catch (Exception ex)

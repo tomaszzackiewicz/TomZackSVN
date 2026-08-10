@@ -66,9 +66,10 @@ namespace SVN.Core
                     return;
                 }
 
+                SVNLogBridge.LogLine("<b>[Add]</b> Checking working copy locks...");
                 if (!await CleanupWorkingCopyAsync(root, token))
                 {
-                    SVNLogBridge.LogLine("<color=#FFAA00>Warning: Cleanup timed out. Proceeding anyway...</color>");
+                    SVNLogBridge.LogLine("<color=#FFAA00>Warning: Cleanup timed out or failed. Proceeding anyway...</color>");
                 }
 
                 SVNLogBridge.LogLine("<b>[Add]</b> Scanning for unversioned items...");
@@ -96,50 +97,76 @@ namespace SVN.Core
                     }
                 }
 
-                SVNLogBridge.LogLine($"Found {unversioned.Count} unversioned item(s). Preparing safe add...");
+                SVNLogBridge.LogLine($"Found <b>{unversioned.Count}</b> unversioned item(s). Preparing safe add...");
 
-                int skippedCount = 0;
-                var validUnversioned = new List<string>(unversioned.Count);
                 string normalizedRoot = root.Replace("\\", "/").TrimEnd('/');
+                var itemsToAdd = EnsureParentDirectoriesAreIncluded(unversioned, normalizedRoot);
 
-                await Task.Run(() =>
-                {
-                    foreach (var path in unversioned)
-                    {
-                        string fullPath = Path.Combine(normalizedRoot, path.Replace('/', Path.DirectorySeparatorChar));
-                        if (File.Exists(fullPath) || Directory.Exists(fullPath))
-                        {
-                            validUnversioned.Add(path);
-                        }
-                        else
-                        {
-                            skippedCount++;
-                        }
-                    }
-                });
-
-                if (skippedCount > 0)
-                {
-                    SVNLogBridge.LogLine($"<color=yellow>Warning: {skippedCount} item(s) disappeared from disk and were safely skipped.</color>");
-                }
-
-                if (validUnversioned.Count == 0)
+                if (itemsToAdd.Count == 0)
                 {
                     SVNLogBridge.LogLine("<color=yellow>No existing items to add.</color>");
                     return;
                 }
 
-                var itemsToAdd = EnsureParentDirectoriesAreIncluded(validUnversioned, normalizedRoot);
+                int chunkSize = 500;
+                int totalItems = itemsToAdd.Count;
+                int processedItems = 0;
+                DateTime startTime = DateTime.Now;
+                DateTime lastUiUpdateTime = DateTime.MinValue;
 
                 string tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_all_{Guid.NewGuid():N}.txt");
 
                 try
                 {
-                    await Task.Run(() => File.WriteAllLines(tempFile, itemsToAdd, new UTF8Encoding(false)));
+                    for (int i = 0; i < itemsToAdd.Count; i += chunkSize)
+                    {
+                        if (token.IsCancellationRequested) break;
 
-                    await SvnRunner.RunAsync($"add --force --parents --targets \"{tempFile}\"", root, false, token);
+                        var chunk = itemsToAdd.Skip(i).Take(chunkSize).ToList();
+                        await Task.Run(() => File.WriteAllLines(tempFile, chunk, new UTF8Encoding(false)));
+
+                        await SvnRunner.RunLiveAsync($"add --force --parents --targets \"{tempFile}\"", root, line =>
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) return;
+                            string cleanLine = line.Trim();
+
+                            if (cleanLine.Length > 1 && cleanLine[0] == 'A')
+                            {
+                                int currentProcessed = Interlocked.Increment(ref processedItems);
+                                DateTime now = DateTime.Now;
+
+                                if ((now - lastUiUpdateTime).TotalMilliseconds > 200)
+                                {
+                                    lastUiUpdateTime = now;
+
+                                    double elapsedSec = (now - startTime).TotalSeconds;
+                                    double speed = currentProcessed / Math.Max(elapsedSec, 0.1);
+
+                                    PostToMainThread(() =>
+                                    {
+                                        float progress = Mathf.Clamp01(0.1f + ((float)elapsedSec / 10f) * 0.8f);
+                                        if (svnUI?.OperationProgressBar != null)
+                                            svnUI.OperationProgressBar.value = progress;
+
+                                        SVNLogBridge.LogLine($"<color=yellow>[Adding]</color> {currentProcessed} files processed | Speed: <b>{speed:F0} files/s</b>");
+                                    });
+                                }
+                            }
+                        }, token);
+                    }
                 }
                 finally { SafeDelete(tempFile); }
+
+                if (token.IsCancellationRequested)
+                {
+                    SVNLogBridge.LogLine("<color=orange>Operation cancelled by user during add.</color>");
+                    return;
+                }
+
+                double totalTime = (DateTime.Now - startTime).TotalSeconds;
+
+                SVNLogBridge.LogLine($"\n<color=green><b>[SUCCESS]</b> {processedItems} items marked as 'Added' in {totalTime:F1}s.</color>");
+                SVNLogBridge.LogLine("<color=white>Note: You still need to <b>Commit</b> to upload them to the server.</color>");
 
                 SVNLogBridge.LogLine("<color=#4FC3F7>Rebuilding tree...</color>");
                 var statusModule = svnManager.GetModule<SVNStatus>();
@@ -149,9 +176,6 @@ namespace SVN.Core
                     statusModule.ClearCurrentData();
                     await statusModule.RefreshModifiedInternal();
                 }
-
-                SVNLogBridge.LogLine("\n<color=green><b>[SUCCESS]</b> Items marked as 'Added'.</color>");
-                SVNLogBridge.LogLine("<color=white>Note: You still need to <b>Commit</b> to upload them to the server.</color>");
             }
             catch (OperationCanceledException) { SVNLogBridge.LogLine("<color=orange>Operation cancelled by user.</color>"); }
             catch (Exception ex) { SVNLogBridge.LogError($"\n<color=#FFAA00>Error during AddAll: {ex.Message}</color>"); }

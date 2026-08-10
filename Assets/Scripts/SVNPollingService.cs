@@ -13,6 +13,8 @@ namespace SVN.Core
         private int _isCheckingFlag;
         private CancellationTokenSource _lifetimeCts;
 
+        public bool IsPaused { get; set; } = false;
+
         [Header("Focus Settings")]
         public float focusCheckCooldownSeconds = 180f;
         private float _lastFocusCheckTime = -100f;
@@ -28,7 +30,7 @@ namespace SVN.Core
 
         private void OnApplicationFocus(bool hasFocus)
         {
-            if (!hasFocus) return;
+            if (!hasFocus || IsPaused) return;
 
             float currentTime = Time.realtimeSinceStartup;
             if (currentTime - _lastFocusCheckTime < focusCheckCooldownSeconds)
@@ -53,6 +55,19 @@ namespace SVN.Core
         {
             _lastKnownRemoteRevision = -1;
             _lastValidWorkingDir = "";
+        }
+
+        public void CancelCurrentCheck()
+        {
+            if (_lifetimeCts != null)
+            {
+                _lifetimeCts.Cancel();
+                _lifetimeCts.Dispose();
+            }
+
+            _lifetimeCts = new CancellationTokenSource();
+
+            Interlocked.Exchange(ref _isCheckingFlag, 0);
         }
 
         public async Task CheckForRemoteCommitsAsync(CancellationToken token = default)
@@ -108,7 +123,6 @@ namespace SVN.Core
 
                     if (this == null) return;
 
-                    // TO JEST JEDYNE CO IDZIE DO UI — powiadomienie o nowym commicie
                     UnityMainThreadDispatcher.Enqueue(() =>
                     {
                         if (this == null) return;
@@ -145,7 +159,6 @@ namespace SVN.Core
             }
             catch (Exception e)
             {
-                // Błędy pollingu idą wyłącznie do pliku — nie zaśmiecają UI
                 SVNLogBridge.LogToFile($"[SVN Polling Error] {e.Message}", "ERROR");
             }
         }

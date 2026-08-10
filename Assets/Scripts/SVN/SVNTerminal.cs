@@ -70,7 +70,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Zapamiętaj oryginalną komendę (przed dodaniem flag) do późniejszego parsowania checkout args
             string originalCmd = cmd;
 
             if (!TryExtractKeyPath(ref cmd, out string keyPath)) return;
@@ -94,7 +93,6 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
                 workDir = Path.GetTempPath();
 
-            // Jeśli to checkout, spróbuj sparsować URL i ścieżkę lokalną (do rejestracji po sukcesie)
             string checkoutUrl = null, checkoutLocalPath = null;
             string firstWord = GetFirstWord(originalCmd);
             if (firstWord.Equals("checkout", StringComparison.OrdinalIgnoreCase) ||
@@ -119,7 +117,6 @@ namespace SVN.Core
                 {
                     TerminalWriteLine("<color=#00FF00>Command completed successfully.</color>");
 
-                    // Rejestracja projektu po udanym checkoucie
                     if (!string.IsNullOrEmpty(checkoutUrl) && !string.IsNullOrEmpty(checkoutLocalPath) &&
                         Directory.Exists(Path.Combine(checkoutLocalPath, ".svn")))
                     {

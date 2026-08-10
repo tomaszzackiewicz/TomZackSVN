@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
@@ -73,7 +72,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Kopia listy, by nie mutować oryginału
             var workingNodes = new List<SVNRevisionNode>(nodes);
             workingNodes.Sort((a, b) => a.Revision.CompareTo(b.Revision));
 
@@ -578,7 +576,7 @@ namespace SVN.Core
             for (int i = _instantiatedItems.Count - 1; i >= 0; i--)
             {
                 var go = _instantiatedItems[i];
-                // Usuwamy z listy obiekty, które zostały zniszczone (np. przez ClearGraph)
+
                 if (go == null)
                 {
                     _instantiatedItems.RemoveAt(i);

@@ -314,7 +314,7 @@ public class MergePanel : MonoBehaviour
             string summary = $"<b>Files to change: {result.RealChanges}</b>  |  " +
                              $"<color=#55FF55>Added: {result.Added}</color>  |  " +
                              $"<color=#FFFF55>Updated: {result.Updated}</color>  |  " +
-                             $"<color=#FF5555>Deleted: {result.Deleted}</color>";
+                             $"<color=#FF9900>Deleted: {result.Deleted}</color>";
 
             if (result.Conflicts > 0)
                 summary += $"  |  <color=#FF0000><b>CONFLICTS: {result.Conflicts}</b></color>";

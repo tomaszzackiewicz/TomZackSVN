@@ -1,6 +1,8 @@
 using UnityEngine;
-using UnityEngine.UI; // To jest wymagane dla VerticalLayoutGroup
+using UnityEngine.UI;
+using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using SVN.Core;
 
 public class SvnTreeView : MonoBehaviour
@@ -8,61 +10,88 @@ public class SvnTreeView : MonoBehaviour
     public GameObject linePrefab;
     public bool isCommitView;
 
-    private List<GameObject> _pool = new List<GameObject>();
+    private List<SvnLineController> _pool = new List<SvnLineController>();
     private VerticalLayoutGroup _layoutGroup;
+
+    private Coroutine _refreshCoroutine;
 
     private void Awake()
     {
-        // Pobieramy komponent układu raz, przy starcie
         _layoutGroup = GetComponent<VerticalLayoutGroup>();
     }
 
     public void RefreshUI(List<SvnTreeElement> elements, SVNStatus manager)
     {
-        // 1. ZABEZPIECZENIE PRZED ZAWIESZENIEM: Wyłączamy Layout Group
+        if (_refreshCoroutine != null)
+        {
+            StopCoroutine(_refreshCoroutine);
+        }
+
+        _refreshCoroutine = StartCoroutine(RefreshUIRoutine(elements, manager));
+    }
+
+    private IEnumerator RefreshUIRoutine(List<SvnTreeElement> elements, SVNStatus manager)
+    {
         if (_layoutGroup != null)
             _layoutGroup.enabled = false;
 
-        // 2. Ukrywamy wszystko
-        foreach (var obj in _pool)
-        {
-            if (obj.activeSelf) obj.SetActive(false);
-        }
+        Stopwatch stopwatch = new Stopwatch();
+        stopwatch.Start();
 
-        // 3. Pokazujemy tylko to, co widoczne (pobierając z puli po kolei, BEZ SetSiblingIndex)
+        const long maxMsPerFrame = 10;
+
         int poolIndex = 0;
         for (int i = 0; i < elements.Count; i++)
         {
             var element = elements[i];
             if (!element.IsVisible) continue;
 
-            GameObject line = GetOrCreateLineByIndex(poolIndex);
-            line.SetActive(true);
+            var controller = GetOrCreateControllerByIndex(poolIndex);
 
-            var controller = line.GetComponent<SvnLineController>();
-            if (controller != null)
+            if (!controller.gameObject.activeSelf)
             {
-                element.IsCommitDelegate = isCommitView;
-                controller.Setup(element, manager);
+                controller.gameObject.SetActive(true);
             }
 
+            element.IsCommitDelegate = isCommitView;
+            controller.Setup(element, manager);
+
             poolIndex++;
+
+            if (stopwatch.ElapsedMilliseconds >= maxMsPerFrame)
+            {
+                yield return null;
+                stopwatch.Restart();
+            }
         }
 
-        // 4. WŁĄCZAMY Layout Group z powrotem. 
-        // Unity przeliczy pozycje RAZ, szybko i bez zacinania się.
+        for (int i = poolIndex; i < _pool.Count; i++)
+        {
+            var ctrl = _pool[i];
+            if (ctrl != null && ctrl.gameObject.activeSelf)
+            {
+                ctrl.gameObject.SetActive(false);
+            }
+
+            if (stopwatch.ElapsedMilliseconds >= maxMsPerFrame)
+            {
+                yield return null;
+                stopwatch.Restart();
+            }
+        }
+
         if (_layoutGroup != null)
             _layoutGroup.enabled = true;
+
+        _refreshCoroutine = null;
     }
 
-    private GameObject GetOrCreateLineByIndex(int index)
+    private SvnLineController GetOrCreateControllerByIndex(int index)
     {
-        // Jeśli potrzebujemy więcej obiektów niż mamy w puli, tworzymy nowe
         while (index >= _pool.Count)
         {
             GameObject newObj = Instantiate(linePrefab, transform);
-            newObj.SetActive(false);
-            _pool.Add(newObj);
+            _pool.Add(newObj.GetComponent<SvnLineController>());
         }
 
         return _pool[index];
@@ -70,13 +99,18 @@ public class SvnTreeView : MonoBehaviour
 
     public void ClearView()
     {
-        // Tutaj też warto zabezpieczyć czyszczenie
+        if (_refreshCoroutine != null)
+        {
+            StopCoroutine(_refreshCoroutine);
+            _refreshCoroutine = null;
+        }
+
         if (_layoutGroup != null) _layoutGroup.enabled = false;
 
-        foreach (var obj in _pool)
+        foreach (var ctrl in _pool)
         {
-            if (obj != null && obj.activeSelf)
-                obj.SetActive(false);
+            if (ctrl != null && ctrl.gameObject.activeSelf)
+                ctrl.gameObject.SetActive(false);
         }
 
         if (_layoutGroup != null) _layoutGroup.enabled = true;
@@ -84,9 +118,10 @@ public class SvnTreeView : MonoBehaviour
 
     public void FilterTree(string filterText)
     {
-        foreach (var lineController in GetComponentsInChildren<SvnLineController>(true))
+        foreach (var ctrl in _pool)
         {
-            lineController.ApplyFilter(filterText);
+            if (ctrl != null && ctrl.gameObject.activeSelf)
+                ctrl.ApplyFilter(filterText);
         }
     }
 }

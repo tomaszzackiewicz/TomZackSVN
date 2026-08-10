@@ -195,7 +195,6 @@ public class SvnLineController : MonoBehaviour
 
     private void SetupFoldButton()
     {
-        // Dodano sprawdzenie _onFoldClickDelegate == null
         if (foldButton == null || _onFoldClickDelegate == null) return;
 
         if (!foldButton.TryGetComponent(out CanvasGroup cg))
@@ -528,9 +527,6 @@ public class SvnLineController : MonoBehaviour
     private void OnFoldClick()
     {
         if (_svnStatus == null || _element == null) return;
-
-        // USUNIĘTO: _element.IsExpanded = !_element.IsExpanded; 
-        // Stan zmienia tylko SVNStatus.ToggleFolderVisibility, inaczej następuje podwójna negacja!
 
         _svnStatus.ToggleFolderVisibility(_element);
     }

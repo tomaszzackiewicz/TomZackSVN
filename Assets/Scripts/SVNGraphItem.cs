@@ -160,7 +160,7 @@ public class SVNGraphItem : MonoBehaviour
             string color = "#FFFFFF";
             if (statusChar == "A") { color = "#55FF55"; added++; }
             else if (statusChar == "M") { color = "#FFFF55"; modified++; }
-            else if (statusChar == "D") { color = "#FF5555"; deleted++; }
+            else if (statusChar == "D") { color = "#FF9900"; deleted++; }
 
             GameObject go = Instantiate(fileButtonPrefab, scrollContent);
             SVNFileItem script = go.GetComponent<SVNFileItem>();
@@ -171,7 +171,7 @@ public class SVNGraphItem : MonoBehaviour
             }
         }
 
-        summaryText.text = $"<size=85%><b>Summary: </b><color=#55FF55>{added}A</color> <color=#FFFF55>{modified}M</color> <color=#FF5555>{deleted}D</color></size>";
+        summaryText.text = $"<size=85%><b>Summary: </b><color=#55FF55>{added}A</color> <color=#FFFF55>{modified}M</color> <color=#FF9900>{deleted}D</color></size>";
     }
 
     private void ClearFiles()

@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace SVN.Core
@@ -322,10 +323,21 @@ namespace SVN.Core
             if (revGraphPanel != null)
             {
                 revGraphPanel.SetActive(true);
-                var graph = revGraphPanel.GetComponent<RevGraphPanel>();
-                if (graph != null)
-                    graph.ForceRefresh();
+
+                StartCoroutine(ForceRefresh_Coroutine());
             }
+        }
+
+        IEnumerator ForceRefresh_Coroutine()
+        {
+            yield return null;
+
+            var graph = revGraphPanel.GetComponent<RevGraphPanel>();
+
+            yield return null;
+
+            if (graph != null)
+                graph.ForceRefresh();
         }
 
         public void Button_CloseRevGraph()

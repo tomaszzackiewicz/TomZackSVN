@@ -140,7 +140,6 @@ namespace SVN.Core
             {
                 if (state != TaskbarState.NoProgress)
                 {
-                    // Ustawienie wartości na 1, aby stan (kolor) był widoczny
                     _taskbarInstance.SetProgressValue(_windowHandle, 1, 100);
                 }
                 _taskbarInstance.SetProgressState(_windowHandle, state);

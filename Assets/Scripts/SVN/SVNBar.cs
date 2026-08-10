@@ -75,7 +75,7 @@ namespace SVN.Core
                     {
                         try { bytes += fi.Length; } catch { }
 
-                        if ((++fileCount & 0x3FF) == 0) // co 1024 pliki
+                        if ((++fileCount & 0x3FF) == 0) // every 1024 files
                             token.ThrowIfCancellationRequested();
                     }
 
@@ -185,7 +185,7 @@ namespace SVN.Core
                         if (!string.IsNullOrEmpty(realAuthor)) snapshot.Author = realAuthor;
                         if (!string.IsNullOrEmpty(realDate)) snapshot.Date = realDate;
                     }
-                    catch { /* dane z info wystarczą */ }
+                    catch {}
                 }
                 else
                 {
@@ -267,7 +267,7 @@ namespace SVN.Core
                 string shortDate = snapshot.Date != "unknown" ? snapshot.Date.Split('(')[0].Trim() : "no commits";
 
                 string revDisplay = snapshot.IsOutdated
-                    ? $"<color=#FF5555>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
+                    ? $"<color=#FF9900>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
                     : snapshot.Revision;
 
                 string statusSuffix = "";

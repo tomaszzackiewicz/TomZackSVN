@@ -45,7 +45,6 @@ namespace SVN.Core
         private bool _isApplyingSnapshot;
         public SVNLockCache LockCache = new SVNLockCache();
         private FileSystemWatcher _folderWatcher;
-        private float _lastAutoRefreshTime;
         private int _isUpdatingSize = 0;
         private int _diskChangesDetectedFlag = 0;
 

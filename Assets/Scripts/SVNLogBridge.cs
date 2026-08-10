@@ -25,13 +25,8 @@ namespace SVN.Core
         private static string _fullLogText = "";
         private static List<string> _allLines = new();
 
-        // Flaga zabezpieczająca przed wielokrotną rejestracją eventów
         private static bool _globalHandlingEnabled = false;
 
-        /// <summary>
-        /// Włącza globalne przechwytywanie wyjątków z Unity i wątków C#.
-        /// Wywołaj to np. w metodzie Awake() lub Start() głównego menedżera.
-        /// </summary>
         public static void EnableGlobalExceptionHandling()
         {
             if (_globalHandlingEnabled) return;
@@ -59,7 +54,7 @@ namespace SVN.Core
         {
             if (type == LogType.Exception || type == LogType.Error)
             {
-                string msg = $"<color=#FF0000><b>[UNITY {type}]</b> {logString}</color>\n<color=#AAAAAA>{stackTrace}</color>";
+                string msg = $"<color=#FF0000><b>[UNITY {type}]</b> {logString}</color>\n<color=#88CCFF>{stackTrace}</color>";
                 LogLine(msg, true, type.ToString());
             }
         }
@@ -75,7 +70,7 @@ namespace SVN.Core
         private static void HandleUnobservedTaskException(object sender, UnobservedTaskExceptionEventArgs e)
         {
             LogException(e.Exception, true, "UNOBSERVED_TASK");
-            e.SetObserved(); // Zapobiega scrashowaniu aplikacji
+            e.SetObserved();
         }
 
         public static void LogToFile(string message, string level = "INFO")
@@ -123,9 +118,6 @@ namespace SVN.Core
             LogLine(errorMessage, append, "ERROR");
         }
 
-        /// <summary>
-        /// Zmieniona i rozbudowana metoda LogException z obsługą InnerException.
-        /// </summary>
         public static void LogException(Exception ex, bool append = true, string level = "EXCEPTION")
         {
             if (ex == null) return;
@@ -138,15 +130,14 @@ namespace SVN.Core
                 sb.AppendLine($"<color=#FFAA00><b>Target:</b> {ex.TargetSite.DeclaringType?.Name}.{ex.TargetSite.Name}</color>");
             }
 
-            sb.AppendLine($"<color=#AAAAAA>{ex.StackTrace}</color>");
+            sb.AppendLine($"<color=#88CCFF>{ex.StackTrace}</color>");
 
-            // Rekursywne wyciąganie błędów wewnętrznych
             Exception inner = ex.InnerException;
             int depth = 1;
-            while (inner != null && depth <= 5) // Limit 5, aby zapobiec potencjalnym nieskończonym pętlom
+            while (inner != null && depth <= 5)
             {
-                sb.AppendLine($"<color=#FF5555><b>[INNER {depth}] {inner.GetType().Name}:</b> {inner.Message}</color>");
-                sb.AppendLine($"<color=#AAAAAA>{inner.StackTrace}</color>");
+                sb.AppendLine($"<color=#FF9900><b>[INNER {depth}] {inner.GetType().Name}:</b> {inner.Message}</color>");
+                sb.AppendLine($"<color=#88CCFF>{inner.StackTrace}</color>");
                 inner = inner.InnerException;
                 depth++;
             }
@@ -350,7 +341,7 @@ namespace SVN.Core
 
             string formattedMessage = message.StartsWith("<color=")
                 ? message
-                : $"<color=#FF5555>{message}</color>";
+                : $"<color=#FF9900>{message}</color>";
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {

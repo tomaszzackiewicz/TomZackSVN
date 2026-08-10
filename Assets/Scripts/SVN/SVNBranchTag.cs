@@ -313,7 +313,7 @@ namespace SVN.Core
                 }
 
                 LogSuccess($"[Diff] Exported: {fileName}");
-                LogInfo($"<color=#55FF55>+{added}</color>  <color=#FFFF55>~{modified}</color>  <color=#FF5555>-{deleted}</color>");
+                LogInfo($"<color=#55FF55>+{added}</color>  <color=#FFFF55>~{modified}</color>  <color=#FF9900>-{deleted}</color>");
             }
             catch (Exception ex)
             {

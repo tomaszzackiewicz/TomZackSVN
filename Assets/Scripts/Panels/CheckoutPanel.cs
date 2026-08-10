@@ -21,4 +21,5 @@ public class CheckoutPanel : MonoBehaviour
     public void Button_Pause() => svnManager.GetModule<SVNCheckout>().PauseCheckout();
     public void Button_Cancel() => svnManager.GetModule<SVNCheckout>().CancelCheckout();
     public void Button_Resume() => svnManager.GetModule<SVNCheckout>().ResumeCheckout();
+    public void Button_RepairWorkingCopy() => svnManager.GetModule<SVNCheckout>().ForceRepairWorkingCopy();
 }

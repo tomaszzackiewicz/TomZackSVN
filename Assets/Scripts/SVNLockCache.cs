@@ -6,7 +6,6 @@ namespace SVN.Core
     [Serializable]
     public class SVNLockCache
     {
-        // Rozważ ConcurrentDictionary jeśli operujesz z wielu wątków/async
         public Dictionary<string, SVNLockDetails> Locks =
             new Dictionary<string, SVNLockDetails>(StringComparer.OrdinalIgnoreCase);
 

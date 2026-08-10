@@ -141,7 +141,7 @@ namespace SVN.Core
 
                 if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                 {
-                    PostUI(() => SVNLogBridge.LogLine("<color=#FF5555>[Stash] Invalid working directory.</color>"));
+                    PostUI(() => SVNLogBridge.LogLine("<color=#FF9900>[Stash] Invalid working directory.</color>"));
                     return false;
                 }
 
@@ -237,7 +237,7 @@ namespace SVN.Core
                 {
                     if (requireCleanWorkingCopy)
                     {
-                        PostUI(() => SVNLogBridge.LogLine($"<color=#FF5555>[Stash] Working copy is still dirty:\n{finalStatus}</color>"));
+                        PostUI(() => SVNLogBridge.LogLine($"<color=#FF9900>[Stash] Working copy is still dirty:\n{finalStatus}</color>"));
                         return false;
                     }
                     else
@@ -257,7 +257,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                PostUI(() => SVNLogBridge.LogLine($"<color=#FF5555>[Stash] FAILED:\n{ex}</color>"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=#FF9900>[Stash] FAILED:\n{ex}</color>"));
                 return false;
             }
             finally

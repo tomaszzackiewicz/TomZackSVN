@@ -22,18 +22,12 @@ namespace SVN.Core
         private OperationState _state = OperationState.Idle;
         private readonly object _stateLock = new object();
 
-        private const double BytesInGB = 1024d * 1024d * 1024d;
         private const double BytesInMB = 1024d * 1024d;
-        private const double MinSpeedThresholdMB = 0.01d;
         private const double SvnOverheadMultiplier = 2.0d;
 
         private DateTime _lastStartAttempt = DateTime.MinValue;
         private const double DebounceIntervalMs = 1000d;
         private string _resolvedKeyPath;
-
-        private long _lastKnownDirectorySize;
-        private DateTime _lastDirectorySizeCheck = DateTime.MinValue;
-        private readonly object _sizeCacheLock = new object();
 
         public SVNCheckout(SVNUI svnUI, SVNManager manager) : base(svnUI, manager)
         {
@@ -728,7 +722,6 @@ namespace SVN.Core
 
                 PostToMainThread(() =>
                 {
-                    string statusMsg;
                     lock (_stateLock)
                     {
                         statusMsg = _state == OperationState.Pausing ? "PAUSED" : "CANCELLED";
@@ -773,6 +766,305 @@ namespace SVN.Core
                 _checkoutCTS = null;
                 IsProcessing = false;
                 lock (_stateLock) { if (_state != OperationState.Paused) _state = OperationState.Idle; }
+            }
+        }
+
+        public async void ForceRepairWorkingCopy()
+        {
+            try
+            {
+                await ForceRepairWorkingCopyAsync();
+            }
+            catch (Exception ex)
+            {
+                HandleOperationException(ex);
+            }
+        }
+
+        private async Task ForceRepairWorkingCopyAsync()
+        {
+            string path = svnUI?.CheckoutDestFolderInput?.text?.Trim();
+            string url = svnUI?.CheckoutRepoUrlInput?.text?.Trim().TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(url))
+            {
+                ShowError("Repository URL and destination path cannot be empty for force repair.");
+                return;
+            }
+
+            if (!IsValidSvnUrl(url))
+            {
+                ShowError("Invalid SVN URL.");
+                return;
+            }
+
+            if (!TryValidatePath(path, out string fullPath)) return;
+
+            if (!Directory.Exists(fullPath))
+            {
+                ShowError("Directory does not exist.");
+                return;
+            }
+
+            SetPollingState(isPaused: true, cancelCurrent: true);
+
+            string svnDir = Path.Combine(fullPath, ".svn");
+            string wcDbPath = Path.Combine(svnDir, "wc.db");
+
+            PostToMainThread(() =>
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
+                    "<color=yellow><b>Initializing Force Repair...</b></color>", "SVN");
+                SVNLogBridge.LogCheckoutConsole("<b>[Force Repair]</b> Starting process...\n");
+            });
+
+            PostToMainThread(() =>
+            {
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
+                    "<color=orange><b>Step 1/2:</b> Removing old .svn metadata...</color>\n<size=11><i>Please wait...</i></size>", "SVN");
+                Canvas.ForceUpdateCanvases();
+            });
+
+            bool deletionSuccess = false;
+            try
+            {
+                deletionSuccess = await Task.Run(() =>
+                {
+                    try
+                    {
+                        if (Directory.Exists(svnDir)) DeleteDirectorySecured(svnDir);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        SVNLogBridge.LogErrorToOutput($"[SVN] Failed to delete .svn: {ex.Message}");
+                        return false;
+                    }
+                }).ConfigureAwait(false);
+            }
+            catch { deletionSuccess = false; }
+
+            if (!deletionSuccess)
+            {
+                ShowError("Cannot remove the old .svn folder. It is likely locked by another program.\nPlease close all programs that might be using these files and try again.");
+                SetPollingState(isPaused: false, cancelCurrent: false);
+                return;
+            }
+
+            string keyPath = ResolveAndValidateKeyPath();
+            string sshConfig = BuildSshConfigOption(keyPath);
+            if (!string.IsNullOrEmpty(sshConfig) && !sshConfig.StartsWith(" ")) sshConfig = " " + sshConfig;
+            string checkoutArgs = $"checkout \"{url}\" . --force --non-interactive --trust-server-cert{sshConfig}";
+
+            PostToMainThread(() =>
+            {
+                var statusBuilder = new StringBuilder();
+                statusBuilder.AppendLine("<color=green><b>Step 1/2:</b> Old metadata removed successfully.</color>");
+                statusBuilder.AppendLine("<color=yellow><b>Step 2/2:</b> Rebuilding wc.db...</color>");
+                statusBuilder.AppendLine("<size=11><i>See console below for live database size.</i></size>");
+
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, statusBuilder.ToString(), "SVN");
+                SVNLogBridge.LogCheckoutConsole("<color=yellow>[Step 2/2]</color> Contacting server and rebuilding database...\n");
+            });
+
+            var monitorCts = new CancellationTokenSource();
+            Task monitorTask = null;
+
+            try
+            {
+                long lastReportedSize = -1;
+                monitorTask = Task.Run(async () =>
+                {
+                    while (!monitorCts.Token.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            if (File.Exists(wcDbPath))
+                            {
+                                FileInfo dbInfo = new FileInfo(wcDbPath);
+                                long sizeBytes = dbInfo.Length;
+
+                                if (sizeBytes != lastReportedSize)
+                                {
+                                    lastReportedSize = sizeBytes;
+                                    string sizeStr = FormatSize(sizeBytes);
+
+                                    PostToMainThread(() =>
+                                    {
+                                        SVNLogBridge.LogCheckoutConsole($"[Database] Current size: <b>{sizeStr}</b>\n");
+                                    });
+                                }
+                            }
+                        }
+                        catch { }
+
+                        await Task.Delay(1000, monitorCts.Token).ConfigureAwait(false);
+                    }
+                }, monitorCts.Token);
+
+                using (var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30)))
+                {
+                    SVNLogBridge.LogToOutput($"<color=yellow>[SVN]</color> Executing: svn {checkoutArgs}");
+                    await SvnRunner.RunAsync(checkoutArgs, fullPath, false, cts.Token).ConfigureAwait(false);
+                }
+
+                monitorCts.Cancel();
+
+                bool wcDbExists = Directory.Exists(svnDir) && File.Exists(wcDbPath);
+
+                if (wcDbExists)
+                {
+                    FileInfo finalDbInfo = new FileInfo(wcDbPath);
+                    string finalSizeStr = FormatSize(finalDbInfo.Length);
+
+                    PostToMainThread(() =>
+                    {
+                        SVNLogBridge.LogCheckoutConsole($"<color=green><b>[Force Repair]</b> COMPLETED! Final size: {finalSizeStr}</color>\n");
+
+                        var report = new StringBuilder();
+                        report.AppendLine("<color=green><b>=========================================</b></color>");
+                        report.AppendLine("<color=green><b>     FORCE REPAIR COMPLETED!</b></color>");
+                        report.AppendLine("<color=green><b>=========================================</b></color>");
+                        report.AppendLine($"New wc.db size: <b>{finalSizeStr}</b>");
+                        report.AppendLine("<color=green><b>=========================================</b></color>");
+
+                        SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, report.ToString(), "SVN");
+                        SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Force repair successful. Synchronizing app state...");
+                    });
+
+                    var statusModule = SVNManager.Instance?.GetModule<SVNStatus>();
+                    var svnBar = SVNManager.Instance?.GetModule<SVNBar>();
+
+                    SVNStatus.ClearLockCache();
+                    svnManager.DiskChangesDetected = true;
+
+                    if (statusModule != null)
+                    {
+                        statusModule.ClearSVNTreeView();
+                        statusModule.ClearCurrentData();
+                        await statusModule.RefreshModifiedInternal();
+                    }
+
+                    if (svnBar != null)
+                    {
+                        var newSnapshot = await svnBar.BuildSnapshotAsync(svnManager.CurrentProject, fullPath);
+
+                        string newRevision = "Unknown";
+                        try
+                        {
+                            string infoAfter = await SvnRunner.GetInfoAsync(fullPath);
+                            var match = System.Text.RegularExpressions.Regex.Match(infoAfter, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
+                            if (match.Success) newRevision = match.Groups[1].Value;
+                        }
+                        catch { }
+
+                        string newAuthor = string.Empty;
+                        try
+                        {
+                            string logOutput = await SvnRunner.RunAsync($"log -r {newRevision} -l 1", fullPath);
+                            var lines = logOutput.Split('\n');
+                            if (lines.Length >= 2)
+                            {
+                                var parts = lines[1].Split('|');
+                                if (parts.Length >= 2) newAuthor = parts[1].Trim();
+                            }
+                        }
+                        catch { }
+
+                        newSnapshot.Revision = newRevision;
+                        if (!string.IsNullOrEmpty(newAuthor))
+                        {
+                            newSnapshot.Author = newAuthor;
+                            newSnapshot.CurrentUser = newAuthor;
+                        }
+                        svnManager.CurrentSnapshot = newSnapshot;
+
+                        await svnBar.ShowProjectInfo(svnManager.CurrentProject, fullPath,
+                            forceOutdatedCheck: true, isRefreshing: false);
+                    }
+
+                    SVNManager.Instance?.ProjectSelectionPanel?.RefreshList();
+                    ResetAndResumePolling();
+                }
+                else
+                {
+                    throw new Exception("SVN process finished, but failed to create the wc.db file.");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                PostToMainThread(() =>
+                {
+                    SVNLogBridge.LogCheckoutConsole("<color=#FFAA00>[Force Repair] Cancelled or timed out.</color>\n");
+                    SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "<color=#FFAA00><b>Force Repair Cancelled.</b></color>", "SVN");
+                });
+                SetPollingState(isPaused: false, cancelCurrent: false);
+            }
+            catch (Exception ex)
+            {
+                PostToMainThread(() =>
+                {
+                    SVNLogBridge.LogCheckoutConsole($"<color=#FF4444>[Force Repair] Failed: {ex.Message}</color>\n");
+                    SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, $"<color=#FF4444><b>Force Repair Failed</b></color>", "SVN");
+                });
+                SVNLogBridge.LogErrorToOutput($"[SVN] Force repair failed: {ex.Message}");
+                SetPollingState(isPaused: false, cancelCurrent: false);
+            }
+            finally
+            {
+                if (monitorCts != null)
+                {
+                    monitorCts.Cancel();
+                    monitorCts.Dispose();
+                }
+            }
+        }
+
+        private static void DeleteDirectorySecured(string targetDir)
+        {
+            string[] files = Directory.GetFiles(targetDir);
+            string[] dirs = Directory.GetDirectories(targetDir);
+
+            foreach (string file in files)
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+                File.Delete(file);
+            }
+
+            foreach (string dir in dirs)
+            {
+                DeleteDirectorySecured(dir);
+            }
+
+            Directory.Delete(targetDir, false);
+        }
+
+        private void SetPollingState(bool isPaused, bool cancelCurrent)
+        {
+            if (SVNManager.Instance != null)
+            {
+                var pollingService = SVNManager.Instance.GetComponent<SVNPollingService>();
+                if (pollingService != null)
+                {
+                    pollingService.IsPaused = isPaused;
+                    if (cancelCurrent)
+                    {
+                        pollingService.CancelCurrentCheck();
+                    }
+                }
+            }
+        }
+
+        private void ResetAndResumePolling()
+        {
+            if (SVNManager.Instance != null)
+            {
+                var pollingService = SVNManager.Instance.GetComponent<SVNPollingService>();
+                if (pollingService != null)
+                {
+                    pollingService.ResetRevisionTracking();
+                    pollingService.IsPaused = false;
+                }
             }
         }
 

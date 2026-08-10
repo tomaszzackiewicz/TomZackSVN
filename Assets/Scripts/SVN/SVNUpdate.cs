@@ -186,18 +186,21 @@ namespace SVN.Core
                         if (session != _sessionId) return;
 
                         processed++;
-                        string progress = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
 
                         string displayLine;
+
+                        char contentStatus = trimmed.Length > 0 ? trimmed[0] : ' ';
+                        char propStatus = trimmed.Length > 1 ? trimmed[1] : ' ';
+                        char activeStatus = contentStatus != ' ' ? contentStatus : propStatus;
 
                         if (trimmed.StartsWith("Updating '.'"))
                         {
                             displayLine = "Scanning repository...";
                         }
-                        else if (trimmed.Length > 2 && "UAGDCR ".Contains(trimmed[0]) && char.IsWhiteSpace(trimmed[1]) && char.IsWhiteSpace(trimmed[2]))
+                        else if (trimmed.Length > 2 && "UAGDCR ".Contains(activeStatus))
                         {
-                            char status = trimmed[0];
-                            string path = SvnRunner.NormalizeRepositoryPath(trimmed.Substring(1).TrimStart());
+                            char status = activeStatus;
+                            string path = SvnRunner.NormalizeRepositoryPath(trimmed.Substring(2).TrimStart());
 
                             switch (status)
                             {
@@ -227,13 +230,15 @@ namespace SVN.Core
                             displayLine = trimmed;
                         }
 
+                        string progressStr = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
+
                         UnityMainThreadDispatcher.Enqueue(() =>
                         {
                             if (token.IsCancellationRequested) return;
                             if (session != _sessionId) return;
 
                             SVNLogBridge.LogToOutput(
-                                $"<b>[SVN]</b> <color=blue>{displayLine}{progress}</color>");
+                                $"<b>[SVN]</b> <color=blue>{displayLine}{progressStr}</color>");
                         });
                     },
                     token
@@ -367,6 +372,12 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 stopwatch.Stop();
+
+                if (ex.Message.Contains("locked") || ex.Message.Contains("E155004"))
+                {
+                    try { await SVNClean.CleanupAsync(targetPath, CancellationToken.None); } catch { }
+                }
+
                 svnManager.IsUpdateRunning = false;
                 svnManager.CurrentSnapshot = oldSnapshot;
                 if (svnBar != null)
@@ -490,14 +501,17 @@ namespace SVN.Core
                         if (session != _sessionId) return;
 
                         processed++;
-                        string progress = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
 
                         string friendlyLine = line;
 
-                        if (friendlyLine.Length > 2 && "UAGDCR ".Contains(friendlyLine[0]) && char.IsWhiteSpace(friendlyLine[1]) && char.IsWhiteSpace(friendlyLine[2]))
+                        char contentStatus = trimmed.Length > 0 ? trimmed[0] : ' ';
+                        char propStatus = trimmed.Length > 1 ? trimmed[1] : ' ';
+                        char activeStatus = contentStatus != ' ' ? contentStatus : propStatus;
+
+                        if (friendlyLine.Length > 2 && "UAGDCR ".Contains(activeStatus))
                         {
-                            char status = friendlyLine[0];
-                            string path = SvnRunner.NormalizeRepositoryPath(friendlyLine.Substring(1).TrimStart());
+                            char status = activeStatus;
+                            string path = SvnRunner.NormalizeRepositoryPath(friendlyLine.Substring(2).TrimStart());
                             friendlyLine = $"{status} {path}";
 
                             switch (status)
@@ -520,12 +534,14 @@ namespace SVN.Core
                             .Replace("G ", "~ Merged: ")
                             .Replace("R ", "↻ Replaced: ");
 
+                        string progressStr = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
+
                         UnityMainThreadDispatcher.Enqueue(() =>
                         {
                             if (token.IsCancellationRequested) return;
                             if (session != _sessionId) return;
 
-                            SVNLogBridge.LogToOutput($"<b>[SVN]</b> <color=blue>{friendlyLine}{progress}</color>");
+                            SVNLogBridge.LogToOutput($"<b>[SVN]</b> <color=blue>{friendlyLine}{progressStr}</color>");
                         });
                     },
                     token
@@ -644,6 +660,12 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 stopwatch.Stop();
+
+                if (ex.Message.Contains("locked") || ex.Message.Contains("E155004"))
+                {
+                    try { await SVNClean.CleanupAsync(targetPath, CancellationToken.None); } catch { }
+                }
+
                 svnManager.IsUpdateRunning = false;
                 svnManager.CurrentSnapshot = oldSnapshot;
                 if (svnBar != null)
@@ -679,11 +701,17 @@ namespace SVN.Core
         {
             try
             {
-                string logOutput = await SvnRunner.RunAsync($"log -r {revision} -q", targetPath);
-                var match = Regex.Match(logOutput, @"^r\d+\s*\|\s*([^|]+)\s*\|", RegexOptions.Multiline);
-                return match.Success ? match.Groups[1].Value.Trim() : null;
+                string logOutput = await SvnRunner.RunAsync($"log -r {revision} -l 1", targetPath);
+                var lines = logOutput.Split('\n');
+                if (lines.Length >= 2)
+                {
+                    var parts = lines[1].Split('|');
+                    if (parts.Length >= 2)
+                        return parts[1].Trim();
+                }
             }
-            catch { return null; }
+            catch { }
+            return string.Empty;
         }
 
         public void CancelUpdate()
