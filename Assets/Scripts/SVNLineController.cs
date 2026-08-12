@@ -1,5 +1,6 @@
 using SVN.Core;
 using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -64,6 +65,9 @@ public class SvnLineController : MonoBehaviour
     private UnityAction _onFullRowClickDelegate;
     private UnityAction _onCommitClickDelegate;
     private UnityAction _onLockClickDelegate;
+    private Dictionary<Button, SVNHoverHandler> _hoverHandlersCache;
+    private LayoutElement _layoutElement;
+    private static readonly Dictionary<int, string> IndentCache = new();
 
     public SvnTreeElement Element => _element;
     public bool IsCommitDelegate => isCommitDelegate;
@@ -79,6 +83,20 @@ public class SvnLineController : MonoBehaviour
 
         if (!TryGetComponent(out _rowBackground))
             _rowBackground = gameObject.AddComponent<Image>();
+
+        if (!TryGetComponent(out _layoutElement))
+            _layoutElement = gameObject.AddComponent<LayoutElement>();
+
+        _hoverHandlersCache = new Dictionary<Button, SVNHoverHandler>();
+        Button[] allButtons = GetComponentsInChildren<Button>(true);
+        foreach (var btn in allButtons)
+        {
+            var handler = btn.GetComponent<SVNHoverHandler>();
+            if (handler == null)
+                handler = btn.gameObject.AddComponent<SVNHoverHandler>();
+
+            _hoverHandlersCache[btn] = handler;
+        }
     }
 
     private void OnDestroy()
@@ -137,11 +155,17 @@ public class SvnLineController : MonoBehaviour
             return;
         }
 
-        var sb = new StringBuilder(depth * 4);
-        for (int i = 0; i < depth; i++)
-            sb.Append(i == depth - 1 ? "└─ " : " |  ");
+        if (!IndentCache.TryGetValue(depth, out string cachedIndent))
+        {
+            var sb = new StringBuilder(depth * 4);
+            for (int i = 0; i < depth; i++)
+                sb.Append(i == depth - 1 ? "└─ " : " |  ");
 
-        indentText.text = sb.ToString();
+            cachedIndent = sb.ToString();
+            IndentCache[depth] = cachedIndent;
+        }
+
+        indentText.text = cachedIndent;
     }
 
     private void RenderStatusAndName()
@@ -254,7 +278,8 @@ public class SvnLineController : MonoBehaviour
     {
         if (fullRowButton == null || _onFullRowClickDelegate == null) return;
 
-        fullRowButton.onClick.RemoveAllListeners();
+        fullRowButton.onClick.RemoveListener(_onFoldClickDelegate);
+        fullRowButton.onClick.RemoveListener(_onFullRowClickDelegate);
 
         bool isRootMeta = IsRootElement(_element.FullPath);
         bool isFolder = _element.IsFolder;
@@ -266,10 +291,8 @@ public class SvnLineController : MonoBehaviour
         {
             fullRowButton.interactable = true;
             fullRowButton.onClick.AddListener(_onFullRowClickDelegate);
-
             BindHover(fullRowButton, "Repository root change (M .)");
-            if (statusText != null)
-                statusText.text = "[ROOT]";
+            if (statusText != null) statusText.text = "[ROOT]";
             return;
         }
 
@@ -280,18 +303,10 @@ public class SvnLineController : MonoBehaviour
 
             var tooltip = new StringBuilder();
             tooltip.Append($"Path: {_element.FullPath} | Status: {_element.Status}");
-
-            if (!string.IsNullOrEmpty(_element.Size))
-                tooltip.Append($" | Size: {_element.Size}");
-
-            if (_element.LockedByMe)
-                tooltip.Append(" | Locked by you");
-            else if (_element.LockedByOther)
-                tooltip.Append(" | Locked by another user");
-
-            if (_element.DiffStatsLoaded)
-                tooltip.Append($" | Diff: +{_element.AddedLines} -{_element.RemovedLines}");
-
+            if (!string.IsNullOrEmpty(_element.Size)) tooltip.Append($" | Size: {_element.Size}");
+            if (_element.LockedByMe) tooltip.Append(" | Locked by you");
+            else if (_element.LockedByOther) tooltip.Append(" | Locked by another user");
+            if (_element.DiffStatsLoaded) tooltip.Append($" | Diff: +{_element.AddedLines} -{_element.RemovedLines}");
             tooltip.Append(" | Click: Preview | Double-Click: External Diff");
 
             BindHover(fullRowButton, tooltip.ToString());
@@ -329,25 +344,14 @@ public class SvnLineController : MonoBehaviour
         }
 
         if (isUnversioned && addBtn != null)
-        {
-            ActivateButton(addBtn, () =>
-            {
-                SVNManager.Instance?.GetModule<SVNAdd>()?.AddSingleItem(_element);
-            }, "Add this unversioned file to SVN control.");
-        }
+            ActivateButton(addBtn, () => SVNManager.Instance?.GetModule<SVNAdd>()?.AddSingleItem(_element), "Add this unversioned file to SVN control.");
 
         if (status == "C" && resolveBtn != null)
-        {
-            ActivateButton(resolveBtn, () =>
-            {
-                SVNManager.Instance?.PanelHandler?.Button_OpenResolve();
-            }, "This file has conflicts. Click to open Resolve panel.");
-        }
+            ActivateButton(resolveBtn, () => SVNManager.Instance?.PanelHandler?.Button_OpenResolve(), "This file has conflicts. Click to open Resolve panel.");
 
         if (!isUnversioned && status != "!" && status != "C" && commitBtn != null)
         {
             commitBtn.gameObject.SetActive(true);
-            commitBtn.onClick.RemoveListener(_onCommitClickDelegate);
             commitBtn.onClick.AddListener(_onCommitClickDelegate);
             BindHover(commitBtn, "Commit only this file.");
         }
@@ -355,34 +359,34 @@ public class SvnLineController : MonoBehaviour
         SetupLockButton(status, isUnversioned, isMissingOrDeleted);
 
         if (!isUnversioned && revertBtn != null)
-        {
-            ActivateButton(revertBtn, () =>
-            {
-                SVNManager.Instance?.GetModule<SVNRevert>()?.RevertSingleItem(_element);
-            }, "Discard local changes and restore to repository version.");
-        }
+            ActivateButton(revertBtn, () => SVNManager.Instance?.GetModule<SVNRevert>()?.RevertSingleItem(_element), "Discard local changes and restore to repository version.");
 
         if (!isUnversioned && status != "A" && logBtn != null)
-        {
-            ActivateButton(logBtn, () =>
-            {
-                SVNManager.Instance?.GetModule<SVNLog>()?.ShowLogForPath(_element.FullPath);
-            }, "Open SVN Log history for this file.");
-        }
+            ActivateButton(logBtn, () => SVNManager.Instance?.GetModule<SVNLog>()?.ShowLogForPath(_element.FullPath), "Open SVN Log history for this file.");
 
         if (explorerBtn != null)
         {
             ActivateButton(explorerBtn, () =>
             {
                 var ext = SVNManager.Instance?.GetModule<SVNExternal>();
-                if (isMissingOrDeleted)
-                    ext?.OpenInExplorer();
-                else
-                    ext?.OpenInExplorerAndSelect(_element.FullPath);
+                if (isMissingOrDeleted) ext?.OpenInExplorer();
+                else ext?.OpenInExplorerAndSelect(_element.FullPath);
             }, "Open file location in Windows Explorer.");
         }
 
         SetupBlameButton(status);
+    }
+
+    private static void ActivateButton(Button btn, Action action, string tooltip)
+    {
+        if (btn == null || action == null) return;
+
+        btn.gameObject.SetActive(true);
+
+        btn.onClick.RemoveAllListeners();
+
+        btn.onClick.AddListener(() => action());
+        BindHoverStatic(btn, tooltip);
     }
 
     private void SetupLockButton(string status, bool isUnversioned, bool isMissingOrDeleted)
@@ -533,15 +537,16 @@ public class SvnLineController : MonoBehaviour
 
     private void BindHover(Button btn, string tooltipText)
     {
+        if (btn == null || !_hoverHandlersCache.TryGetValue(btn, out var handler)) return;
+        handler.TooltipText = tooltipText;
+    }
+
+    private static void BindHoverStatic(Button btn, string tooltipText)
+    {
         if (btn == null) return;
-
-        var existingHandler = btn.GetComponent<SVNHoverHandler>();
-        if (existingHandler != null)
-            Destroy(existingHandler);
-
-        var handler = btn.gameObject.AddComponent<SVNHoverHandler>();
-        handler.OnHoverEnter += () => SVNLogBridge.LogTooltip(tooltipText);
-        handler.OnHoverExit += () => SVNLogBridge.ClearTooltip();
+        var handler = btn.GetComponent<SVNHoverHandler>();
+        if (handler != null)
+            handler.TooltipText = tooltipText;
     }
 
     private void ApplyRowBackground()
@@ -563,9 +568,15 @@ public class SvnLineController : MonoBehaviour
 
     public void ApplyFilter(string filterText)
     {
+        if (_layoutElement == null) return;
+
         if (string.IsNullOrWhiteSpace(filterText))
         {
-            gameObject.SetActive(true);
+            if (!gameObject.activeSelf) gameObject.SetActive(true);
+            _layoutElement.ignoreLayout = false;
+
+            var cg = GetComponent<CanvasGroup>();
+            if (cg != null) { cg.alpha = 1f; cg.blocksRaycasts = true; }
             return;
         }
 
@@ -575,7 +586,27 @@ public class SvnLineController : MonoBehaviour
             _element.FullPath.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0 ||
             _element.Status.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0;
 
-        gameObject.SetActive(matches);
+        if (matches)
+        {
+            _layoutElement.ignoreLayout = false;
+            var cg = GetComponent<CanvasGroup>();
+            if (cg != null) { cg.alpha = 1f; cg.blocksRaycasts = true; }
+        }
+        else
+        {
+            _layoutElement.ignoreLayout = true;
+
+            var cg = GetComponent<CanvasGroup>();
+            if (cg != null)
+            {
+                cg.alpha = 0f;
+                cg.blocksRaycasts = false;
+            }
+            else
+            {
+                gameObject.SetActive(false);
+            }
+        }
     }
 
     private static bool IsRootElement(string fullPath) =>
@@ -598,29 +629,6 @@ public class SvnLineController : MonoBehaviour
     {
         if (btn != null)
             btn.gameObject.SetActive(active);
-    }
-
-    private static void ActivateButton(Button btn, Action action, string tooltip)
-    {
-        if (btn == null || action == null) return;
-
-        btn.gameObject.SetActive(true);
-        btn.onClick.RemoveAllListeners();
-        btn.onClick.AddListener(() => action());
-        BindHoverStatic(btn, tooltip);
-    }
-
-    private static void BindHoverStatic(Button btn, string tooltipText)
-    {
-        if (btn == null) return;
-
-        var existingHandler = btn.GetComponent<SVNHoverHandler>();
-        if (existingHandler != null)
-            Destroy(existingHandler);
-
-        var handler = btn.gameObject.AddComponent<SVNHoverHandler>();
-        handler.OnHoverEnter += () => SVNLogBridge.LogTooltip(tooltipText);
-        handler.OnHoverExit += () => SVNLogBridge.ClearTooltip();
     }
 
     private void RemoveAllButtonListeners()

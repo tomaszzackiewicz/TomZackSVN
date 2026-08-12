@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
 using TMPro;
@@ -89,6 +90,127 @@ namespace SVN.Core
         {
             Append(msg, "#610402");
             SVNLogBridge.LogError(msg);
+        }
+
+        protected string ResolveAndValidateKeyPath()
+        {
+            string keyPath = SvnRunner.KeyPath;
+            if (string.IsNullOrWhiteSpace(keyPath))
+            {
+                keyPath = SVNManager.Instance?.CurrentKey;
+                if (!string.IsNullOrWhiteSpace(keyPath))
+                    SVNLogBridge.LogToOutput("<color=yellow>[SVN]</color> Using fallback SSH key.");
+            }
+
+            if (string.IsNullOrWhiteSpace(keyPath)) return null;
+
+            keyPath = keyPath.Replace("\"", string.Empty).Trim();
+            if (keyPath.StartsWith("~"))
+            {
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                keyPath = Path.Combine(home, keyPath.Substring(1).TrimStart('\\', '/'));
+            }
+
+            try { keyPath = Path.GetFullPath(keyPath); }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN] Invalid SSH key path: {ex.Message}");
+                return null;
+            }
+
+            if (!File.Exists(keyPath))
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN] SSH key not found: {keyPath}");
+                SVNLogBridge.LogErrorToOutput("[SVN] Please verify the SSH key path in Settings.");
+                return null;
+            }
+
+            try
+            {
+                FileInfo fileInfo = new FileInfo(keyPath);
+                if ((fileInfo.Attributes & FileAttributes.ReadOnly) != 0)
+                    SVNLogBridge.LogToOutput("<color=yellow>[SVN]</color> Warning: SSH key is marked as read-only.");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN] Cannot access SSH key: {ex.Message}");
+                return null;
+            }
+
+            return keyPath;
+        }
+
+        protected string BuildSshConfigOption(string keyPath)
+        {
+            if (string.IsNullOrWhiteSpace(keyPath)) return string.Empty;
+            string normalizedKeyPath = keyPath.Replace("\\", "/");
+            string nullDevice = Environment.OSVersion.Platform == PlatformID.Win32NT ? "NUL" : "/dev/null";
+            string sshCommand = $"ssh -i \"{normalizedKeyPath}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile={nullDevice}";
+            return $" --config-option config:tunnels:ssh=\"{sshCommand}\"";
+        }
+
+        protected void HandleOperationException(Exception ex)
+        {
+            IsProcessing = false;
+            SVNLogBridge.LogErrorToOutput($"[SVN] Unhandled operation exception:\n{ex}");
+            ShowError(ex.Message);
+        }
+
+        protected void ShowError(string message)
+        {
+            SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, $"<color=#FFAA00>Error:</color> {message}", "Checkout");
+        }
+
+        protected bool IsValidSvnUrl(string url)
+        {
+            return url.StartsWith("svn://", StringComparison.OrdinalIgnoreCase) ||
+                   url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase) ||
+                   url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                   url.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        }
+
+        protected bool TryValidatePath(string inputPath, out string fullPath)
+        {
+            fullPath = null;
+            try { fullPath = Path.GetFullPath(inputPath); }
+            catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return false; }
+
+            try
+            {
+                string root = Path.GetPathRoot(fullPath);
+                if (!string.IsNullOrEmpty(root))
+                {
+                    DriveInfo drive = new DriveInfo(root);
+                    if (!drive.IsReady)
+                    {
+                        ShowError($"The drive {root} is not ready. Please choose a valid location.");
+                        return false;
+                    }
+                }
+            }
+            catch (Exception ex) { ShowError($"Cannot access destination drive: {ex.Message}"); return false; }
+
+            return true;
+        }
+
+        protected void PostToMainThread(Action action)
+        {
+            if (action == null) return;
+            UnityMainThreadDispatcher.Enqueue(action);
+        }
+
+        protected string FormatSize(long bytes)
+        {
+            if (bytes <= 0) return "0 B";
+            string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+            double size = bytes;
+            int order = 0;
+            while (size >= 1024.0 && order < suffixes.Length - 1)
+            {
+                order++;
+                size /= 1024.0;
+            }
+            return $"{size:0.##} {suffixes[order]}";
         }
     }
 }

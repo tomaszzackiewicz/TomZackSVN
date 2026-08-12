@@ -122,7 +122,7 @@ namespace SVN.Core
             }
             else
             {
-                if (blameBtn != null) ActivateButton(blameBtn, () => ShowBlame(), "Blame.");
+                if (blameBtn != null) ActivateButton(blameBtn, ShowBlame, "Blame.");
             }
         }
 
@@ -203,9 +203,18 @@ namespace SVN.Core
         private static void BindHoverStatic(Button btn, string tooltipText)
         {
             if (btn == null) return;
-            var handler = btn.gameObject.GetComponent<SVNHoverHandler>() ?? btn.gameObject.AddComponent<SVNHoverHandler>();
-            handler.OnHoverEnter += () => SVNLogBridge.LogTooltip(tooltipText);
-            handler.OnHoverExit += () => SVNLogBridge.ClearTooltip();
+
+            var handler = btn.GetComponent<SVNHoverHandler>();
+
+            if (handler != null)
+            {
+                handler.SetTooltip(tooltipText);
+            }
+            else
+            {
+
+                Debug.LogWarning($"[RepoBrowser] SVNHoverHandler component is missing on button: {btn.name}", btn);
+            }
         }
     }
 }

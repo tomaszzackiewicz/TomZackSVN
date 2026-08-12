@@ -11,7 +11,7 @@ namespace SVN.Core
 {
     public static class SVNLogBridge
     {
-        private static readonly Regex RichTextRegex = new Regex(@"<[^>]*>");
+        private static readonly Regex RichTextRegex = new Regex(@"<[^>]*>", RegexOptions.Compiled);
         private const float DefaultNotificationDuration = 5f;
         private const int FlushThreshold = 10;
         private const int FlushDelayMs = 200;
@@ -23,7 +23,8 @@ namespace SVN.Core
         private static Timer _flushTimer;
 
         private static string _fullLogText = "";
-        private static List<string> _allLines = new();
+
+        private static Queue<string> _allLines = new Queue<string>();
 
         private static bool _globalHandlingEnabled = false;
 
@@ -94,11 +95,14 @@ namespace SVN.Core
                 return;
             }
 
-            bool forceFlush = level == "ERROR" || level == "EXCEPTION" || level == "UNHANDLED_DOMAIN" || level == "UNOBSERVED_TASK";
+            bool forceFlush = level == "ERROR" || level == "EXCEPTION" || level == "UNHANDLED_DOMAIN" || level == "UNobserved_TASK";
             int count;
             lock (_bufferLock)
             {
-                _buffer.Add(uiMessage);
+                if (!string.IsNullOrWhiteSpace(uiMessage.TrimEnd('\n', '\r')))
+                {
+                    _buffer.Add(uiMessage);
+                }
                 count = _buffer.Count;
             }
 
@@ -156,10 +160,20 @@ namespace SVN.Core
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (uiField == null) return;
+
+                string trimmedContent = content.TrimEnd('\n', '\r');
+
                 if (append)
-                    uiField.text += content + "\n";
+                {
+                    string currentText = uiField.text.TrimEnd('\n', '\r');
+                    uiField.text = string.IsNullOrEmpty(currentText)
+                        ? trimmedContent + "\n"
+                        : currentText + "\n" + trimmedContent + "\n";
+                }
                 else
-                    uiField.text = content;
+                {
+                    uiField.text = trimmedContent + "\n";
+                }
             });
         }
 
@@ -195,17 +209,7 @@ namespace SVN.Core
                 _flushScheduled = false;
             }
 
-            foreach (var line in linesToAdd)
-                _allLines.Add(line);
-
-            while (_allLines.Count > MaxUILines)
-                _allLines.RemoveAt(0);
-
-            StringBuilder sb = new StringBuilder();
-            foreach (var line in _allLines)
-                sb.AppendLine(line);
-            _fullLogText = sb.ToString();
-
+            AppendToLog(linesToAdd);
             SetLogText(_fullLogText, scroll: true);
         }
 
@@ -219,8 +223,9 @@ namespace SVN.Core
                 if (clear)
                 {
                     _allLines.Clear();
-                    _buffer.Clear();
-                    _allLines.Add(singleMessage);
+                    lock (_bufferLock) _buffer.Clear();
+
+                    _allLines.Enqueue(singleMessage);
                     _fullLogText = singleMessage + "\n";
                     SetLogText(_fullLogText, scroll: false);
                     return;
@@ -235,19 +240,35 @@ namespace SVN.Core
                 if (!string.IsNullOrEmpty(singleMessage))
                     pending.Add(singleMessage);
 
-                foreach (var line in pending)
-                    _allLines.Add(line);
-
-                while (_allLines.Count > MaxUILines)
-                    _allLines.RemoveAt(0);
-
-                StringBuilder sb = new StringBuilder();
-                foreach (var line in _allLines)
-                    sb.AppendLine(line);
-                _fullLogText = sb.ToString();
-
+                AppendToLog(pending);
                 SetLogText(_fullLogText, scroll: true);
             });
+        }
+
+        private static void AppendToLog(List<string> linesToAdd)
+        {
+            if (linesToAdd == null || linesToAdd.Count == 0) return;
+
+            foreach (var line in linesToAdd)
+            {
+                _allLines.Enqueue(line);
+                _fullLogText += line + "\n";
+            }
+
+            if (_allLines.Count > MaxUILines)
+            {
+                int excess = _allLines.Count - MaxUILines;
+                for (int i = 0; i < excess; i++)
+                {
+                    _allLines.Dequeue();
+                }
+
+                var sb = new StringBuilder(_allLines.Count * 128);
+                foreach (var l in _allLines)
+                    sb.AppendLine(l);
+
+                _fullLogText = sb.ToString();
+            }
         }
 
         private static void SetLogText(string text, bool scroll)
@@ -257,7 +278,6 @@ namespace SVN.Core
 
             if (scroll && SVNUI.Instance.LogScrollRect != null)
             {
-                Canvas.ForceUpdateCanvases();
                 SVNUI.Instance.LogScrollRect.verticalNormalizedPosition = 0f;
             }
         }
@@ -330,7 +350,6 @@ namespace SVN.Core
                     return;
 
                 SVNUI.Instance.OutputText.text = message;
-                Canvas.ForceUpdateCanvases();
             });
         }
 
@@ -349,7 +368,6 @@ namespace SVN.Core
                     return;
 
                 SVNUI.Instance.OutputText.text = formattedMessage;
-                Canvas.ForceUpdateCanvases();
             });
         }
     }

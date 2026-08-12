@@ -47,13 +47,14 @@ namespace SVN.Core
         private FileSystemWatcher _folderWatcher;
         private int _isUpdatingSize = 0;
         private int _diskChangesDetectedFlag = 0;
+        private int _diskDebouncePending = 0;
+        private DateTime _lastDiskEventTime = DateTime.MinValue;
 
         private SVNPollingService _cachedPoller;
 
         private CancellationTokenSource _refreshStatusCts;
         private CancellationTokenSource _projectSwitchDebounceCts;
         private CancellationTokenSource _watcherRestartCts;
-        private CancellationTokenSource _diskDebounceCts;
         private CancellationTokenSource _lifetimeCts;
 
         private CancellationTokenSource _saveProjectDebounceCts;
@@ -128,7 +129,11 @@ namespace SVN.Core
             {
                 if (_isProcessing == value) return;
                 _isProcessing = value;
-                OnProcessingStateChanged?.Invoke(_isProcessing);
+
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    OnProcessingStateChanged?.Invoke(_isProcessing);
+                });
             }
         }
 
@@ -187,8 +192,8 @@ namespace SVN.Core
                 RegisterModule(new SVNBar(svnUI, this));
                 RegisterModule(new SVNIgnore(svnUI, this));
                 RegisterModule(new SVNRepoBrowser(svnUI, this));
-                RegisterModule(new SVNLock(svnUI, this));
                 RegisterModule(new SVNRevision(svnUI, this));
+                RegisterModule(new SVNRepoRepair(svnUI, this));
 
                 SVNLogBridge.LogToOutput($"<color=green>[SVN] Successfully initialized {_modules.Count} modules manually.</color>");
             }
@@ -246,7 +251,10 @@ namespace SVN.Core
 
         public void RaiseSnapshotChanged(SVNProjectInfoSnapshot snapshot)
         {
-            OnSnapshotChanged?.Invoke(snapshot);
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                OnSnapshotChanged?.Invoke(snapshot);
+            });
         }
 
         private async Task StartAsync()
@@ -349,37 +357,41 @@ namespace SVN.Core
                 var proj = projects.Find(p =>
                     !string.IsNullOrEmpty(p.workingDir) &&
                     p.workingDir.Replace("\\", "/").TrimEnd('/') == normalizedDir);
+
                 if (proj != null)
                 {
                     proj.lastOpened = DateTime.UtcNow;
                     ProjectSettings.SaveProjects(projects);
                 }
 
-                SyncUIToCurrentState();
-                PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
-                PlayerPrefs.SetString("SVN_LastOpenedProjectId", project.projectId);
-                PlayerPrefs.Save();
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    SyncUIToCurrentState();
+                    PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
+                    PlayerPrefs.SetString("SVN_LastOpenedProjectId", project.projectId);
+                    PlayerPrefs.Save();
+
+                    SVNLogBridge.UpdateUIField(
+                        svnUI.StatusInfoText,
+                        $"<size=150%><color=#FFFF00>●</color></size> <color=orange><b>Loading project...</b></color>",
+                        "INFO",
+                        append: false);
+
+                    var statusModule = GetModule<SVNStatus>();
+                    statusModule?.ClearCurrentData();
+
+                    ApplySettingsSnapshot();
+                });
             }
             finally
             {
                 _managerLock.ExitWrite();
             }
 
-            SVNLogBridge.UpdateUIField(
-                svnUI.StatusInfoText,
-                $"<size=150%><color=#FFFF00>●</color></size> <color=orange><b>Loading project...</b></color>",
-                "INFO",
-                append: false);
-
-            var statusModule = GetModule<SVNStatus>();
-            statusModule?.ClearCurrentData();
-
             if (Directory.Exists(WorkingDir))
             {
                 await InitializeActiveProject(project);
             }
-
-            ApplySettingsSnapshot();
         }
 
         private async Task InitializeActiveProject(SVNProject project)
@@ -399,7 +411,10 @@ namespace SVN.Core
             await RefreshRepositoryInfo();
             if (this == null) return;
 
-            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
+            });
 
             _ = RefreshStatusAsync().ContinueWith(t =>
             {
@@ -416,8 +431,6 @@ namespace SVN.Core
                         SVNLogBridge.LogError($"[Init] Repo Browser load failed: {t.Exception?.InnerException?.Message}");
                 }, TaskScheduler.Default);
             }
-
-            if (this == null) return;
         }
 
         private async Task RefreshStatusAsync()
@@ -439,7 +452,10 @@ namespace SVN.Core
         private async Task LoadAndNotifyAsync(SVNProject project)
         {
             await LoadProject(project);
-            OnProjectChanged?.Invoke(project);
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                OnProjectChanged?.Invoke(project);
+            });
         }
 
         private void SyncUIToCurrentState()
@@ -473,7 +489,15 @@ namespace SVN.Core
         private string CleanPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return string.Empty;
-            return new string(path.Where(c => !char.IsControl(c) && (int)c != 160 && (int)c != 8203).ToArray()).Trim();
+            var sb = new System.Text.StringBuilder(path.Length);
+            foreach (char c in path)
+            {
+                if (!char.IsControl(c) && c != '\u00A0' && c != '\u200B')
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString().Trim();
         }
 
         public async Task RefreshStatus(bool force = false)
@@ -483,19 +507,24 @@ namespace SVN.Core
 
             GetModule<SVNStatus>()?.CancelCurrentRefresh();
 
-            var oldCts = Interlocked.Exchange(ref _refreshStatusCts, new CancellationTokenSource());
-            oldCts?.Cancel();
-            oldCts?.Dispose();
+            var newCts = new CancellationTokenSource();
+            var oldCts = Interlocked.Exchange(ref _refreshStatusCts, newCts);
+
+            if (oldCts != null)
+            {
+                oldCts.Cancel();
+                _ = Task.Delay(1000).ContinueWith(_ => oldCts.Dispose());
+            }
+
             CancellationToken token = _refreshStatusCts.Token;
 
             await _managerLock.EnterWriteAsync(_lifetimeCts.Token);
             try
             {
-
                 var statusModule = GetModule<SVNStatus>();
                 if (statusModule == null) return;
 
-                ClearStatusUI(statusModule);
+                UnityMainThreadDispatcher.Enqueue(() => ClearStatusUI(statusModule));
 
                 await Task.Yield();
 
@@ -584,12 +613,12 @@ namespace SVN.Core
                 if (lockDict == null || lockDict.Count == 0)
                     return;
 
-                statusModule.ApplyLockColors(
-                    statusModule.GetCurrentData(),
-                    lockDict
-                );
+                statusModule.ApplyLockColors(statusModule.GetCurrentData(), lockDict);
 
-                statusModule.RefreshVisibleUIOnly();
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    statusModule.RefreshVisibleUIOnly();
+                });
             }
             catch (Exception e)
             {
@@ -605,12 +634,15 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogErrorToOutput("[SVN] Conflicts detected! Opening Resolve panel.");
 
-                panelHandler?.Button_OpenResolve();
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    panelHandler?.Button_OpenResolve();
+                });
+
                 await GetModule<SVNResolve>().RefreshConflictUI();
             }
 
             await UpdateStatus();
-
             await RefreshLocksSafe();
         }
 
@@ -646,7 +678,12 @@ namespace SVN.Core
             string output = await SvnRunner.RunAsync(args, workingDir);
 
             if (!string.IsNullOrEmpty(output))
-                SVNLogBridge.LogLine(output);
+            {
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    SVNLogBridge.LogLine(output);
+                });
+            }
 
             return output;
         }
@@ -666,10 +703,10 @@ namespace SVN.Core
 
         public string ExtractPathFromStatusLine(string line, string statusChar)
         {
-            int prefixLength = 8;
+            const int prefixLength = 8;
             if (line.Length > prefixLength && line.StartsWith(statusChar))
             {
-                return line.Substring(prefixLength).Trim().Replace("\t", "").Replace('\\', '/');
+                return line.Substring(prefixLength).Trim().Replace("\t", string.Empty).Replace('\\', '/');
             }
             return null;
         }
@@ -789,9 +826,12 @@ namespace SVN.Core
 
         private void DebounceSaveProject()
         {
-            _saveProjectDebounceCts?.Cancel();
-            _saveProjectDebounceCts?.Dispose();
+            var oldCts = _saveProjectDebounceCts;
             _saveProjectDebounceCts = new CancellationTokenSource();
+
+            oldCts?.Cancel();
+            oldCts?.Dispose();
+
             var token = _saveProjectDebounceCts.Token;
 
             Task.Delay(500, token).ContinueWith(t =>
@@ -976,7 +1016,7 @@ namespace SVN.Core
             }
         }
 
-        private void DisposeFileSystemWatcher()
+        public void DisposeFileSystemWatcher()
         {
             if (_folderWatcher != null)
             {
@@ -990,9 +1030,6 @@ namespace SVN.Core
             }
         }
 
-        private DateTime _lastDiskEventTime = DateTime.MinValue;
-        private readonly object _diskDebounceLock = new object();
-
         private void OnDiskEvent(object sender, FileSystemEventArgs e)
         {
             if (e.FullPath.Contains(".svn")) return;
@@ -1000,17 +1037,18 @@ namespace SVN.Core
             Interlocked.Exchange(ref _diskChangesDetectedFlag, 1);
             _lastDiskEventTime = DateTime.UtcNow;
 
-            lock (_diskDebounceLock)
+            if (Interlocked.CompareExchange(ref _diskDebouncePending, 1, 0) == 0)
             {
-                _diskDebounceCts?.Cancel();
-                _diskDebounceCts?.Dispose();
-                _diskDebounceCts = new CancellationTokenSource();
-                var token = _diskDebounceCts.Token;
-
-                Task.Delay(TimeSpan.FromSeconds(1.5), token)
-                    .ContinueWith(t =>
+                Task.Run(async () =>
+                {
+                    try
                     {
-                        if (!t.IsCanceled && Interlocked.CompareExchange(ref _diskChangesDetectedFlag, 0, 1) == 1)
+                        while ((DateTime.UtcNow - _lastDiskEventTime).TotalSeconds < 1.5)
+                        {
+                            await Task.Delay(250);
+                        }
+
+                        if (Interlocked.CompareExchange(ref _diskChangesDetectedFlag, 0, 1) == 1)
                         {
                             UnityMainThreadDispatcher.Enqueue(() =>
                             {
@@ -1020,7 +1058,12 @@ namespace SVN.Core
                                     _ = status.ExecuteRefreshWithAutoExpand(false);
                             });
                         }
-                    }, TaskScheduler.Default);
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _diskDebouncePending, 0);
+                    }
+                });
             }
         }
 
@@ -1052,9 +1095,6 @@ namespace SVN.Core
 
             _watcherRestartCts?.Cancel();
             _watcherRestartCts?.Dispose();
-
-            _diskDebounceCts?.Cancel();
-            _diskDebounceCts?.Dispose();
 
             _saveProjectDebounceCts?.Cancel();
             _saveProjectDebounceCts?.Dispose();

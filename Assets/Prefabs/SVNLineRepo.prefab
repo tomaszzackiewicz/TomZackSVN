@@ -13,6 +13,7 @@ GameObject:
   - component: {fileID: 5806669177353060913}
   - component: {fileID: 5663108426386945025}
   - component: {fileID: 308767671715232637}
+  - component: {fileID: 2395427948883611399}
   m_Layer: 5
   m_Name: CopyRelPathBtn
   m_TagString: Untagged
@@ -142,6 +143,19 @@ MonoBehaviour:
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1
   m_LayoutPriority: 1
+--- !u!114 &2395427948883611399
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 48973968920699365}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!1 &597612601454914108
 GameObject:
   m_ObjectHideFlags: 0
@@ -381,6 +395,7 @@ GameObject:
   - component: {fileID: 3445164780011451334}
   - component: {fileID: 272234909739206320}
   - component: {fileID: 5794134839414927930}
+  - component: {fileID: 6898934485217699387}
   m_Layer: 5
   m_Name: ExportBtn
   m_TagString: Untagged
@@ -510,6 +525,19 @@ MonoBehaviour:
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1
   m_LayoutPriority: 1
+--- !u!114 &6898934485217699387
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 729193114366127142}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!1 &827575371951549919
 GameObject:
   m_ObjectHideFlags: 0
@@ -681,6 +709,7 @@ GameObject:
   - component: {fileID: 1789872446486736127}
   - component: {fileID: 85391054799543236}
   - component: {fileID: 1905161443645878857}
+  - component: {fileID: 783620704960462928}
   m_Layer: 5
   m_Name: CopyPathBtn
   m_TagString: Untagged
@@ -810,6 +839,19 @@ MonoBehaviour:
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1
   m_LayoutPriority: 1
+--- !u!114 &783620704960462928
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 870055482420727797}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!1 &1158197668167988643
 GameObject:
   m_ObjectHideFlags: 0
@@ -1299,6 +1341,7 @@ GameObject:
   - component: {fileID: 3988804213693712049}
   - component: {fileID: 1479457081632517033}
   - component: {fileID: 5510688151735337151}
+  - component: {fileID: 8817851545516299375}
   m_Layer: 5
   m_Name: LogBtn
   m_TagString: Untagged
@@ -1428,6 +1471,19 @@ MonoBehaviour:
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1
   m_LayoutPriority: 1
+--- !u!114 &8817851545516299375
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4901802803132119986}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!1 &5471869214461901263
 GameObject:
   m_ObjectHideFlags: 0
@@ -1578,6 +1634,7 @@ GameObject:
   - component: {fileID: 3287784381230646483}
   - component: {fileID: 6778715203072506137}
   - component: {fileID: 5320915218936420294}
+  - component: {fileID: 4562255986163305356}
   m_Layer: 5
   m_Name: CheckoutFolderBtn
   m_TagString: Untagged
@@ -1707,6 +1764,19 @@ MonoBehaviour:
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1
   m_LayoutPriority: 1
+--- !u!114 &4562255986163305356
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6202064163576352255}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!1 &6421179681852470322
 GameObject:
   m_ObjectHideFlags: 0
@@ -2358,6 +2428,7 @@ GameObject:
   - component: {fileID: 5519052315879975848}
   - component: {fileID: 3027399478210687728}
   - component: {fileID: 9529176616809911}
+  - component: {fileID: 1241815130990513238}
   m_Layer: 5
   m_Name: BlameBtn
   m_TagString: Untagged
@@ -2487,6 +2558,19 @@ MonoBehaviour:
   m_FlexibleWidth: -1
   m_FlexibleHeight: -1
   m_LayoutPriority: 1
+--- !u!114 &1241815130990513238
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8923144256623300140}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!1 &8985513543342955484
 GameObject:
   m_ObjectHideFlags: 0

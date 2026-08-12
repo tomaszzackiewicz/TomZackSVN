@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,11 +12,13 @@ namespace SVN.Core
     public class SVNBar : SVNBase
     {
         private string _svnVersionCached = "";
-        private DateTime _lastSizeCalcTime = DateTime.MinValue;
-        private string _lastSizeCalcValue = "";
+
+        private Task<string> _svnVersionTask;
 
         private readonly Dictionary<string, (DateTime time, string value)> _sizeCache = new();
         private readonly object _sizeCacheLock = new();
+
+        private int _snapshotGeneration = 0;
 
         public SVNBar(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -23,26 +26,18 @@ namespace SVN.Core
         }
 
         public async Task ShowProjectInfo(
-    SVNProject svnProject,
-    string path,
-    bool forceOutdatedCheck = false,
-    bool isRefreshing = false)
+            SVNProject svnProject,
+            string path,
+            bool forceOutdatedCheck = false,
+            bool isRefreshing = false)
         {
-            if (svnManager.IsUpdateRunning)
-            {
-                string projectName = svnProject?.projectName ?? "Project";
-                PostToMainThread(() =>
-                    SVNLogBridge.UpdateUIField(
-                        svnUI.StatusInfoText,
-                        $"<size=150%><color=#FFFF00>●</color></size> " +
-                        $"<color=orange><b>{projectName}</b></color> | " +
-                        $"<color=#FFFF00>Updating working copy…</color>",
-                        "INFO",
-                        append: false));
-                return;
-            }
+            int currentGeneration = Interlocked.Increment(ref _snapshotGeneration);
 
             var snapshot = await BuildSnapshotAsync(svnProject, path);
+
+            if (currentGeneration != _snapshotGeneration)
+                return;
+
             svnManager.CurrentSnapshot = snapshot;
             RenderSnapshot(snapshot, isRefreshing);
         }
@@ -102,20 +97,19 @@ namespace SVN.Core
 
         private async Task EnsureVersionCached()
         {
-            if (string.IsNullOrEmpty(_svnVersionCached))
+            if (_svnVersionTask == null)
             {
-                try
-                {
-                    _svnVersionCached = await SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir);
-                    _svnVersionCached = _svnVersionCached.Trim();
-                }
-                catch { _svnVersionCached = "?.?.?"; }
+                _svnVersionTask = SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir)
+                    .ContinueWith(t =>
+                        t.IsFaulted ? "?.?.?" : (t.Result ?? "?.?.?").Trim(),
+                        TaskContinuationOptions.ExecuteSynchronously);
             }
+            _svnVersionCached = await _svnVersionTask;
         }
 
         public async Task<SVNProjectInfoSnapshot> BuildSnapshotAsync(
-    SVNProject svnProject,
-    string path)
+            SVNProject svnProject,
+            string path)
         {
             var snapshot = new SVNProjectInfoSnapshot();
 
@@ -137,9 +131,15 @@ namespace SVN.Core
 
                 string cacheKey = path.Replace("\\", "/").TrimEnd('/');
                 string cachedSize = null;
+
                 lock (_sizeCacheLock)
                 {
-                    if (_sizeCache.TryGetValue(cacheKey, out var entry) && (DateTime.UtcNow - entry.time).TotalSeconds < 10)
+                    var now = DateTime.UtcNow;
+                    var expiredKeys = _sizeCache.Where(kvp => (now - kvp.Value.time).TotalSeconds > 10).Select(kvp => kvp.Key).ToList();
+                    foreach (var key in expiredKeys)
+                        _sizeCache.Remove(key);
+
+                    if (_sizeCache.TryGetValue(cacheKey, out var entry) && (now - entry.time).TotalSeconds < 10)
                         cachedSize = entry.value;
                 }
 
@@ -170,28 +170,13 @@ namespace SVN.Core
 
                 snapshot.ProjectName = projectName;
                 snapshot.WorkingCopySize = sizeStr;
+
                 snapshot.Revision = ExtractValue(rawInfo, "Revision:");
                 snapshot.Author = ExtractValue(rawInfo, "Last Changed Author:");
                 snapshot.Date = ExtractValue(rawInfo, "Last Changed Date:");
 
-                if (int.TryParse(snapshot.Revision, out _))
-                {
-                    if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
-                        snapshot.RemoteRevision = remoteRevRaw.Trim();
-
-                    try
-                    {
-                        var (realAuthor, realDate) = await GetRealCommitInfoAsync(path, snapshot.Revision);
-                        if (!string.IsNullOrEmpty(realAuthor)) snapshot.Author = realAuthor;
-                        if (!string.IsNullOrEmpty(realDate)) snapshot.Date = realDate;
-                    }
-                    catch {}
-                }
-                else
-                {
-                    if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
-                        snapshot.RemoteRevision = remoteRevRaw.Trim();
-                }
+                if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
+                    snapshot.RemoteRevision = remoteRevRaw.Trim();
 
                 snapshot.RelativeUrl = ExtractValue(rawInfo, "Relative URL:");
                 snapshot.Url = ExtractValue(rawInfo, "URL:");
@@ -226,10 +211,7 @@ namespace SVN.Core
                 }
 
                 snapshot.AppVersion = Application.version;
-
-                if (string.IsNullOrEmpty(_svnVersionCached))
-                    await EnsureVersionCached();
-
+                await EnsureVersionCached();
                 snapshot.SvnVersion = _svnVersionCached;
                 snapshot.CurrentUser = svnManager.CurrentUserName ?? "Unknown";
                 snapshot.IsValid = true;
@@ -266,9 +248,7 @@ namespace SVN.Core
 
                 string shortDate = snapshot.Date != "unknown" ? snapshot.Date.Split('(')[0].Trim() : "no commits";
 
-                string revDisplay = snapshot.IsOutdated
-                    ? $"<color=#FF9900>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
-                    : snapshot.Revision;
+                string revDisplay = snapshot.IsOutdated ? $"<color=#FF4444>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>" : snapshot.Revision;
 
                 string statusSuffix = "";
                 if (isBusy) statusSuffix = " | Updating...";
@@ -292,49 +272,6 @@ namespace SVN.Core
             });
         }
 
-        public async Task<SVNProjectInfoSnapshot> BuildSnapshot(SVNProject project, string workingDir)
-        {
-            string info = await SvnRunner.GetInfoAsync(workingDir);
-            string revision = SVNAssetLocator.ParseRevision(info);
-            string author = ExtractAuthor(info);
-            string date = ExtractDate(info);
-
-            if (int.TryParse(revision, out _))
-            {
-                var realInfo = await GetRealCommitInfoAsync(workingDir, revision);
-                if (!string.IsNullOrEmpty(realInfo.author)) author = realInfo.author;
-                if (!string.IsNullOrEmpty(realInfo.date)) date = realInfo.date;
-            }
-
-            return new SVNProjectInfoSnapshot
-            {
-                Revision = revision,
-                RemoteRevision = "Unknown",
-                Author = author,
-                Date = date,
-                Branch = ExtractBranch(info),
-                Server = project.repoUrl
-            };
-        }
-
-        private string ExtractAuthor(string info)
-        {
-            var m = Regex.Match(info, @"^Last Changed Author:\s*(.+)$", RegexOptions.Multiline);
-            return m.Success ? m.Groups[1].Value.Trim() : "Unknown";
-        }
-
-        private string ExtractDate(string info)
-        {
-            var m = Regex.Match(info, @"^Last Changed Date:\s*(.+)$", RegexOptions.Multiline);
-            return m.Success ? m.Groups[1].Value.Trim() : "Unknown";
-        }
-
-        private string ExtractBranch(string info)
-        {
-            var m = Regex.Match(info, @"URL:\s*(.+)$", RegexOptions.Multiline);
-            return m.Success ? m.Groups[1].Value.Trim() : "Unknown";
-        }
-
         public void RenderFromSnapshot(SVNProjectInfoSnapshot snapshot)
         {
             RenderSnapshot(snapshot);
@@ -346,29 +283,6 @@ namespace SVN.Core
             {
                 svnManager.OnSnapshotChanged -= RenderFromSnapshot;
             }
-        }
-
-        private async Task<(string author, string date)> GetRealCommitInfoAsync(string path, string revision, CancellationToken token = default)
-        {
-            try
-            {
-                string logOutput = await SvnRunner.RunAsync($"log -r {revision} --limit 1", path, token: token);
-                if (!string.IsNullOrWhiteSpace(logOutput))
-                {
-                    var match = Regex.Match(logOutput, @"^r\d+\s*\|\s*([^|]+)\s*\|\s*([^|]+)", RegexOptions.Multiline);
-                    if (match.Success)
-                    {
-                        return (match.Groups[1].Value.Trim(), match.Groups[2].Value.Trim());
-                    }
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError($"Failed to fetch real author/date from log: {ex.Message}");
-            }
-
-            return (null, null);
         }
 
         public void ShowUpdatingStatus(string projectName)
@@ -383,12 +297,6 @@ namespace SVN.Core
                     "INFO",
                     append: false);
             });
-        }
-
-        private void PostToMainThread(Action action)
-        {
-            if (action == null) return;
-            UnityMainThreadDispatcher.Enqueue(action);
         }
     }
 }

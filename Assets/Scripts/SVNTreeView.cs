@@ -2,7 +2,6 @@ using UnityEngine;
 using UnityEngine.UI;
 using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics;
 using SVN.Core;
 
 public class SvnTreeView : MonoBehaviour
@@ -13,7 +12,11 @@ public class SvnTreeView : MonoBehaviour
     private List<SvnLineController> _pool = new List<SvnLineController>();
     private VerticalLayoutGroup _layoutGroup;
 
+    private int _currentVisibleCount = 0;
+
     private Coroutine _refreshCoroutine;
+
+    private const int ItemsPerFrame = 4;
 
     private void Awake()
     {
@@ -32,18 +35,14 @@ public class SvnTreeView : MonoBehaviour
 
     private IEnumerator RefreshUIRoutine(List<SvnTreeElement> elements, SVNStatus manager)
     {
-        if (_layoutGroup != null)
-            _layoutGroup.enabled = false;
+        var elementsSnapshot = new List<SvnTreeElement>(elements);
 
-        Stopwatch stopwatch = new Stopwatch();
-        stopwatch.Start();
-
-        const long maxMsPerFrame = 10;
-
+        int processedInThisFrame = 0;
         int poolIndex = 0;
-        for (int i = 0; i < elements.Count; i++)
+
+        for (int i = 0; i < elementsSnapshot.Count; i++)
         {
-            var element = elements[i];
+            var element = elementsSnapshot[i];
             if (!element.IsVisible) continue;
 
             var controller = GetOrCreateControllerByIndex(poolIndex);
@@ -57,13 +56,16 @@ public class SvnTreeView : MonoBehaviour
             controller.Setup(element, manager);
 
             poolIndex++;
+            processedInThisFrame++;
 
-            if (stopwatch.ElapsedMilliseconds >= maxMsPerFrame)
+            if (processedInThisFrame >= ItemsPerFrame)
             {
+                processedInThisFrame = 0;
                 yield return null;
-                stopwatch.Restart();
             }
         }
+
+        _currentVisibleCount = poolIndex;
 
         for (int i = poolIndex; i < _pool.Count; i++)
         {
@@ -72,16 +74,7 @@ public class SvnTreeView : MonoBehaviour
             {
                 ctrl.gameObject.SetActive(false);
             }
-
-            if (stopwatch.ElapsedMilliseconds >= maxMsPerFrame)
-            {
-                yield return null;
-                stopwatch.Restart();
-            }
         }
-
-        if (_layoutGroup != null)
-            _layoutGroup.enabled = true;
 
         _refreshCoroutine = null;
     }
@@ -105,23 +98,25 @@ public class SvnTreeView : MonoBehaviour
             _refreshCoroutine = null;
         }
 
-        if (_layoutGroup != null) _layoutGroup.enabled = false;
+        _currentVisibleCount = 0;
 
         foreach (var ctrl in _pool)
         {
             if (ctrl != null && ctrl.gameObject.activeSelf)
                 ctrl.gameObject.SetActive(false);
         }
-
-        if (_layoutGroup != null) _layoutGroup.enabled = true;
     }
 
     public void FilterTree(string filterText)
     {
-        foreach (var ctrl in _pool)
+        int count = Mathf.Min(_currentVisibleCount, _pool.Count);
+
+        for (int i = 0; i < count; i++)
         {
-            if (ctrl != null && ctrl.gameObject.activeSelf)
-                ctrl.ApplyFilter(filterText);
+            if (_pool[i] != null)
+            {
+                _pool[i].ApplyFilter(filterText);
+            }
         }
     }
 }

@@ -24,12 +24,285 @@ namespace SVN.Core
         private static readonly TimeSpan LockCacheDuration = TimeSpan.FromMinutes(2);
         private static readonly object _cacheLock = new object();
 
-        private static readonly string[] SIZE_UNITS = { "B", "KB", "MB", "GB", "TB" };
-
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             UnityMainThreadDispatcher.EnsureExists();
             manager.OnProjectChanged += HandleProjectChanged;
+        }
+
+        public void UpdateAllStatisticsUI(SvnStats stats, bool isIgnoredView)
+        {
+            if (svnUI == null) return;
+
+            if (svnUI.StatsText != null)
+            {
+                string statsContent = isIgnoredView
+                    ? $"<color=#444444><b>VIEW: IGNORED</b></color> | Folders: {stats.IgnoredFolderCount} | Files: {stats.IgnoredFileCount} | Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>"
+                    : $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | <color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | <color=#00FF00>Add (A): {stats.AddedCount}</color> | <color=#00E5FF>New (?): {stats.NewFilesCount}</color> | <color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | <color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
+
+                SVNLogBridge.UpdateUIField(svnUI.StatsText, statsContent, "STATS", append: false);
+            }
+
+            if (svnUI.CommitStatsText != null)
+            {
+                if (isIgnoredView)
+                {
+                    SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>", "STATS", append: false);
+                }
+                else
+                {
+                    int totalToCommit = stats.ModifiedCount + stats.AddedCount + stats.NewFilesCount + stats.DeletedCount;
+                    string conflictPart = stats.ConflictsCount > 0 ? $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>" : "";
+                    string commitStats = $"<b>Pending Changes:</b> <color=#FFD700>M: {stats.ModifiedCount}</color> | <color=#00FF00>A: {stats.AddedCount}</color> | <color=#00E5FF>?: {stats.NewFilesCount}</color> | <color=#FF4444>D/!: {stats.DeletedCount}</color> | <color=#FFFFFF><b>Total: {totalToCommit}</b></color>{conflictPart}";
+
+                    SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, commitStats, "STATS", append: false);
+                }
+            }
+        }
+
+        public static async Task<Dictionary<string, SvnChangeInfo>> GetChangesDictionaryAsync(
+            string workingDir,
+            CancellationToken cancellationToken = default)
+        {
+            const int svnStatusPrefixLength = 8;
+            const string allowedSvnStatuses = "MA?!DC~R";
+            const string directoryLabel = "DIR";
+            const string fileLabel = "FILE";
+
+            workingDir = workingDir.Replace("\\", "/").TrimEnd('/');
+
+            string output = await SvnRunner.RunAsync(
+                "status --ignore-externals",
+                workingDir,
+                token: cancellationToken
+            );
+
+            if (string.IsNullOrWhiteSpace(output))
+                return new Dictionary<string, SvnChangeInfo>(2048);
+
+            var statusDict = await Task.Run(() =>
+            {
+                var dict = new Dictionary<string, SvnChangeInfo>(2048);
+                string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (var line in lines)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (line.Length < svnStatusPrefixLength) continue;
+
+                    char itemStatus = line[0];
+                    char propStatus = line[1];
+
+                    char activeChar = itemStatus != ' ' ? char.ToUpperInvariant(itemStatus) : char.ToUpperInvariant(propStatus);
+                    if (allowedSvnStatuses.IndexOf(activeChar) < 0) continue;
+
+                    string stat = activeChar.ToString();
+
+                    string rawPath = line.Substring(svnStatusPrefixLength).TrimStart();
+                    string cleanPath = SvnRunner.NormalizeRepositoryPath(rawPath);
+                    if (!string.IsNullOrEmpty(cleanPath))
+                        cleanPath = cleanPath.Replace('\\', '/').Trim();
+
+                    bool isRootChange = cleanPath == ".";
+
+                    if (isRootChange)
+                    {
+                        dict["."] = new SvnChangeInfo { Status = stat, Size = "DIR", Bytes = 0, Exists = true };
+                        continue;
+                    }
+
+                    string fullPath = (workingDir + "/" + cleanPath.TrimStart('/')).Replace("\\", "/");
+
+                    bool isActuallyFile = false;
+                    bool isActuallyDir = false;
+                    bool existsOnDisk = false;
+
+                    bool isDeletedOrMissing = (activeChar == 'D' || activeChar == '!');
+
+                    if (!isDeletedOrMissing)
+                    {
+                        try
+                        {
+                            var attr = File.GetAttributes(fullPath);
+                            isActuallyDir = (attr & FileAttributes.Directory) == FileAttributes.Directory;
+                            isActuallyFile = !isActuallyDir;
+                            existsOnDisk = true;
+                        }
+                        catch (FileNotFoundException) { }
+                        catch (DirectoryNotFoundException) { }
+                        catch { }
+                    }
+
+                    string sizeLabel;
+                    long bytes = 0;
+
+                    if (existsOnDisk)
+                    {
+                        sizeLabel = isActuallyFile ? fileLabel : directoryLabel;
+
+                        if (isActuallyFile)
+                        {
+                            try { bytes = new FileInfo(fullPath).Length; }
+                            catch { bytes = 0; }
+                        }
+                    }
+                    else
+                    {
+                        if (activeChar == '?') continue;
+
+                        sizeLabel = cleanPath.Contains(".") ? fileLabel : directoryLabel;
+                    }
+
+                    dict[cleanPath] = new SvnChangeInfo
+                    {
+                        Status = stat,
+                        Size = sizeLabel,
+                        Bytes = bytes,
+                        Exists = existsOnDisk
+                    };
+                }
+                return dict;
+            }, cancellationToken);
+
+            return statusDict;
+        }
+
+        public struct SvnChangeInfo
+        {
+            public string Status;
+            public string Size;
+            public long Bytes;
+            public bool Exists;
+        }
+
+        public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
+        {
+            UpdateListSelection(_flatTreeData, parentFolder.FullPath, isChecked);
+            if (_commitTreeData != null)
+                UpdateListSelection(_commitTreeData, parentFolder.FullPath, isChecked);
+
+            NotifySelectionChanged();
+        }
+
+        private void UpdateListSelection(List<SvnTreeElement> list, string path, bool isChecked)
+        {
+            if (list == null || list.Count == 0) return;
+
+            int startIndex = list.FindIndex(e => e.FullPath == path);
+            if (startIndex == -1) return;
+
+            list[startIndex].IsChecked = isChecked;
+            string prefix = path + "/";
+
+            for (int i = startIndex + 1; i < list.Count; i++)
+            {
+                if (list[i].FullPath.StartsWith(prefix))
+                    list[i].IsChecked = isChecked;
+            }
+        }
+
+        public List<SvnTreeElement> GetCurrentData() => _flatTreeData;
+
+        public async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(string root, CancellationToken token = default)
+        {
+            lock (_cacheLock)
+            {
+                if (_lockCache.data != null &&
+                    string.Equals(_lockCache.root, root, StringComparison.OrdinalIgnoreCase) &&
+                    (DateTime.UtcNow - _lockCache.time) < LockCacheDuration)
+                {
+                    return _lockCache.data;
+                }
+            }
+
+            var result = new Dictionary<string, SVNLockDetails>();
+            try
+            {
+                var lockModule = svnManager.GetModule<SVNLock>();
+                if (lockModule == null) return result;
+
+                var locks = await lockModule.GetDetailedLocks(root);
+                token.ThrowIfCancellationRequested();
+
+                foreach (var l in locks)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (string.IsNullOrEmpty(l.FullPath)) continue;
+
+                    string normalized = NormalizeLockPath(l.FullPath);
+                    result[normalized] = l;
+                }
+
+                lock (_cacheLock)
+                {
+                    _lockCache = (DateTime.UtcNow, root, result);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"Lock dictionary fetch failed: {ex.Message}");
+            }
+
+            return result;
+        }
+
+        public static void ClearLockCache()
+        {
+            lock (_cacheLock)
+            {
+                _lockCache = default;
+            }
+        }
+
+        public void NotifySelectionChanged()
+        {
+            if (svnUI.SvnTreeView != null)
+                svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
+
+            bool commitPanelVisible =
+                svnUI.SVNCommitTreeDisplay != null &&
+                svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
+
+            if (commitPanelVisible && _commitTreeData != null)
+                svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
+
+            UpdateSelectedSizeDisplay();
+            OnSelectionChanged?.Invoke();
+        }
+
+        public void ApplyLockColors(List<SvnTreeElement> elements, Dictionary<string, SVNLockDetails> lockDict)
+        {
+            if (elements == null || lockDict == null) return;
+
+            string currentUser = svnManager.CurrentUserName?.Trim().ToLower();
+
+            foreach (var e in elements)
+            {
+                e.LockedByMe = false;
+                e.LockedByOther = false;
+                if (string.IsNullOrEmpty(e.FullPath)) continue;
+
+                string normalized = NormalizeLockPath(e.FullPath);
+                if (lockDict.TryGetValue(normalized, out var lockInfo))
+                {
+                    bool isMine = !string.IsNullOrEmpty(lockInfo.Owner) &&
+                                  lockInfo.Owner.Trim().ToLower() == currentUser;
+                    e.LockedByMe = isMine;
+                    e.LockedByOther = !isMine;
+                }
+            }
+        }
+
+        private string NormalizeLockPath(string path) => SvnRunner.NormalizeRepositoryPath(path);
+
+        public void CancelCurrentRefresh()
+        {
+            _cts?.Cancel();
         }
 
         public void Dispose()
@@ -634,287 +907,6 @@ namespace SVN.Core
 
             totalCommitBytes = selectedBytes;
             svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{FormatSize(selectedBytes)}</color>";
-        }
-
-        private string FormatSize(long bytes)
-        {
-            if (bytes <= 0) return "0 B";
-
-            int digit = (int)Math.Floor(Math.Log(bytes, 1024));
-            digit = Mathf.Clamp(digit, 0, SIZE_UNITS.Length - 1);
-            double value = bytes / Math.Pow(1024, digit);
-            return value.ToString("F2") + " " + SIZE_UNITS[digit];
-        }
-
-        public void UpdateAllStatisticsUI(SvnStats stats, bool isIgnoredView)
-        {
-            if (svnUI == null) return;
-
-            if (svnUI.StatsText != null)
-            {
-                string statsContent = isIgnoredView
-                    ? $"<color=#444444><b>VIEW: IGNORED</b></color> | Folders: {stats.IgnoredFolderCount} | Files: {stats.IgnoredFileCount} | Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>"
-                    : $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | <color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | <color=#00FF00>Add (A): {stats.AddedCount}</color> | <color=#00E5FF>New (?): {stats.NewFilesCount}</color> | <color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | <color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
-
-                SVNLogBridge.UpdateUIField(svnUI.StatsText, statsContent, "STATS", append: false);
-            }
-
-            if (svnUI.CommitStatsText != null)
-            {
-                if (isIgnoredView)
-                {
-                    SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>", "STATS", append: false);
-                }
-                else
-                {
-                    int totalToCommit = stats.ModifiedCount + stats.AddedCount + stats.NewFilesCount + stats.DeletedCount;
-                    string conflictPart = stats.ConflictsCount > 0 ? $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>" : "";
-                    string commitStats = $"<b>Pending Changes:</b> <color=#FFD700>M: {stats.ModifiedCount}</color> | <color=#00FF00>A: {stats.AddedCount}</color> | <color=#00E5FF>?: {stats.NewFilesCount}</color> | <color=#FF4444>D/!: {stats.DeletedCount}</color> | <color=#FFFFFF><b>Total: {totalToCommit}</b></color>{conflictPart}";
-
-                    SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, commitStats, "STATS", append: false);
-                }
-            }
-        }
-
-        public static async Task<Dictionary<string, SvnChangeInfo>> GetChangesDictionaryAsync(
-    string workingDir,
-    CancellationToken cancellationToken = default)
-        {
-            const int svnStatusPrefixLength = 8;
-            const string allowedSvnStatuses = "MA?!DC~R";
-            const string directoryLabel = "DIR";
-            const string fileLabel = "FILE";
-
-            workingDir = workingDir.Replace("\\", "/").TrimEnd('/');
-
-            string output = await SvnRunner.RunAsync(
-                "status --ignore-externals",
-                workingDir,
-                token: cancellationToken
-            );
-
-            if (string.IsNullOrWhiteSpace(output))
-                return new Dictionary<string, SvnChangeInfo>(2048);
-
-            var statusDict = await Task.Run(() =>
-            {
-                var dict = new Dictionary<string, SvnChangeInfo>(2048);
-                string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-
-                foreach (var line in lines)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    if (line.Length < svnStatusPrefixLength) continue;
-
-                    char itemStatus = line[0];
-                    char propStatus = line[1];
-
-                    string stat = itemStatus != ' ' ? itemStatus.ToString().ToUpper() : propStatus.ToString().ToUpper();
-                    if (!allowedSvnStatuses.Contains(stat)) continue;
-
-                    string rawPath = line.Substring(svnStatusPrefixLength).TrimStart();
-                    string cleanPath = SvnRunner.NormalizeRepositoryPath(rawPath);
-                    if (!string.IsNullOrEmpty(cleanPath))
-                        cleanPath = cleanPath.Replace('\\', '/').Trim();
-
-                    bool isRootChange = cleanPath == ".";
-
-                    if (isRootChange)
-                    {
-                        dict["."] = new SvnChangeInfo { Status = stat, Size = "DIR", Bytes = 0, Exists = true };
-                        continue;
-                    }
-
-                    string fullPath = (workingDir + "/" + cleanPath.TrimStart('/')).Replace("\\", "/");
-
-                    bool isActuallyFile = false;
-                    bool isActuallyDir = false;
-                    bool existsOnDisk = false;
-
-                    try
-                    {
-                        var attr = File.GetAttributes(fullPath);
-                        isActuallyDir = (attr & FileAttributes.Directory) == FileAttributes.Directory;
-                        isActuallyFile = !isActuallyDir;
-                        existsOnDisk = true;
-                    }
-                    catch (FileNotFoundException) { }
-                    catch (DirectoryNotFoundException) { }
-                    catch { }
-
-                    string sizeLabel;
-                    long bytes = 0;
-
-                    if (existsOnDisk)
-                    {
-                        sizeLabel = isActuallyFile ? fileLabel : directoryLabel;
-
-                        if (isActuallyFile)
-                        {
-                            try { bytes = new FileInfo(fullPath).Length; }
-                            catch { bytes = 0; }
-                        }
-                    }
-                    else
-                    {
-                        if (stat == "?") continue;
-
-                        sizeLabel = cleanPath.Contains(".") ? fileLabel : directoryLabel;
-                    }
-
-                    dict[cleanPath] = new SvnChangeInfo
-                    {
-                        Status = stat,
-                        Size = sizeLabel,
-                        Bytes = bytes,
-                        Exists = existsOnDisk
-                    };
-                }
-                return dict;
-            }, cancellationToken);
-
-            return statusDict;
-        }
-
-        public struct SvnChangeInfo
-        {
-            public string Status;
-            public string Size;
-            public long Bytes;
-            public bool Exists;
-        }
-
-        public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
-        {
-            UpdateListSelection(_flatTreeData, parentFolder.FullPath, isChecked);
-            if (_commitTreeData != null)
-                UpdateListSelection(_commitTreeData, parentFolder.FullPath, isChecked);
-
-            NotifySelectionChanged();
-        }
-
-        private void UpdateListSelection(List<SvnTreeElement> list, string path, bool isChecked)
-        {
-            if (list == null || list.Count == 0) return;
-
-            int startIndex = list.FindIndex(e => e.FullPath == path);
-            if (startIndex == -1) return;
-
-            list[startIndex].IsChecked = isChecked;
-            string prefix = path + "/";
-
-            for (int i = startIndex + 1; i < list.Count; i++)
-            {
-                if (list[i].FullPath.StartsWith(prefix))
-                    list[i].IsChecked = isChecked;
-                else
-                    break;
-            }
-        }
-
-        public List<SvnTreeElement> GetCurrentData() => _flatTreeData;
-
-        public async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(string root, CancellationToken token = default)
-        {
-            lock (_cacheLock)
-            {
-                if (_lockCache.data != null &&
-                    string.Equals(_lockCache.root, root, StringComparison.OrdinalIgnoreCase) &&
-                    (DateTime.UtcNow - _lockCache.time) < LockCacheDuration)
-                {
-                    return _lockCache.data;
-                }
-            }
-
-            var result = new Dictionary<string, SVNLockDetails>();
-            try
-            {
-                var lockModule = svnManager.GetModule<SVNLock>();
-                if (lockModule == null) return result;
-
-                var locks = await lockModule.GetDetailedLocks(root);
-                token.ThrowIfCancellationRequested();
-
-                foreach (var l in locks)
-                {
-                    token.ThrowIfCancellationRequested();
-                    if (string.IsNullOrEmpty(l.FullPath)) continue;
-
-                    string normalized = NormalizeLockPath(l.FullPath);
-                    result[normalized] = l;
-                }
-
-                lock (_cacheLock)
-                {
-                    _lockCache = (DateTime.UtcNow, root, result);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError($"Lock dictionary fetch failed: {ex.Message}");
-            }
-
-            return result;
-        }
-
-        public static void ClearLockCache()
-        {
-            lock (_cacheLock)
-            {
-                _lockCache = default;
-            }
-        }
-
-        public void NotifySelectionChanged()
-        {
-
-            if (svnUI.SvnTreeView != null)
-                svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
-
-            bool commitPanelVisible =
-                svnUI.SVNCommitTreeDisplay != null &&
-                svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
-
-            if (commitPanelVisible && _commitTreeData != null)
-                svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-
-            UpdateSelectedSizeDisplay();
-            OnSelectionChanged?.Invoke();
-        }
-
-        public void ApplyLockColors(List<SvnTreeElement> elements, Dictionary<string, SVNLockDetails> lockDict)
-        {
-            if (elements == null || lockDict == null) return;
-
-            string currentUser = svnManager.CurrentUserName?.Trim().ToLower();
-
-            foreach (var e in elements)
-            {
-                e.LockedByMe = false;
-                e.LockedByOther = false;
-                if (string.IsNullOrEmpty(e.FullPath)) continue;
-
-                string normalized = NormalizeLockPath(e.FullPath);
-                if (lockDict.TryGetValue(normalized, out var lockInfo))
-                {
-                    bool isMine = !string.IsNullOrEmpty(lockInfo.Owner) &&
-                                  lockInfo.Owner.Trim().ToLower() == currentUser;
-                    e.LockedByMe = isMine;
-                    e.LockedByOther = !isMine;
-                }
-            }
-        }
-
-        private string NormalizeLockPath(string path) => SvnRunner.NormalizeRepositoryPath(path);
-
-        public void CancelCurrentRefresh()
-        {
-            _cts?.Cancel();
         }
     }
 }

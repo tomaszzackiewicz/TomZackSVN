@@ -8878,6 +8878,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &145868713
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -9396,6 +9397,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &165493077
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11422,6 +11424,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &201959219
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -14729,6 +14732,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &269358135
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -17566,6 +17570,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &353497909
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -19157,6 +19162,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &400149865
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -24130,6 +24136,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &544913963
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -43819,6 +43826,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1010348413
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -46745,6 +46753,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1091045732
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -47018,6 +47027,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1093276122
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -51688,8 +51698,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 1083.8203, y: -163.95}
-  m_SizeDelta: {x: 685.437, y: 327.9}
+  m_AnchoredPosition: {x: 1083.8203, y: -102.500015}
+  m_SizeDelta: {x: 685.437, y: 205}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1221358097
 MonoBehaviour:
@@ -52176,6 +52186,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1223445778
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -53544,6 +53555,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1239054203
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -60332,6 +60344,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1374369110
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -65761,6 +65774,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1501991743
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -76112,6 +76126,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1c64d93e1e6bacc478e19e8b5050f17c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SVNHoverHandler
+  _tooltipText: 
 --- !u!114 &1766342271
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -85379,7 +85394,7 @@ MonoBehaviour:
   m_fontSizeMax: 72
   m_fontStyle: 0
   m_HorizontalAlignment: 1
-  m_VerticalAlignment: 512
+  m_VerticalAlignment: 256
   m_textAlignment: 65535
   m_characterSpacing: 0
   m_characterHorizontalScale: 1

@@ -19,7 +19,18 @@ public class CheckoutPanel : MonoBehaviour
     public void Button_Export() => svnManager.GetModule<SVNCheckout>().ExportRepository();
     public void Button_Checkout() => svnManager.GetModule<SVNCheckout>().StartCheckout();
     public void Button_Pause() => svnManager.GetModule<SVNCheckout>().PauseCheckout();
-    public void Button_Cancel() => svnManager.GetModule<SVNCheckout>().CancelCheckout();
+
+    public void Button_Cancel()
+    {
+        var repair = svnManager.GetModule<SVNRepoRepair>();
+        var checkout = svnManager.GetModule<SVNCheckout>();
+
+        if (repair != null && repair.IsProcessing)
+            repair.CancelRepair();
+        else
+            checkout?.CancelCheckout();
+    }
+
     public void Button_Resume() => svnManager.GetModule<SVNCheckout>().ResumeCheckout();
-    public void Button_RepairWorkingCopy() => svnManager.GetModule<SVNCheckout>().ForceRepairWorkingCopy();
+    public void Button_RepairWorkingCopy() => svnManager.GetModule<SVNRepoRepair>().ForceRepairWorkingCopy();
 }

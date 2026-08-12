@@ -34,63 +34,11 @@ namespace SVN.Core
             UnityMainThreadDispatcher.EnsureExists();
         }
 
-        private string ResolveAndValidateKeyPath()
+        private string ResolveAndCacheKeyPath()
         {
-            string keyPath = SvnRunner.KeyPath;
-            if (string.IsNullOrWhiteSpace(keyPath))
-            {
-                keyPath = SVNManager.Instance?.CurrentKey;
-                if (!string.IsNullOrWhiteSpace(keyPath))
-                    SVNLogBridge.LogToOutput("<color=yellow>[SVN]</color> Using fallback SSH key.");
-            }
-
-            if (string.IsNullOrWhiteSpace(keyPath)) return null;
-
-            keyPath = keyPath.Replace("\"", string.Empty).Trim();
-            if (keyPath.StartsWith("~"))
-            {
-                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                keyPath = Path.Combine(home, keyPath.Substring(1).TrimStart('\\', '/'));
-            }
-
-            try { keyPath = Path.GetFullPath(keyPath); }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogErrorToOutput($"[SVN] Invalid SSH key path: {ex.Message}");
-                return null;
-            }
-
-            if (!File.Exists(keyPath))
-            {
-                SVNLogBridge.LogErrorToOutput($"[SVN] SSH key not found: {keyPath}");
-                SVNLogBridge.LogErrorToOutput("[SVN] Please verify the SSH key path in Settings.");
-                return null;
-            }
-
-            try
-            {
-                FileInfo fileInfo = new FileInfo(keyPath);
-                if ((fileInfo.Attributes & FileAttributes.ReadOnly) != 0)
-                    SVNLogBridge.LogToOutput("<color=yellow>[SVN]</color> Warning: SSH key is marked as read-only.");
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogErrorToOutput($"[SVN] Cannot access SSH key: {ex.Message}");
-                return null;
-            }
-
+            string keyPath = ResolveAndValidateKeyPath();
             _resolvedKeyPath = keyPath;
-            SVNLogBridge.LogToOutput($"<color=green>[SVN]</color> SSH key resolved: {keyPath}");
             return keyPath;
-        }
-
-        private string BuildSshConfigOption(string keyPath)
-        {
-            if (string.IsNullOrWhiteSpace(keyPath)) return string.Empty;
-            string normalizedKeyPath = keyPath.Replace("\\", "/");
-            string nullDevice = Environment.OSVersion.Platform == PlatformID.Win32NT ? "NUL" : "/dev/null";
-            string sshCommand = $"ssh -i \"{normalizedKeyPath}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile={nullDevice}";
-            return $" --config-option config:tunnels:ssh=\"{sshCommand}\"";
         }
 
         public async void UpdateProjectInfo()
@@ -120,7 +68,7 @@ namespace SVN.Core
             PostToMainThread(() =>
                 SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "Analyzing repository...", "Info"));
 
-            string keyPath = ResolveAndValidateKeyPath();
+            string keyPath = ResolveAndCacheKeyPath();
             string sshConfig = BuildSshConfigOption(keyPath);
             _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url, sshConfig).ConfigureAwait(false);
             string structure = await GetRepositoryStructureAsync(url, sshConfig).ConfigureAwait(false);
@@ -261,7 +209,7 @@ namespace SVN.Core
                 return;
             }
 
-            string keyPath = ResolveAndValidateKeyPath();
+            string keyPath = ResolveAndCacheKeyPath();
             if (url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(keyPath))
             {
                 ShowError("SSH repository requires a valid private key.");
@@ -328,7 +276,7 @@ namespace SVN.Core
                 return;
             }
 
-            string keyPath = ResolveAndValidateKeyPath();
+            string keyPath = ResolveAndCacheKeyPath();
             string sshConfig = BuildSshConfigOption(keyPath);
 
             lock (_stateLock) { _state = OperationState.Running; }
@@ -553,7 +501,9 @@ namespace SVN.Core
                             if (curConflicts > 0)
                                 sb.Append(" | <b><color=#FFAA00>Conflicts: ").Append(curConflicts).Append("</color></b>");
 
-                            PostToMainThread(() => svnUI.CheckoutStatusInfoText.text = sb.ToString());
+                            string currentText = sb.ToString();
+                            PostToMainThread(() => svnUI.CheckoutStatusInfoText.text = currentText);
+
                             await Task.Delay(1000, token).ConfigureAwait(false);
                         }
                     }
@@ -595,36 +545,17 @@ namespace SVN.Core
                         }
                     }
 
-                    if (isExport)
-                    {
-                        PostToMainThread(() =>
-                        {
-                            if (svnUI.CheckoutConsoleText != null)
-                            {
-                                string text = svnUI.CheckoutConsoleText.text;
-                                string[] textLines = text.Split('\n');
-                                if (textLines.Length > 0 && textLines[textLines.Length - 1].StartsWith("Exporting:"))
-                                    textLines[textLines.Length - 1] = cleanLine;
-                                else
-                                    textLines = textLines.Append(cleanLine).ToArray();
-                                svnUI.CheckoutConsoleText.text = string.Join("\n", textLines);
-                                Canvas.ForceUpdateCanvases();
-                            }
-                        });
-                    }
-                    else
-                    {
-                        logBuffer.Enqueue(cleanLine);
-                    }
+                    logBuffer.Enqueue(cleanLine);
+
                 }, token).ConfigureAwait(false);
 
                 if (token.IsCancellationRequested) throw new OperationCanceledException(token);
 
                 bool hasWorkingCopy = Directory.Exists(Path.Combine(path, ".svn"));
+
                 bool hasError = !string.IsNullOrWhiteSpace(result) &&
-                                (result.Contains("error", StringComparison.OrdinalIgnoreCase) ||
-                                 result.Contains("exception", StringComparison.OrdinalIgnoreCase) ||
-                                 result.Contains("failed", StringComparison.OrdinalIgnoreCase));
+                                (result.Contains("svn: E", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Contains("[SVN ERROR]", StringComparison.OrdinalIgnoreCase));
 
                 if (isExport)
                 {
@@ -769,305 +700,6 @@ namespace SVN.Core
             }
         }
 
-        public async void ForceRepairWorkingCopy()
-        {
-            try
-            {
-                await ForceRepairWorkingCopyAsync();
-            }
-            catch (Exception ex)
-            {
-                HandleOperationException(ex);
-            }
-        }
-
-        private async Task ForceRepairWorkingCopyAsync()
-        {
-            string path = svnUI?.CheckoutDestFolderInput?.text?.Trim();
-            string url = svnUI?.CheckoutRepoUrlInput?.text?.Trim().TrimEnd('/');
-
-            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(url))
-            {
-                ShowError("Repository URL and destination path cannot be empty for force repair.");
-                return;
-            }
-
-            if (!IsValidSvnUrl(url))
-            {
-                ShowError("Invalid SVN URL.");
-                return;
-            }
-
-            if (!TryValidatePath(path, out string fullPath)) return;
-
-            if (!Directory.Exists(fullPath))
-            {
-                ShowError("Directory does not exist.");
-                return;
-            }
-
-            SetPollingState(isPaused: true, cancelCurrent: true);
-
-            string svnDir = Path.Combine(fullPath, ".svn");
-            string wcDbPath = Path.Combine(svnDir, "wc.db");
-
-            PostToMainThread(() =>
-            {
-                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
-                    "<color=yellow><b>Initializing Force Repair...</b></color>", "SVN");
-                SVNLogBridge.LogCheckoutConsole("<b>[Force Repair]</b> Starting process...\n");
-            });
-
-            PostToMainThread(() =>
-            {
-                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
-                    "<color=orange><b>Step 1/2:</b> Removing old .svn metadata...</color>\n<size=11><i>Please wait...</i></size>", "SVN");
-                Canvas.ForceUpdateCanvases();
-            });
-
-            bool deletionSuccess = false;
-            try
-            {
-                deletionSuccess = await Task.Run(() =>
-                {
-                    try
-                    {
-                        if (Directory.Exists(svnDir)) DeleteDirectorySecured(svnDir);
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        SVNLogBridge.LogErrorToOutput($"[SVN] Failed to delete .svn: {ex.Message}");
-                        return false;
-                    }
-                }).ConfigureAwait(false);
-            }
-            catch { deletionSuccess = false; }
-
-            if (!deletionSuccess)
-            {
-                ShowError("Cannot remove the old .svn folder. It is likely locked by another program.\nPlease close all programs that might be using these files and try again.");
-                SetPollingState(isPaused: false, cancelCurrent: false);
-                return;
-            }
-
-            string keyPath = ResolveAndValidateKeyPath();
-            string sshConfig = BuildSshConfigOption(keyPath);
-            if (!string.IsNullOrEmpty(sshConfig) && !sshConfig.StartsWith(" ")) sshConfig = " " + sshConfig;
-            string checkoutArgs = $"checkout \"{url}\" . --force --non-interactive --trust-server-cert{sshConfig}";
-
-            PostToMainThread(() =>
-            {
-                var statusBuilder = new StringBuilder();
-                statusBuilder.AppendLine("<color=green><b>Step 1/2:</b> Old metadata removed successfully.</color>");
-                statusBuilder.AppendLine("<color=yellow><b>Step 2/2:</b> Rebuilding wc.db...</color>");
-                statusBuilder.AppendLine("<size=11><i>See console below for live database size.</i></size>");
-
-                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, statusBuilder.ToString(), "SVN");
-                SVNLogBridge.LogCheckoutConsole("<color=yellow>[Step 2/2]</color> Contacting server and rebuilding database...\n");
-            });
-
-            var monitorCts = new CancellationTokenSource();
-            Task monitorTask = null;
-
-            try
-            {
-                long lastReportedSize = -1;
-                monitorTask = Task.Run(async () =>
-                {
-                    while (!monitorCts.Token.IsCancellationRequested)
-                    {
-                        try
-                        {
-                            if (File.Exists(wcDbPath))
-                            {
-                                FileInfo dbInfo = new FileInfo(wcDbPath);
-                                long sizeBytes = dbInfo.Length;
-
-                                if (sizeBytes != lastReportedSize)
-                                {
-                                    lastReportedSize = sizeBytes;
-                                    string sizeStr = FormatSize(sizeBytes);
-
-                                    PostToMainThread(() =>
-                                    {
-                                        SVNLogBridge.LogCheckoutConsole($"[Database] Current size: <b>{sizeStr}</b>\n");
-                                    });
-                                }
-                            }
-                        }
-                        catch { }
-
-                        await Task.Delay(1000, monitorCts.Token).ConfigureAwait(false);
-                    }
-                }, monitorCts.Token);
-
-                using (var cts = new CancellationTokenSource(TimeSpan.FromMinutes(30)))
-                {
-                    SVNLogBridge.LogToOutput($"<color=yellow>[SVN]</color> Executing: svn {checkoutArgs}");
-                    await SvnRunner.RunAsync(checkoutArgs, fullPath, false, cts.Token).ConfigureAwait(false);
-                }
-
-                monitorCts.Cancel();
-
-                bool wcDbExists = Directory.Exists(svnDir) && File.Exists(wcDbPath);
-
-                if (wcDbExists)
-                {
-                    FileInfo finalDbInfo = new FileInfo(wcDbPath);
-                    string finalSizeStr = FormatSize(finalDbInfo.Length);
-
-                    PostToMainThread(() =>
-                    {
-                        SVNLogBridge.LogCheckoutConsole($"<color=green><b>[Force Repair]</b> COMPLETED! Final size: {finalSizeStr}</color>\n");
-
-                        var report = new StringBuilder();
-                        report.AppendLine("<color=green><b>=========================================</b></color>");
-                        report.AppendLine("<color=green><b>     FORCE REPAIR COMPLETED!</b></color>");
-                        report.AppendLine("<color=green><b>=========================================</b></color>");
-                        report.AppendLine($"New wc.db size: <b>{finalSizeStr}</b>");
-                        report.AppendLine("<color=green><b>=========================================</b></color>");
-
-                        SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, report.ToString(), "SVN");
-                        SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Force repair successful. Synchronizing app state...");
-                    });
-
-                    var statusModule = SVNManager.Instance?.GetModule<SVNStatus>();
-                    var svnBar = SVNManager.Instance?.GetModule<SVNBar>();
-
-                    SVNStatus.ClearLockCache();
-                    svnManager.DiskChangesDetected = true;
-
-                    if (statusModule != null)
-                    {
-                        statusModule.ClearSVNTreeView();
-                        statusModule.ClearCurrentData();
-                        await statusModule.RefreshModifiedInternal();
-                    }
-
-                    if (svnBar != null)
-                    {
-                        var newSnapshot = await svnBar.BuildSnapshotAsync(svnManager.CurrentProject, fullPath);
-
-                        string newRevision = "Unknown";
-                        try
-                        {
-                            string infoAfter = await SvnRunner.GetInfoAsync(fullPath);
-                            var match = System.Text.RegularExpressions.Regex.Match(infoAfter, @"^Revision:\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline);
-                            if (match.Success) newRevision = match.Groups[1].Value;
-                        }
-                        catch { }
-
-                        string newAuthor = string.Empty;
-                        try
-                        {
-                            string logOutput = await SvnRunner.RunAsync($"log -r {newRevision} -l 1", fullPath);
-                            var lines = logOutput.Split('\n');
-                            if (lines.Length >= 2)
-                            {
-                                var parts = lines[1].Split('|');
-                                if (parts.Length >= 2) newAuthor = parts[1].Trim();
-                            }
-                        }
-                        catch { }
-
-                        newSnapshot.Revision = newRevision;
-                        if (!string.IsNullOrEmpty(newAuthor))
-                        {
-                            newSnapshot.Author = newAuthor;
-                            newSnapshot.CurrentUser = newAuthor;
-                        }
-                        svnManager.CurrentSnapshot = newSnapshot;
-
-                        await svnBar.ShowProjectInfo(svnManager.CurrentProject, fullPath,
-                            forceOutdatedCheck: true, isRefreshing: false);
-                    }
-
-                    SVNManager.Instance?.ProjectSelectionPanel?.RefreshList();
-                    ResetAndResumePolling();
-                }
-                else
-                {
-                    throw new Exception("SVN process finished, but failed to create the wc.db file.");
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                PostToMainThread(() =>
-                {
-                    SVNLogBridge.LogCheckoutConsole("<color=#FFAA00>[Force Repair] Cancelled or timed out.</color>\n");
-                    SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "<color=#FFAA00><b>Force Repair Cancelled.</b></color>", "SVN");
-                });
-                SetPollingState(isPaused: false, cancelCurrent: false);
-            }
-            catch (Exception ex)
-            {
-                PostToMainThread(() =>
-                {
-                    SVNLogBridge.LogCheckoutConsole($"<color=#FF4444>[Force Repair] Failed: {ex.Message}</color>\n");
-                    SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, $"<color=#FF4444><b>Force Repair Failed</b></color>", "SVN");
-                });
-                SVNLogBridge.LogErrorToOutput($"[SVN] Force repair failed: {ex.Message}");
-                SetPollingState(isPaused: false, cancelCurrent: false);
-            }
-            finally
-            {
-                if (monitorCts != null)
-                {
-                    monitorCts.Cancel();
-                    monitorCts.Dispose();
-                }
-            }
-        }
-
-        private static void DeleteDirectorySecured(string targetDir)
-        {
-            string[] files = Directory.GetFiles(targetDir);
-            string[] dirs = Directory.GetDirectories(targetDir);
-
-            foreach (string file in files)
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-                File.Delete(file);
-            }
-
-            foreach (string dir in dirs)
-            {
-                DeleteDirectorySecured(dir);
-            }
-
-            Directory.Delete(targetDir, false);
-        }
-
-        private void SetPollingState(bool isPaused, bool cancelCurrent)
-        {
-            if (SVNManager.Instance != null)
-            {
-                var pollingService = SVNManager.Instance.GetComponent<SVNPollingService>();
-                if (pollingService != null)
-                {
-                    pollingService.IsPaused = isPaused;
-                    if (cancelCurrent)
-                    {
-                        pollingService.CancelCurrentCheck();
-                    }
-                }
-            }
-        }
-
-        private void ResetAndResumePolling()
-        {
-            if (SVNManager.Instance != null)
-            {
-                var pollingService = SVNManager.Instance.GetComponent<SVNPollingService>();
-                if (pollingService != null)
-                {
-                    pollingService.ResetRevisionTracking();
-                    pollingService.IsPaused = false;
-                }
-            }
-        }
-
         public async void ExportRepository()
         {
             try { await ExportRepositoryAsync().ConfigureAwait(false); }
@@ -1153,17 +785,9 @@ namespace SVN.Core
                     SVNLogBridge.LogLine($"<color=#FFAA00>{errorMsg}</color>");
                     return false;
                 }
-
-                try { Directory.Delete(fullPath, false); }
-                catch (Exception ex)
-                {
-                    errorMsg = $"Cannot prepare destination: {ex.Message}";
-                    SVNLogBridge.LogLine($"<color=#FFAA00>Export: Cannot delete empty folder {fullPath} – {ex.Message}</color>");
-                    return false;
-                }
             }
 
-            keyPath = ResolveAndValidateKeyPath();
+            keyPath = ResolveAndCacheKeyPath();
             if (url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(keyPath))
             {
                 errorMsg = "SSH repository requires a valid private key.";
@@ -1195,56 +819,6 @@ namespace SVN.Core
             }
         }
 
-        private bool IsValidSvnUrl(string url)
-        {
-            return url.StartsWith("svn://", StringComparison.OrdinalIgnoreCase) ||
-                   url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase) ||
-                   url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                   url.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool TryValidatePath(string inputPath, out string fullPath)
-        {
-            fullPath = null;
-            try { fullPath = Path.GetFullPath(inputPath); }
-            catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return false; }
-
-            try
-            {
-                string root = Path.GetPathRoot(fullPath);
-                if (!string.IsNullOrEmpty(root))
-                {
-                    DriveInfo drive = new DriveInfo(root);
-                    if (!drive.IsReady)
-                    {
-                        ShowError($"The drive {root} is not ready. Please choose a valid location.");
-                        return false;
-                    }
-                }
-            }
-            catch (Exception ex) { ShowError($"Cannot access destination drive: {ex.Message}"); return false; }
-
-            return true;
-        }
-
-        private void ShowError(string message)
-        {
-            SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, $"<color=#FFAA00>Error:</color> {message}", "Checkout");
-        }
-
-        private void HandleOperationException(Exception ex)
-        {
-            IsProcessing = false;
-            SVNLogBridge.LogErrorToOutput($"[SVN] Unhandled operation exception:\n{ex}");
-            ShowError(ex.Message);
-        }
-
-        private void PostToMainThread(Action action)
-        {
-            if (action == null) return;
-            UnityMainThreadDispatcher.Enqueue(action);
-        }
-
         private void FlushLogBuffer(ConcurrentQueue<string> logBuffer)
         {
             if (logBuffer == null || logBuffer.IsEmpty) return;
@@ -1259,19 +833,33 @@ namespace SVN.Core
         private long GetDirectorySizeFast(string folderPath)
         {
             if (!Directory.Exists(folderPath)) return 0;
+            return CalculateDirectorySizeSafe(new DirectoryInfo(folderPath));
+        }
 
+        private long CalculateDirectorySizeSafe(DirectoryInfo directory)
+        {
             long size = 0;
             try
             {
-                var directory = new DirectoryInfo(folderPath);
-                foreach (FileInfo file in directory.EnumerateFiles("*", SearchOption.AllDirectories))
+                FileInfo[] files = directory.GetFiles();
+                foreach (FileInfo file in files)
                 {
                     try { size += file.Length; }
-                    catch (UnauthorizedAccessException) { }
-                    catch { }
+                    catch {}
+                }
+
+                DirectoryInfo[] subDirectories = directory.GetDirectories();
+                foreach (DirectoryInfo subDir in subDirectories)
+                {
+                    size += CalculateDirectorySizeSafe(subDir);
                 }
             }
-            catch { }
+            catch (UnauthorizedAccessException)
+            {
+            }
+            catch
+            {
+            }
 
             return size;
         }
@@ -1351,20 +939,6 @@ namespace SVN.Core
 
             return string.Equals(normSavedPath, normCurrentPath, StringComparison.OrdinalIgnoreCase) &&
                    string.Equals(normSavedUrl, normCurrentUrl, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private string FormatSize(long bytes)
-        {
-            if (bytes <= 0) return "0 B";
-            string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
-            double size = bytes;
-            int order = 0;
-            while (size >= 1024.0 && order < suffixes.Length - 1)
-            {
-                order++;
-                size /= 1024.0;
-            }
-            return $"{size:0.##} {suffixes[order]}";
         }
     }
 }

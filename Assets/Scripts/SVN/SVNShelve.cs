@@ -521,15 +521,6 @@ namespace SVN.Core
             catch { }
         }
 
-        private static string FormatSize(long bytes)
-        {
-            if (bytes <= 0) return "0 B";
-            string[] units = { "B", "KB", "MB", "GB" };
-            int digit = Math.Min((int)Math.Floor(Math.Log(bytes, 1024)), units.Length - 1);
-            double value = bytes / Math.Pow(1024, digit);
-            return value.ToString("F1") + " " + units[digit];
-        }
-
         private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
         {
             if (!Directory.Exists(sourceDirectory)) return;

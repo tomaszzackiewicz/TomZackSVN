@@ -1,17 +1,36 @@
+using SVN.Core;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
 public class SVNHoverHandler : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
 {
-    public event System.Action OnHoverEnter;
-    public event System.Action OnHoverExit;
+    [SerializeField]
+    private string _tooltipText = "";
 
-    public void OnPointerEnter(PointerEventData eventData) => OnHoverEnter?.Invoke();
-    public void OnPointerExit(PointerEventData eventData) => OnHoverExit?.Invoke();
-
-    private void OnDestroy()
+    public string TooltipText
     {
-        OnHoverEnter = null;
-        OnHoverExit = null;
+        get => _tooltipText;
+        set => _tooltipText = value;
+    }
+
+    public void SetTooltip(string tooltip)
+    {
+        _tooltipText = tooltip;
+    }
+
+    public void OnPointerEnter(PointerEventData eventData)
+    {
+        if (!string.IsNullOrEmpty(_tooltipText))
+            SVNLogBridge.LogTooltip(_tooltipText);
+    }
+
+    public void OnPointerExit(PointerEventData eventData)
+    {
+        SVNLogBridge.ClearTooltip();
+    }
+
+    private void OnDisable()
+    {
+        SVNLogBridge.ClearTooltip();
     }
 }

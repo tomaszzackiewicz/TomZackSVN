@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using UnityEngine;
 
 namespace SVN.Core
@@ -34,7 +35,11 @@ namespace SVN.Core
                     _keyPath = PlayerPrefs.GetString("SVN_SSHKeyPath", "");
                 return _keyPath;
             }
-            set => _keyPath = value ?? "";
+            set
+            {
+                _keyPath = value ?? "";
+                PlayerPrefs.SetString("SVN_SSHKeyPath", _keyPath);
+            }
         }
 
         public static int ActiveOperationsCount
@@ -51,7 +56,7 @@ namespace SVN.Core
                 {
                     _processingState = true;
                     SVNLogBridge.LogToOutput("<color=#00FFAA>[SVN]</color> Processing START");
-                    OnProcessingStateChanged?.Invoke(true);
+                    InvokeProcessingStateChanged(true);
                 }
             }
         }
@@ -68,7 +73,20 @@ namespace SVN.Core
                 {
                     _processingState = false;
                     SVNLogBridge.LogToOutput("<color=#FFCC00>[SVN]</color> Processing END");
-                    OnProcessingStateChanged?.Invoke(false);
+                    InvokeProcessingStateChanged(false);
+                }
+            }
+        }
+
+        private static void InvokeProcessingStateChanged(bool state)
+        {
+            var handlers = OnProcessingStateChanged?.GetInvocationList();
+            if (handlers != null)
+            {
+                foreach (var h in handlers)
+                {
+                    try { ((Action<bool>)h).Invoke(state); }
+                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Event handler error: {ex.Message}"); }
                 }
             }
         }
@@ -121,10 +139,11 @@ namespace SVN.Core
             bool retryOnLock = true,
             CancellationToken token = default)
         {
-            string safeArgs = BuildSafeArguments(args);
+            var argList = args.ToList();
+            string safeArgs = BuildSafeArguments(argList);
             SVNLogBridge.LogToOutput($"[SVN QUEUE] Waiting: svn {safeArgs}");
 
-            bool write = IsWriteCommand(args);
+            bool write = IsWriteCommand(argList);
             if (write)
                 await _svnLock.EnterWriteAsync(token);
             else
@@ -138,13 +157,7 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(workingDir))
                     throw new Exception("Working Directory is null!");
 
-                string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
-
-                string safeKeyPath = (!string.IsNullOrEmpty(KeyPath))
-                    ? KeyPath.Trim().Replace("\"", "").Replace('\\', '/')
-                    : "";
-
-                var finalArgs = new List<string>(args);
+                var finalArgs = new List<string>(argList);
                 if (!finalArgs.Contains("--non-interactive"))
                     finalArgs.Add("--non-interactive");
                 if (!finalArgs.Contains("--trust-server-cert"))
@@ -156,105 +169,38 @@ namespace SVN.Core
                 {
                     token.ThrowIfCancellationRequested();
 
-                    var psi = new ProcessStartInfo
+                    var (output, error, exitCode) = await ExecuteProcessAsync(finalArgs, workingDir, token);
+
+                    if (exitCode != 0)
                     {
-                        FileName = "svn",
-                        WorkingDirectory = cleanWorkingDir,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8
-                    };
+                        bool isLockError = error.Contains("locked") || error.Contains("cleanup");
 
-                    foreach (var arg in finalArgs)
-                        psi.ArgumentList.Add(arg);
-
-                    if (!string.IsNullOrEmpty(safeKeyPath))
-                    {
-                        psi.EnvironmentVariables["SVN_SSH"] =
-                            $"ssh -i \"{safeKeyPath}\" " +
-                            "-o IdentitiesOnly=yes " +
-                            "-o StrictHostKeyChecking=no " +
-                            "-o BatchMode=yes " +
-                            "-o LogLevel=QUIET " +
-                            "-o ServerAliveInterval=15 " +
-                            "-o ServerAliveCountMax=10 " +
-                            "-o IPQoS=throughput";
-                    }
-
-                    using var process = new Process
-                    {
-                        StartInfo = psi,
-                        EnableRaisingEvents = true
-                    };
-
-                    SvnProcessTracker.Register(process);
-
-                    var outputQueue = new ConcurrentQueue<string>();
-                    var errorQueue = new ConcurrentQueue<string>();
-
-                    process.OutputDataReceived += (s, e) =>
-                    {
-                        if (!string.IsNullOrWhiteSpace(e.Data))
-                            outputQueue.Enqueue(e.Data);
-                    };
-
-                    process.ErrorDataReceived += (s, e) =>
-                    {
-                        if (!string.IsNullOrWhiteSpace(e.Data))
-                            errorQueue.Enqueue(e.Data);
-                    };
-
-                    try
-                    {
-                        SVNLogBridge.LogToOutput($"[SvnRunner] Starting process...");
-                        process.Start();
-                        process.BeginOutputReadLine();
-                        process.BeginErrorReadLine();
-
-                        await WaitForExitAsync(process, token);
-
-                        string err = string.Join("\n", errorQueue);
-
-                        if (process.ExitCode != 0)
+                        if (attempt == 0 && retryOnLock && isLockError)
                         {
-                            bool isLockError =
-                                err.Contains("locked") ||
-                                err.Contains("cleanup");
+                            SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
+                            SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Performing automatic cleanup...");
 
-                            if (attempt == 0 && retryOnLock && isLockError)
-                            {
-                                SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
-                                SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Performing automatic cleanup...");
+                            var cleanupArgs = new List<string> { "cleanup", "--non-interactive", "--trust-server-cert" };
+                            await ExecuteProcessAsync(cleanupArgs, workingDir, token);
 
-                                await RunAsync("cleanup", workingDir, false, token);
-
-                                SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
-                                continue;
-                            }
-
-                            string diagnostic =
-                                err.Contains("E170013") || err.Contains("can't connect")
-                                    ? " [Connection/URL issue]"
-                                    : err.Contains("E215004")
-                                        ? " [Authorization/Password error]"
-                                        : "";
-
-                            string fullError = $"SVN Error (Code {process.ExitCode}): {err}{diagnostic}";
-                            SVNLogBridge.LogErrorToOutput(fullError);
-                            throw new Exception(fullError);
+                            SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
+                            continue;
                         }
 
-                        SVNLogBridge.LogToOutput($"[SvnRunner] Completed successfully.");
-                        return string.Join("\n", outputQueue);
+                        string diagnostic =
+                            error.Contains("E170013") || error.Contains("can't connect")
+                                ? " [Connection/URL issue]"
+                                : error.Contains("E215004")
+                                    ? " [Authorization/Password error]"
+                                    : "";
+
+                        string fullError = $"SVN Error (Code {exitCode}): {error}{diagnostic}";
+                        SVNLogBridge.LogErrorToOutput(fullError);
+                        throw new Exception(fullError);
                     }
-                    catch (OperationCanceledException)
-                    {
-                        SvnProcessTracker.Kill(process);
-                        throw;
-                    }
+
+                    SVNLogBridge.LogToOutput($"[SvnRunner] Completed successfully.");
+                    return output;
                 }
 
                 throw new Exception("SVN retry system failed.");
@@ -271,6 +217,84 @@ namespace SVN.Core
                     SVNLogBridge.LogErrorToOutput($"[SvnRunner] Lock release failed: {ex.Message}");
                 }
                 DecrementOperations();
+            }
+        }
+
+        private static async Task<(string output, string error, int exitCode)> ExecuteProcessAsync(
+            List<string> args,
+            string workingDir,
+            CancellationToken token)
+        {
+            string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "svn",
+                WorkingDirectory = cleanWorkingDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                StandardOutputEncoding = new UTF8Encoding(false),
+                StandardErrorEncoding = new UTF8Encoding(false)
+            };
+
+            foreach (var arg in args)
+                psi.ArgumentList.Add(arg);
+
+            if (!string.IsNullOrEmpty(KeyPath))
+            {
+                string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
+                psi.EnvironmentVariables["SVN_SSH"] =
+                    $"ssh -i \"{safeKeyPath}\" " +
+                    "-o IdentitiesOnly=yes " +
+                    "-o StrictHostKeyChecking=no " +
+                    "-o BatchMode=yes " +
+                    "-o LogLevel=QUIET " +
+                    "-o ServerAliveInterval=15 " +
+                    "-o ServerAliveCountMax=10 " +
+                    "-o IPQoS=throughput";
+            }
+
+            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            SvnProcessTracker.Register(process);
+
+            var outputQueue = new ConcurrentQueue<string>();
+            var errorQueue = new ConcurrentQueue<string>();
+
+            process.OutputDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                    outputQueue.Enqueue(e.Data);
+            };
+
+            process.ErrorDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                    errorQueue.Enqueue(e.Data);
+            };
+
+            try
+            {
+                SVNLogBridge.LogToOutput($"[SvnRunner] Starting process...");
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                await WaitForExitAsync(process, token);
+
+                string output = string.Join("\n", outputQueue);
+                string error = string.Join("\n", errorQueue);
+                return (output, error, process.ExitCode);
+            }
+            catch (OperationCanceledException)
+            {
+                SvnProcessTracker.Kill(process);
+                throw;
+            }
+            finally
+            {
+                try { SvnProcessTracker.Unregister(process); } catch { }
             }
         }
 
@@ -316,10 +340,11 @@ namespace SVN.Core
             Action<string> onLineReceived,
             CancellationToken token = default)
         {
-            string safeArgs = BuildSafeArguments(args);
+            var argList = args.ToList();
+            string safeArgs = BuildSafeArguments(argList);
             SVNLogBridge.LogToOutput($"[SVN QUEUE] Waiting LIVE: svn {safeArgs}");
 
-            bool write = IsWriteCommand(args);
+            bool write = IsWriteCommand(argList);
             if (write) await _svnLock.EnterWriteAsync(token);
             else await _svnLock.EnterReadAsync(token);
 
@@ -332,7 +357,7 @@ namespace SVN.Core
 
                 string cleanWorkingDir = Path.GetFullPath((workingDir ?? "").Trim());
 
-                var finalArgs = new List<string>(args);
+                var finalArgs = new List<string>(argList);
                 if (!finalArgs.Contains("--non-interactive"))
                     finalArgs.Add("--non-interactive");
                 if (!finalArgs.Contains("--trust-server-cert"))
@@ -370,13 +395,11 @@ namespace SVN.Core
                 process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 SvnProcessTracker.Register(process);
 
-                var outputQueue = new ConcurrentQueue<string>();
                 var errorQueue = new ConcurrentQueue<string>();
 
                 process.OutputDataReceived += (s, e) =>
                 {
                     if (string.IsNullOrWhiteSpace(e.Data)) return;
-                    outputQueue.Enqueue(e.Data);
                     try { onLineReceived?.Invoke(e.Data); }
                     catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner Live] Callback error: {ex.Message}"); }
                 };
@@ -408,7 +431,7 @@ namespace SVN.Core
                 }
 
                 SVNLogBridge.LogLine("[SvnRunner Live] Completed successfully.");
-                return string.Join("\n", outputQueue);
+                return "";
             }
             catch (OperationCanceledException)
             {
@@ -422,6 +445,7 @@ namespace SVN.Core
                 {
                     try { process.CancelOutputRead(); } catch { }
                     try { process.CancelErrorRead(); } catch { }
+                    try { SvnProcessTracker.Unregister(process); } catch { }
                     try { process.Dispose(); } catch { }
                 }
                 try
@@ -453,9 +477,10 @@ namespace SVN.Core
             Action<string> onOutput,
             CancellationToken token)
         {
-            SVNLogBridge.LogToOutput($"<color=#00FFFF>[SvnRunner]</color> Starting SVN STREAMED: svn {BuildSafeArguments(args)}");
+            var argList = args.ToList();
+            SVNLogBridge.LogToOutput($"<color=#00FFFF>[SvnRunner]</color> Starting SVN STREAMED: svn {BuildSafeArguments(argList)}");
 
-            bool write = IsWriteCommand(args);
+            bool write = IsWriteCommand(argList);
             if (write) await _svnLock.EnterWriteAsync(token);
             else await _svnLock.EnterReadAsync(token);
 
@@ -465,7 +490,7 @@ namespace SVN.Core
 
                 string cleanWorkingDir = Path.GetFullPath((workingDirectory ?? "").Trim());
 
-                var finalArgs = new List<string>(args);
+                var finalArgs = new List<string>(argList);
                 if (!finalArgs.Contains("--non-interactive"))
                     finalArgs.Add("--non-interactive");
                 if (!finalArgs.Contains("--trust-server-cert"))
@@ -479,8 +504,8 @@ namespace SVN.Core
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
+                    StandardOutputEncoding = new UTF8Encoding(false),
+                    StandardErrorEncoding = new UTF8Encoding(false)
                 };
 
                 foreach (var arg in finalArgs)
@@ -521,8 +546,12 @@ namespace SVN.Core
                 }
                 catch (OperationCanceledException)
                 {
-                    if (!process.HasExited) try { process.Kill(); } catch { }
+                    if (process != null) { try { SvnProcessTracker.Kill(process); } catch { } }
                     throw;
+                }
+                finally
+                {
+                    try { SvnProcessTracker.Unregister(process); } catch { }
                 }
             }
             finally
@@ -556,9 +585,10 @@ namespace SVN.Core
             Action<string> onOutput,
             CancellationToken token)
         {
-            SVNLogBridge.LogToOutput($"<color=#00FFFF>[SvnRunner]</color> Starting SVN LIVE STREAMED: svn {BuildSafeArguments(args)}");
+            var argList = args.ToList();
+            SVNLogBridge.LogToOutput($"<color=#00FFFF>[SvnRunner]</color> Starting SVN LIVE STREAMED: svn {BuildSafeArguments(argList)}");
 
-            bool write = IsWriteCommand(args);
+            bool write = IsWriteCommand(argList);
             if (write) await _svnLock.EnterWriteAsync(token);
             else await _svnLock.EnterReadAsync(token);
 
@@ -568,7 +598,7 @@ namespace SVN.Core
 
                 string cleanWorkingDir = Path.GetFullPath((workingDirectory ?? "").Trim());
 
-                var finalArgs = new List<string>(args);
+                var finalArgs = new List<string>(argList);
                 if (!finalArgs.Contains("--non-interactive"))
                     finalArgs.Add("--non-interactive");
                 if (!finalArgs.Contains("--trust-server-cert"))
@@ -582,8 +612,8 @@ namespace SVN.Core
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8
+                    StandardOutputEncoding = new UTF8Encoding(false),
+                    StandardErrorEncoding = new UTF8Encoding(false)
                 };
 
                 foreach (var arg in finalArgs)
@@ -634,8 +664,12 @@ namespace SVN.Core
                 }
                 catch (OperationCanceledException)
                 {
-                    try { if (!process.HasExited) process.Kill(); } catch { }
+                    try { SvnProcessTracker.Kill(process); } catch { }
                     throw;
+                }
+                finally
+                {
+                    try { SvnProcessTracker.Unregister(process); } catch { }
                 }
             }
             finally
@@ -694,13 +728,17 @@ namespace SVN.Core
 
             lock (_infoCacheLock)
             {
-                if (_infoCache.TryGetValue(cleanWd, out var cached))
+                var now = DateTime.UtcNow;
+                var expiredKeys = _infoCache.Where(kvp => now - kvp.Value.time >= InfoCacheDuration).Select(kvp => kvp.Key).ToList();
+                foreach (var key in expiredKeys)
                 {
-                    if (DateTime.UtcNow - cached.time < InfoCacheDuration)
-                    {
-                        SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
-                        return cached.output;
-                    }
+                    _infoCache.Remove(key);
+                }
+
+                if (_infoCache.TryGetValue(cleanWd, out var cached) && now - cached.time < InfoCacheDuration)
+                {
+                    SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
+                    return cached.output;
                 }
             }
 
@@ -740,6 +778,9 @@ namespace SVN.Core
             bool showIgnored,
             HashSet<string> foldersWithRelevantContent)
         {
+            if (statusDict == null || expandedPaths == null || foldersWithRelevantContent == null || parentIsLast == null)
+                return;
+
             string normRootDir = rootDir.Replace('\\', '/').TrimEnd('/');
             string normCurrentDir = currentDir.Replace('\\', '/').TrimEnd('/');
 
@@ -749,7 +790,7 @@ namespace SVN.Core
                 currentRelDir = normCurrentDir.Substring(normRootDir.Length).TrimStart('/').Replace('\\', '/');
             }
 
-            var combinedEntries = new List<string>(64);
+            var combinedEntries = new HashSet<string>();
 
             if (Directory.Exists(normCurrentDir))
             {
@@ -774,8 +815,7 @@ namespace SVN.Core
                 if (string.Equals(svnParent, currentRelDir, StringComparison.OrdinalIgnoreCase))
                 {
                     string fullPath = $"{normRootDir}/{svnPath}";
-                    if (!combinedEntries.Contains(fullPath))
-                        combinedEntries.Add(fullPath);
+                    combinedEntries.Add(fullPath);
                 }
             }
 
@@ -788,12 +828,12 @@ namespace SVN.Core
                 if (string.Equals(fParent, currentRelDir, StringComparison.OrdinalIgnoreCase))
                 {
                     string fullPath = $"{normRootDir}/{f}";
-                    if (!combinedEntries.Contains(fullPath))
-                        combinedEntries.Add(fullPath);
+                    combinedEntries.Add(fullPath);
                 }
             }
 
-            combinedEntries.Sort((a, b) =>
+            var sortedEntries = combinedEntries.ToList();
+            sortedEntries.Sort((a, b) =>
             {
                 bool aIsDir = Directory.Exists(a) || string.IsNullOrEmpty(Path.GetExtension(a));
                 bool bIsDir = Directory.Exists(b) || string.IsNullOrEmpty(Path.GetExtension(b));
@@ -801,9 +841,9 @@ namespace SVN.Core
                 return string.CompareOrdinal(a, b);
             });
 
-            for (int i = 0; i < combinedEntries.Count; i++)
+            for (int i = 0; i < sortedEntries.Count; i++)
             {
-                string entry = combinedEntries[i];
+                string entry = sortedEntries[i];
                 string name = Path.GetFileName(entry);
                 if (string.IsNullOrEmpty(name) || name == ".svn" || name.EndsWith(".meta")) continue;
 
@@ -820,9 +860,8 @@ namespace SVN.Core
                     sizeDisplay = statusTuple.size;
                 }
 
-                bool isDirectory = Directory.Exists(entry) || foldersWithRelevantContent.Contains(relPath) ||
-                                  (string.IsNullOrEmpty(Path.GetExtension(name)) && (status == "!" || status == "D"));
-                bool isLast = (i == combinedEntries.Count - 1);
+                bool isDirectory = Directory.Exists(entry) || foldersWithRelevantContent.Contains(relPath);
+                bool isLast = (i == sortedEntries.Count - 1);
 
                 if (!showIgnored)
                 {
@@ -852,10 +891,11 @@ namespace SVN.Core
                     if (status == "!" || status == "D") stats.DeletedCount++;
                 }
 
-                for (int j = 0; j < indent - 1; j++)
+                int limit = Math.Min(indent - 1, parentIsLast.Length);
+                for (int j = 0; j < limit; j++)
                     sb.Append(parentIsLast[j] ? "    " : "│   ");
 
-                if (indent > 0)
+                if (indent > 0 && indent <= parentIsLast.Length + 1)
                     sb.Append(isLast ? "└── " : "├── ");
 
                 string expandIcon = isDirectory ? (expandedPaths.Contains(relPath) ? "[-] " : "[+] ") : "    ";
@@ -888,8 +928,15 @@ namespace SVN.Core
         private static string FormatBytes(long bytes)
         {
             string[] Suffix = { "B", "KB", "MB", "GB" };
-            int i; double dblSByte = bytes;
-            for (i = 0; i < Suffix.Length && bytes >= 1024; i++, bytes /= 1024) dblSByte = bytes / 1024.0;
+            if (bytes == 0) return "0B";
+
+            int i = 0;
+            double dblSByte = bytes;
+            while (dblSByte >= 1024 && i < Suffix.Length - 1)
+            {
+                dblSByte /= 1024.0;
+                i++;
+            }
             return $"{dblSByte:0.##}{Suffix[i]}";
         }
 
@@ -906,73 +953,54 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(output))
                 return statusDict;
 
-            string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (var rawLine in lines)
+            using (var reader = new StringReader(output))
             {
-                if (string.IsNullOrWhiteSpace(rawLine))
-                    continue;
-
-                string line = rawLine;
-
-                if (line.Length < 9)
-                    continue;
-
-                char contentStatus = line[0];
-                char propStatus = line[1];
-
-                string stat = contentStatus.ToString();
-
-                if (stat == " " && propStatus == 'C')
-                    stat = "C";
-
-                string pathPart = line.Length >= 9 ? line.Substring(8).TrimStart() : "";
-
-                if (string.IsNullOrWhiteSpace(pathPart))
-                    continue;
-
-                string rawPath = new string(pathPart
-                    .Where(c =>
-                        !char.IsControl(c) &&
-                        c != '\t' &&
-                        c != '\u00A0')
-                    .ToArray())
-                    .Trim();
-
-                if (string.IsNullOrWhiteSpace(rawPath))
-                    continue;
-
-                string cleanPath = rawPath
-                    .Replace('\\', '/')
-                    .Trim('/');
-
-                bool isRelevant =
-                    "MA?!DC".Contains(stat) ||
-                    (includeIgnored && stat == "I");
-
-                if (!isRelevant)
-                    continue;
-
-                string fullPath = Path.Combine(cleanWorkingDir, rawPath);
-
-                if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+                string rawLine;
+                while ((rawLine = reader.ReadLine()) != null)
                 {
-                    statusDict[cleanPath] = (stat, "");
-                    continue;
-                }
+                    if (string.IsNullOrWhiteSpace(rawLine)) continue;
+                    string line = rawLine;
 
-                string size = "";
+                    if (line.Length < 9) continue;
 
-                try
-                {
-                    size = GetFileSizeSafe(fullPath);
-                }
-                catch
-                {
-                    size = "";
-                }
+                    char contentStatus = line[0];
+                    char propStatus = line[1];
 
-                statusDict[cleanPath] = (stat, size);
+                    string stat = contentStatus.ToString();
+
+                    if (stat == " " && propStatus == 'C')
+                        stat = "C";
+
+                    string pathPart = line.Length >= 9 ? line.Substring(8).TrimStart() : "";
+
+                    if (string.IsNullOrWhiteSpace(pathPart)) continue;
+
+                    string rawPath = new string(pathPart
+                        .Where(c => !char.IsControl(c) && c != '\t' && c != '\u00A0')
+                        .ToArray())
+                        .Trim();
+
+                    if (string.IsNullOrWhiteSpace(rawPath)) continue;
+
+                    string cleanPath = rawPath.Replace('\\', '/').Trim('/');
+
+                    bool isRelevant = "MA?!DC".Contains(stat) || (includeIgnored && stat == "I");
+                    if (!isRelevant) continue;
+
+                    string fullPath = Path.Combine(cleanWorkingDir, rawPath);
+
+                    if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+                    {
+                        statusDict[cleanPath] = (stat, "");
+                        continue;
+                    }
+
+                    string size = "";
+                    try { size = GetFileSizeSafe(fullPath); }
+                    catch { size = ""; }
+
+                    statusDict[cleanPath] = (stat, size);
+                }
             }
 
             SVNLogBridge.LogToOutput($"<color=green>[SVN]</color> Parser finished. Dictionary count: {statusDict.Count}");
@@ -988,10 +1016,7 @@ namespace SVN.Core
                 FileInfo fi = new FileInfo(fullPath);
                 return FormatBytes(fi.Length);
             }
-            catch
-            {
-                return "";
-            }
+            catch { return ""; }
         }
 
         public static async Task<string[]> GetRepoListAsync(string workingDir, string subFolder, CancellationToken token = default)
@@ -1009,19 +1034,26 @@ namespace SVN.Core
 
                 string projectRoot = repoUrl;
 
-                if (repoUrl.Contains("/trunk"))
-                    projectRoot = repoUrl.Substring(0, repoUrl.IndexOf("/trunk"));
-                else if (repoUrl.Contains("/branches/"))
-                    projectRoot = repoUrl.Substring(0, repoUrl.IndexOf("/branches/"));
-                else if (repoUrl.Contains("/tags/"))
-                    projectRoot = repoUrl.Substring(0, repoUrl.IndexOf("/tags/"));
+                int trunkIdx = repoUrl.IndexOf("/trunk/", StringComparison.OrdinalIgnoreCase);
+                if (trunkIdx == -1 && repoUrl.EndsWith("/trunk", StringComparison.OrdinalIgnoreCase))
+                    trunkIdx = repoUrl.IndexOf("/trunk", StringComparison.OrdinalIgnoreCase);
+
+                int branchIdx = repoUrl.IndexOf("/branches/", StringComparison.OrdinalIgnoreCase);
+                int tagIdx = repoUrl.IndexOf("/tags/", StringComparison.OrdinalIgnoreCase);
+
+                if (trunkIdx != -1)
+                    projectRoot = repoUrl.Substring(0, trunkIdx);
+                else if (branchIdx != -1)
+                    projectRoot = repoUrl.Substring(0, branchIdx);
+                else if (tagIdx != -1)
+                    projectRoot = repoUrl.Substring(0, tagIdx);
                 else if (repoUrl.Contains("/"))
                     projectRoot = repoUrl.Substring(0, repoUrl.LastIndexOf('/'));
 
                 targetUrl = $"{projectRoot}/{subFolder}";
             }
 
-            string output = await RunAsync($"ls \"{targetUrl}\"", workingDir, token: token);
+            string output = await RunAsync(new List<string> { "ls", targetUrl }, workingDir, token: token);
 
             return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                          .Select(s => s.TrimEnd('/'))
@@ -1032,11 +1064,21 @@ namespace SVN.Core
         {
             string output = await RunAsync("info --xml", workingDir, true, token).ConfigureAwait(false);
 
-            if (!string.IsNullOrEmpty(output) && output.Contains("<url>"))
+            if (!string.IsNullOrEmpty(output))
             {
-                int start = output.IndexOf("<url>") + 5;
-                int end = output.IndexOf("</url>");
-                return output.Substring(start, end - start).Trim();
+                try
+                {
+                    var doc = XDocument.Parse(output);
+                    var urlElement = doc.Descendants("url").FirstOrDefault();
+                    if (urlElement != null)
+                    {
+                        return urlElement.Value.Trim();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogErrorToOutput($"[SVN] Failed to parse XML from svn info. Falling back. Error: {ex.Message}");
+                }
             }
 
             string errorMsg = "Failed to retrieve repository URL. Is this a valid SVN working copy?";
@@ -1073,12 +1115,7 @@ namespace SVN.Core
 
             path = path.Replace('\\', '/').Trim();
 
-            string[] roots =
-            {
-                "trunk/",
-                "branches/",
-                "tags/"
-            };
+            string[] roots = { "trunk/", "branches/", "tags/" };
 
             foreach (string root in roots)
             {
