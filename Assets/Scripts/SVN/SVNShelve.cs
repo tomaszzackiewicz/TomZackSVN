@@ -15,6 +15,7 @@ namespace SVN.Core
         private readonly string _shelfFolder;
         private CancellationTokenSource _cts;
         private int _processingFlag;
+        private int _disposed;
         private readonly SynchronizationContext _mainThreadContext;
 
         public SVNShelve(SVNUI ui, SVNManager manager) : base(ui, manager)
@@ -26,15 +27,30 @@ namespace SVN.Core
 
         public void Dispose()
         {
-            _cts?.Cancel();
-            _cts?.Dispose();
-            _cts = null;
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+            var cts = Interlocked.Exchange(ref _cts, null);
+            if (cts != null)
+            {
+                try { cts.Cancel(); } catch { }
+                try { cts.Dispose(); } catch { }
+            }
         }
 
-        public void Cancel() => _cts?.Cancel();
+        public void Cancel()
+        {
+            try
+            {
+                var cts = Volatile.Read(ref _cts);
+                if (cts == null || cts.IsCancellationRequested) return;
+                cts.Cancel();
+            }
+            catch (ObjectDisposedException) { }
+        }
 
         private bool TryEnterProcessing()
         {
+            if (Volatile.Read(ref _disposed) == 1) return false;
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1) return false;
             IsProcessing = true;
             return true;
@@ -130,8 +146,8 @@ namespace SVN.Core
                 return false;
             }
 
-            using var cts = new CancellationTokenSource();
-            _cts = cts;
+            var cts = new CancellationTokenSource();
+            Interlocked.Exchange(ref _cts, cts);
             CancellationToken token = cts.Token;
 
             try
@@ -262,7 +278,8 @@ namespace SVN.Core
             }
             finally
             {
-                _cts = null;
+                Interlocked.CompareExchange(ref _cts, null, cts);
+                try { cts.Dispose(); } catch { }
                 ExitProcessing();
             }
         }
@@ -308,8 +325,8 @@ namespace SVN.Core
                 return false;
             }
 
-            using var cts = new CancellationTokenSource();
-            _cts = cts;
+            var cts = new CancellationTokenSource();
+            Interlocked.Exchange(ref _cts, cts);
             CancellationToken token = cts.Token;
 
             try
@@ -363,7 +380,8 @@ namespace SVN.Core
             }
             finally
             {
-                _cts = null;
+                Interlocked.CompareExchange(ref _cts, null, cts);
+                try { cts.Dispose(); } catch { }
                 ExitProcessing();
             }
         }

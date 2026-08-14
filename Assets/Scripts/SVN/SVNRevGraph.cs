@@ -1,5 +1,9 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
@@ -7,7 +11,7 @@ using UnityEngine.UI;
 
 namespace SVN.Core
 {
-    public enum NodeType { Trunk, Branch, Tag }
+    public enum NodeType { Trunk, Branch, Tag, Unknown }
 
     public readonly struct BranchInfo
     {
@@ -21,18 +25,21 @@ namespace SVN.Core
         }
 
         public static readonly BranchInfo Trunk = new("trunk", NodeType.Trunk);
+        public static readonly BranchInfo Unknown = new("unknown", NodeType.Unknown);
     }
 
     public class SVNRevGraph : SVNBase
     {
-        private const string VERT_TRUNK = "│ ";
+        private const string VERT_TRUNK = "┃ ";
         private const string VERT_BRANCH = "│ ";
-        private const string VERT_TAG = "│ ";
+        private const string VERT_TAG = "┊ ";
+        private const string VERT_UNKNOWN = "│ ";
         private const string VERT_MERGED = "┆ ";
 
         private const string SHAPE_TRUNK = "■";
         private const string SHAPE_BRANCH = "●";
         private const string SHAPE_TAG = "◆";
+        private const string SHAPE_UNKNOWN = "○";
         private const string SHAPE_MERGE_FROM_TRUNK = "▣";
         private const string SHAPE_MERGE_FROM_BRANCH = "◉";
         private const string SHAPE_MERGE_FROM_TAG = "◈";
@@ -42,25 +49,35 @@ namespace SVN.Core
         private const string COLOR_MERGED_INACTIVE = "#88888844";
         private const string COLOR_BLACK = "#000000";
 
+        private const int MaxPoolSize = 200;
+        private const long MaxFrameBudgetMs = 10;
+
         private static readonly Regex MergePathRegex = new(
             @"(?:^|[\s\(\)\[\]\{\}""'`])/?(\^?/)?(?<type>branches|trunk|tags)(/(?<name>[^\s,;:\)]+))?",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            RegexOptions.IgnoreCase | RegexOptions.Compiled,
+            TimeSpan.FromMilliseconds(200));
 
         private static readonly Regex BranchQuoteRegex = new(
             @"branch\s*['""](?<name>[^'""]+)['""]",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            RegexOptions.IgnoreCase | RegexOptions.Compiled,
+            TimeSpan.FromMilliseconds(200));
 
         private static readonly Regex HtmlTagRegex = new("<.*?>", RegexOptions.Compiled);
 
         public SVNRevGraph(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
         private readonly List<GameObject> _instantiatedItems = new();
-        private readonly Dictionary<string, NodeType> _branchTypes = new();
-        private readonly HashSet<string> _mergedBranches = new();
-        private readonly Dictionary<string, long> _branchFirstRev = new();
-        private readonly Dictionary<string, long> _branchLastRev = new();
-        private readonly Dictionary<string, string> _branchParent = new();
-        private readonly Dictionary<string, string> _branchColorCache = new();
+        private readonly Stack<GameObject> _graphItemPool = new();
+
+        private readonly Dictionary<string, NodeType> _branchTypes = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _mergedBranches = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, long> _branchFirstRev = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, long> _branchLastRev = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _branchParent = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _branchColorCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly BranchColorSystem _branchColorSystem = new();
+
+        private Coroutine _renderCoroutine;
 
         public IReadOnlyList<GameObject> InstantiatedItems => _instantiatedItems;
 
@@ -72,35 +89,105 @@ namespace SVN.Core
                 return;
             }
 
+            if (_renderCoroutine != null)
+            {
+                svnUI.StopCoroutine(_renderCoroutine);
+                _renderCoroutine = null;
+            }
+
+            _renderCoroutine = svnUI.StartCoroutine(RenderGraphRoutine(nodes));
+        }
+
+        private IEnumerator RenderGraphRoutine(List<SVNRevisionNode> nodes)
+        {
             var workingNodes = new List<SVNRevisionNode>(nodes);
             workingNodes.Sort((a, b) => a.Revision.CompareTo(b.Revision));
 
-            ClearGraph();
+            DisableAutoLayout();
+            ReleaseActiveItemsToPool();
             ResetState();
 
             var branchColumns = AnalyzeBranches(workingNodes, out int columnCount);
 
-            workingNodes.Sort((a, b) => b.Revision.CompareTo(a.Revision));
-
             foreach (var branch in branchColumns.Keys)
-                _branchColorCache[branch] = BranchColorSystem.GetColor(branch);
+                _branchColorCache[branch] = _branchColorSystem.GetColor(branch);
 
             var columnBranches = BuildColumnLookup(branchColumns, columnCount);
 
-            foreach (var node in workingNodes)
-                RenderNode(node, branchColumns, columnBranches, columnCount);
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
+
+            for (int i = workingNodes.Count - 1; i >= 0; i--)
+            {
+                RenderNode(workingNodes[i], branchColumns, columnBranches, columnCount);
+
+                if (stopwatch.ElapsedMilliseconds >= MaxFrameBudgetMs)
+                {
+                    stopwatch.Reset();
+                    yield return null;
+                    stopwatch.Start();
+                }
+            }
+
+            stopwatch.Stop();
+
+            EnableAutoLayout();
+            RefreshLayout();
 
             SVNLogBridge.LogToOutput($"[SVN] Render complete. {_instantiatedItems.Count} revisions rendered.");
+            _renderCoroutine = null;
         }
 
-        private void ClearGraph()
+        private void DisableAutoLayout()
         {
             if (svnUI.GraphContainer == null) return;
 
-            foreach (Transform t in svnUI.GraphContainer)
+            var layoutGroup = svnUI.GraphContainer.GetComponent<VerticalLayoutGroup>();
+            if (layoutGroup != null) layoutGroup.enabled = false;
+
+            var contentSizeFitter = svnUI.GraphContainer.GetComponent<ContentSizeFitter>();
+            if (contentSizeFitter != null) contentSizeFitter.enabled = false;
+        }
+
+        private void EnableAutoLayout()
+        {
+            if (svnUI.GraphContainer == null) return;
+
+            var layoutGroup = svnUI.GraphContainer.GetComponent<VerticalLayoutGroup>();
+            if (layoutGroup != null) layoutGroup.enabled = true;
+
+            var contentSizeFitter = svnUI.GraphContainer.GetComponent<ContentSizeFitter>();
+            if (contentSizeFitter != null) contentSizeFitter.enabled = true;
+        }
+
+        private void ReleaseActiveItemsToPool()
+        {
+            if (svnUI.GraphContainer == null) return;
+
+            for (int i = svnUI.GraphContainer.childCount - 1; i >= 0; i--)
             {
-                if (t != null)
-                    UnityEngine.Object.Destroy(t.gameObject);
+                var child = svnUI.GraphContainer.GetChild(i);
+                if (child == null) continue;
+
+                var go = child.gameObject;
+
+                if (!go.TryGetComponent<SVNGraphItem>(out _))
+                {
+                    UnityEngine.Object.Destroy(go);
+                    continue;
+                }
+
+                go.SetActive(false);
+                go.transform.SetParent(null);
+
+                if (_graphItemPool.Count < MaxPoolSize)
+                {
+                    _graphItemPool.Push(go);
+                }
+                else
+                {
+                    UnityEngine.Object.Destroy(go);
+                }
             }
         }
 
@@ -113,7 +200,7 @@ namespace SVN.Core
             _branchLastRev.Clear();
             _branchParent.Clear();
             _branchColorCache.Clear();
-            BranchColorSystem.Reset();
+            _branchColorSystem.Reset();
         }
 
         private Dictionary<string, int> AnalyzeBranches(List<SVNRevisionNode> nodes, out int columnCount)
@@ -128,8 +215,12 @@ namespace SVN.Core
 
                 RegisterBranch(node, info, branchColumns, ref columnCount);
 
-                if (info.Type != NodeType.Trunk && _branchFirstRev[info.Name] == node.Revision)
+                if (info.Type != NodeType.Trunk &&
+                    _branchFirstRev.TryGetValue(info.Name, out long firstRev) &&
+                    firstRev == node.Revision)
+                {
                     DetectAndStoreBranchParent(node, info.Name);
+                }
 
                 if (IsMergeCommit(node))
                     DetectAndRegisterMergeSource(node, info.Name, branchColumns, ref columnCount);
@@ -159,22 +250,10 @@ namespace SVN.Core
         private void DetectAndRegisterMergeSource(SVNRevisionNode node, string currentBranch,
             Dictionary<string, int> branchColumns, ref int nextColumn)
         {
-            var knownBranches = branchColumns.Keys;
-            string mergeSrcBranch = DetectMergeSourceBranch(node, currentBranch, knownBranches);
+            string mergeSrcBranch = DetectMergeSourceBranch(node, currentBranch, branchColumns.Keys);
 
             if (string.IsNullOrEmpty(mergeSrcBranch))
-            {
-                foreach (var kv in branchColumns)
-                {
-                    if (kv.Key != currentBranch)
-                    {
-                        mergeSrcBranch = kv.Key;
-                        break;
-                    }
-                }
-            }
-
-            if (string.IsNullOrEmpty(mergeSrcBranch)) return;
+                return;
 
             _mergedBranches.Add(mergeSrcBranch);
 
@@ -227,8 +306,14 @@ namespace SVN.Core
             string[] columnBranches, int columnCount)
         {
             var info = GetBranchInfo(node);
-            int col = branchColumns[info.Name];
-            string colHex = _branchColorCache[info.Name];
+
+            if (!branchColumns.TryGetValue(info.Name, out int col))
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN RevGraph] Branch '{info.Name}' not found in column map.");
+                return;
+            }
+
+            string colHex = _branchColorCache.TryGetValue(info.Name, out var color) ? color : "#555555";
 
             bool isMerge = IsMergeCommit(node);
             string mergeSrcBranch = ResolveMergeSourceBranch(node, info.Name, branchColumns);
@@ -246,28 +331,16 @@ namespace SVN.Core
         {
             if (!IsMergeCommit(node)) return null;
 
-            string mergeSrc = DetectMergeSourceBranch(node, currentBranch, branchColumns.Keys);
-
-            if (string.IsNullOrEmpty(mergeSrc))
-            {
-                foreach (var kv in branchColumns)
-                {
-                    if (kv.Key != currentBranch)
-                    {
-                        mergeSrc = kv.Key;
-                        break;
-                    }
-                }
-            }
-
-            return mergeSrc;
+            return DetectMergeSourceBranch(node, currentBranch, branchColumns.Keys);
         }
 
         private string BuildPrefix(SVNRevisionNode node, BranchInfo info, string mergeSrcBranch)
         {
             var prefix = new StringBuilder();
 
-            if (info.Type != NodeType.Trunk && node.Revision == _branchFirstRev[info.Name])
+            if (info.Type != NodeType.Trunk &&
+                _branchFirstRev.TryGetValue(info.Name, out long firstRev) &&
+                node.Revision == firstRev)
             {
                 string parent = _branchParent.TryGetValue(info.Name, out var p) ? p : "trunk";
                 prefix.Append($"<color={COLOR_BLACK}>[branched from {parent}]</color> ");
@@ -288,6 +361,7 @@ namespace SVN.Core
                     NodeType.Trunk => SHAPE_TRUNK,
                     NodeType.Branch => SHAPE_BRANCH,
                     NodeType.Tag => SHAPE_TAG,
+                    NodeType.Unknown => SHAPE_UNKNOWN,
                     _ => SHAPE_BRANCH
                 };
             }
@@ -295,7 +369,9 @@ namespace SVN.Core
             if (mergeSrcBranch == "trunk")
                 return SHAPE_MERGE_FROM_TRUNK;
 
-            if (_branchTypes.TryGetValue(mergeSrcBranch, out var srcType) && srcType == NodeType.Tag)
+            if (!string.IsNullOrEmpty(mergeSrcBranch) &&
+                _branchTypes.TryGetValue(mergeSrcBranch, out var srcType) &&
+                srcType == NodeType.Tag)
                 return SHAPE_MERGE_FROM_TAG;
 
             return SHAPE_MERGE_FROM_BRANCH;
@@ -308,20 +384,28 @@ namespace SVN.Core
 
             for (int c = 0; c < columnCount; c++)
             {
-                string laneBranch = c < columnCount ? columnBranches[c] : null;
-                string laneColor = laneBranch != null ? _branchColorCache[laneBranch] : "#555555";
+                string laneBranch = columnBranches[c];
+                string laneColor = laneBranch != null && _branchColorCache.TryGetValue(laneBranch, out var cached)
+                    ? cached
+                    : "#555555";
+
                 string finalColor = laneColor;
                 string laneText;
 
                 bool isCurrent = (c == currentCol);
+
                 bool isActive = laneBranch != null &&
-                                node.Revision >= _branchFirstRev[laneBranch] &&
-                                node.Revision <= _branchLastRev[laneBranch];
+                                _branchFirstRev.TryGetValue(laneBranch, out long firstRev) &&
+                                _branchLastRev.TryGetValue(laneBranch, out long lastRev) &&
+                                node.Revision >= firstRev &&
+                                node.Revision <= lastRev;
 
                 if (isCurrent)
                 {
                     if (isMerge && !string.IsNullOrEmpty(mergeSrcBranch))
-                        finalColor = _branchColorCache.GetValueOrDefault(mergeSrcBranch, laneColor);
+                    {
+                        finalColor = _branchColorCache.TryGetValue(mergeSrcBranch, out var mergeColor) ? mergeColor : laneColor;
+                    }
 
                     laneText = shape + SPACER;
                 }
@@ -331,8 +415,10 @@ namespace SVN.Core
                 }
                 else
                 {
-                    bool isMergedAndInactive = _mergedBranches.Contains(laneBranch) &&
-                                               node.Revision > _branchLastRev[laneBranch];
+                    bool isMergedAndInactive = laneBranch != null &&
+                                               _mergedBranches.Contains(laneBranch) &&
+                                               _branchLastRev.TryGetValue(laneBranch, out long lastRev2) &&
+                                               node.Revision > lastRev2;
 
                     if (isMergedAndInactive)
                     {
@@ -354,16 +440,19 @@ namespace SVN.Core
 
         private string GetVerticalLine(string branchName)
         {
-            if (!_branchTypes.TryGetValue(branchName, out var type))
-                return VERT_BRANCH;
-
-            return type switch
+            if (branchName != null && _branchTypes.TryGetValue(branchName, out var type))
             {
-                NodeType.Trunk => VERT_TRUNK,
-                NodeType.Branch => VERT_BRANCH,
-                NodeType.Tag => VERT_TAG,
-                _ => VERT_BRANCH
-            };
+                return type switch
+                {
+                    NodeType.Trunk => VERT_TRUNK,
+                    NodeType.Branch => VERT_BRANCH,
+                    NodeType.Tag => VERT_TAG,
+                    NodeType.Unknown => VERT_UNKNOWN,
+                    _ => VERT_BRANCH
+                };
+            }
+
+            return VERT_BRANCH;
         }
 
         private void InstantiateGraphItem(string graphText, SVNRevisionNode node, string branchName,
@@ -375,7 +464,30 @@ namespace SVN.Core
                 return;
             }
 
-            GameObject itemGo = UnityEngine.Object.Instantiate(svnUI.GraphItemPrefab, svnUI.GraphContainer);
+            GameObject itemGo;
+
+            if (_graphItemPool.Count > 0)
+            {
+                itemGo = _graphItemPool.Pop();
+                if (itemGo != null)
+                {
+                    itemGo.transform.SetParent(svnUI.GraphContainer, false);
+                    itemGo.SetActive(true);
+
+                    itemGo.transform.localPosition = Vector3.zero;
+                    itemGo.transform.localRotation = Quaternion.identity;
+                    itemGo.transform.localScale = Vector3.one;
+                }
+                else
+                {
+                    itemGo = UnityEngine.Object.Instantiate(svnUI.GraphItemPrefab, svnUI.GraphContainer);
+                }
+            }
+            else
+            {
+                itemGo = UnityEngine.Object.Instantiate(svnUI.GraphItemPrefab, svnUI.GraphContainer);
+            }
+
             _instantiatedItems.Add(itemGo);
 
             if (itemGo.TryGetComponent<SVNGraphItem>(out var item))
@@ -388,10 +500,13 @@ namespace SVN.Core
 
             foreach (string path in node.ChangedPaths)
             {
-                if (!path.StartsWith("A ") || !path.Contains("(from "))
+                if (!path.TrimStart().StartsWith("A ", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                int fromIdx = path.IndexOf("(from ");
+                if (!path.Contains("(from ", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                int fromIdx = path.IndexOf("(from ", StringComparison.OrdinalIgnoreCase);
                 if (fromIdx < 0) continue;
 
                 string fromPart = path.Substring(fromIdx + 6);
@@ -412,15 +527,22 @@ namespace SVN.Core
         {
             string msg = node.Message ?? "";
 
-            var pathMatches = MergePathRegex.Matches(msg);
-            foreach (Match m in pathMatches)
+            try
             {
-                string type = m.Groups["type"].Value.ToLowerInvariant();
-                string name = m.Groups["name"].Value;
-                string found = type == "trunk" ? "trunk" : (string.IsNullOrEmpty(name) ? null : name);
+                var pathMatches = MergePathRegex.Matches(msg);
+                foreach (Match m in pathMatches)
+                {
+                    string type = m.Groups["type"].Value.ToLowerInvariant();
+                    string name = m.Groups["name"].Value;
+                    string found = type == "trunk" ? "trunk" : (string.IsNullOrEmpty(name) ? null : name);
 
-                if (!string.IsNullOrEmpty(found) && found != currentBranch)
-                    return found;
+                    if (!string.IsNullOrEmpty(found) && found != currentBranch)
+                        return found;
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                SVNLogBridge.LogErrorToOutput("[SVN RevGraph] Regex timeout while detecting merge source.");
             }
 
             foreach (string branch in knownBranches)
@@ -430,11 +552,18 @@ namespace SVN.Core
                     return branch;
             }
 
-            var branchWordMatch = BranchQuoteRegex.Match(msg);
-            if (branchWordMatch.Success)
+            try
             {
-                string name = branchWordMatch.Groups["name"].Value;
-                if (name != currentBranch) return name;
+                var branchWordMatch = BranchQuoteRegex.Match(msg);
+                if (branchWordMatch.Success)
+                {
+                    string name = branchWordMatch.Groups["name"].Value;
+                    if (name != currentBranch) return name;
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                SVNLogBridge.LogErrorToOutput("[SVN RevGraph] Regex timeout while matching branch quote.");
             }
 
             if (node.ChangedPaths != null)
@@ -539,7 +668,16 @@ namespace SVN.Core
         private BranchInfo GetBranchInfo(SVNRevisionNode node)
         {
             if (node.ChangedPaths == null || node.ChangedPaths.Count == 0)
-                return BranchInfo.Trunk;
+            {
+                SVNLogBridge.LogErrorToOutput("[SVN RevGraph] Revision has no changed paths, defaulting to unknown.");
+                return BranchInfo.Unknown;
+            }
+
+            foreach (string path in node.ChangedPaths)
+            {
+                if (IsExactTrunkPath(path))
+                    return BranchInfo.Trunk;
+            }
 
             foreach (string path in node.ChangedPaths)
             {
@@ -560,12 +698,10 @@ namespace SVN.Core
                     string name = nextSlash > 0 ? afterTags.Substring(0, nextSlash) : afterTags;
                     return new BranchInfo(name, NodeType.Tag);
                 }
-
-                if (IsExactTrunkPath(path))
-                    return BranchInfo.Trunk;
             }
 
-            return BranchInfo.Trunk;
+            SVNLogBridge.LogErrorToOutput("[SVN RevGraph] Could not determine branch, defaulting to unknown.");
+            return BranchInfo.Unknown;
         }
 
         public void CollapseAll() => ToggleAll(false);
@@ -573,16 +709,10 @@ namespace SVN.Core
 
         private void ToggleAll(bool expanded)
         {
-            for (int i = _instantiatedItems.Count - 1; i >= 0; i--)
+            _instantiatedItems.RemoveAll(item => item == null);
+
+            foreach (var go in _instantiatedItems)
             {
-                var go = _instantiatedItems[i];
-
-                if (go == null)
-                {
-                    _instantiatedItems.RemoveAt(i);
-                    continue;
-                }
-
                 if (go.TryGetComponent<SVNGraphItem>(out var item))
                     item.SetExpanded(expanded);
             }
@@ -593,7 +723,9 @@ namespace SVN.Core
         private void RefreshLayout()
         {
             if (svnUI.GraphContainer != null)
-                LayoutRebuilder.ForceRebuildLayoutImmediate(svnUI.GraphContainer as RectTransform);
+            {
+                LayoutRebuilder.MarkLayoutForRebuild(svnUI.GraphContainer as RectTransform);
+            }
         }
 
         public void ExportHistoryToTxt()
@@ -604,19 +736,56 @@ namespace SVN.Core
                 return;
             }
 
+            var sortedItems = _instantiatedItems
+                .Where(go => go != null)
+                .Select(go => go.TryGetComponent<SVNGraphItem>(out var item) ? item : null)
+                .Where(item => item != null)
+                .OrderByDescending(item => item.GetRevision())
+                .ToList();
+
+            var authorStats = new Dictionary<string, (int Commits, int FileChanges)>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in sortedItems)
+            {
+                string author = item.GetAuthor();
+                if (string.IsNullOrWhiteSpace(author)) author = "Unknown";
+
+                var paths = item.GetChangedPaths();
+                int changesThisRev = paths != null ? paths.Count : 0;
+
+                if (authorStats.TryGetValue(author, out var current))
+                {
+                    authorStats[author] = (current.Commits + 1, current.FileChanges + changesThisRev);
+                }
+                else
+                {
+                    authorStats[author] = (1, changesThisRev);
+                }
+            }
+
             var sb = new StringBuilder();
             sb.AppendLine("=== SVN REVISION HISTORY REPORT ===");
-            sb.AppendLine($"Generated: {DateTime.Now}");
-            sb.AppendLine($"Total Revisions: {_instantiatedItems.Count}");
-            sb.AppendLine("===================================\n");
+            sb.AppendLine($"Generated: {DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)}");
+            sb.AppendLine($"Total Revisions: {sortedItems.Count}");
+            sb.AppendLine("===================================");
 
-            foreach (GameObject go in _instantiatedItems)
+            sb.AppendLine();
+            sb.AppendLine("=== AUTHOR STATISTICS ===");
+
+            var sortedAuthors = authorStats
+                .OrderByDescending(kvp => kvp.Value.Commits)
+                .ThenBy(kvp => kvp.Key);
+
+            foreach (var kvp in sortedAuthors)
             {
-                if (go == null) continue;
+                sb.AppendLine($"  {kvp.Key,-25} | Commits: {kvp.Value.Commits,-6} | Touched Files: {kvp.Value.FileChanges,-6}");
+            }
 
-                if (!go.TryGetComponent<SVNGraphItem>(out var item))
-                    continue;
+            sb.AppendLine("==============================");
+            sb.AppendLine();
 
+            foreach (var item in sortedItems)
+            {
                 sb.AppendLine($"[r{item.GetRevision()}]");
                 sb.AppendLine($"Date:    {item.GetDate()}");
                 sb.AppendLine($"Author:  {item.GetAuthor()}");
@@ -640,13 +809,13 @@ namespace SVN.Core
             external?.SaveHistoryToFile(sb.ToString());
         }
 
-        public static class BranchColorSystem
+        private class BranchColorSystem
         {
-            private static readonly Dictionary<string, string> _branchColors = new();
-            private static int _index = 0;
+            private readonly Dictionary<string, string> _branchColors = new(StringComparer.OrdinalIgnoreCase);
+            private int _index = 0;
             private const float GOLDEN_ANGLE = 137.508f;
 
-            public static string GetColor(string branch)
+            public string GetColor(string branch)
             {
                 if (_branchColors.TryGetValue(branch, out var existing))
                     return existing;
@@ -659,19 +828,24 @@ namespace SVN.Core
                 return hex;
             }
 
-            public static void Reset()
+            public void Reset()
             {
                 _branchColors.Clear();
                 _index = 0;
             }
         }
-    }
 
-    public static class DictionaryExtensions
-    {
-        public static TValue GetValueOrDefault<TKey, TValue>(this Dictionary<TKey, TValue> dict, TKey key, TValue defaultValue)
+        public void ClearGraph()
         {
-            return dict.TryGetValue(key, out var value) ? value : defaultValue;
+            if (_renderCoroutine != null)
+            {
+                svnUI.StopCoroutine(_renderCoroutine);
+                _renderCoroutine = null;
+            }
+
+            ReleaseActiveItemsToPool();
+            _instantiatedItems.Clear();
+            ResetState();
         }
     }
 }

@@ -12,12 +12,27 @@ namespace SVN.Core
         private const float DoubleClickThreshold = 5.0f;
 
         private float _lastUpdateToRevClickTime;
-        private string _pendingRevision = null;
+        private string _pendingRevision;
 
         private float _lastRevertClickTime;
-        private string _pendingRevertInput = null;
+        private string _pendingRevertInput;
+
+        private int _processingFlag;
 
         public SVNRevision(SVNUI svnUI, SVNManager svnManager) : base(svnUI, svnManager) { }
+
+        private bool TryEnterProcessing()
+        {
+            if (Interlocked.Exchange(ref _processingFlag, 1) == 1) return false;
+            IsProcessing = true;
+            return true;
+        }
+
+        private void ExitProcessing()
+        {
+            IsProcessing = false;
+            Interlocked.Exchange(ref _processingFlag, 0);
+        }
 
         private void LogToRevisionPanel(string message, bool append = true)
         {
@@ -33,6 +48,8 @@ namespace SVN.Core
 
         public async void UpdateToRevisionButton()
         {
+            if (IsProcessing) return;
+
             if (svnUI?.UpdateRevisionInput == null)
             {
                 LogToRevisionPanel("<color=red>Error: UpdateRevisionInput is not assigned in SVNUI Inspector!</color>");
@@ -63,7 +80,7 @@ namespace SVN.Core
                 return;
             }
 
-            bool hasModifications = await updateModule.HasLocalModificationsAsync(svnManager.WorkingDir);
+            bool hasModifications = await updateModule.HasLocalModificationsAsync(svnManager.WorkingDir).ConfigureAwait(false);
             if (hasModifications)
             {
                 LogToRevisionPanel(
@@ -158,8 +175,7 @@ namespace SVN.Core
                 return;
             }
 
-            if (IsProcessing) return;
-            IsProcessing = true;
+            if (!TryEnterProcessing()) return;
 
             try
             {
@@ -181,7 +197,7 @@ namespace SVN.Core
 
                 try
                 {
-                    await SvnRunner.RunAsync("update", workingDir, true, CancellationToken.None);
+                    await SvnRunner.RunAsync("update", workingDir, true, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -191,7 +207,7 @@ namespace SVN.Core
                 string args = $"merge {revArgs}. --non-interactive --accept postpone";
                 LogToRevisionPanel($"[Revert] Executing: svn {args}");
 
-                string output = await SvnRunner.RunAsync(args, workingDir, true, CancellationToken.None);
+                string output = await SvnRunner.RunAsync(args, workingDir, true, CancellationToken.None).ConfigureAwait(false);
 
                 if (string.IsNullOrWhiteSpace(output) || output.Contains("No changes") || output.Contains("Already merged"))
                 {
@@ -207,7 +223,7 @@ namespace SVN.Core
                     LogToRevisionPanel("<color=#FFFF00>IMPORTANT: You MUST commit these changes now to finalize the undo.</color>");
                 }
 
-                await svnManager.RefreshStatus();
+                await svnManager.RefreshStatus().ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -219,7 +235,7 @@ namespace SVN.Core
             }
             finally
             {
-                IsProcessing = false;
+                ExitProcessing();
             }
         }
 
@@ -246,8 +262,7 @@ namespace SVN.Core
                 return;
             }
 
-            if (IsProcessing) return;
-            IsProcessing = true;
+            if (!TryEnterProcessing()) return;
 
             try
             {
@@ -270,7 +285,7 @@ namespace SVN.Core
             }
             finally
             {
-                IsProcessing = false;
+                ExitProcessing();
             }
         }
     }

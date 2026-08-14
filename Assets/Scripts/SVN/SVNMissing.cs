@@ -8,47 +8,70 @@ using System.Threading.Tasks;
 
 namespace SVN.Core
 {
-    public class SVNMissing : SVNBase
+    public class SVNMissing : SVNBase, IDisposable
     {
         private CancellationTokenSource _cts;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
-        private const int BatchSize = 25;
+        private const int BatchSize = 500;
+        private int _processingFlag;
+        private int _disposed;
 
-        public SVNMissing(SVNUI ui, SVNManager manager) : base(ui, manager) { }
+        public SVNMissing(SVNUI ui, SVNManager manager) : base(ui, manager)
+        {
+            UnityMainThreadDispatcher.EnsureExists();
+        }
+
+        private void LogToConsole(string msg, bool append = true)
+        {
+            if (string.IsNullOrWhiteSpace(msg)) return;
+            PostToMainThread(() => SVNLogBridge.LogLine(msg, append));
+        }
 
         public void Cancel()
         {
-            _cts?.Cancel();
+            try
+            {
+                var cts = Volatile.Read(ref _cts);
+                if (cts == null || cts.IsCancellationRequested) return;
+                cts.Cancel();
+                LogToConsole("<color=orange><b>[Missing Files]</b> Cancel requested...</color>");
+            }
+            catch (ObjectDisposedException) { }
         }
 
         public async void FixMissingFiles()
         {
+            if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
+                return;
+
             bool hasLock = false;
+            CancellationTokenSource localCts = null;
+
             try
             {
-                hasLock = await _operationLock.WaitAsync(0);
+                hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
                 if (!hasLock) return;
 
-                if (IsProcessing) return;
                 IsProcessing = true;
 
-                _cts?.Cancel();
-                _cts?.Dispose();
-                _cts = new CancellationTokenSource();
-                var token = _cts.Token;
+                localCts = new CancellationTokenSource();
+                Volatile.Write(ref _cts, localCts);
+                var token = localCts.Token;
 
-                SVNLogBridge.LogLine("<b>[Missing Files]</b> Scanning for items removed from disk...");
+                LogToConsole("<b>[Missing Files]</b> Scanning for items removed from disk...");
 
-                await svnManager.CancelBackgroundTasksAsync();
-                int removedCount = await FixMissingLogicAsync(token);
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+                int removedCount = await FixMissingLogicAsync(token).ConfigureAwait(false);
 
                 token.ThrowIfCancellationRequested();
-                await Task.Delay(250, token);
+                await Task.Delay(250, token).ConfigureAwait(false);
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
-                if (statusModule != null)
+
+                PostToMainThread(() =>
                 {
-                    statusModule.ClearCurrentData();
+                    if (statusModule != null)
+                        statusModule.ClearCurrentData();
 
                     svnUI.SvnTreeView?.ClearView();
                     svnUI.SVNCommitTreeDisplay?.ClearView();
@@ -60,50 +83,71 @@ namespace SVN.Core
 
                     svnManager.ExpandedPaths.Clear();
                     svnManager.ExpandedPaths.Add("");
+                });
 
-                    SVNLogBridge.LogLine("<color=#4FC3F7>Refreshing SVN status...</color>");
-                    await statusModule.ExecuteRefreshWithAutoExpand(force: true);
+                if (statusModule != null)
+                {
+                    LogToConsole("<color=#4FC3F7>Refreshing SVN status...</color>");
+                    await statusModule.ExecuteRefreshWithAutoExpand(force: true).ConfigureAwait(false);
 
-                    if (statusModule.GetCurrentData().Count == 0)
+                    PostToMainThread(() =>
                     {
-                        if (svnUI.TreeDisplay != null)
-                            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
-                        if (svnUI.CommitTreeDisplay != null)
-                            SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
-                    }
+                        if (statusModule.GetCurrentData().Count == 0)
+                        {
+                            if (svnUI.TreeDisplay != null)
+                                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
+                            if (svnUI.CommitTreeDisplay != null)
+                                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
+                        }
+                    });
                 }
 
                 if (removedCount > 0)
-                    SVNLogBridge.LogLine($"<color=green><b>SUCCESS!</b></color> Removed {removedCount} missing file(s) from SVN index.");
+                    LogToConsole($"<color=green><b>SUCCESS!</b></color> Removed {removedCount} missing file(s) from SVN index.");
                 else
-                    SVNLogBridge.LogLine("<color=yellow>No missing files found.</color>");
+                    LogToConsole("<color=yellow>No missing files found.</color>");
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange>Fix missing files cancelled.</color>");
+                LogToConsole("<color=orange>Fix missing files cancelled.</color>");
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogToOutput($"<color=#FFAA00>FixMissing Error:</color> {ex.Message}");
-                SVNLogBridge.LogErrorToOutput($"[SVN] FixMissing: {ex}");
+                PostToMainThread(() =>
+                {
+                    SVNLogBridge.LogToOutput($"<color=#FFAA00>FixMissing Error:</color> {ex.Message}");
+                    SVNLogBridge.LogErrorToOutput($"[SVN] FixMissing: {ex}");
+                });
             }
             finally
             {
                 IsProcessing = false;
-                if (hasLock) _operationLock.Release();
-                _cts?.Dispose();
-                _cts = null;
+
+                if (localCts != null)
+                {
+                    Interlocked.CompareExchange(ref _cts, null, localCts);
+                    try { localCts.Dispose(); } catch { }
+                }
+
+                if (hasLock)
+                {
+                    try { _operationLock.Release(); }
+                    catch (SemaphoreFullException) { }
+                    catch (ObjectDisposedException) { }
+                }
+
+                Interlocked.Exchange(ref _processingFlag, 0);
             }
         }
 
         public async Task<int> FixMissingLogicAsync(CancellationToken token = default)
         {
             string root = svnManager.WorkingDir;
-            var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false);
+            var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root, false).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
 
             var missingFiles = statusDict
-                .Where(x => x.Value.status.Contains("!"))
+                .Where(x => x.Value.status.StartsWith("!", StringComparison.Ordinal))
                 .Select(x => x.Key)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -129,8 +173,8 @@ namespace SVN.Core
             }
 
             int skippedNested = cleanMissingFiles.Count - filteredMissing.Count;
-            SVNLogBridge.LogLine($"Found <b>{cleanMissingFiles.Count}</b> missing items." + (skippedNested > 0 ? $" <color=yellow>(Optimized: skipped {skippedNested} nested files to prevent errors)</color>" : ""));
-            SVNLogBridge.LogLine("Removing from SVN index...");
+            LogToConsole($"Found <b>{cleanMissingFiles.Count}</b> missing items." + (skippedNested > 0 ? $" <color=yellow>(Optimized: skipped {skippedNested} nested files to prevent errors)</color>" : ""));
+            LogToConsole("Removing from SVN index...");
 
             int total = filteredMissing.Count;
             int processed = 0;
@@ -144,8 +188,8 @@ namespace SVN.Core
 
                 try
                 {
-                    File.WriteAllLines(tempFile, batch, new UTF8Encoding(false));
-                    await SvnRunner.RunAsync($"delete --force --targets \"{tempFile}\"", root, false, token);
+                    await Task.Run(() => File.WriteAllLines(tempFile, batch, new UTF8Encoding(false)), token).ConfigureAwait(false);
+                    await SvnRunner.RunAsync($"delete --force --targets \"{tempFile}\"", root, false, token).ConfigureAwait(false);
                     processed += batch.Count;
                 }
                 catch (OperationCanceledException)
@@ -154,33 +198,50 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
-                    SVNLogBridge.LogLine($"<color=yellow>Batch failed ({ex.Message}). Retrying files individually...</color>");
+                    LogToConsole($"<color=yellow>Batch failed ({ex.Message}). Retrying files individually...</color>");
 
                     foreach (var singleFile in batch)
                     {
                         try
                         {
-                            await SvnRunner.RunAsync($"delete --force \"{singleFile}\"", root, false, token);
+                            await SvnRunner.RunAsync($"delete --force \"{singleFile}\"", root, false, token).ConfigureAwait(false);
                             processed++;
                         }
-                        catch
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception singleEx)
                         {
                             failed++;
+                            LogToConsole($"<color=#FFAA00>Failed to remove:</color> {singleFile} - {singleEx.Message}");
                         }
                     }
                 }
                 finally
                 {
-                    if (File.Exists(tempFile)) File.Delete(tempFile);
+                    if (File.Exists(tempFile))
+                    {
+                        try { File.Delete(tempFile); } catch { }
+                    }
                 }
 
-                SVNLogBridge.LogLine($"  Progress: {processed}/{total} files removed.", false);
+                LogToConsole($"  Progress: {processed}/{total} files removed.", false);
             }
 
             if (failed > 0)
-                SVNLogBridge.LogLine($"<color=#FFAA00>Warning:</color> {failed} file(s) could not be removed due to errors.");
+                LogToConsole($"<color=#FFAA00>Warning:</color> {failed} file(s) could not be removed due to errors.");
 
             return processed;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+            Cancel();
+            try { _operationLock.Dispose(); } catch { }
+            GC.SuppressFinalize(this);
         }
     }
 }

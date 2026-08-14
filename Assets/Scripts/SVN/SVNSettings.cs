@@ -65,7 +65,7 @@ namespace SVN.Core
             string newUrl = svnUI?.SettingsRepoUrlInput?.text?.Trim() ?? "";
             if (string.IsNullOrEmpty(newUrl)) return;
 
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.repoUrl = newUrl);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.repoUrl = newUrl).ConfigureAwait(false);
             PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, newUrl);
             PlayerPrefs.Save();
 
@@ -79,7 +79,7 @@ namespace SVN.Core
         {
             string path = svnUI?.SettingsSshKeyPathInput?.text?.Trim() ?? "";
 
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.privateKeyPath = path);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.privateKeyPath = path).ConfigureAwait(false);
             PlayerPrefs.SetString(SVNManager.KEY_SSH_PATH, path);
             PlayerPrefs.Save();
 
@@ -96,7 +96,7 @@ namespace SVN.Core
         {
             string newPath = svnUI?.SettingsMergeToolPathInput?.text?.Trim() ?? "";
 
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.mergeToolPath = newPath);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.mergeToolPath = newPath).ConfigureAwait(false);
             PlayerPrefs.SetString(SVNManager.KEY_TEXTEDITOR_TOOL, newPath);
             PlayerPrefs.Save();
 
@@ -110,41 +110,38 @@ namespace SVN.Core
         {
             if (!TryEnterProcessing()) return;
 
-            string newPath = svnUI?.SettingsWorkingDirInput?.text?.Trim().Replace("\\", "/") ?? "";
-            if (string.IsNullOrWhiteSpace(newPath))
-            {
-                ExitProcessing();
-                return;
-            }
-
             try
             {
-                newPath = Path.GetFullPath(newPath).Replace("\\", "/");
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Invalid path: {ex.Message}");
-                ExitProcessing();
-                return;
-            }
+                string newPath = svnUI?.SettingsWorkingDirInput?.text?.Trim().Replace("\\", "/") ?? "";
+                if (string.IsNullOrWhiteSpace(newPath))
+                {
+                    SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Path is empty.");
+                    return;
+                }
 
-            if (!Directory.Exists(newPath))
-            {
-                SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Directory does not exist: {newPath}");
-                ExitProcessing();
-                return;
-            }
+                try
+                {
+                    newPath = Path.GetFullPath(newPath).Replace("\\", "/");
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Invalid path: {ex.Message}");
+                    return;
+                }
 
-            if (!Directory.Exists(Path.Combine(newPath, ".svn")))
-            {
-                SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Not a valid SVN working copy: {newPath}");
-                ExitProcessing();
-                return;
-            }
+                if (!Directory.Exists(newPath))
+                {
+                    SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Directory does not exist: {newPath}");
+                    return;
+                }
 
-            try
-            {
-                List<SVNProject> projects = await Task.Run(() => ProjectSettings.LoadProjects());
+                if (!Directory.Exists(Path.Combine(newPath, ".svn")))
+                {
+                    SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Not a valid SVN working copy: {newPath}");
+                    return;
+                }
+
+                List<SVNProject> projects = await Task.Run(() => ProjectSettings.LoadProjects()).ConfigureAwait(false);
                 string normalizedPath = newPath.TrimEnd('/');
 
                 var existing = projects.Find(p =>
@@ -159,7 +156,7 @@ namespace SVN.Core
                         workingDir = normalizedPath,
                         lastOpened = DateTime.UtcNow
                     });
-                    await Task.Run(() => ProjectSettings.SaveProjects(projects));
+                    await Task.Run(() => ProjectSettings.SaveProjects(projects)).ConfigureAwait(false);
                 }
 
                 PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
@@ -192,7 +189,7 @@ namespace SVN.Core
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
             if (string.IsNullOrEmpty(lastPath)) return;
 
-            List<SVNProject> projects = await Task.Run(() => ProjectSettings.LoadProjects());
+            List<SVNProject> projects = await Task.Run(() => ProjectSettings.LoadProjects()).ConfigureAwait(false);
             string normalizedLast = NormalizePath(lastPath);
 
             var current = projects.Find(p =>
@@ -249,7 +246,7 @@ namespace SVN.Core
         {
             string newPath = svnUI?.SettingsDiffToolPathInput?.text?.Trim() ?? "";
 
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.diffToolPath = newPath);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.diffToolPath = newPath).ConfigureAwait(false);
             PlayerPrefs.SetString(SVNManager.KEY_DIFF_TOOL, newPath);
             PlayerPrefs.Save();
 
@@ -263,7 +260,7 @@ namespace SVN.Core
         {
             string newPath = svnUI?.SettingsResolveToolPathInput?.text?.Trim() ?? "";
 
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.resolveToolPath = newPath);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.resolveToolPath = newPath).ConfigureAwait(false);
             PlayerPrefs.SetString(SVNManager.KEY_RESOLVE_TOOL, newPath);
             PlayerPrefs.Save();
 
@@ -277,7 +274,7 @@ namespace SVN.Core
         {
             string newPath = svnUI?.SettingsBlameToolPathInput?.text?.Trim() ?? "";
 
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.blameToolPath = newPath);
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.blameToolPath = newPath).ConfigureAwait(false);
             PlayerPrefs.SetString(SVNManager.KEY_BLAME_TOOL, newPath);
             PlayerPrefs.Save();
 

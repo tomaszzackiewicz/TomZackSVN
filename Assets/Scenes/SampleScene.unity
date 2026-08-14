@@ -251,14 +251,17 @@ RectTransform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 1249648443}
   - {fileID: 187518028}
+  - {fileID: 1009987779}
+  - {fileID: 1001910215}
   - {fileID: 410901834}
   - {fileID: 689980469}
   m_Father: {fileID: 951734881}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 642.8239, y: -30}
+  m_AnchoredPosition: {x: 642.8239, y: -90}
   m_SizeDelta: {x: 1285.6478, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &5763095
@@ -2924,8 +2927,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 1105.4473, y: -390.925}
-  m_SizeDelta: {x: 710.5353, y: 783.1767}
+  m_AnchoredPosition: {x: 1105.4473, y: -348.1673}
+  m_SizeDelta: {x: 710.5353, y: 690.8201}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &41906269
 MonoBehaviour:
@@ -4399,7 +4402,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -50
+      value: -40
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -4780,6 +4783,8 @@ MonoBehaviour:
   branchTagConsoleText: {fileID: 623918326}
   mergeFilesContainer: {fileID: 998701572}
   mergeFileItemPrefab: {fileID: 1186746675166123127, guid: 66bee1c46fd7bbe4dabae12dc3218cbf, type: 3}
+  branchSourcePathInput: {fileID: 1887898574}
+  ignoreAncestryToggle: {fileID: 1001910216}
   statusInfoText: {fileID: 733838293}
   commitMessageInput: {fileID: 1692052939}
   filterTreeViewInput: {fileID: 1520043485}
@@ -4791,6 +4796,7 @@ MonoBehaviour:
   commitStatsText: {fileID: 262316098}
   commitConsoleContent: {fileID: 1894273843}
   operationProgressBar: {fileID: 133543381}
+  commitCurrentFileText: {fileID: 444600789}
   treeDisplay: {fileID: 586432107}
   statsText: {fileID: 631663702}
   conflictGroup: {fileID: 1212322074}
@@ -7266,6 +7272,128 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1001 &114690735
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 515640296}
+    m_Modifications:
+    - target: {fileID: 1270824040224751472, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270824040224751472, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270824040224751472, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 1426.4255
+      objectReference: {fileID: 0}
+    - target: {fileID: 1270824040224751472, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -10
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 1436.4255
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 20
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 774.84045
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -706.3346
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3538934216348571643, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: m_Name
+      value: CopyButtonParent
+      objectReference: {fileID: 0}
+    - target: {fileID: 4167301384820247976, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+      propertyPath: consoleTextElement
+      value: 
+      objectReference: {fileID: 1945648117}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+--- !u!224 &114690736 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
+  m_PrefabInstance: {fileID: 114690735}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &115440633
 GameObject:
   m_ObjectHideFlags: 0
@@ -7419,6 +7547,96 @@ CanvasRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 116444794}
+  m_CullTransparentMesh: 1
+--- !u!1 &117643161
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 117643162}
+  - component: {fileID: 117643165}
+  - component: {fileID: 117643164}
+  - component: {fileID: 117643163}
+  m_Layer: 5
+  m_Name: Viewport
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &117643162
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 117643161}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 444600787}
+  m_Father: {fileID: 1651857599}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: -17, y: 0}
+  m_Pivot: {x: 0, y: 1}
+--- !u!114 &117643163
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 117643161}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 31a19414c41e5ae4aae2af33fee712f6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_ShowMaskGraphic: 0
+--- !u!114 &117643164
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 117643161}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10917, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 1
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &117643165
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 117643161}
   m_CullTransparentMesh: 1
 --- !u!1001 &118107061
 PrefabInstance:
@@ -7895,6 +8113,143 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 121790329}
   m_CullTransparentMesh: 1
+--- !u!1 &124271949
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 124271950}
+  - component: {fileID: 124271952}
+  - component: {fileID: 124271951}
+  m_Layer: 5
+  m_Name: Label
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &124271950
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 124271949}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1001910215}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 143.5897, y: -25}
+  m_SizeDelta: {x: 287.1794, y: 50}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &124271951
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 124271949}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.TextMeshPro::TMPro.TextMeshProUGUI
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_text: Ignore Ancestry
+  m_isRightToLeft: 0
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_fontSharedMaterials: []
+  m_fontMaterial: {fileID: 0}
+  m_fontMaterials: []
+  m_fontColor32:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontColor: {r: 1, g: 1, b: 1, a: 1}
+  m_enableVertexGradient: 0
+  m_colorMode: 3
+  m_fontColorGradient:
+    topLeft: {r: 1, g: 1, b: 1, a: 1}
+    topRight: {r: 1, g: 1, b: 1, a: 1}
+    bottomLeft: {r: 1, g: 1, b: 1, a: 1}
+    bottomRight: {r: 1, g: 1, b: 1, a: 1}
+  m_fontColorGradientPreset: {fileID: 0}
+  m_spriteAsset: {fileID: 0}
+  m_tintAllSprites: 0
+  m_StyleSheet: {fileID: 0}
+  m_TextStyleHashCode: -1183493901
+  m_overrideHtmlColors: 0
+  m_faceColor:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontSize: 36
+  m_fontSizeBase: 36
+  m_fontWeight: 400
+  m_enableAutoSizing: 0
+  m_fontSizeMin: 18
+  m_fontSizeMax: 72
+  m_fontStyle: 0
+  m_HorizontalAlignment: 2
+  m_VerticalAlignment: 512
+  m_textAlignment: 65535
+  m_characterSpacing: 0
+  m_characterHorizontalScale: 1
+  m_wordSpacing: 0
+  m_lineSpacing: 0
+  m_lineSpacingMax: 0
+  m_paragraphSpacing: 0
+  m_charWidthMaxAdj: 0
+  m_TextWrappingMode: 1
+  m_wordWrappingRatios: 0.4
+  m_overflowMode: 0
+  m_linkedTextComponent: {fileID: 0}
+  parentLinkedComponent: {fileID: 0}
+  m_enableKerning: 0
+  m_ActiveFontFeatures: 6e72656b
+  m_enableExtraPadding: 0
+  checkPaddingRequired: 0
+  m_isRichText: 1
+  m_EmojiFallbackSupport: 1
+  m_parseCtrlCharacters: 1
+  m_isOrthographic: 1
+  m_isCullingEnabled: 0
+  m_horizontalMapping: 0
+  m_verticalMapping: 0
+  m_uvLineOffset: 0
+  m_geometrySortingOrder: 0
+  m_IsTextObjectScaleStatic: 0
+  m_VertexBufferAutoSizeReduction: 0
+  m_useMaxVisibleDescender: 1
+  m_pageToDisplay: 1
+  m_margin: {x: 0, y: 0, z: 0, w: 0}
+  m_isUsingLegacyAnimationComponent: 0
+  m_isVolumetricText: 0
+  m_hasFontAssetChanged: 0
+  m_baseMaterial: {fileID: 0}
+  m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!222 &124271952
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 124271949}
+  m_CullTransparentMesh: 1
 --- !u!1 &129202607
 GameObject:
   m_ObjectHideFlags: 0
@@ -8213,7 +8568,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &133543380
 RectTransform:
   m_ObjectHideFlags: 0
@@ -8233,8 +8588,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: -690.1277, y: -30.266}
-  m_SizeDelta: {x: 1447.6509, y: 53}
+  m_AnchoredPosition: {x: -722.62354, y: -15}
+  m_SizeDelta: {x: 1447.6509, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &133543381
 MonoBehaviour:
@@ -10894,7 +11249,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 126.796974, y: -30}
+  m_AnchoredPosition: {x: 88.71193, y: -30}
   m_SizeDelta: {x: 85, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &187518029
@@ -11193,6 +11548,164 @@ RectTransform:
   m_AnchoredPosition: {x: 721.95, y: -530.4419}
   m_SizeDelta: {x: 1500, y: 5}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &197527052
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 197527053}
+  - component: {fileID: 197527056}
+  - component: {fileID: 197527055}
+  - component: {fileID: 197527054}
+  m_Layer: 5
+  m_Name: BranchMsgText
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &197527053
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 197527052}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1480092012}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 174.58304, y: -30}
+  m_SizeDelta: {x: 349.166, y: 50}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &197527054
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 197527052}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 306cc8c2b49d7114eaa3623786fc2126, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_IgnoreLayout: 0
+  m_MinWidth: -1
+  m_MinHeight: -1
+  m_PreferredWidth: -1
+  m_PreferredHeight: -1
+  m_FlexibleWidth: -1
+  m_FlexibleHeight: -1
+  m_LayoutPriority: 1
+--- !u!114 &197527055
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 197527052}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_text: 'Branch Source Path:'
+  m_isRightToLeft: 0
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_fontSharedMaterials: []
+  m_fontMaterial: {fileID: 0}
+  m_fontMaterials: []
+  m_fontColor32:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontColor: {r: 1, g: 1, b: 1, a: 1}
+  m_enableVertexGradient: 0
+  m_colorMode: 3
+  m_fontColorGradient:
+    topLeft: {r: 1, g: 1, b: 1, a: 1}
+    topRight: {r: 1, g: 1, b: 1, a: 1}
+    bottomLeft: {r: 1, g: 1, b: 1, a: 1}
+    bottomRight: {r: 1, g: 1, b: 1, a: 1}
+  m_fontColorGradientPreset: {fileID: 0}
+  m_spriteAsset: {fileID: 0}
+  m_tintAllSprites: 0
+  m_StyleSheet: {fileID: 0}
+  m_TextStyleHashCode: -1183493901
+  m_overrideHtmlColors: 0
+  m_faceColor:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontSize: 36
+  m_fontSizeBase: 36
+  m_fontWeight: 400
+  m_enableAutoSizing: 0
+  m_fontSizeMin: 18
+  m_fontSizeMax: 72
+  m_fontStyle: 0
+  m_HorizontalAlignment: 2
+  m_VerticalAlignment: 512
+  m_textAlignment: 65535
+  m_characterSpacing: 0
+  m_characterHorizontalScale: 1
+  m_wordSpacing: 0
+  m_lineSpacing: 0
+  m_lineSpacingMax: 0
+  m_paragraphSpacing: 0
+  m_charWidthMaxAdj: 0
+  m_TextWrappingMode: 1
+  m_wordWrappingRatios: 0.4
+  m_overflowMode: 0
+  m_linkedTextComponent: {fileID: 0}
+  parentLinkedComponent: {fileID: 0}
+  m_enableKerning: 0
+  m_ActiveFontFeatures: 6e72656b
+  m_enableExtraPadding: 0
+  checkPaddingRequired: 0
+  m_isRichText: 1
+  m_EmojiFallbackSupport: 1
+  m_parseCtrlCharacters: 1
+  m_isOrthographic: 1
+  m_isCullingEnabled: 0
+  m_horizontalMapping: 0
+  m_verticalMapping: 0
+  m_uvLineOffset: 0
+  m_geometrySortingOrder: 0
+  m_IsTextObjectScaleStatic: 0
+  m_VertexBufferAutoSizeReduction: 0
+  m_useMaxVisibleDescender: 1
+  m_pageToDisplay: 1
+  m_margin: {x: 0, y: 0, z: 0, w: 0}
+  m_isUsingLegacyAnimationComponent: 0
+  m_isVolumetricText: 0
+  m_hasFontAssetChanged: 0
+  m_baseMaterial: {fileID: 0}
+  m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!222 &197527056
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 197527052}
+  m_CullTransparentMesh: 1
 --- !u!1 &199040783
 GameObject:
   m_ObjectHideFlags: 0
@@ -12007,7 +12520,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1911977654}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.026960686
+  m_Size: 0.021367727
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -12365,6 +12878,81 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!1 &230820752
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 230820753}
+  - component: {fileID: 230820755}
+  - component: {fileID: 230820754}
+  m_Layer: 5
+  m_Name: Handle
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &230820753
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 230820752}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2033423372}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 20, y: 20}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &230820754
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 230820752}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 0.2901961, g: 0.2901961, b: 0.2901961, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10905, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 1
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &230820755
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 230820752}
+  m_CullTransparentMesh: 1
 --- !u!1 &231216820
 GameObject:
   m_ObjectHideFlags: 0
@@ -13343,8 +13931,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: -18, y: -14}
-  m_SizeDelta: {x: 1311.5671, y: 853.633}
+  m_AnchoredPosition: {x: -18, y: 13.147}
+  m_SizeDelta: {x: 1311.5671, y: 931.85}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &242203810
 MonoBehaviour:
@@ -19889,7 +20477,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 461.8183, y: -30}
+  m_AnchoredPosition: {x: 667.25323, y: -30}
   m_SizeDelta: {x: 247.8547, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &410901835
@@ -20485,6 +21073,81 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 428881445}
   m_CullTransparentMesh: 1
+--- !u!1 &430179861
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 430179862}
+  - component: {fileID: 430179864}
+  - component: {fileID: 430179863}
+  m_Layer: 5
+  m_Name: Checkmark
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &430179862
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 430179861}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1855369142}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 50, y: 50}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &430179863
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 430179861}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10901, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 0
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &430179864
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 430179861}
+  m_CullTransparentMesh: 1
 --- !u!1 &430405671
 GameObject:
   m_ObjectHideFlags: 0
@@ -21045,6 +21708,158 @@ RectTransform:
   m_CorrespondingSourceObject: {fileID: 7750361092450764457, guid: ad5fb3769074bbf44a0a7cb9f7aae1af, type: 3}
   m_PrefabInstance: {fileID: 439691400}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &444600786
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 444600787}
+  - component: {fileID: 444600790}
+  - component: {fileID: 444600789}
+  - component: {fileID: 444600788}
+  m_Layer: 5
+  m_Name: CheckoutedFileContent
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &444600787
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 444600786}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 117643162}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: -118.2501}
+  m_Pivot: {x: 0, y: 1}
+--- !u!114 &444600788
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 444600786}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3245ec927659c4140ac4f8d17403cc18, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_HorizontalFit: 0
+  m_VerticalFit: 2
+--- !u!114 &444600789
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 444600786}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_text: 
+  m_isRightToLeft: 0
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_fontSharedMaterials: []
+  m_fontMaterial: {fileID: 0}
+  m_fontMaterials: []
+  m_fontColor32:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontColor: {r: 1, g: 1, b: 1, a: 1}
+  m_enableVertexGradient: 0
+  m_colorMode: 3
+  m_fontColorGradient:
+    topLeft: {r: 1, g: 1, b: 1, a: 1}
+    topRight: {r: 1, g: 1, b: 1, a: 1}
+    bottomLeft: {r: 1, g: 1, b: 1, a: 1}
+    bottomRight: {r: 1, g: 1, b: 1, a: 1}
+  m_fontColorGradientPreset: {fileID: 0}
+  m_spriteAsset: {fileID: 0}
+  m_tintAllSprites: 0
+  m_StyleSheet: {fileID: 0}
+  m_TextStyleHashCode: -1183493901
+  m_overrideHtmlColors: 0
+  m_faceColor:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontSize: 20
+  m_fontSizeBase: 20
+  m_fontWeight: 400
+  m_enableAutoSizing: 0
+  m_fontSizeMin: 18
+  m_fontSizeMax: 72
+  m_fontStyle: 0
+  m_HorizontalAlignment: 1
+  m_VerticalAlignment: 256
+  m_textAlignment: 65535
+  m_characterSpacing: 0
+  m_characterHorizontalScale: 1
+  m_wordSpacing: 0
+  m_lineSpacing: 0
+  m_lineSpacingMax: 0
+  m_paragraphSpacing: 0
+  m_charWidthMaxAdj: 0
+  m_TextWrappingMode: 1
+  m_wordWrappingRatios: 0.4
+  m_overflowMode: 0
+  m_linkedTextComponent: {fileID: 0}
+  parentLinkedComponent: {fileID: 0}
+  m_enableKerning: 0
+  m_ActiveFontFeatures: 6e72656b
+  m_enableExtraPadding: 0
+  checkPaddingRequired: 0
+  m_isRichText: 1
+  m_EmojiFallbackSupport: 1
+  m_parseCtrlCharacters: 1
+  m_isOrthographic: 1
+  m_isCullingEnabled: 0
+  m_horizontalMapping: 0
+  m_verticalMapping: 0
+  m_uvLineOffset: 0
+  m_geometrySortingOrder: 0
+  m_IsTextObjectScaleStatic: 0
+  m_VertexBufferAutoSizeReduction: 0
+  m_useMaxVisibleDescender: 1
+  m_pageToDisplay: 1
+  m_margin: {x: 50, y: 0, z: 50, w: 0}
+  m_isUsingLegacyAnimationComponent: 0
+  m_isVolumetricText: 0
+  m_hasFontAssetChanged: 0
+  m_baseMaterial: {fileID: 0}
+  m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!222 &444600790
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 444600786}
+  m_CullTransparentMesh: 1
 --- !u!1 &450797992
 GameObject:
   m_ObjectHideFlags: 0
@@ -21540,8 +22355,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 375.0898, y: -390.925}
-  m_SizeDelta: {x: 750.1796, y: 785.78}
+  m_AnchoredPosition: {x: 375.0898, y: -348.1673}
+  m_SizeDelta: {x: 750.1796, y: 693.4233}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &464808261
 MonoBehaviour:
@@ -23065,6 +23880,8 @@ RectTransform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1065984399}
+  - {fileID: 114690736}
+  - {fileID: 1651857599}
   - {fileID: 1234583862}
   m_Father: {fileID: 288858256}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -25317,7 +26134,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 355.26764, y: -26.4548}
+  m_AnchoredPosition: {x: 355.26764, y: -26.454845}
   m_SizeDelta: {x: 708.1223, y: 52.9096}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &567849669
@@ -26519,8 +27336,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 355.26764, y: -583.0446}
-  m_SizeDelta: {x: 673.1644, y: 400.27}
+  m_AnchoredPosition: {x: 355.26764, y: -536.8651}
+  m_SizeDelta: {x: 673.1644, y: 307.91}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &597114291
 MonoBehaviour:
@@ -28225,15 +29042,14 @@ RectTransform:
   - {fileID: 1623641654}
   - {fileID: 1109508803}
   - {fileID: 951734881}
-  - {fileID: 819481448}
   - {fileID: 1751330828}
   - {fileID: 2097978683}
   m_Father: {fileID: 242203809}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 655.78357, y: -454.05264}
-  m_SizeDelta: {x: 1303.7844, y: 794.6884}
+  m_AnchoredPosition: {x: 655.78357, y: -491.9545}
+  m_SizeDelta: {x: 1303.7844, y: 883.909}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &630239176
 MonoBehaviour:
@@ -29035,7 +29851,7 @@ MonoBehaviour:
   m_fontMaterials: []
   m_fontColor32:
     serializedVersion: 2
-    rgba: 4294967295
+    rgba: 4281479730
   m_fontColor: {r: 0.19607843, g: 0.19607843, b: 0.19607843, a: 1}
   m_enableVertexGradient: 0
   m_colorMode: 3
@@ -29048,7 +29864,7 @@ MonoBehaviour:
   m_spriteAsset: {fileID: 0}
   m_tintAllSprites: 0
   m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: 0
+  m_TextStyleHashCode: -1183493901
   m_overrideHtmlColors: 0
   m_faceColor:
     serializedVersion: 2
@@ -29908,7 +30724,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 977.8452, y: -30}
+  m_AnchoredPosition: {x: 1046.3236, y: -30}
   m_SizeDelta: {x: 447.0113, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &689980470
@@ -31964,6 +32780,132 @@ RectTransform:
   m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
   m_PrefabInstance: {fileID: 738114431}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &741733769
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 741733770}
+  - component: {fileID: 741733773}
+  - component: {fileID: 741733772}
+  - component: {fileID: 741733771}
+  m_Layer: 5
+  m_Name: Scrollbar Vertical
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &741733770
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 741733769}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 2033423372}
+  m_Father: {fileID: 1651857599}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 1, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 20, y: 0}
+  m_Pivot: {x: 1, y: 1}
+--- !u!114 &741733771
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 741733769}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2a4db7a114972834c8e4117be1d82ba3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Navigation:
+    m_Mode: 3
+    m_WrapAround: 0
+    m_SelectOnUp: {fileID: 0}
+    m_SelectOnDown: {fileID: 0}
+    m_SelectOnLeft: {fileID: 0}
+    m_SelectOnRight: {fileID: 0}
+  m_Transition: 1
+  m_Colors:
+    m_NormalColor: {r: 1, g: 1, b: 1, a: 1}
+    m_HighlightedColor: {r: 0.9607843, g: 0.9607843, b: 0.9607843, a: 1}
+    m_PressedColor: {r: 0.78431374, g: 0.78431374, b: 0.78431374, a: 1}
+    m_SelectedColor: {r: 0.9607843, g: 0.9607843, b: 0.9607843, a: 1}
+    m_DisabledColor: {r: 0.78431374, g: 0.78431374, b: 0.78431374, a: 0.5019608}
+    m_ColorMultiplier: 1
+    m_FadeDuration: 0.1
+  m_SpriteState:
+    m_HighlightedSprite: {fileID: 0}
+    m_PressedSprite: {fileID: 0}
+    m_SelectedSprite: {fileID: 0}
+    m_DisabledSprite: {fileID: 0}
+  m_AnimationTriggers:
+    m_NormalTrigger: Normal
+    m_HighlightedTrigger: Highlighted
+    m_PressedTrigger: Pressed
+    m_SelectedTrigger: Selected
+    m_DisabledTrigger: Disabled
+  m_Interactable: 1
+  m_TargetGraphic: {fileID: 230820754}
+  m_HandleRect: {fileID: 230820753}
+  m_Direction: 2
+  m_Value: 0
+  m_Size: 1
+  m_NumberOfSteps: 0
+  m_OnValueChanged:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &741733772
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 741733769}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 0.17254902, g: 0.17254902, b: 0.17254902, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10907, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 1
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &741733773
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 741733769}
+  m_CullTransparentMesh: 1
 --- !u!1001 &746721031
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -34967,7 +35909,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -372.9096
+      value: -372.91003
       objectReference: {fileID: 0}
     - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -35497,41 +36439,6 @@ RectTransform:
   m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
   m_PrefabInstance: {fileID: 816366539}
   m_PrefabAsset: {fileID: 0}
---- !u!1 &819481447
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 819481448}
-  m_Layer: 5
-  m_Name: Spacer (1)
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!224 &819481448
-RectTransform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 819481447}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 630239175}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 651.8922, y: -418.1935}
-  m_SizeDelta: {x: 100, y: 13.3388}
-  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &820076668
 GameObject:
   m_ObjectHideFlags: 0
@@ -36681,7 +37588,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -50
+      value: -40
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -39720,7 +40627,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: -18, y: 0}
+  m_SizeDelta: {x: -17, y: 0}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &903013875
 MonoBehaviour:
@@ -40337,7 +41244,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -50
+      value: -40
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -41346,6 +42253,7 @@ RectTransform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
+  - {fileID: 1480092012}
   - {fileID: 5763094}
   - {fileID: 1345249196}
   - {fileID: 1082140312}
@@ -41353,8 +42261,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 651.8922, y: -315.76205}
-  m_SizeDelta: {x: 1287.5559, y: 191.5241}
+  m_AnchoredPosition: {x: 651.8922, y: -342.36914}
+  m_SizeDelta: {x: 1287.5559, y: 251.629}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &951734882
 MonoBehaviour:
@@ -43194,6 +44102,119 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!1 &1001910214
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1001910215}
+  - component: {fileID: 1001910216}
+  - component: {fileID: 1001910217}
+  m_Layer: 5
+  m_Name: Toggle
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1001910215
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1001910214}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 124271950}
+  - {fileID: 1855369142}
+  m_Father: {fileID: 5763094}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 346.78857, y: -30}
+  m_SizeDelta: {x: 329.7999, y: 50}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1001910216
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1001910214}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9085046f02f69544eb97fd06b6048fe2, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Toggle
+  m_Navigation:
+    m_Mode: 3
+    m_WrapAround: 0
+    m_SelectOnUp: {fileID: 0}
+    m_SelectOnDown: {fileID: 0}
+    m_SelectOnLeft: {fileID: 0}
+    m_SelectOnRight: {fileID: 0}
+  m_Transition: 1
+  m_Colors:
+    m_NormalColor: {r: 1, g: 1, b: 1, a: 1}
+    m_HighlightedColor: {r: 0.9607843, g: 0.9607843, b: 0.9607843, a: 1}
+    m_PressedColor: {r: 0.78431374, g: 0.78431374, b: 0.78431374, a: 1}
+    m_SelectedColor: {r: 0.9607843, g: 0.9607843, b: 0.9607843, a: 1}
+    m_DisabledColor: {r: 0.78431374, g: 0.78431374, b: 0.78431374, a: 0.5019608}
+    m_ColorMultiplier: 1
+    m_FadeDuration: 0.1
+  m_SpriteState:
+    m_HighlightedSprite: {fileID: 0}
+    m_PressedSprite: {fileID: 0}
+    m_SelectedSprite: {fileID: 0}
+    m_DisabledSprite: {fileID: 0}
+  m_AnimationTriggers:
+    m_NormalTrigger: Normal
+    m_HighlightedTrigger: Highlighted
+    m_PressedTrigger: Pressed
+    m_SelectedTrigger: Selected
+    m_DisabledTrigger: Disabled
+  m_Interactable: 1
+  m_TargetGraphic: {fileID: 1855369143}
+  toggleTransition: 1
+  graphic: {fileID: 430179863}
+  m_Group: {fileID: 0}
+  onValueChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_IsOn: 0
+--- !u!114 &1001910217
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1001910214}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30649d3a9faa99c48a7b1166b86bf2a0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.HorizontalLayoutGroup
+  m_Padding:
+    m_Left: 0
+    m_Right: 0
+    m_Top: 0
+    m_Bottom: 0
+  m_ChildAlignment: 0
+  m_Spacing: 0
+  m_ChildForceExpandWidth: 1
+  m_ChildForceExpandHeight: 1
+  m_ChildControlWidth: 0
+  m_ChildControlHeight: 0
+  m_ChildScaleWidth: 0
+  m_ChildScaleHeight: 0
+  m_ReverseArrangement: 0
 --- !u!1 &1006573055
 GameObject:
   m_ObjectHideFlags: 0
@@ -43773,6 +44794,41 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1009676034}
   m_CullTransparentMesh: 1
+--- !u!1 &1009987778
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1009987779}
+  m_Layer: 5
+  m_Name: Spacer (1)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1009987779
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1009987778}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 5763094}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 156.5503, y: -30}
+  m_SizeDelta: {x: -12.598, y: 50}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &1010348410
 GameObject:
   m_ObjectHideFlags: 0
@@ -45841,8 +46897,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 774.84045, y: -396.02924}
-  m_SizeDelta: {x: 1445.8766, y: 781.85}
+  m_AnchoredPosition: {x: 774.84045, y: -348.1673}
+  m_SizeDelta: {x: 1445.8766, y: 696.3346}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1065984400
 MonoBehaviour:
@@ -46435,7 +47491,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 641.03455, y: -159.5332}
+  m_AnchoredPosition: {x: 641.03455, y: -219.5332}
   m_SizeDelta: {x: 1282.0691, y: 79.0664}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1082140313
@@ -47552,8 +48608,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 651.8922, y: -170}
-  m_SizeDelta: {x: 1287.5559, y: 100}
+  m_AnchoredPosition: {x: 651.8922, y: -161.9328}
+  m_SizeDelta: {x: 1287.5559, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1109508804
 MonoBehaviour:
@@ -53151,8 +54207,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 774.8405, y: -827.4287}
-  m_SizeDelta: {x: -1380.2555, y: 60.532}
+  m_AnchoredPosition: {x: 774.8405, y: -849.5847}
+  m_SizeDelta: {x: -1445.2472, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1234583863
 MonoBehaviour:
@@ -53458,7 +54514,7 @@ MonoBehaviour:
   m_TargetGraphic: {fileID: 1355713275}
   m_HandleRect: {fileID: 1355713274}
   m_Direction: 2
-  m_Value: 1
+  m_Value: 0
   m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
@@ -54114,6 +55170,41 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1246101656}
   m_CullTransparentMesh: 1
+--- !u!1 &1249648442
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1249648443}
+  m_Layer: 5
+  m_Name: Spacer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1249648443
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1249648442}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 5763094}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 15.196625, y: -30}
+  m_SizeDelta: {x: -1.2441, y: 50}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &1250363874
 GameObject:
   m_ObjectHideFlags: 0
@@ -58286,7 +59377,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 594.76404, y: -90}
+  m_AnchoredPosition: {x: 594.76404, y: -150}
   m_SizeDelta: {x: 1189.5281, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1345249197
@@ -60165,6 +61256,143 @@ RectTransform:
   m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
   m_PrefabInstance: {fileID: 1364804092}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &1366641134
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1366641135}
+  - component: {fileID: 1366641137}
+  - component: {fileID: 1366641136}
+  m_Layer: 5
+  m_Name: Text
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1366641135
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1366641134}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1372198744}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1366641136
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1366641134}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_text: "\u200B"
+  m_isRightToLeft: 0
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_fontSharedMaterials: []
+  m_fontMaterial: {fileID: 0}
+  m_fontMaterials: []
+  m_fontColor32:
+    serializedVersion: 2
+    rgba: 4281479730
+  m_fontColor: {r: 0.19607843, g: 0.19607843, b: 0.19607843, a: 1}
+  m_enableVertexGradient: 0
+  m_colorMode: 3
+  m_fontColorGradient:
+    topLeft: {r: 1, g: 1, b: 1, a: 1}
+    topRight: {r: 1, g: 1, b: 1, a: 1}
+    bottomLeft: {r: 1, g: 1, b: 1, a: 1}
+    bottomRight: {r: 1, g: 1, b: 1, a: 1}
+  m_fontColorGradientPreset: {fileID: 0}
+  m_spriteAsset: {fileID: 0}
+  m_tintAllSprites: 0
+  m_StyleSheet: {fileID: 0}
+  m_TextStyleHashCode: -1183493901
+  m_overrideHtmlColors: 0
+  m_faceColor:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontSize: 14
+  m_fontSizeBase: 14
+  m_fontWeight: 400
+  m_enableAutoSizing: 0
+  m_fontSizeMin: 18
+  m_fontSizeMax: 72
+  m_fontStyle: 0
+  m_HorizontalAlignment: 1
+  m_VerticalAlignment: 256
+  m_textAlignment: 65535
+  m_characterSpacing: 0
+  m_characterHorizontalScale: 1
+  m_wordSpacing: 0
+  m_lineSpacing: 0
+  m_lineSpacingMax: 0
+  m_paragraphSpacing: 0
+  m_charWidthMaxAdj: 0
+  m_TextWrappingMode: 3
+  m_wordWrappingRatios: 0.4
+  m_overflowMode: 0
+  m_linkedTextComponent: {fileID: 0}
+  parentLinkedComponent: {fileID: 0}
+  m_enableKerning: 0
+  m_ActiveFontFeatures: 6e72656b
+  m_enableExtraPadding: 1
+  checkPaddingRequired: 0
+  m_isRichText: 1
+  m_EmojiFallbackSupport: 1
+  m_parseCtrlCharacters: 1
+  m_isOrthographic: 1
+  m_isCullingEnabled: 0
+  m_horizontalMapping: 0
+  m_verticalMapping: 0
+  m_uvLineOffset: 0
+  m_geometrySortingOrder: 0
+  m_IsTextObjectScaleStatic: 0
+  m_VertexBufferAutoSizeReduction: 0
+  m_useMaxVisibleDescender: 1
+  m_pageToDisplay: 1
+  m_margin: {x: 0, y: 0, z: 0, w: 0}
+  m_isUsingLegacyAnimationComponent: 0
+  m_isVolumetricText: 0
+  m_hasFontAssetChanged: 0
+  m_baseMaterial: {fileID: 0}
+  m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!222 &1366641137
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1366641134}
+  m_CullTransparentMesh: 1
 --- !u!1 &1367146509
 GameObject:
   m_ObjectHideFlags: 0
@@ -60291,6 +61519,58 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1367146509}
   m_CullTransparentMesh: 1
+--- !u!1 &1372198743
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1372198744}
+  - component: {fileID: 1372198745}
+  m_Layer: 5
+  m_Name: Text Area
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1372198744
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1372198743}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 1849140061}
+  - {fileID: 1366641135}
+  m_Father: {fileID: 1887898572}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: -0.5}
+  m_SizeDelta: {x: -20, y: -13}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1372198745
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1372198743}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3312d7739989d2b4e91e6319e9a96d76, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Padding: {x: -8, y: -5, z: -8, w: -5}
+  m_Softness: {x: 0, y: 0}
 --- !u!1 &1374369107
 GameObject:
   m_ObjectHideFlags: 0
@@ -60807,7 +62087,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 160.94449, y: -50}
+  m_AnchoredPosition: {x: 160.94449, y: -40}
   m_SizeDelta: {x: 160, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1389333065
@@ -62793,7 +64073,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1815814470}
   m_Direction: 2
   m_Value: 0
-  m_Size: 0.2
+  m_Size: 1
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -65084,6 +66364,70 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1476659817}
   m_CullTransparentMesh: 1
+--- !u!1 &1480092011
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1480092012}
+  - component: {fileID: 1480092013}
+  m_Layer: 5
+  m_Name: BranchSourcePath
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1480092012
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1480092011}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 197527053}
+  - {fileID: 1887898572}
+  m_Father: {fileID: 951734881}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 637.1202, y: -30}
+  m_SizeDelta: {x: 1274.2404, y: 60}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1480092013
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1480092011}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 30649d3a9faa99c48a7b1166b86bf2a0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Padding:
+    m_Left: 0
+    m_Right: 0
+    m_Top: 0
+    m_Bottom: 0
+  m_ChildAlignment: 3
+  m_Spacing: 0
+  m_ChildForceExpandWidth: 1
+  m_ChildForceExpandHeight: 1
+  m_ChildControlWidth: 0
+  m_ChildControlHeight: 0
+  m_ChildScaleWidth: 0
+  m_ChildScaleHeight: 0
+  m_ReverseArrangement: 0
 --- !u!1 &1480181222
 GameObject:
   m_ObjectHideFlags: 0
@@ -69834,8 +71178,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 651.8922, y: -70}
-  m_SizeDelta: {x: 1287.5559, y: 100}
+  m_AnchoredPosition: {x: 651.8922, y: -67.31093}
+  m_SizeDelta: {x: 1287.5559, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1623641655
 MonoBehaviour:
@@ -71137,6 +72481,135 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: -20, y: -20}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &1651857598
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1651857599}
+  - component: {fileID: 1651857603}
+  - component: {fileID: 1651857602}
+  - component: {fileID: 1651857601}
+  - component: {fileID: 1651857600}
+  m_Layer: 5
+  m_Name: ConsoleFiles
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1651857599
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651857598}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 117643162}
+  - {fileID: 741733770}
+  m_Father: {fileID: 515640296}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 774.84045, y: -775.45966}
+  m_SizeDelta: {x: 1442.6, y: 118.2501}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1651857600
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651857598}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 306cc8c2b49d7114eaa3623786fc2126, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_IgnoreLayout: 0
+  m_MinWidth: -1
+  m_MinHeight: -1
+  m_PreferredWidth: -1
+  m_PreferredHeight: -1
+  m_FlexibleWidth: -1
+  m_FlexibleHeight: -1
+  m_LayoutPriority: 1
+--- !u!114 &1651857601
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651857598}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1aa08ab6e0800fa44ae55d278d1423e3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Content: {fileID: 444600787}
+  m_Horizontal: 0
+  m_Vertical: 1
+  m_MovementType: 1
+  m_Elasticity: 0.1
+  m_Inertia: 1
+  m_DecelerationRate: 0.135
+  m_ScrollSensitivity: 1
+  m_Viewport: {fileID: 117643162}
+  m_HorizontalScrollbar: {fileID: 0}
+  m_VerticalScrollbar: {fileID: 741733771}
+  m_HorizontalScrollbarVisibility: 2
+  m_VerticalScrollbarVisibility: 2
+  m_HorizontalScrollbarSpacing: -3
+  m_VerticalScrollbarSpacing: -3
+  m_OnValueChanged:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &1651857602
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651857598}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 0.392}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10907, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 1
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &1651857603
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1651857598}
+  m_CullTransparentMesh: 1
 --- !u!1 &1653047524
 GameObject:
   m_ObjectHideFlags: 0
@@ -71483,7 +72956,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 35565.492}
+  m_SizeDelta: {x: 0, y: 45132.62}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1662562891
 MonoBehaviour:
@@ -71519,24 +72992,24 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: "<size=140%><color=blue><b>TomZackSVN ver. {VERSION}</b></color></size>\n<voffset=1em>--------------------------------------------------</voffset>\n<size=120%><b>Support
-    & Credits</b></size>\n<line-height=125%>\n<b>Developer:</b> <color=#FBBF24>Tomasz
-    Zackiewicz</color>\n<b>Support Email:</b> <color=#34D399>pogtoma@gmail.com</color>\n<b>Bug
-    Reports:</b> Please provide the <b>Log Text File</b> by using the <b>Open Log</b>
-    button when reporting issues.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Switch
-    Project</b></size>\n<line-height=125%>\nThe Switch Project panel is your central
-    hub for managing all your working copies. It displays a list of your saved projects
-    and provides sub\u2011panels for adding new ones, loading existing folders, and
-    relocating repository addresses.\n\nEach saved project appears with its name
-    and three action buttons:\n\u2022 <b>Select</b> \u2013 loads the project and
-    makes it the active working copy.\n\u2022 <b>Delete</b> \u2013 removes the project
-    from the list. Your local folder and files are not touched; only the entry in
-    the application is deleted.\n\u2022 <b>Relocate</b> \u2013 opens a small panel
-    where you can change the repository URL of the working copy without downloading
-    everything again. The current URL is pre\u2011filled; type a new one and press
-    <b>Confirm</b>, or <b>Cancel</b> to close the panel. This is useful when the
-    server address or protocol changes.\n\n<b>Add New Project (sub\u2011panel)</b>\nOpens
-    when you click the <b>Add New Project</b> button. You need to provide:\n\u2022
+  m_text: "<size=140%><b><color=#0066cc>TomZackSVN ver. {VERSION}</color></b></size>\n\n<size=110%><b>Full
+    Documentation:</b></size>\n<color=#34D399>https://tomaszzackiewicz.wordpress.com/2026/07/21/tomzacksvn-a-full-featured-svn-client-for-developers/</color>\n\n<line-height=120%>\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Support
+    & Credits</b></size>\n\n<b>Developer:</b> Tomasz Zackiewicz\n<b>Support Email:</b>
+    <color=#34D399>pogtoma@gmail.com</color>\n<b>Bug Reports:</b> Please provide
+    the <b>Log Text File</b> by using the <b>Open Log</b> button when reporting issues.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Switch
+    Project</b></size>\n\nThe <b>Switch Project</b> panel is your central hub for
+    managing all your working copies. It displays a list of your saved projects and
+    provides sub\u2011panels for adding new ones, loading existing folders, and relocating
+    repository addresses.\n\nEach saved project appears with its name and three action
+    buttons:\n\n\u2022 <b>Select</b> \u2013 loads the project and makes it the active
+    working copy.\n\u2022 <b>Delete</b> \u2013 removes the project from the list.
+    Your local folder and files are not touched; only the entry in the application
+    is deleted.\n\u2022 <b>Relocate</b> \u2013 opens a small panel where you can
+    change the repository URL of the working copy without downloading everything
+    again. The current URL is pre\u2011filled; type a new one and press <b>Confirm</b>,
+    or <b>Cancel</b> to close the panel. This is useful when the server address or
+    protocol changes.\n\n<size=110%><b>Add New Project (sub\u2011panel)</b></size>\n\nOpens
+    when you click the <b>Add New Project</b> button. You need to provide:\n\n\u2022
     <b>Project Name</b> \u2013 a friendly label for the list. If left empty, the
     name is automatically generated from the Repository URL.\n\u2022 <b>Repository
     URL</b> \u2013 the address of the SVN server (e.g., <i><color=#34D399>svn+ssh://...</color></i>
@@ -71544,467 +73017,562 @@ MonoBehaviour:
     \u2013 the directory where the working copy already exists or will be placed.
     Use the <b>Browse</b> button to select it.\n\u2022 <b>Private Key</b> \u2013
     required if the repository uses <i><color=#34D399>svn+ssh://</color></i> connections.
-    You can type the path or use the <b>Browse</b> button.\nClick <b>Save Project</b>
+    You can type the path or use the <b>Browse</b> button.\n\nClick <b>Save Project</b>
     to register the project. It immediately appears in the main list and is automatically
-    loaded as the active working copy.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Checkout</b></size>\n<line-height=125%>\nThe
+    loaded as the active working copy.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    The project list is stored locally in a JSON file. You can back it up or move
+    it to another computer if needed.\n\u2022 If you have many projects, use the
+    <b>Select</b> button to quickly switch between them \u2013 the working directory,
+    repository URL, and private key are restored automatically.\n\u2022 The <b>Relocate</b>
+    function is especially useful when you change SVN servers or switch from HTTP
+    to SVN+SSH.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Checkout</b></size>\n\nThe
     Checkout panel is where you download a repository for the first time, export
     a clean copy without version-control metadata, or resume an interrupted download.
     It gives you full control over long\u2011running transfers with pause, resume,
-    and cancel.\n\n<b>Fields you must fill:</b>\n\u2022 <b>Repository URL</b> \u2013
-    the address of the SVN server (e.g., <i><color=#34D399>svn+ssh://...</color></i>,
+    and cancel.\n\n<size=110%><b>Fields you must fill:</b></size>\n\n\u2022 <b>Repository
+    URL</b> \u2013 the address of the SVN server (e.g., <i><color=#34D399>svn+ssh://...</color></i>,
     <i><color=#34D399>https://...</color></i>).\n\u2022 <b>Destination Folder</b>
     \u2013 the local folder where the project will be placed. It must be empty or
     non\u2011existent. If it already contains an SVN working copy, you will be asked
     to use the Resume function instead.\n\u2022 <b>Private Key</b> (optional) \u2013
     required if your repository uses <i><color=#34D399>svn+ssh://</color></i>. You
-    can type the path directly or use the <b>Browse</b> button to select it.\n\n<b>Action
-    buttons:</b>\n\u2022 <b>Project Info</b> \u2013 before starting, you can click
-    this button to analyze the repository. It shows the remote size, the required
-    disk space, and the structure (trunk, branches, tags) so you know exactly what
-    you are about to download.\n\u2022 <b>Checkout</b> \u2013 starts the download
-    of the entire repository (HEAD revision). A live progress panel appears, showing
+    can type the path directly or use the <b>Browse</b> button to select it.\n\n<size=110%><b>Action
+    buttons:</b></size>\n\n\u2022 <b>Project Info</b> \u2013 before starting, you
+    can click this button to analyze the repository. It shows the remote size, the
+    required disk space, and the structure (trunk, branches, tags) so you know exactly
+    what you are about to download.\n\n\u2022 <b>Force Repair Working Copy</b> \u2013
+    performs a complete repair of the SVN metadata for the destination folder. This
+    operation is intended for cases where the working copy database (<i><color=#34D399>.svn/wc.db</color></i>)
+    is corrupted or incomplete, and a standard cleanup cannot fix it.\nThe process
+    consists of two steps:\n1. The entire <b>.svn</b> directory is removed from the
+    destination folder (after confirmation and with all necessary safeguards).\n2.
+    A fresh checkout is executed <b>in place</b> using the provided repository URL
+    and destination path, rebuilding the <b>wc.db</b> database from scratch.\nDuring
+    the operation, all SVN background polling is paused. When the checkout finishes,
+    the health of the new working copy is verified (by checking <b>svn info</b>).
+    Only if the verification succeeds will the application resume normal polling
+    and refresh the status tree.\n<color=#FFAA00><b>Warning:</b></color> This is
+    a destructive repair \u2013 all local SVN metadata is replaced. Unversioned files
+    are usually preserved, but any local SVN state (e.g., changelists, lock tokens)
+    will be lost. Use this only when the working copy is unusable and other repair
+    methods have failed.\n\n\u2022 <b>Checkout</b> \u2013 starts the download of
+    the entire repository (HEAD revision). A live progress panel appears, showing
     current status (Downloading, Paused, etc.), percentage complete, estimated time
-    remaining, total size already on disk, and download speed.\n\u2022 <b>Pause</b>
+    remaining, total size already on disk, and download speed.\n\n\u2022 <b>Pause</b>
     \u2013 temporarily stops the checkout. The already downloaded files are kept,
-    and you can resume later.\n\u2022 <b>Resume</b> \u2013 continues a paused checkout.
+    and you can resume later.\n\n\u2022 <b>Resume</b> \u2013 continues a paused checkout.
     It only works when the destination folder already contains a partial working
     copy (<i><color=#34D399>.svn</color></i> folder present). If the checkout was
-    cancelled, Resume is not available.\n\u2022 <b>Cancel</b> \u2013 permanently
+    cancelled, Resume is not available.\n\n\u2022 <b>Cancel</b> \u2013 permanently
     aborts the operation. The downloaded files remain on disk, but the working copy
     will be incomplete and cannot be resumed. Use Cancel only when you are sure you
-    want to start over.\n\n<b>Typical workflow:</b>\n1. Enter the repository URL,
-    a new folder path, and (if needed) the private key.\n2. Click <b>Project Info</b>
-    to see how much space you need.\n3. Click <b>Checkout</b> and watch the progress.\n4.
-    If the connection is slow, you can <b>Pause</b> and later <b>Resume</b> without
-    losing the downloaded data.\n5. Once finished, the project is automatically loaded
-    into the application and appears in the Switch Project list.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Add
-    Repo</b></size>\n<line-height=125%>\n(quick registration of an existing folder)\n\nThis
-    function lets you bring an already existing local folder under the application's
-    management without filling in a custom name. Click the <b>Add Repo</b> button
-    to open its sub\u2011panel, then provide:\n\u2022 <b>Repository URL</b> \u2013
-    the full address of your SVN server. This is optional if the folder is already
-    a working copy; if the folder is not yet under SVN control and you supply a URL,
-    the application will checkout the repository into that folder.\n\u2022 <b>Local
-    Folder Path</b> \u2013 the directory that contains (or will contain) the working
-    copy. Use the <b>Browse</b> button to select it.\n\u2022 <b>Private Key</b> (optional)
-    \u2013 the SSH private key if the repository uses <i><color=#34D399>svn+ssh://</color></i>.
-    You can type the path or use the <b>Browse</b> button.\nClick <b>Load Repo</b>
+    want to start over. If you change your mind, you can use <b>Update</b> to download
+    the rest of the project.\n\n<size=110%><b>Typical workflow:</b></size>\n\n1.
+    Enter the repository URL, a new folder path, and (if needed) the private key.\n2.
+    Click <b>Project Info</b> to see how much space you need.\n3. (Optional) If you
+    already have a broken working copy, click <b>Force Repair Working Copy</b> to
+    rebuild its metadata.\n4. Click <b>Checkout</b> and watch the progress.\n5. If
+    the connection is slow, you can <b>Pause</b> and later <b>Resume</b> without
+    losing the downloaded data.\n6. Once finished, the project is automatically loaded
+    into the application and appears in the Switch Project list.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Always check the required disk space before starting
+    a checkout \u2013 large repositories can be surprisingly big.\n\u2022 If you
+    are behind a firewall or VPN, make sure your SVN port (usually 22 for SVN+SSH
+    or 443 for HTTPS) is open.\n\u2022 For very large repositories, consider checking
+    out only the parts you actually need (e.g., a specific branch or subfolder) to
+    save time and disk space.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Add
+    Repo (quick registration of an existing folder)</b></size>\n\nThis function lets
+    you bring an already existing local folder under the application's management
+    without filling in a custom name. Click the <b>Add Repo</b> button to open its
+    sub\u2011panel, then provide:\n\n\u2022 <b>Repository URL</b> \u2013 the full
+    address of your SVN server. This is optional if the folder is already a working
+    copy; if the folder is not yet under SVN control and you supply a URL, the application
+    will checkout the repository into that folder.\n\u2022 <b>Local Folder Path</b>
+    \u2013 the directory that contains (or will contain) the working copy. Use the
+    <b>Browse</b> button to select it.\n\u2022 <b>Private Key</b> (optional) \u2013
+    the SSH private key if the repository uses <i><color=#34D399>svn+ssh://</color></i>.
+    You can type the path or use the <b>Browse</b> button.\n\nClick <b>Load Repo</b>
     to register the folder. The project immediately appears in the main list and
     is set as the active working copy. If a project with the same local path already
     exists in your list, it is updated instead of duplicated.\n\nThis is ideal when
     you already have a checked\u2011out working copy on disk and simply want to start
     working with it, or when you need to quickly add several repositories without
-    manually entering names.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Update</b></size>\n<line-height=125%>\nSync
+    manually entering names.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    If you have a working copy that was checked out using TortoiseSVN or another
+    SVN client, you can add it here and continue working with TomZackSVN.\n\u2022
+    The private key path is optional, but for repositories using <i>svn+ssh://</i>
+    it is required \u2013 without it, every command will fail with a connection error.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Update</b></size>\n\nSync
     local files with the server. Use this daily before starting work. Shows per\u2011file
-    progress and a final report with counts of Updated, Added, Deleted, and Conflicts.
-    The report includes the old and new revision numbers and the duration of the
-    update.\n</line-height>\n\n<size=120%><b>Cancel Update</b></size>\n<line-height=125%>\nStops
-    an ongoing Update operation immediately. Use this if the download seems stuck
-    or you need to work offline. Partial files will be preserved, and the working
-    copy will remain in a consistent state. You can press <b>Update</b> again later
-    to continue downloading the remaining changes.\n</line-height>\n\n<size=120%><b>Refresh</b></size>\n<line-height=125%>\nTriggers
+    progress and a final report with counts of <b>Updated</b>, <b>Added</b>, <b>Deleted</b>,
+    and <b>Conflicts</b>. The report includes the old and new revision numbers and
+    the duration of the update.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    Always run Update before starting your work day \u2013 this prevents most conflicts.\n\u2022
+    If an update is interrupted, the working copy will be in a consistent but partially
+    updated state. Running Update again will continue where it left off.\n\u2022
+    If conflicts appear, use the <b>Resolve</b> panel to fix them before committing.\n\n<size=120%><b>Cancel
+    Update</b></size>\n\nStops an ongoing Update operation immediately. Use this
+    if the download seems stuck or you need to work offline. Partial files will be
+    preserved, and the working copy will remain in a consistent state. You can press
+    <b>Update</b> again later to continue downloading the remaining changes.\n\n<size=120%><b>Refresh</b></size>\n\nTriggers
     a complete manual scan of your local directory. It updates the file statuses
     in the main tree, rebuilds the commit panel (if it is active), refreshes lock
     information, and recalculates all statistics (modified, added, deleted, etc.).
     Use this after making changes outside the application, or whenever the display
-    seems out of sync with the actual file state.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Clean</b></size>\n<line-height=125%>\nThe
-    Clean panel is your maintenance and repair toolbox. When the SVN database gets
-    locked after a crash, or your working copy behaves strangely, use the buttons
+    seems out of sync with the actual file state.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    Use Refresh after deleting or moving files in Windows Explorer \u2013 the tree
+    will immediately show the correct statuses.\n\u2022 Refresh does not contact
+    the server \u2013 it only scans your local disk.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Clean</b></size>\n\nThe
+    <b>Clean</b> panel is your maintenance and repair toolbox. When the SVN database
+    gets locked after a crash, or your working copy behaves strangely, use the buttons
     here to fix it. Each button performs a specific repair operation and writes its
-    progress to the panel's dedicated console.\n\n<b>Available Repair Operations:</b>\n\u2022
-    <b>Clean</b> \u2013 runs the standard <i><color=#34D399>svn cleanup</color></i>
-    command. It releases any internal SVN locks that are blocking your working copy
-    (common after an interrupted update or commit). If the basic cleanup fails, it
-    automatically retries with <i><color=#34D399>--include-externals</color></i>.
-    Use this first whenever you see \u201Clocked\u201D or \u201Cworking copy locked\u201D
-    errors.\n\u2022 <b>Discard Untracked</b> \u2013 deletes all unversioned files
-    and folders from your working copy. These are items marked with the <i><color=#34D399>?</color></i>
-    status \u2013 files that exist on disk but are not tracked by SVN. After the
-    operation the tree view is cleared, and a fresh status scan runs automatically.
-    <color=#FFAA00>Warning: the deleted items cannot be recovered; use only when
-    you are sure you no longer need them.</color>\n\u2022 <b>Vacuum</b> \u2013 performs
-    a deep database optimization (<i><color=#34D399>svn cleanup --vacuum-pristines</color></i>).
-    It reclaims disk space that is wasted inside the internal <i><color=#34D399>wc.db</color></i>
-    database and can noticeably speed up SVN operations on large projects. If your
-    SVN client is too old to support vacuum, it falls back to a normal cleanup. This
-    operation may take a while for big working copies.\n\u2022 <b>Deep Repair</b>
-    \u2013 a multi\u2011step, advanced repair that combines cleanup, timestamp refresh,
-    and automatic conflict resolution. It runs three stages: (1) Basic Cleanup \u2013
-    removes database locks; (2) Timestamp repair \u2013 forces an update to fix broken
-    file\u2011time records; (3) Conflict resolution \u2013 automatically resolves
-    every conflict by accepting the server version (<i><color=#34D399>theirs-full</color></i>).
+    progress to the panel's dedicated console.\n\n<size=110%><b>Available Repair
+    Operations:</b></size>\n\n\u2022 <b>Clean</b> \u2013 runs the standard <i>svn
+    cleanup</i> command. It releases any internal SVN locks that are blocking your
+    working copy (common after an interrupted update or commit). If the basic cleanup
+    fails, it automatically retries with <i>--include-externals</i>. Use this first
+    whenever you see \u201Clocked\u201D or \u201Cworking copy locked\u201D errors.\n\n\u2022
+    <b>Discard Untracked</b> \u2013 deletes all unversioned files and folders from
+    your working copy. These are items marked with the <b>?</b> status \u2013 files
+    that exist on disk but are not tracked by SVN. After the operation the tree view
+    is cleared, and a fresh status scan runs automatically. <color=#FFAA00><b>Warning:</b></color>
+    the deleted items cannot be recovered; use only when you are sure you no longer
+    need them.\n\n\u2022 <b>Vacuum</b> \u2013 performs a deep database optimization
+    (<i>svn cleanup --vacuum-pristines</i>). It reclaims disk space that is wasted
+    inside the internal <i>wc.db</i> database and can noticeably speed up SVN operations
+    on large projects. If your SVN client is too old to support vacuum, it falls
+    back to a normal cleanup. This operation may take a while for big working copies.\n\n\u2022
+    <b>Deep Repair</b> \u2013 a multi\u2011step, advanced repair that combines cleanup,
+    timestamp refresh, and automatic conflict resolution. It runs three stages: (1)
+    Basic Cleanup \u2013 removes database locks; (2) Timestamp repair \u2013 forces
+    an update to fix broken file\u2011time records; (3) Conflict resolution \u2013
+    automatically resolves every conflict by accepting the server version (<i>theirs-full</i>).
     Use this when a normal cleanup is not enough, but be aware that any local changes
-    you made in conflicted files will be discarded.\n\u2022 <b>Hard Reset</b> \u2013
+    you made in conflicted files will be discarded.\n\n\u2022 <b>Hard Reset</b> \u2013
     reverts everything in your working copy to match the latest server revision (HEAD).
-    It first discards all local modifications (<i><color=#34D399>svn revert -R .</color></i>),
-    then permanently deletes all unversioned files, and finally forces an update
-    that replaces every file with the server version. This operation is <color=#FFAA00>irreversible</color>
+    It first discards all local modifications (<i>svn revert -R .</i>), then permanently
+    deletes all unversioned files, and finally forces an update that replaces every
+    file with the server version. This operation is <color=#FFAA00><b>irreversible</b></color>
     \u2013 after it finishes, your working copy is an exact mirror of the server.
     Use it only when you want a completely fresh start without deleting the whole
-    folder.\n\u2022 <b>Repair Structure</b> \u2013 re\u2011aligns the working copy
+    folder.\n\n\u2022 <b>Repair Structure</b> \u2013 re\u2011aligns the working copy
     with the repository URL, fixing deep structural issues. It reads the current
     repository URL, then performs a cleanup, a switch to the same URL (which repairs
     missing metadata), and a full update that restores all files. Finally, it resolves
     any remaining conflicts by accepting the server version. Use this when your working
     copy has lost track of its repository structure (e.g., after a failed switch
-    or a partial checkout).\n\nAll operations automatically refresh the file tree
-    after completion, so you immediately see the result. If an operation is cancelled,
-    the console shows a warning and the working copy is left in a consistent state.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Resolve</b></size>\n<line-height=125%>\nThe
-    Resolve panel is your conflict\u2011resolution centre. Conflicts happen when
-    two people modify the same part of a file, or when a file that exists locally
+    or a partial checkout).\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    Always try <b>Clean</b> first \u2013 it solves the majority of locking issues.\n\u2022
+    Use <b>Vacuum</b> periodically (e.g., once a week) on large projects to keep
+    SVN operations fast.\n\u2022 <b>Deep Repair</b> and <b>Hard Reset</b> should
+    be your last resorts, as they discard local changes.\n\nAll operations automatically
+    refresh the file tree after completion, so you immediately see the result. If
+    an operation is cancelled, the console shows a warning and the working copy is
+    left in a consistent state.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Resolve</b></size>\n\nThe
+    <b>Resolve</b> panel is your conflict\u2011resolution centre. Conflicts happen
+    when two people modify the same part of a file, or when a file that exists locally
     has been added remotely (or vice\u2011versa). The panel shows every conflicted
-    file together with buttons that let you fix them one by one, or all at once.\n\n<b>What
-    the panel contains:</b>\n\u2022 A console that logs every resolve action so you
-    can track what was done.\n\u2022 A list of conflict items \u2013 each item shows
-    the file path and its conflict type (Text, Manual, or Tree). For every item you
-    have the following action buttons:\n  - <b>Resolve as Mine</b> \u2013 keep your
-    local version and discard the server changes.\n  - <b>Resolve as Theirs</b> \u2013
-    accept the server version and discard your own changes.\n  - <b>Open in Editor</b>
-    \u2013 open the file in your configured merge tool (from Settings) so you can
-    combine both versions manually.\n  - <b>Mark as Resolved</b> \u2013 tell SVN
-    that you have fixed the file (only works after conflict markers like <i><color=#34D399><<<<<<<</color></i>,
-    <i><color=#34D399>=======</color></i>, <i><color=#34D399>>>>>>>></color></i>
-    have been removed).\n\u2022 Global buttons at the top (or bottom) that affect
-    all conflicts at once:\n  - <b>Resolve All (Mine)</b> \u2013 keep your local
-    version for every conflict.\n  - <b>Resolve All (Theirs)</b> \u2013 discard all
-    your changes and accept the server version everywhere.\n  - <b>Delete All Obstructions</b>
-    \u2013 batch\u2011resolve every tree conflict by removing the obstructing local
-    files.\n  - <b>Mark as Resolved</b> \u2013 attempts to mark all conflicts as
-    resolved (only works if no conflict markers remain).\n  - <b>Open in Editor</b>
-    \u2013 opens the merge tool for a specific file. You can type the file path in
-    the input field, or leave it blank to open the first pending conflict. The <b>Browse</b>
-    button next to the input field lets you select a file from a file dialog.\n\n<b>How
-    to use it:</b>\n1. After an Update or Merge, open the Resolve panel. The list
-    automatically refreshes and shows every file with a conflict.\n2. Decide how
-    to fix each file:\n   - If you want to keep your work and ignore the other change,
-    click <b>Resolve as Mine</b> on that file's row.\n   - If the other change is
-    the correct one and you want to discard your modifications, click <b>Resolve
-    as Theirs</b>.\n   - If you need to combine both changes, click <b>Open in Editor</b>.
-    This launches your external merge tool (configured in <i>Settings</i>). After
-    you have saved the merged file, click <b>Mark as Resolved</b> to let SVN know
-    the conflict is over.\n3. For tree conflicts (a file exists locally but was added
-    on the server, or vice\u2011versa):\n   - Use the global <b>Delete All Obstructions</b>
+    file together with buttons that let you fix them one by one, or all at once.\n\n<size=110%><b>What
+    the panel contains:</b></size>\n\n\u2022 A console that logs every resolve action
+    so you can track what was done.\n\u2022 A list of conflict items \u2013 each
+    item shows the file path and its conflict type (<b>Text</b>, <b>Manual</b>, or
+    <b>Tree</b>). For every item you have the following action buttons:\n  \u2022
+    <b>Resolve as Mine</b> \u2013 keep your local version and discard the server
+    changes.\n  \u2022 <b>Resolve as Theirs</b> \u2013 accept the server version
+    and discard your own changes.\n  \u2022 <b>Open in Editor</b> \u2013 open the
+    file in your configured merge tool (from Settings) so you can combine both versions
+    manually.\n  \u2022 <b>Mark as Resolved</b> \u2013 tell SVN that you have fixed
+    the file (only works after conflict markers like <i><<<<<<<</i>, <i>=======</i>,
+    <i>>>>>>>></i> have been removed).\n\u2022 Global buttons at the top (or bottom)
+    that affect all conflicts at once:\n  \u2022 <b>Resolve All (Mine)</b> \u2013
+    keep your local version for every conflict.\n  \u2022 <b>Resolve All (Theirs)</b>
+    \u2013 discard all your changes and accept the server version everywhere.\n 
+    \u2022 <b>Delete All Obstructions</b> \u2013 batch\u2011resolve every tree conflict
+    by removing the obstructing local files.\n  \u2022 <b>Mark as Resolved</b> \u2013
+    attempts to mark all conflicts as resolved (only works if no conflict markers
+    remain).\n  \u2022 <b>Open in Editor</b> \u2013 opens the merge tool for a specific
+    file. You can type the file path in the input field, or leave it blank to open
+    the first pending conflict. The <b>Browse</b> button next to the input field
+    lets you select a file from a file dialog.\n\n<size=110%><b>How to use it:</b></size>\n\n1.
+    After an Update or Merge, open the Resolve panel. The list automatically refreshes
+    and shows every file with a conflict.\n2. Decide how to fix each file:\n   \u2022
+    If you want to keep your work and ignore the other change, click <b>Resolve as
+    Mine</b> on that file's row.\n   \u2022 If the other change is the correct one
+    and you want to discard your modifications, click <b>Resolve as Theirs</b>.\n  
+    \u2022 If you need to combine both changes, click <b>Open in Editor</b>. This
+    launches your external merge tool (configured in <i>Settings</i>). After you
+    have saved the merged file, click <b>Mark as Resolved</b> to let SVN know the
+    conflict is over.\n3. For tree conflicts (a file exists locally but was added
+    on the server, or vice\u2011versa):\n   \u2022 Use the global <b>Delete All Obstructions</b>
     button to remove all obstructing local files at once and accept the server versions.\n  
-    - If you prefer to keep a local file, use <b>Resolve as Mine</b> on that specific
-    item.\n4. When all conflicts are fixed, you can commit your changes as usual.
-    The panel automatically refreshes after every action, so you always see the current
-    state.\n\nThe global buttons let you resolve everything in one step \u2013 for
+    \u2022 If you prefer to keep a local file, use <b>Resolve as Mine</b> on that
+    specific item.\n4. When all conflicts are fixed, you can commit your changes
+    as usual. The panel automatically refreshes after every action, so you always
+    see the current state.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    Never commit with unresolved conflicts \u2013 SVN will block the commit and may
+    leave the working copy in a dirty state.\n\u2022 If you are unsure which version
+    is correct, use <b>Open in Editor</b> to compare them side-by-side before making
+    a decision.\n\u2022 Tree conflicts are often caused by files being moved or renamed
+    outside SVN \u2013 the <b>Delete All Obstructions</b> button is usually the quickest
+    fix.\n\nThe global buttons let you resolve everything in one step \u2013 for
     example, after a large merge you can click <b>Resolve All (Theirs)</b> to accept
     all incoming changes, or <b>Delete All Obstructions</b> to clear every tree conflict
-    at once. The console log helps you track exactly what was done.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Branch/Tag</b></size>\n<line-height=125%>\nThe
-    Branch/Tag panel lets you create, switch, compare, delete and inspect branches
-    and tags directly from the server.\n\n<b>Layout:</b>\n\u2022 A type selector
-    (branches or tags).\n\u2022 A text field for the name of the new branch or tag.\n\u2022
-    An optional revision field \u2013 if filled, the new branch/tag will be created
-    from that exact revision; otherwise HEAD is used.\n\u2022 Two dropdown lists:
-    one for branches (always contains <i><color=#34D399>trunk</color></i> plus all
-    branches), and one for tags.\n\n<b>Buttons:</b>\n\u2022 <b>Create Branch from
-    Trunk</b> \u2013 creates a new branch or tag from trunk. The name is taken from
-    the input field.\n\u2022 <b>Create Branch from Selected</b> \u2013 creates a
-    new branch or tag from the currently selected branch/tag in the dropdown.\n\u2022
-    <b>Show Details</b> \u2013 displays the creator, creation date, and source branch
-    for the selected branch/tag.\n\u2022 <b>Switch to Branch</b> \u2013 switches
-    your working copy to the selected branch. You will be warned if you have uncommitted
-    local changes.\n\u2022 <b>Switch to Tag</b> \u2013 switches your working copy
-    to the selected tag. Same warning applies.\n\u2022 <b>Diff with Current Branch</b>
-    \u2013 compares your current working copy with the selected branch. Differences
-    are written to a temporary text file and opened in your default text editor,
-    with a summary in the console.\n\u2022 <b>Diff with Current Tag</b> \u2013 same
-    as above, but compares with the selected tag.\n\u2022 <b>Delete Branch</b> \u2013
-    permanently removes the selected branch from the server (requires double\u2011click
-    within 5 seconds to confirm). <i><color=#34D399>trunk</color></i> cannot be deleted.\n\u2022
-    <b>Delete Tag</b> \u2013 permanently removes the selected tag from the server,
-    also with double\u2011click confirmation.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Merge</b></size>\n<line-height=125%>\nThe
-    Merge panel provides all the tools you need to merge changes between branches,
-    simulate merges, and undo them.\n\n<b>Layout:</b>\n\u2022 A dropdown list of
-    available branches (including trunk). The selected branch is automatically copied
-    to the source input field.\n\u2022 A set of action buttons.\n\u2022 After a dry\u2011run,
-    a list of files that would be affected appears below the console.\n\n<b>Buttons:</b>\n\u2022
-    <b>Cancel Merge</b> \u2013 immediately stops any running merge operation.\n\u2022
-    <b>Refresh Branch Dropdown</b> \u2013 reloads the list of branches from the server.\n\u2022
-    <b>Compare with Trunk</b> \u2013 analyses the difference between your current
-    branch and trunk, showing how many revisions your branch is behind (incoming)
-    and ahead (outgoing).\n\u2022 <b>Sync with Trunk</b> \u2013 performs a live merge
-    of trunk into your current branch.\n\u2022 <b>Repair Merge History</b> \u2013
-    fixes incomplete reintegrate merge information on trunk. No files are changed,
-    only SVN metadata. You must commit after running this.\n\u2022 <b>Force Merge
-    from Trunk</b> \u2013 merges trunk changes into your branch while ignoring ancestry.
-    Use only when the standard merge fails with an \u201Cancestry\u201D error. Commit
-    immediately after.\n\u2022 <b>Dry Run Merge</b> \u2013 simulates the merge without
-    modifying any files, showing exactly what would be added, updated, deleted or
-    conflicted.\n\u2022 <b>Confirm Merge</b> \u2013 executes the actual merge. Review
-    the changes and commit them.\n\u2022 <b>Cancel Local Merge</b> \u2013 reverts
-    only the changes introduced by the last merge, keeping other local modifications.\n\u2022
-    <b>Revert to HEAD</b> \u2013 discards all local changes and restores your working
-    copy to the latest server revision (requires double\u2011click within 5 seconds).\n\u2022
+    at once. The console log helps you track exactly what was done.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Branch/Tag</b></size>\n\nThe
+    <b>Branch/Tag</b> panel lets you create, switch, compare, delete and inspect
+    branches and tags directly from the server.\n\n<size=110%><b>Layout:</b></size>\n\n\u2022
+    A type selector (<b>branches</b> or <b>tags</b>).\n\u2022 A text field for the
+    name of the new branch or tag.\n\u2022 An optional revision field \u2013 if filled,
+    the new branch/tag will be created from that exact revision; otherwise HEAD is
+    used.\n\u2022 Two dropdown lists: one for branches (always contains <i>trunk</i>
+    plus all branches), and one for tags.\n\n<size=110%><b>Buttons:</b></size>\n\n\u2022
+    <b>Create Branch from Trunk</b> \u2013 creates a new branch or tag from trunk.
+    The name is taken from the input field.\n\u2022 <b>Create Branch from Selected</b>
+    \u2013 creates a new branch or tag from the currently selected branch/tag in
+    the dropdown.\n\u2022 <b>Show Details</b> \u2013 displays the creator, creation
+    date, and source branch for the selected branch/tag.\n\u2022 <b>Switch to Branch</b>
+    \u2013 switches your working copy to the selected branch. You will be warned
+    if you have uncommitted local changes.\n\u2022 <b>Switch to Tag</b> \u2013 switches
+    your working copy to the selected tag. Same warning applies.\n\u2022 <b>Diff
+    with Current Branch</b> \u2013 compares your current working copy with the selected
+    branch. Differences are written to a temporary text file and opened in your default
+    text editor, with a summary in the console.\n\u2022 <b>Diff with Current Tag</b>
+    \u2013 same as above, but compares with the selected tag.\n\u2022 <b>Delete Branch</b>
+    \u2013 permanently removes the selected branch from the server (requires <b>double\u2011click
+    within 5 seconds</b> to confirm). <i>trunk</i> cannot be deleted.\n\u2022 <b>Delete
+    Tag</b> \u2013 permanently removes the selected tag from the server, also with
+    double\u2011click confirmation.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    Before switching to a branch, always commit or shelve your local changes.\n\u2022
+    Tags are usually created from stable releases \u2013 avoid creating tags from
+    work-in-progress branches.\n\u2022 Use <b>Diff with Current Branch</b> before
+    merging to see exactly what would be changed.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Merge</b></size>\n\nThe
+    <b>Merge</b> panel provides all the tools you need to merge changes between branches,
+    simulate merges, and undo them.\n\n<size=110%><b>Layout:</b></size>\n\n\u2022
+    A dropdown list of available branches (including trunk). The selected branch
+    is automatically copied to the source input field.\n\u2022 A set of action buttons.\n\u2022
+    After a dry\u2011run, a list of files that would be affected appears below the
+    console.\n\n<size=110%><b>Buttons:</b></size>\n\n\u2022 <b>Cancel Merge</b> \u2013
+    immediately stops any running merge operation.\n\u2022 <b>Refresh Branch Dropdown</b>
+    \u2013 reloads the list of branches from the server.\n\u2022 <b>Compare with
+    Trunk</b> \u2013 analyses the difference between your current branch and trunk,
+    showing how many revisions your branch is behind (incoming) and ahead (outgoing).\n\u2022
+    <b>Sync with Trunk</b> \u2013 performs a live merge of trunk into your current
+    branch.\n\u2022 <b>Repair Merge History</b> \u2013 fixes incomplete reintegrate
+    merge information on trunk. No files are changed, only SVN metadata. You must
+    commit after running this.\n\u2022 <b>Force Merge from Trunk</b> \u2013 merges
+    trunk changes into your branch while ignoring ancestry. Use only when the standard
+    merge fails with an \u201Cancestry\u201D error. Commit immediately after.\n\u2022
+    <b>Dry Run Merge</b> \u2013 simulates the merge without modifying any files,
+    showing exactly what would be added, updated, deleted or conflicted.\n\u2022
+    <b>Confirm Merge</b> \u2013 executes the actual merge. Review the changes and
+    commit them.\n\u2022 <b>Cancel Local Merge</b> \u2013 reverts only the changes
+    introduced by the last merge, keeping other local modifications.\n\u2022 <b>Revert
+    to HEAD</b> \u2013 discards all local changes and restores your working copy
+    to the latest server revision (requires double\u2011click within 5 seconds).\n\u2022
     <b>Undo Merge</b> \u2013 reverts a merge that has already been committed, creating
-    a new commit that reverses the changes. Your working copy must be clean.\n\nAll
-    merge operations handle common errors automatically (e.g., ancestry issues trigger
-    an automatic retry with <i><color=#34D399>--ignore-ancestry</color></i>) and
-    update the working copy status afterwards.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Diff</b></size>\n<line-height=125%>\nThe
-    Diff panel lets you compare your local changes in a single file with the version
-    stored in the repository. It is useful when you want to review exactly what you
-    modified before committing, or when you need to see what the server version looks
-    like.\n\n<b>How to use it \u2013 from the main file tree:</b>\n\u2022 Double\u2011click
-    any file that has a modified status (<i><color=#34D399>M</color></i>, <i><color=#34D399>A</color></i>,
-    etc.). The first double\u2011click shows a coloured, line\u2011by\u2011line preview
-    directly inside the application. Added lines are green, removed lines are red,
-    and context lines are white. A summary header displays the file paths and counts
-    of added, removed, and unchanged lines.\n\u2022 Double\u2011click the same file
-    a second time to open the comparison in your external diff/merge tool (configured
-    in <i>Settings</i>). The external tool receives a temporary file with the diff
-    output, enriched with line numbers for easier navigation.\n\n<b>How to use it
-    \u2013 from the Diff panel itself:</b>\nThe panel contains an input field and
-    two buttons:\n\u2022 <b>Browse</b> \u2013 opens a file dialog starting from your
-    working copy root. When you select a file, its relative path is automatically
-    placed into the input field.\n\u2022 <b>Diff</b> \u2013 runs <i><color=#34D399>svn
-    diff</color></i> on the file whose path is in the input field. The application
+    a new commit that reverses the changes. Your working copy must be clean.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Always start with <b>Dry Run Merge</b> to see what
+    would happen.\n\u2022 After a live merge, review the changes and run the tests
+    before committing.\n\u2022 If a merge creates conflicts, use the <b>Resolve</b>
+    panel immediately \u2013 the sooner you fix them, the easier it is.\n\nAll merge
+    operations handle common errors automatically (e.g., ancestry issues trigger
+    an automatic retry with <i>--ignore-ancestry</i>) and update the working copy
+    status afterwards.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Diff</b></size>\n\nThe
+    <b>Diff</b> panel lets you compare your local changes in a single file with the
+    version stored in the repository. It is useful when you want to review exactly
+    what you modified before committing, or when you need to see what the server
+    version looks like.\n\n<size=110%><b>How to use it \u2013 from the main file
+    tree:</b></size>\n\n\u2022 Double\u2011click any file that has a modified status
+    (<b>M</b>, <b>A</b>, etc.). The first double\u2011click shows a coloured, line\u2011by\u2011line
+    preview directly inside the application. Added lines are green, removed lines
+    are red, and context lines are white. A summary header displays the file paths
+    and counts of added, removed, and unchanged lines.\n\u2022 Double\u2011click
+    the same file a second time to open the comparison in your external diff/merge
+    tool (configured in <i>Settings</i>). The external tool receives a temporary
+    file with the diff output, enriched with line numbers for easier navigation.\n\n<size=110%><b>How
+    to use it \u2013 from the Diff panel itself:</b></size>\n\nThe panel contains
+    an input field and two buttons:\n\n\u2022 <b>Browse</b> \u2013 opens a file dialog
+    starting from your working copy root. When you select a file, its relative path
+    is automatically placed into the input field.\n\u2022 <b>Diff</b> \u2013 runs
+    <i>svn diff</i> on the file whose path is in the input field. The application
     then:\n  1. Displays the full, colour\u2011formatted diff directly in the panel's
-    console. To keep the interface responsive and prevent TextMeshPro from being
-    overloaded, the preview is limited to the first 500 lines. If the diff is longer,
-    a message is shown at the bottom: <i>\"\u2026 Diff truncated. Full diff opened
-    in external editor.\"</i>\n  2. Shows a one\u2011line summary in the console,
-    e.g., <i>\"Diff Summary: +12 lines added, -3 lines removed\"</i>.\n  3. Opens
-    the complete diff in your external diff tool so you can inspect every change
-    without restrictions.\n\nIf no file is selected, or the working directory is
-    missing, an appropriate warning is displayed in the console. For binary files,
-    the preview is not available; instead, Windows Explorer opens with the file selected.\n\n<b>When
-    to use it:</b>\n\u2022 Before committing \u2013 check that all changes are intentional.\n\u2022
-    After an update or merge \u2013 verify that conflicts were resolved correctly.\n\u2022
-    While reviewing a colleague's work \u2013 quickly see what was modified in a
-    specific file.\n\nThe Diff panel combines a quick, in\u2011app preview with a
-    full external comparison, giving you both speed and depth when reviewing changes.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Blame</b></size>\n<line-height=125%>\nThe
-    Blame panel shows who last changed each line of a text file, together with the
-    revision number and the author.\n\n<b>How to use it:</b>\n\u2022 <b>Browse</b>
-    \u2013 opens a file dialog starting from your working copy root. The selected
-    file's relative path is placed into the input field.\n\u2022 <b>Blame</b> \u2013
-    runs <i><color=#34D399>svn blame --xml</color></i> on the file in the input field
-    and:\n  1. Displays a colour\u2011coded report directly in the panel. Each line
-    shows the line number, revision, author, and content. To keep the interface responsive,
-    the preview is limited to the first 500 lines. If the file has more, a message
-    appears at the bottom, and the full report is opened in your external editor
-    (as configured in Settings).\n  2. Simultaneously saves a plain\u2011text version
-    of the same report and opens it in your external editor, so you can review, print,
-    or share the complete history.\n  3. For binary files (such as <i><color=#34D399>.uasset</color></i>,
+    console. To keep the interface responsive, the preview is limited to the first
+    <b>500 lines</b>. If the diff is longer, a message is shown at the bottom: <i>\"\u2026
+    Diff truncated. Full diff opened in external editor.\"</i>\n  2. Shows a one\u2011line
+    summary in the console, e.g., <i>\"Diff Summary: +12 lines added, -3 lines removed\"</i>.\n 
+    3. Opens the complete diff in your external diff tool so you can inspect every
+    change without restrictions.\n\nIf no file is selected, or the working directory
+    is missing, an appropriate warning is displayed in the console. For binary files,
+    the preview is not available; instead, Windows Explorer opens with the file selected.\n\n<size=110%><b>When
+    to use it:</b></size>\n\n\u2022 Before committing \u2013 check that all changes
+    are intentional.\n\u2022 After an update or merge \u2013 verify that conflicts
+    were resolved correctly.\n\u2022 While reviewing a colleague's work \u2013 quickly
+    see what was modified in a specific file.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    The in-app preview is ideal for quick checks, but for large diffs always use
+    the external tool.\n\u2022 You can compare any text file, not just code \u2013
+    including configuration files, READMEs, and scripts.\n\nThe Diff panel combines
+    a quick, in\u2011app preview with a full external comparison, giving you both
+    speed and depth when reviewing changes.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Blame</b></size>\n\nThe
+    <b>Blame</b> panel shows who last changed each line of a text file, together
+    with the revision number and the author.\n\n<size=110%><b>How to use it:</b></size>\n\n\u2022
+    <b>Browse</b> \u2013 opens a file dialog starting from your working copy root.
+    The selected file's relative path is placed into the input field.\n\u2022 <b>Blame</b>
+    \u2013 runs <i>svn blame --xml</i> on the file in the input field and:\n  1.
+    Displays a colour\u2011coded report directly in the panel. Each line shows the
+    line number, revision, author, and content. To keep the interface responsive,
+    the preview is limited to the first <b>500 lines</b>. If the file has more, a
+    message appears at the bottom, and the full report is opened in your external
+    editor (as configured in Settings).\n  2. Simultaneously saves a plain\u2011text
+    version of the same report and opens it in your external editor, so you can review,
+    print, or share the complete history.\n  3. For binary files (such as <i>.uasset</i>,
     images, etc.) the panel simply shows a clear message: <i>\"Binary file \u2013
     blame not available.\"</i> No external editor is opened in this case.\n\u2022
     From the main file tree \u2013 when you click the per\u2011file <b>Blame</b>
     button, the result is shown directly in the main application log console (with
     the same formatting and truncation limits).\n\nThe blame output is cached \u2013
     running Blame again on the same unchanged file reuses the previous result, saving
-    time.\n\n<b>When to use it:</b>\n\u2022 To find out who introduced a specific
-    change (e.g., a bug or configuration update).\n\u2022 Before modifying a file
-    \u2013 to see who else has been working on the same lines.\n\u2022 During code
-    review \u2013 to quickly check the authorship of recent modifications.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Shelve</b></size>\n<line-height=125%>\nOpens
-    the Shelve (Stash) panel. It lets you temporarily save your uncommitted changes,
-    revert your working copy to a clean state, and restore the changes later.\n\n<b>Panel
-    layout:</b>\n\u2022 An input field for an optional shelf name (auto\u2011generated
+    time.\n\n<size=110%><b>When to use it:</b></size>\n\n\u2022 To find out who introduced
+    a specific change (e.g., a bug or configuration update).\n\u2022 Before modifying
+    a file \u2013 to see who else has been working on the same lines.\n\u2022 During
+    code review \u2013 to quickly check the authorship of recent modifications.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Blame is extremely useful for binary files that cannot
+    be diffed \u2013 you can at least see who last touched them.\n\u2022 The report
+    is saved as a plain text file, so you can share it with your team or attach it
+    to a bug report.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Shelve</b></size>\n\nThe
+    <b>Shelve</b> (Stash) panel lets you temporarily save your uncommitted changes,
+    revert your working copy to a clean state, and restore the changes later.\n\n<size=110%><b>Panel
+    layout:</b></size>\n\n\u2022 An input field for an optional shelf name (auto\u2011generated
     if left empty).\n\u2022 <b>Stash</b> \u2013 saves all local modifications as
     a patch, reverts every changed file, and adds the shelf to the list.\n\u2022
     <b>Refresh</b> \u2013 reloads the list of saved shelves.\n\nEach shelf in the
     list shows its name, creation date, number of changed files, and patch size.
-    Two action buttons are available:\n\u2022 <b>Restore</b> \u2013 applies the saved
-    patch back to your working copy and deletes the shelf.\n\u2022 <b>Delete</b>
-    \u2013 permanently removes the shelf without applying it.\n\n<b>Workflow example:</b>\n1.
-    You need to switch tasks quickly. Click <b>Stash</b> \u2013 your working copy
-    is reverted to the latest server revision.\n2. Fix the urgent issue, commit,
-    then return.\n3. Click <b>Restore</b> on your shelf to get your previous changes
-    back.\n\nShelf files are stored locally and are not shared with the server.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Settings</b></size>\n<line-height=125%>\nThe
-    Settings panel lets you configure the essential connection and tool parameters
-    for your current working copy. Each setting is saved in two places:\n\u2022 Per\u2011project
-    \u2013 the value is stored in the project list (the same JSON file that the Switch
-    Project panel uses), so it stays linked to this specific working copy.\n\u2022
-    Global fallback \u2013 the value is also stored in Unity's PlayerPrefs, providing
-    a default for operations where no project is active (e.g., when you first open
-    the application or use the terminal without a loaded project).\n\n<b>Available
-    settings:</b>\n\u2022 <b>Repository URL</b> \u2013 the address of your SVN server
-    (e.g., <i><color=#34D399>svn+ssh://...</color></i> or <i><color=#34D399>https://...</color></i>).
-    Press the adjacent <b>Save</b> button to store the value. It updates both the
-    current project and the global default.\n\u2022 <b>Working Directory</b> \u2013
-    the local folder of your working copy. Press the adjacent <b>Save</b> button
-    to switch the application to this folder. If the folder exists and is not yet
-    in your project list, it will be added automatically. After saving, the application
-    refreshes the repository information and file tree for the new location. This
-    is a quick way to jump between working copies without opening the Switch Project
-    panel.\n\u2022 <b>SSH Private Key</b> \u2013 the path to your private key file
-    for <i><color=#34D399>svn+ssh://</color></i> connections. Press the adjacent
-    <b>Save</b> button to store the path. It updates the current project and the
-    global key setting. The application also immediately starts using this key for
-    any subsequent SVN commands.\n\u2022 <b>Merge Tool path</b> \u2013 the external
-    program used for resolving text conflicts and comparing files (e.g., the path
-    to your diff tool or text editor). Press the adjacent <b>Save</b> button to store
-    the path. It updates the current project and the global merge\u2011tool setting.
-    This tool is launched when you use <b>Diff</b> or <b>Open in Editor</b> from
-    the Resolve panel.\n\nWhen you open the Settings panel, it automatically fills
-    all fields with the values currently held in memory for the active project \u2013
-    so you always see what is actually being used.\n\nIf no project is loaded, the
-    fields will show the global defaults from PlayerPrefs. Changes made here affect
-    the current working copy immediately and are remembered the next time you start
-    the application.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Show
-    Ignored</b></size>\n<line-height=125%>\nDisplays all files and folders currently
-    excluded from version control (marked with the <i><color=#34D399>I</color></i>
-    status), together with the active ignore rules.\n\nWhen opened, the panel shows:\n\u2022
-    System information (working directory, <i><color=#34D399>.svnignore</color></i>
-    file path, whether the file exists).\n\u2022 Active ignore rules \u2013 patterns
-    from the local <i><color=#34D399>.svnignore</color></i> file (marked <b>[FILE]</b>)
+    Two action buttons are available:\n\n\u2022 <b>Restore</b> \u2013 applies the
+    saved patch back to your working copy and deletes the shelf.\n\u2022 <b>Delete</b>
+    \u2013 permanently removes the shelf without applying it.\n\n<size=110%><b>Workflow
+    example:</b></size>\n\n1. You need to switch tasks quickly. Click <b>Stash</b>
+    \u2013 your working copy is reverted to the latest server revision.\n2. Fix the
+    urgent issue, commit, then return.\n3. Click <b>Restore</b> on your shelf to
+    get your previous changes back.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    Shelf files are stored locally and are not shared with the server \u2013 they
+    are unique to your machine.\n\u2022 You can have multiple shelves at the same
+    time \u2013 give them descriptive names to find them easily later.\n\u2022 If
+    a shelf is no longer needed, delete it to keep the list tidy.\n\nShelf files
+    are stored locally and are not shared with the server.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Settings</b></size>\n\nThe
+    <b>Settings</b> panel lets you configure the essential connection and tool parameters
+    for your current working copy. Each setting is saved in two places:\n\n\u2022
+    <b>Per\u2011project</b> \u2013 the value is stored in the project list (the same
+    JSON file that the Switch Project panel uses), so it stays linked to this specific
+    working copy.\n\u2022 <b>Global fallback</b> \u2013 the value is also stored
+    in Unity's PlayerPrefs, providing a default for operations where no project is
+    active (e.g., when you first open the application or use the terminal without
+    a loaded project).\n\n<size=110%><b>Available settings:</b></size>\n\n\u2022
+    <b>Repository URL</b> \u2013 the address of your SVN server (e.g., <i><color=#34D399>svn+ssh://...</color></i>
+    or <i><color=#34D399>https://...</color></i>). Press the adjacent <b>Save</b>
+    button to store the value. It updates both the current project and the global
+    default.\n\u2022 <b>Working Directory</b> \u2013 the local folder of your working
+    copy. Press the adjacent <b>Save</b> button to switch the application to this
+    folder. If the folder exists and is not yet in your project list, it will be
+    added automatically. After saving, the application refreshes the repository information
+    and file tree for the new location. This is a quick way to jump between working
+    copies without opening the Switch Project panel.\n\u2022 <b>SSH Private Key</b>
+    \u2013 the path to your private key file for <i><color=#34D399>svn+ssh://</color></i>
+    connections. Press the adjacent <b>Save</b> button to store the path. It updates
+    the current project and the global key setting. The application also immediately
+    starts using this key for any subsequent SVN commands.\n\u2022 <b>Merge Tool
+    path</b> \u2013 the external program used for resolving text conflicts and comparing
+    files (e.g., the path to your diff tool or text editor). Press the adjacent <b>Save</b>
+    button to store the path. It updates the current project and the global merge\u2011tool
+    setting. This tool is launched when you use <b>Diff</b> or <b>Open in Editor</b>
+    from the Resolve panel.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022
+    The SSH private key must be in the correct format (OpenSSH or PuTTY). If you
+    are unsure, ask your system administrator.\n\u2022 Test your settings by using
+    the <b>Test Connection</b> button after saving.\n\nWhen you open the Settings
+    panel, it automatically fills all fields with the values currently held in memory
+    for the active project \u2013 so you always see what is actually being used.\n\nIf
+    no project is loaded, the fields will show the global defaults from PlayerPrefs.
+    Changes made here affect the current working copy immediately and are remembered
+    the next time you start the application.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Show
+    Ignored</b></size>\n\nDisplays all files and folders currently excluded from
+    version control (marked with the <b>I</b> status), together with the active ignore
+    rules.\n\nWhen opened, the panel shows:\n\n\u2022 System information (working
+    directory, <i>.svnignore</i> file path, whether the file exists).\n\u2022 Active
+    ignore rules \u2013 patterns from the local <i>.svnignore</i> file (marked <b>[FILE]</b>)
     and from SVN properties (marked <b>[SVN]</b>).\n\u2022 Currently ignored files
-    \u2013 up to 200 files matching the active rules.\n\n<b>Buttons:</b>\n\u2022
+    \u2013 up to 200 files matching the active rules.\n\n<size=110%><b>Buttons:</b></size>\n\n\u2022
     <b>Refresh Rules</b> \u2013 rescans the working copy and updates the display.\n\u2022
-    <b>Load New Rules</b> \u2013 reloads the ignore patterns from the local <i><color=#34D399>.svnignore</color></i>
+    <b>Load New Rules</b> \u2013 reloads the ignore patterns from the local <i>.svnignore</i>
     file into the application's cache.\n\u2022 <b>Apply New Rules</b> \u2013 writes
-    the contents of your local <i><color=#34D399>.svnignore</color></i> file to the
-    <i><color=#34D399>svn:global-ignores</color></i> property on the root of the
-    working copy. After this, you must commit the root folder so that other team
-    members also get the same ignore rules.\n\n<b>Common workflow:</b> edit <i><color=#34D399>.svnignore</color></i>,
-    click <b>Load New Rules</b>, verify with <b>Refresh Rules</b>, then <b>Apply
-    New Rules</b> and commit.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Explore</b></size>\n<line-height=125%>\nOpens
-    the root folder of your current working copy directly in Windows Explorer.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Revision
-    Graph</b></size>\n<line-height=125%>\nThe Revision Graph visualises the complete
-    history of your repository \u2013 every commit, its author, date, message, and
-    changed files. It is an interactive timeline that helps you understand the evolution
-    of the project.\n\n<b>What you see:</b>\n\u2022 A list of commits, newest at
-    the top.\n\u2022 Each commit row contains:\n  - A lane diagram on the left \u2013
-    coloured symbols and lines that represent different branches and merges. Trunk
-    is a square, branches are circles, tags are diamonds, and merges have special
-    composite symbols. Each branch gets its own distinct, consistent colour.\n  -
-    The revision number, author, date, and commit message.\n  - A collapsible list
-    of changed files \u2013 click the small arrow to see exactly what was modified,
-    added, or deleted.\n  - A small <b>R</b> button next to your own commits (active
-    only when you are the author of that commit).\n\n<b>Filtering:</b>\n\u2022 At
-    the top of the panel there are two text fields and two buttons:\n  - <b>Filter
+    the contents of your local <i>.svnignore</i> file to the <i>svn:global-ignores</i>
+    property on the root of the working copy. After this, you must commit the root
+    folder so that other team members also get the same ignore rules.\n\n<size=110%><b>Common
+    workflow:</b></size>\n\nEdit <i>.svnignore</i>, click <b>Load New Rules</b>,
+    verify with <b>Refresh Rules</b>, then <b>Apply New Rules</b> and commit.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Ignored files are not included in commits or updates,
+    but they still take up disk space.\n\u2022 Use ignore rules to exclude temporary
+    files, build outputs, and personal notes that should not be shared with the team.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Explore</b></size>\n\nOpens
+    the root folder of your current working copy directly in Windows Explorer.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Use Explore when you need to manually copy or inspect
+    files outside the application \u2013 just remember to click <b>Refresh</b> afterwards
+    to update the tree.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Revision
+    Graph</b></size>\n\nThe <b>Revision Graph</b> visualises the complete history
+    of your repository \u2013 every commit, its author, date, message, and changed
+    files. It is an interactive timeline that helps you understand the evolution
+    of the project.\n\n<size=110%><b>What you see:</b></size>\n\n\u2022 A list of
+    commits, newest at the top.\n\u2022 Each commit row contains:\n  \u2022 A lane
+    diagram on the left \u2013 coloured symbols and lines that represent different
+    branches and merges. Trunk is a square, branches are circles, tags are diamonds,
+    and merges have special composite symbols. Each branch gets its own distinct,
+    consistent colour.\n  \u2022 The revision number, author, date, and commit message.\n 
+    \u2022 A collapsible list of changed files \u2013 click the small arrow to see
+    exactly what was modified, added, or deleted.\n  \u2022 A small <b>R</b> button
+    next to your own commits (active only when you are the author of that commit).\n\n<size=110%><b>Filtering:</b></size>\n\nAt
+    the top of the panel there are two text fields and two buttons:\n\n\u2022 <b>Filter
     field</b> \u2013 type a branch name, part of a commit message, an author name,
-    a revision number, or a file path. Only matching revisions remain visible.\n 
-    - <b>Rename field</b> \u2013 a permanent input field used to change the message
-    of your own commits (see below).\n\n<b>Buttons:</b>\n\u2022 <b>Load Graph</b>
-    \u2013 reloads the full revision history from the server. Use this when you know
-    new commits have been made.\n\u2022 <b>Collapse All</b> \u2013 collapses the
-    file list of every commit, giving you a compact overview.\n\u2022 <b>Export History</b>
-    \u2013 saves the complete graph (with revision details, dates, authors, messages,
-    and changed paths) to a text file and opens it in your default text editor. Ideal
-    for documentation or sharing a summary with the team.\n\n<b>Renaming a commit
-    message (R button):</b>\nNext to each commit row, there is an <b>R</b> button.
-    It is active only for your own commits (i.e., commits where the author matches
-    your current SVN username). When you click <b>R</b>, the current commit message
-    is automatically loaded into the <b>Rename field</b> at the top of the panel.
-    You can then edit the message freely in that field. Press Enter to save the new
-    message \u2013 the graph refreshes and the updated message appears immediately.
-    This allows you to correct typos or improve descriptions of your changes without
-    rewriting history.\n\n<b>When to use it:</b>\n\u2022 To understand the branching
-    structure and merge history.\n\u2022 To track when a specific change was introduced
-    \u2013 filter by file path and see all related commits.\n\u2022 To prepare release
-    notes or documentation.\n\u2022 To fix or clarify your own commit messages directly
-    from the graph.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Help</b></size>\n<line-height=125%>\nOpens
-    this help documentation inside the application.\n</line-height>\n\n<size=120%><b>Exit</b></size>\n<line-height=125%>\nSafely
-    closes the application. Any running SVN operations are cancelled before shutdown.\n</line-height>\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>File
-    Tree Toolbar</b></size>\n<line-height=125%>\nThe buttons located near the file
-    tree give you quick access to everyday actions on your local changes and tree
-    navigation. They allow you to check remote updates, commit, add files, repair
-    missing items, revert modifications, and control the tree display.\n\n\u2022
-    <b>S (Switch View)</b> \u2013 switches the file tree between the standard <b>Changes
-    View</b> (local modifications only) and the <b>Repo Browser</b> (full repository
-    tree). The Repo Browser mode is described in detail in the next section.\n\u2022
-    <b>V (Expand/Collapse All)</b> \u2013 toggles between showing every folder fully
-    expanded or completely collapsed. Because large working copies can contain thousands
-    of changed files, the tree always <b>starts with all folders collapsed</b> to
-    keep the interface fast and responsive.\n\u2022 <b>Check Remote</b> \u2013 quickly
-    shows which files on the server have been changed by others, without downloading
-    anything. It lists all items that would be updated if you ran a full Update.
-    Use this to see what's coming before actually syncing.\n\u2022 <b>Commit</b>
-    \u2013 opens the Commit panel, where you can review and send your local changes
-    to the repository. The panel itself contains the following buttons:\n  - <b>Refresh</b>
-    \u2013 rescans the working copy and rebuilds the list of files that are ready
-    to commit. Useful after you have manually resolved conflicts or added files.\n 
-    - <b>Commit All</b> \u2013 executes a full, four\u2011step process: (1) cleans
-    up the database, (2) scans and fixes missing files, (3) adds all new unversioned
-    items, and (4) sends everything to the server. A success message shows the new
-    revision number.\n  - <b>Commit Selected</b> \u2013 commits only the files you
-    have checked in the main tree. It automatically handles additions, deletions,
-    and modifications for those items.\n  - <b>Cancel Commit</b> \u2013 safely aborts
-    a running commit and runs a cleanup to keep the database healthy.\n\u2022 <b>Add</b>
+    a revision number, or a file path. Only matching revisions remain visible.\n\u2022
+    <b>Rename field</b> \u2013 a permanent input field used to change the message
+    of your own commits (see below).\n\n<size=110%><b>Buttons:</b></size>\n\n\u2022
+    <b>Load Graph</b> \u2013 reloads the full revision history from the server. Use
+    this when you know new commits have been made.\n\u2022 <b>Collapse All</b> \u2013
+    collapses the file list of every commit, giving you a compact overview.\n\u2022
+    <b>Export History</b> \u2013 saves the complete graph (with revision details,
+    dates, authors, messages, and changed paths) to a text file and opens it in your
+    default text editor. Ideal for documentation or sharing a summary with the team.\n\n<size=110%><b>Renaming
+    a commit message (R button):</b></size>\n\nNext to each commit row, there is
+    an <b>R</b> button. It is active only for your own commits (i.e., commits where
+    the author matches your current SVN username). When you click <b>R</b>, the current
+    commit message is automatically loaded into the <b>Rename field</b> at the top
+    of the panel. You can then edit the message freely in that field. Press Enter
+    to save the new message \u2013 the graph refreshes and the updated message appears
+    immediately. This allows you to correct typos or improve descriptions of your
+    changes without rewriting history.\n\n<size=110%><b>When to use it:</b></size>\n\n\u2022
+    To understand the branching structure and merge history.\n\u2022 To track when
+    a specific change was introduced \u2013 filter by file path and see all related
+    commits.\n\u2022 To prepare release notes or documentation.\n\u2022 To fix or
+    clarify your own commit messages directly from the graph.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 The graph is loaded from the server, so it may take
+    a moment for large repositories.\n\u2022 Use the filter to quickly find commits
+    related to a specific feature, bug, or author.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Help</b></size>\n\nOpens
+    this help documentation inside the application.\n\n<size=120%><b>Exit</b></size>\n\nSafely
+    closes the application. Any running SVN operations are cancelled before shutdown.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Always close the application through the Exit button
+    rather than killing the process \u2013 this ensures that all SVN operations are
+    cleanly stopped.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>File
+    Tree Toolbar</b></size>\n\nThe buttons located near the file tree give you quick
+    access to everyday actions on your local changes and tree navigation. They allow
+    you to check remote updates, commit, add files, repair missing items, revert
+    modifications, and control the tree display.\n\n\u2022 <b>S (Switch View)</b>
+    \u2013 switches the file tree between the standard <b>Changes View</b> (local
+    modifications only) and the <b>Repo Browser</b> (full repository tree). The Repo
+    Browser mode is described in detail in the next section.\n\n\u2022 <b>V (Expand/Collapse
+    All)</b> \u2013 toggles between showing every folder fully expanded or completely
+    collapsed. Because large working copies can contain thousands of changed files,
+    the tree always starts with all folders collapsed to keep the interface fast
+    and responsive.\n\n\u2022 <b>Check Remote</b> \u2013 quickly shows which files
+    on the server have been changed by others, without downloading anything. It lists
+    all items that would be updated if you ran a full Update. Use this to see what's
+    coming before actually syncing.\n\n\u2022 <b>Commit</b> \u2013 opens the Commit
+    panel, where you can review and send your local changes to the repository. The
+    panel itself contains the following buttons:\n  \u2022 <b>Refresh</b> \u2013
+    rescans the working copy and rebuilds the list of files that are ready to commit.
+    Useful after you have manually resolved conflicts or added files.\n  \u2022 <b>Commit
+    All</b> \u2013 executes a full, four\u2011step process: (1) cleans up the database,
+    (2) scans and fixes missing files, (3) adds all new unversioned items, and (4)
+    sends everything to the server. A success message shows the new revision number.\n 
+    \u2022 <b>Commit Selected</b> \u2013 commits only the files you have checked
+    in the main tree. It automatically handles additions, deletions, and modifications
+    for those items.\n  \u2022 <b>Cancel Commit</b> \u2013 safely aborts a running
+    commit and runs a cleanup to keep the database healthy.\n\n\u2022 <b>Add</b>
     \u2013 tells SVN to start tracking files that are currently unversioned (marked
-    with <i><color=#34D399>?</color></i>). It works in two ways:\n  - Click the main
-    <b>Add</b> button to add all unversioned items in your working copy at once.\n 
-    - In the file tree, each unversioned file has its own <b>Add</b> button to add
-    only that specific item. After adding, the files show the <i><color=#34D399>A</color></i>
-    status and will be included in your next commit.\n\u2022 <b>Revert All Missing</b>
-    \u2013 restores files that were manually deleted outside of SVN (marked with
-    <i><color=#34D399>!</color></i>). It brings them back from the server so they
-    no longer block your commits.\n\u2022 <b>Fix Missing</b> \u2013 removes the SVN
-    records of files that have been physically deleted from disk. This clears the
-    <i><color=#34D399>!</color></i> status and unblocks commits without restoring
-    the files.\n\u2022 <b>Discard Untracked</b> \u2013 permanently deletes all files
-    that are not tracked by SVN (<i><color=#34D399>?</color></i> status). Use this
-    to clean up temporary or unwanted files. The deleted items cannot be recovered.\n\u2022
-    <b>Revert</b> \u2013 discards all local modifications in your entire working
-    copy and restores every file to the version from the server. This operation affects
-    every changed file, not just a single one. A double\u2011click confirmation is
-    required to prevent accidental data loss.\n\u2022 <b>Cancel Revert</b> \u2013
-    immediately stops an ongoing Revert operation (the one started by the <b>Revert</b>
-    button above). Use this if you triggered a full revert by mistake or changed
-    your mind while it is running.\n\nAll actions automatically refresh the file
-    tree after completion, keeping the displayed statuses up to date.\n</line-height>\n\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Repository
-    Browser / Tree View Controls</b></size>\n<line-height=125%>\nWhen you press the
-    <b>S</b> button, the main file tree turns into a <b>Repository Browser</b> \u2013
-    a full, interactive view of the entire repository. In this mode you can navigate
-    through all folders and files exactly as they exist on the server, independently
-    of your local working copy. The following controls are available:\n\n<b>Navigation
-    buttons:</b>\n\u2022 <b>Go Up</b> \u2013 collapses the deepest expanded folder,
-    effectively moving one level up in your browsing path. Each click undoes the
-    last expansion, letting you retrace your steps.\n\u2022 <b>Collapse All</b> \u2013
-    collapses all expanded folders back to the root, showing only the top\u2011level
-    items.\n\n<b>Per\u2011item action buttons (Repo Browser only):</b>\nIn the Repo
-    Browser, every file and folder row displays small, single\u2011letter buttons.
-    Hovering over any button reveals a tooltip:\n\u2022 <b>L (Log)</b> \u2013 shows
-    the full SVN log for the selected item (file or folder), listing all revisions,
-    authors, and commit messages.\n\u2022 <b>C (Checkout)</b> \u2013 downloads the
-    selected folder as a new working copy to a location of your choice. Ideal for
-    grabbing a specific branch or sub\u2011folder without checking out the whole
-    repository.\n\u2022 <b>P (Copy Full URL)</b> \u2013 copies the complete repository
-    URL of the item to the clipboard, e.g. <i><color=#34D399>svn+ssh://svn_pogtoma@108.162.70.196/srv/storage/svn/repos/Test/branches</color></i>.\n\u2022
+    with <b>?</b>). It works in two ways:\n  \u2022 Click the main <b>Add</b> button
+    to add all unversioned items in your working copy at once.\n  \u2022 In the file
+    tree, each unversioned file has its own <b>Add</b> button to add only that specific
+    item. After adding, the files show the <b>A</b> status and will be included in
+    your next commit.\n\n\u2022 <b>Revert All Missing</b> \u2013 restores files that
+    were manually deleted outside of SVN (marked with <b>!</b>). It brings them back
+    from the server so they no longer block your commits.\n\n\u2022 <b>Fix Missing</b>
+    \u2013 removes the SVN records of files that have been physically deleted from
+    disk. This clears the <b>!</b> status and unblocks commits without restoring
+    the files.\n\n\u2022 <b>Discard Untracked</b> \u2013 permanently deletes all
+    files that are not tracked by SVN (<b>?</b> status). Use this to clean up temporary
+    or unwanted files. The deleted items cannot be recovered.\n\n\u2022 <b>Revert</b>
+    \u2013 discards all local modifications in your entire working copy and restores
+    every file to the version from the server. This operation affects every changed
+    file, not just a single one. A <b>double\u2011click confirmation</b> is required
+    to prevent accidental data loss.\n\n\u2022 <b>Cancel Revert</b> \u2013 immediately
+    stops an ongoing Revert operation (the one started by the <b>Revert</b> button
+    above). Use this if you triggered a full revert by mistake or changed your mind
+    while it is running.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022 Use
+    <b>Check Remote</b> before starting work \u2013 it shows you what others have
+    changed without downloading anything.\n\u2022 The tree is designed to handle
+    thousands of files, so use the <b>V</b> button to collapse everything when you
+    only need a quick overview.\n\nAll actions automatically refresh the file tree
+    after completion, keeping the displayed statuses up to date.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Repository
+    Browser / Tree View Controls</b></size>\n\nWhen you press the <b>S</b> button,
+    the main file tree turns into a <b>Repository Browser</b> \u2013 a full, interactive
+    view of the entire repository. In this mode you can navigate through all folders
+    and files exactly as they exist on the server, independently of your local working
+    copy. The following controls are available:\n\n<size=110%><b>Navigation buttons:</b></size>\n\n\u2022
+    <b>Go Up</b> \u2013 collapses the deepest expanded folder, effectively moving
+    one level up in your browsing path. Each click undoes the last expansion, letting
+    you retrace your steps.\n\u2022 <b>Collapse All</b> \u2013 collapses all expanded
+    folders back to the root, showing only the top\u2011level items.\n\n<size=110%><b>Per\u2011item
+    action buttons (Repo Browser only):</b></size>\n\nIn the Repo Browser, every
+    file and folder row displays small, single\u2011letter buttons. Hovering over
+    any button reveals a tooltip:\n\n\u2022 <b>L (Log)</b> \u2013 shows the full
+    SVN log for the selected item (file or folder), listing all revisions, authors,
+    and commit messages.\n\u2022 <b>C (Checkout)</b> \u2013 downloads the selected
+    folder as a new working copy to a location of your choice. Ideal for grabbing
+    a specific branch or sub\u2011folder without checking out the whole repository.\n\u2022
+    <b>P (Copy Full URL)</b> \u2013 copies the complete repository URL of the item
+    to the clipboard, e.g. <i>svn+ssh://svn_pogtoma@108.162.70.196/srv/storage/svn/repos/Test/branches</i>.\n\u2022
     <b>R (Copy Relative Path)</b> \u2013 copies the item's path relative to the repository
-    root, e.g. <i><color=#34D399>trunk/(2).txt</color></i>. Handy for scripting or
-    referencing files in conversations.\n\u2022 <b>B (Blame)</b> \u2013 (files only)
-    displays an annotated view showing who last changed each line, along with the
-    revision number. For binary files a clear message is shown instead.\n\u2022 <b>E
-    (Export)</b> \u2013 exports a clean copy of the item (without <i><color=#34D399>.svn</color></i>
-    metadata) to a folder on your disk. Works for both files and entire directories.\n\nTo
-    return to the standard Changes View, simply press <b>S</b> again.\n</line-height>\n\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Lock
-    Toolbar</b></size>\n<line-height=125%>\nThe Lock toolbar helps you manage file
-    locks on the repository. Locking a file prevents others from committing changes
-    to it until you release the lock. The panel provides a set of global actions
-    and a detailed view of all currently active locks.\n\n<b>Main buttons:</b>\n\u2022
+    root, e.g. <i>trunk/(2).txt</i>. Handy for scripting or referencing files in
+    conversations.\n\u2022 <b>B (Blame)</b> \u2013 (files only) displays an annotated
+    view showing who last changed each line, along with the revision number. For
+    binary files a clear message is shown instead.\n\u2022 <b>E (Export)</b> \u2013
+    exports a clean copy of the item (without <i>.svn</i> metadata) to a folder on
+    your disk. Works for both files and entire directories.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Use <b>C</b> to check out just a specific branch without
+    downloading the entire repository.\n\u2022 The <b>P</b> button is perfect for
+    sharing links with teammates \u2013 just paste the URL anywhere.\n\nTo return
+    to the standard <b>Changes View</b>, simply press <b>S</b> again.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Lock
+    Toolbar</b></size>\n\nThe <b>Lock</b> toolbar helps you manage file locks on
+    the repository. Locking a file prevents others from committing changes to it
+    until you release the lock. The panel provides a set of global actions and a
+    detailed view of all currently active locks.\n\n<size=110%><b>Main buttons:</b></size>\n\n\u2022
     <b>Show Locks</b> \u2013 fetches and displays all active locks currently set
     on the repository. The list shows which files are locked, who owns each lock,
     and when the lock was created.\n\u2022 <b>Lock All Modified</b> \u2013 locks
-    every file that you have locally modified (<i><color=#34D399>M</color></i> status).\n\u2022
-    <b>Unlock All Modified</b> \u2013 releases all locks that you currently hold.\n\u2022
-    <b>Cleanup Locks</b> \u2013 removes internal, local lock database records that
-    may be stuck after a crash or interrupted operation. This is a working\u2011copy
-    repair tool; it does <b>not</b> affect locks on the server. Use it when the lock
-    cache seems corrupted and causes false \u201Clocked\u201D states.\n\u2022 <b>Clear
-    Locks View</b> \u2013 clears the displayed lock list without changing anything
-    on the server.\n\u2022 <b>Steal Locks</b> \u2013 opens a dedicated panel for
-    forcefully taking over locks that belong to other users.\n\n<b>Steal Locks panel:</b>\nWhen
+    every file that you have locally modified (<b>M</b> status).\n\u2022 <b>Unlock
+    All Modified</b> \u2013 releases all locks that you currently hold.\n\u2022 <b>Cleanup
+    Locks</b> \u2013 removes internal, local lock database records that may be stuck
+    after a crash or interrupted operation. This is a working\u2011copy repair tool;
+    it does <b>not</b> affect locks on the server. Use it when the lock cache seems
+    corrupted and causes false \u201Clocked\u201D states.\n\u2022 <b>Clear Locks
+    View</b> \u2013 clears the displayed lock list without changing anything on the
+    server.\n\u2022 <b>Steal Locks</b> \u2013 opens a dedicated panel for forcefully
+    taking over locks that belong to other users.\n\n<size=110%><b>Steal Locks panel:</b></size>\n\nWhen
     you open <b>Steal Locks</b>, a new panel appears showing all locks currently
     on the repository. It has its own <b>Refresh Locks</b> button. Each lock entry
-    displays the file path, the current lock owner, and two action buttons:\n  -
+    displays the file path, the current lock owner, and two action buttons:\n\n\u2022
     <b>Break</b> \u2013 removes the lock record <b>locally</b> from your working
     copy. The lock on the server remains unchanged, but your client will no longer
-    see it, allowing you to work on the file.\n  - <b>Steal</b> \u2013 forcefully
+    see it, allowing you to work on the file.\n\u2022 <b>Steal</b> \u2013 forcefully
     transfers the lock to you on the server, making you the new owner. This allows
     you to commit changes to a file that was previously locked by someone else. This
     is an administrative action \u2013 use it only when necessary and with the team's
-    awareness.\n\nAll operations in the Lock panel log their progress to the main
-    application console, and the lock list is automatically refreshed after each
-    action.\n</line-height>\n\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Utility
-    Toolbar</b></size>\n<line-height=125%>\nLocated directly below the Lock Toolbar,
-    the Utility Toolbar gives you immediate access to log management, connection
-    testing, revision\u2011based operations, and the built\u2011in terminal.\n\n<b>First
-    row of buttons:</b>\n\u2022 <b>Show Log</b> \u2013 opens the dedicated log viewer,
-    where you can browse the full application log, scroll through detailed SVN output,
-    and search for specific messages.\n\u2022 <b>Clear Log</b> \u2013 erases all
-    content from the internal application log console, giving you a fresh, empty
-    log window.\n\u2022 <b>Open Log File</b> \u2013 opens the current raw session
+    awareness.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022 Lock files
+    only when you absolutely need to \u2013 SVN works best when everyone merges changes
+    naturally.\n\u2022 If someone forgets to unlock a file, use the <b>Steal</b>
+    button after confirming with them.\n\nAll operations in the Lock panel log their
+    progress to the main application console, and the lock list is automatically
+    refreshed after each action.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Utility
+    Toolbar</b></size>\n\nLocated directly below the Lock Toolbar, the <b>Utility
+    Toolbar</b> gives you immediate access to log management, connection testing,
+    revision\u2011based operations, and the built\u2011in terminal.\n\n<size=110%><b>First
+    row of buttons:</b></size>\n\n\u2022 <b>Show Log</b> \u2013 opens the dedicated
+    log viewer, where you can browse the full application log, scroll through detailed
+    SVN output, and search for specific messages.\n\u2022 <b>Clear Log</b> \u2013
+    erases all content from the internal application log console, giving you a fresh,
+    empty log window.\n\u2022 <b>Open Log File</b> \u2013 opens the current raw session
     log file in your default text editor. This file is essential when reporting bugs.\n\u2022
     <b>Test Connection</b> \u2013 verifies that the currently configured repository
     URL and SSH private key can successfully reach the server.\n\u2022 <b>Update
@@ -72012,65 +73580,73 @@ MonoBehaviour:
     The adjacent input field lets you enter the desired revision. Leaving the field
     empty performs a standard update to HEAD. A double\u2011click within 5 seconds
     is required to confirm non\u2011HEAD updates.\n\u2022 <b>Export Revision</b>
-    \u2013 exports a clean copy (without <i><color=#34D399>.svn</color></i> metadata)
-    of a specific revision. It uses the same revision input field as <b>Update to
-    Revision</b>. If the field is empty, the latest revision (HEAD) is exported.
-    The destination folder is taken from the main Checkout panel.\n\n<b>Second row
-    of buttons (Terminal):</b>\n\u2022 <b>Run CLI Command</b> \u2013 executes the
-    raw SVN command currently typed in the terminal input field. The command output
-    appears in the application log.\n\u2022 <b>Cancel CLI Command</b> \u2013 immediately
-    stops the currently running terminal command.\n</line-height>\n\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Per\u2011File
-    Action Buttons</b></size>\n<line-height=125%>\nEach file row in the tree displays
-    a set of small, single\u2011letter buttons that change depending on the file's
-    status. Hovering over any button shows a tooltip explaining exactly what it does.\n\n\u2022
-    <b>Add (A)</b> \u2013 visible for unversioned files (<i><color=#34D399>?</color></i>).
-    Starts tracking the file; it will become <i><color=#34D399>A</color></i> and
-    be included in the next commit.\n\u2022 <b>Revert (R)</b> \u2013 visible for
-    modified or replaced files. Discards all local changes and restores the file
-    to the repository version (requires double\u2011click confirmation).\n\u2022
+    \u2013 exports a clean copy (without <i>.svn</i> metadata) of a specific revision.
+    It uses the same revision input field as <b>Update to Revision</b>. If the field
+    is empty, the latest revision (HEAD) is exported. The destination folder is taken
+    from the main Checkout panel.\n\n<size=110%><b>Second row of buttons (Terminal):</b></size>\n\n\u2022
+    <b>Run CLI Command</b> \u2013 executes the raw SVN command currently typed in
+    the terminal input field. The command output appears in the application log.\n\u2022
+    <b>Cancel CLI Command</b> \u2013 immediately stops the currently running terminal
+    command.\n\n<size=110%><b>Additional tips:</b></size>\n\n\u2022 Use <b>Test Connection</b>
+    before doing any work if you suspect network issues.\n\u2022 The terminal is
+    a power-user tool \u2013 you can run any SVN command directly without waiting
+    for UI panels.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Per\u2011File
+    Action Buttons</b></size>\n\nEach file row in the tree displays a set of small,
+    single\u2011letter buttons that change depending on the file's status. Hovering
+    over any button shows a tooltip explaining exactly what it does.\n\n\u2022 <b>Add
+    (A)</b> \u2013 visible for unversioned files (<b>?</b>). Starts tracking the
+    file; it will become <b>A</b> and be included in the next commit.\n\u2022 <b>Revert
+    (R)</b> \u2013 visible for modified or replaced files. Discards all local changes
+    and restores the file to the repository version (requires double\u2011click confirmation).\n\u2022
     <b>Log (L)</b> \u2013 opens the SVN Log for that specific file.\n\u2022 <b>Blame
     (B)</b> \u2013 displays an annotated view showing who last modified each line.\n\u2022
     <b>Explore (E)</b> \u2013 always visible. Opens Windows Explorer and selects
     the file.\n\u2022 <b>Lock / Unlock (K / O / U)</b> \u2013 visible for tracked,
-    non\u2011missing files:\n  - <b>K</b> (green) \u2013 you own the lock. Click
-    to unlock.\n  - <b>O</b> (red) \u2013 another user owns the lock.\n  - <b>U</b>
-    (grey) \u2013 unlocked. Click to lock it.\n\u2022 <b>Resolve (C)</b> \u2013 visible
-    for conflicted files (<i><color=#34D399>C</color></i>). Opens the Resolve panel.\n\u2022
+    non\u2011missing files:\n  \u2022 <b>K</b> (green) \u2013 you own the lock. Click
+    to unlock.\n  \u2022 <b>O</b> (red) \u2013 another user owns the lock.\n  \u2022
+    <b>U</b> (grey) \u2013 unlocked. Click to lock it.\n\u2022 <b>Resolve (C)</b>
+    \u2013 visible for conflicted files (<b>C</b>). Opens the Resolve panel.\n\u2022
     <b>Commit (V)</b> \u2013 visible for tracked, non\u2011conflicted files. Commits
-    only this single file with an automatically generated message.\n</line-height>\n\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Notifications</b></size>\n<line-height=125%>\nWhen
+    only this single file with an automatically generated message.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Hover over any button to see a tooltip before clicking
+    \u2013 this prevents mistakes.\n\u2022 The buttons change dynamically based on
+    the file's current status, so you only see relevant actions.\n\nAll these buttons
+    appear automatically based on the file's current SVN status, so you only see
+    the actions that are relevant at any given moment.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Notifications</b></size>\n\nWhen
     the application detects a new commit from another user, it plays a sound and
     shows a notification pop\u2011up with the author, revision, and commit message.
-    Automatic checking happens when the app regains focus (cooldown: 3 minutes).\n</line-height>\n\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>File
-    Status Legend (Understanding the Icons)</b></size>\n<line-height=130%>\nIn the
-    file list, you will see specific prefixes or icons. Here is what they mean:\n\n\u2022
-    <color=#FFFFFF><b>? (Unversioned)</b></color> \u2013 New file, not yet tracked
-    by SVN. Use <b>Add</b> before committing.\n\u2022 <color=#FBBF24><b>M (Modified)</b></color>
-    \u2013 You have changed this file locally. Needs a commit.\n\u2022 <color=#34D399><b>A
-    (Added)</b></color> \u2013 New file scheduled to be added.\n\u2022 <color=#F87171><b>!
-    (Missing)</b></color> \u2013 File was deleted outside SVN. Blocks commits; use
-    <b>Fix Missing</b> or <b>Revert</b>.\n\u2022 <color=#F87171><b>D (Deleted)</b></color>
-    \u2013 File scheduled for deletion from the repository.\n\u2022 <color=#EF4444><b>C
-    (Conflicted)</b></color> \u2013 Critical error. You must resolve the conflict
-    before committing.\n\u2022 <color=#94A3B8><b>I (Ignored)</b></color> \u2013 File
-    excluded from version control.\n\u2022 <color=#FFAA00><b>R (Replaced)</b></color>
-    \u2013 File was replaced by a merge or switch. Commit or update to clear.\n\u2022
-    <color=#00FF00><b>K (Locked by me)</b></color> \u2013 You have locked this file.\n\u2022
-    <color=#FF4444><b>O (Locked by other)</b></color> \u2013 File locked by another
-    user; you cannot commit.\n</line-height>\n\n<voffset=1em>--------------------------------------------------</voffset>\n\n<size=120%><b>Terminal
-    \u2013 Using Custom SSH Keys</b></size>\n<line-height=125%>\nNormally, all SVN
-    commands that communicate with the server will automatically use the <b>default
-    SSH key</b> configured in the application settings. You do <b>not</b> need to
-    specify it every time.\n\nIf you ever need to use a <b>different key</b> for
-    a single command, simply add the <b>--key</b> option right after the command
-    name.\n\n<b>General syntax:</b>\n<color=#34D399><b>command --key \"C:/Users/[YourUsername]/.ssh/[KeyFile]\"
-    [rest of the arguments]</b></color>\n\n<b>Examples:</b>\n\u2022 <b>Checkout with
-    a specific key:</b>\n  checkout --key \"C:/Users/PC/.ssh/project_key\" svn+ssh://user@server/srv/svn/repo
-    \"D:\\Projects\\Repo\"\n\n\u2022 <b>Update using a different key:</b>\n  update
-    --key \"C:/Users/PC/.ssh/admin_key\"\n\n\u2022 <b>Show log with a custom key:</b>\n 
-    log --key \"C:/Users/PC/.ssh/readonly_key\" -l 10\n\n\u2022 <b>Commit with a
-    temporary key:</b>\n  commit --key \"C:/Users/PC/.ssh/committer_key\" -m \"Message\"\n\nRemember:
-    if you omit <b>--key</b>, the terminal will use the key set in <b>Settings >
-    SSH Private Key</b>. Use <b>--key</b> only when you need to override it temporarily.\n</line-height>"
+    Automatic checking happens when the app regains focus (cooldown: <b>3 minutes</b>).\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n\u2022 Notifications help you stay aware of what your teammates
+    are doing \u2013 they appear automatically and do not interrupt your work.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>File
+    Status Legend (Understanding the Icons)</b></size>\n\nIn the file list, you will
+    see specific prefixes or icons. Here is what they mean:\n\n\u2022 <b>? (Unversioned)</b>
+    \u2013 New file, not yet tracked by SVN. Use <b>Add</b> before committing.\n\u2022
+    <b>M (Modified)</b> \u2013 You have changed this file locally. Needs a commit.\n\u2022
+    <b>A (Added)</b> \u2013 New file scheduled to be added.\n\u2022 <b>! (Missing)</b>
+    \u2013 File was deleted outside SVN. Blocks commits; use <b>Fix Missing</b> or
+    <b>Revert</b>.\n\u2022 <b>D (Deleted)</b> \u2013 File scheduled for deletion
+    from the repository.\n\u2022 <b>C (Conflicted)</b> \u2013 Critical error. You
+    must resolve the conflict before committing.\n\u2022 <b>I (Ignored)</b> \u2013
+    File excluded from version control.\n\u2022 <b>R (Replaced)</b> \u2013 File was
+    replaced by a merge or switch. Commit or update to clear.\n\u2022 <b>K (Locked
+    by me)</b> \u2013 You have locked this file.\n\u2022 <b>O (Locked by other)</b>
+    \u2013 File locked by another user; you cannot commit.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Terminal
+    \u2013 Using Custom SSH Keys</b></size>\n\nNormally, all SVN commands that communicate
+    with the server will automatically use the <b>default SSH key</b> configured
+    in the application settings. You do <b>not</b> need to specify it every time.\n\nIf
+    you ever need to use a <b>different key</b> for a single command, simply add
+    the <b>--key</b> option right after the command name. This works for any SVN
+    command.\n\n<size=110%><b>General syntax:</b></size>\n\n<color=#34D399><b>command
+    --key \"C:/Users/[YourUsername]/.ssh/[KeyFile]\" [rest of the arguments]</b></color>\n\n<size=110%><b>Examples:</b></size>\n\n\u2022
+    <b>Checkout with a specific key:</b>\n  <color=#34D399>checkout --key \"C:/Users/PC/.ssh/project_key\"
+    svn+ssh://user@server/srv/svn/repo \"D:\\Projects\\Repo\"</color>\n\n\u2022 <b>Update
+    using a different key:</b>\n  <color=#34D399>update --key \"C:/Users/PC/.ssh/admin_key\"</color>\n\n\u2022
+    <b>Show log with a custom key:</b>\n  <color=#34D399>log --key \"C:/Users/PC/.ssh/readonly_key\"
+    -l 10</color>\n\n\u2022 <b>Commit with a temporary key:</b>\n  <color=#34D399>commit
+    --key \"C:/Users/PC/.ssh/committer_key\" -m \"Message\"</color>\n\nRemember:
+    if you omit <b>--key</b>, the terminal will use whatever key is set in <b>Settings
+    > SSH Private Key</b>. Use the <b>--key</b> option only when you need to override
+    it temporarily.\n</line-height>"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -75599,7 +77175,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -434.8629
+      value: -492.8055
       objectReference: {fileID: 0}
     - target: {fileID: 3089238190807380542, guid: df37d8ab30a965d4883949577259f38f, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -77244,7 +78820,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -27.236145
+      value: -25
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -78637,7 +80213,7 @@ RectTransform:
   m_Father: {fileID: 858409900}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 1, y: 0.2}
+  m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
@@ -80029,7 +81605,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -50
+      value: -40
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -80142,6 +81718,164 @@ CanvasRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1844219233}
+  m_CullTransparentMesh: 1
+--- !u!1 &1849140060
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1849140061}
+  - component: {fileID: 1849140064}
+  - component: {fileID: 1849140063}
+  - component: {fileID: 1849140062}
+  m_Layer: 5
+  m_Name: Placeholder
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1849140061
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1849140060}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1372198744}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1849140062
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1849140060}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 306cc8c2b49d7114eaa3623786fc2126, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_IgnoreLayout: 1
+  m_MinWidth: -1
+  m_MinHeight: -1
+  m_PreferredWidth: -1
+  m_PreferredHeight: -1
+  m_FlexibleWidth: -1
+  m_FlexibleHeight: -1
+  m_LayoutPriority: 1
+--- !u!114 &1849140063
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1849140060}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_text: Enter text...
+  m_isRightToLeft: 0
+  m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_fontSharedMaterials: []
+  m_fontMaterial: {fileID: 0}
+  m_fontMaterials: []
+  m_fontColor32:
+    serializedVersion: 2
+    rgba: 2150773298
+  m_fontColor: {r: 0.19607843, g: 0.19607843, b: 0.19607843, a: 0.5}
+  m_enableVertexGradient: 0
+  m_colorMode: 3
+  m_fontColorGradient:
+    topLeft: {r: 1, g: 1, b: 1, a: 1}
+    topRight: {r: 1, g: 1, b: 1, a: 1}
+    bottomLeft: {r: 1, g: 1, b: 1, a: 1}
+    bottomRight: {r: 1, g: 1, b: 1, a: 1}
+  m_fontColorGradientPreset: {fileID: 0}
+  m_spriteAsset: {fileID: 0}
+  m_tintAllSprites: 0
+  m_StyleSheet: {fileID: 0}
+  m_TextStyleHashCode: -1183493901
+  m_overrideHtmlColors: 0
+  m_faceColor:
+    serializedVersion: 2
+    rgba: 4294967295
+  m_fontSize: 14
+  m_fontSizeBase: 14
+  m_fontWeight: 400
+  m_enableAutoSizing: 0
+  m_fontSizeMin: 18
+  m_fontSizeMax: 72
+  m_fontStyle: 2
+  m_HorizontalAlignment: 1
+  m_VerticalAlignment: 256
+  m_textAlignment: 65535
+  m_characterSpacing: 0
+  m_characterHorizontalScale: 1
+  m_wordSpacing: 0
+  m_lineSpacing: 0
+  m_lineSpacingMax: 0
+  m_paragraphSpacing: 0
+  m_charWidthMaxAdj: 0
+  m_TextWrappingMode: 0
+  m_wordWrappingRatios: 0.4
+  m_overflowMode: 0
+  m_linkedTextComponent: {fileID: 0}
+  parentLinkedComponent: {fileID: 0}
+  m_enableKerning: 0
+  m_ActiveFontFeatures: 6e72656b
+  m_enableExtraPadding: 1
+  checkPaddingRequired: 0
+  m_isRichText: 1
+  m_EmojiFallbackSupport: 1
+  m_parseCtrlCharacters: 1
+  m_isOrthographic: 1
+  m_isCullingEnabled: 0
+  m_horizontalMapping: 0
+  m_verticalMapping: 0
+  m_uvLineOffset: 0
+  m_geometrySortingOrder: 0
+  m_IsTextObjectScaleStatic: 0
+  m_VertexBufferAutoSizeReduction: 0
+  m_useMaxVisibleDescender: 1
+  m_pageToDisplay: 1
+  m_margin: {x: 0, y: 0, z: 0, w: 0}
+  m_isUsingLegacyAnimationComponent: 0
+  m_isVolumetricText: 0
+  m_hasFontAssetChanged: 0
+  m_baseMaterial: {fileID: 0}
+  m_maskOffset: {x: 0, y: 0, z: 0, w: 0}
+--- !u!222 &1849140064
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1849140060}
   m_CullTransparentMesh: 1
 --- !u!1001 &1849715631
 PrefabInstance:
@@ -80578,6 +82312,82 @@ RectTransform:
   m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
   m_PrefabInstance: {fileID: 1853249551}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &1855369141
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1855369142}
+  - component: {fileID: 1855369144}
+  - component: {fileID: 1855369143}
+  m_Layer: 5
+  m_Name: Background
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1855369142
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1855369141}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 430179862}
+  m_Father: {fileID: 1001910215}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 287.1794, y: -25}
+  m_SizeDelta: {x: 50, y: 50}
+  m_Pivot: {x: 0, y: 0.5}
+--- !u!114 &1855369143
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1855369141}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10905, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 1
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &1855369144
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1855369141}
+  m_CullTransparentMesh: 1
 --- !u!1 &1860464576
 GameObject:
   m_ObjectHideFlags: 0
@@ -81950,6 +83760,205 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1887214535}
   m_CullTransparentMesh: 1
+--- !u!1 &1887898571
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1887898572}
+  - component: {fileID: 1887898576}
+  - component: {fileID: 1887898575}
+  - component: {fileID: 1887898574}
+  - component: {fileID: 1887898573}
+  m_Layer: 5
+  m_Name: BranchMsgField
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &1887898572
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1887898571}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 2, y: 2, z: 2}
+  m_ConstrainProportionsScale: 1
+  m_Children:
+  - {fileID: 1372198744}
+  m_Father: {fileID: 1480092012}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 1}
+  m_AnchorMax: {x: 0, y: 1}
+  m_AnchoredPosition: {x: 811.7031, y: -30}
+  m_SizeDelta: {x: 470, y: 30}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1887898573
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1887898571}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 306cc8c2b49d7114eaa3623786fc2126, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_IgnoreLayout: 0
+  m_MinWidth: -1
+  m_MinHeight: -1
+  m_PreferredWidth: -1
+  m_PreferredHeight: -1
+  m_FlexibleWidth: -1
+  m_FlexibleHeight: -1
+  m_LayoutPriority: 1
+--- !u!114 &1887898574
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1887898571}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2da0c512f12947e489f739169773d7ca, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Navigation:
+    m_Mode: 3
+    m_WrapAround: 0
+    m_SelectOnUp: {fileID: 0}
+    m_SelectOnDown: {fileID: 0}
+    m_SelectOnLeft: {fileID: 0}
+    m_SelectOnRight: {fileID: 0}
+  m_Transition: 1
+  m_Colors:
+    m_NormalColor: {r: 1, g: 1, b: 1, a: 1}
+    m_HighlightedColor: {r: 0.9607843, g: 0.9607843, b: 0.9607843, a: 1}
+    m_PressedColor: {r: 0.78431374, g: 0.78431374, b: 0.78431374, a: 1}
+    m_SelectedColor: {r: 0.9607843, g: 0.9607843, b: 0.9607843, a: 1}
+    m_DisabledColor: {r: 0.78431374, g: 0.78431374, b: 0.78431374, a: 0.5019608}
+    m_ColorMultiplier: 1
+    m_FadeDuration: 0.1
+  m_SpriteState:
+    m_HighlightedSprite: {fileID: 0}
+    m_PressedSprite: {fileID: 0}
+    m_SelectedSprite: {fileID: 0}
+    m_DisabledSprite: {fileID: 0}
+  m_AnimationTriggers:
+    m_NormalTrigger: Normal
+    m_HighlightedTrigger: Highlighted
+    m_PressedTrigger: Pressed
+    m_SelectedTrigger: Selected
+    m_DisabledTrigger: Disabled
+  m_Interactable: 1
+  m_TargetGraphic: {fileID: 1887898575}
+  m_TextViewport: {fileID: 1372198744}
+  m_TextComponent: {fileID: 1366641136}
+  m_Placeholder: {fileID: 1849140063}
+  m_VerticalScrollbar: {fileID: 0}
+  m_VerticalScrollbarEventHandler: {fileID: 0}
+  m_LayoutGroup: {fileID: 0}
+  m_ScrollSensitivity: 1
+  m_ContentType: 0
+  m_InputType: 0
+  m_AsteriskChar: 42
+  m_KeyboardType: 0
+  m_LineType: 0
+  m_HideMobileInput: 0
+  m_HideSoftKeyboard: 0
+  m_CharacterValidation: 0
+  m_RegexValue: 
+  m_GlobalPointSize: 14
+  m_CharacterLimit: 0
+  m_OnEndEdit:
+    m_PersistentCalls:
+      m_Calls: []
+  m_OnSubmit:
+    m_PersistentCalls:
+      m_Calls: []
+  m_OnSelect:
+    m_PersistentCalls:
+      m_Calls: []
+  m_OnDeselect:
+    m_PersistentCalls:
+      m_Calls: []
+  m_OnTextSelection:
+    m_PersistentCalls:
+      m_Calls: []
+  m_OnEndTextSelection:
+    m_PersistentCalls:
+      m_Calls: []
+  m_OnValueChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_OnTouchScreenKeyboardStatusChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_CaretColor: {r: 0.19607843, g: 0.19607843, b: 0.19607843, a: 1}
+  m_CustomCaretColor: 0
+  m_SelectionColor: {r: 0.65882355, g: 0.80784315, b: 1, a: 0.7529412}
+  m_Text: 
+  m_CaretBlinkRate: 0.85
+  m_CaretWidth: 1
+  m_ReadOnly: 0
+  m_RichText: 1
+  m_GlobalFontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  m_OnFocusSelectAll: 1
+  m_ResetOnDeActivation: 1
+  m_KeepTextSelectionVisible: 0
+  m_RestoreOriginalTextOnEscape: 1
+  m_isRichTextEditingAllowed: 0
+  m_LineLimit: 0
+  isAlert: 0
+  m_InputValidator: {fileID: 0}
+  m_ShouldActivateOnSelect: 1
+--- !u!114 &1887898575
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1887898571}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10911, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 1
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &1887898576
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1887898571}
+  m_CullTransparentMesh: 1
 --- !u!1 &1888607053
 GameObject:
   m_ObjectHideFlags: 0
@@ -82337,8 +84346,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: -0.0008544922}
-  m_SizeDelta: {x: 0, y: -400.27}
+  m_AnchoredPosition: {x: 0, y: -0.0009765625}
+  m_SizeDelta: {x: 0, y: -307.91}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1894273842
 MonoBehaviour:
@@ -83341,7 +85350,7 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1657918751}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.9730393}
+  m_AnchorMin: {x: 0, y: 0.9786323}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}
@@ -87700,7 +89709,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -50
+      value: -40
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -88575,6 +90584,42 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2031456326}
   m_CullTransparentMesh: 1
+--- !u!1 &2033423371
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2033423372}
+  m_Layer: 5
+  m_Name: Sliding Area
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!224 &2033423372
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2033423371}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 230820753}
+  m_Father: {fileID: 741733770}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: -20, y: -20}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &2039790452
 GameObject:
   m_ObjectHideFlags: 0
@@ -88931,8 +90976,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: -0.00024414062}
-  m_SizeDelta: {x: 0, y: -785.78}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: -693.4233}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &2042118853
 MonoBehaviour:
@@ -90207,7 +92252,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 160.94449, y: -50}
+  m_AnchoredPosition: {x: 160.94449, y: -40}
   m_SizeDelta: {x: 160, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2066300413
@@ -90607,7 +92652,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: -50
+      value: -40
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -91635,7 +93680,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 651.8922, y: -614.44824}
+  m_AnchoredPosition: {x: 651.8922, y: -687.0127}
   m_SizeDelta: {x: 1283.4873, y: 339.1707}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2097978684

@@ -44,6 +44,8 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI branchTagConsoleText;
         [SerializeField] private Transform mergeFilesContainer;
         [SerializeField] private MergeFileItem mergeFileItemPrefab;
+        [SerializeField] private TMP_InputField branchSourcePathInput;
+        [SerializeField] private Toggle ignoreAncestryToggle;
         [Header("Status Info")]
         [SerializeField] private TextMeshProUGUI statusInfoText;
         [SerializeField] private TMP_InputField commitMessageInput;
@@ -58,6 +60,7 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI commitStatsText;
         [SerializeField] private TextMeshProUGUI commitConsoleContent;
         [SerializeField] private UnityEngine.UI.Slider operationProgressBar;
+        [SerializeField] private TextMeshProUGUI commitCurrentFileText;
         [Header("Loading Indicator")]
         [SerializeField] private TextMeshProUGUI treeDisplay;
         [SerializeField] private TextMeshProUGUI statsText;
@@ -145,6 +148,8 @@ namespace SVN.Core
         public TextMeshProUGUI BranchTagConsoleText => branchTagConsoleText;
         public Transform MergeFilesContainer => mergeFilesContainer;
         public MergeFileItem MergeFileItemPrefab => mergeFileItemPrefab;
+        public TMP_InputField BranchSourcePathInput => branchSourcePathInput;
+        public Toggle IgnoreAncestryToggle => ignoreAncestryToggle;
         public TextMeshProUGUI StatusInfoText => statusInfoText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
         public TMP_InputField FilterTreeViewInput => filterTreeViewInput;
@@ -168,6 +173,7 @@ namespace SVN.Core
         public TextMeshProUGUI CommitConsoleContent => commitConsoleContent;
         public TextMeshProUGUI OutputText => outputText;
         public UnityEngine.UI.Slider OperationProgressBar => operationProgressBar;
+        public TextMeshProUGUI CommitCurrentFileText => commitCurrentFileText;
         public GameObject ConflictGroup => conflictGroup;
         public TMP_InputField SettingsRepoUrlInput => settingsRepoUrlInput;
         public TMP_InputField SettingsWorkingDirInput => settingsWorkingDirInput;

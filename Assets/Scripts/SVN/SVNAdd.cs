@@ -9,326 +9,362 @@ using UnityEngine;
 
 namespace SVN.Core
 {
-    public class SVNAdd : SVNBase
+    public class SVNAdd : SVNBase, IDisposable
     {
         private CancellationTokenSource _activeCTS;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private const int CleanupTimeoutSeconds = 30;
+        private int _disposed;
 
         public SVNAdd(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             UnityMainThreadDispatcher.EnsureExists();
         }
 
-        private void PostToMainThread(Action action)
+        public async void AddAll()
         {
-            if (action == null) return;
-            UnityMainThreadDispatcher.Enqueue(action);
+            try
+            {
+                await AddAllAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[Add] AddAll failed: {ex.Message}");
+            }
         }
-
-        public async void AddAll() { try { await AddAllAsync(); } catch (Exception ex) { Debug.LogException(ex); } }
 
         public void AddSingleItem(SvnTreeElement element)
         {
-            if (element == null || IsProcessing) return;
-            _ = AddSingleItemAsync(element);
+            if (element != null)
+            {
+                _ = AddSingleItemAsync(element);
+            }
         }
 
         public void Cancel()
         {
-            var cts = Interlocked.Exchange(ref _activeCTS, null);
-            try { cts?.Cancel(); } catch (ObjectDisposedException) { }
-            IsProcessing = false;
+            try
+            {
+                var cts = Volatile.Read(ref _activeCTS);
+                if (cts == null || cts.IsCancellationRequested) return;
 
-            try { _operationLock.Release(); }
-            catch (SemaphoreFullException) { }
+                cts.Cancel();
+                SVNLogBridge.LogLine("<color=orange><b>[Add]</b> Cancellation requested...</color>");
+            }
             catch (ObjectDisposedException) { }
-
-            HideProgressBarAfterDelay(0);
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[Add] Error during cancel: {ex.Message}");
+            }
         }
 
         private async Task AddAllAsync()
         {
             bool hasLock = false;
+            bool ownsProcessing = false;
+            CancellationTokenSource localCts = null;
+            string tempFile = null;
+
             try
             {
-                hasLock = await _operationLock.WaitAsync(0);
+                hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
                 if (!hasLock || IsProcessing) return;
 
+                string root = NormalizeRoot(svnManager.WorkingDir);
+                if (string.IsNullOrWhiteSpace(root)) return;
+
+                ownsProcessing = true;
                 IsProcessing = true;
-                var token = ResetAndGetToken();
+
+                localCts = new CancellationTokenSource();
+                Volatile.Write(ref _activeCTS, localCts);
+                CancellationToken token = localCts.Token;
+
                 ShowProgressBar();
 
-                string root = svnManager.WorkingDir;
-                if (string.IsNullOrEmpty(root))
-                {
-                    SVNLogBridge.LogError("Working directory is null or empty.");
-                    return;
-                }
-
                 SVNLogBridge.LogLine("<b>[Add]</b> Checking working copy locks...");
-                if (!await CleanupWorkingCopyAsync(root, token))
-                {
-                    SVNLogBridge.LogLine("<color=#FFAA00>Warning: Cleanup timed out or failed. Proceeding anyway...</color>");
-                }
+                bool cleanupOk = await CleanupWorkingCopyAsync(root, token).ConfigureAwait(false);
+                if (!cleanupOk) return;
 
                 SVNLogBridge.LogLine("<b>[Add]</b> Scanning for unversioned items...");
+                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
 
-                string rawStatus = await SvnRunner.RunAsync("status", root, true, token);
+                var unversioned = statusDict
+                    .Where(x => x.Value.status == "?")
+                    .Select(x => NormalizeRelativePath(x.Key))
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
-                if (string.IsNullOrWhiteSpace(rawStatus) || !rawStatus.Contains("?"))
+                if (unversioned.Count == 0)
                 {
                     SVNLogBridge.LogLine("<color=yellow>Nothing to add. All items are already tracked or ignored.</color>");
                     return;
                 }
 
-                var unversioned = new List<string>();
-                using (var reader = new StringReader(rawStatus))
+                var itemsToAdd = ReduceToTopLevelItems(unversioned);
+                if (itemsToAdd.Count == 0) return;
+
+                SVNLogBridge.LogLine($"Found <b>{itemsToAdd.Count}</b> unversioned target(s). Adding...");
+
+                tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_all_{Guid.NewGuid():N}.txt");
+                const int chunkSize = 500;
+                int processed = 0, total = itemsToAdd.Count;
+                DateTime start = DateTime.UtcNow, lastUi = DateTime.MinValue;
+
+                for (int i = 0; i < itemsToAdd.Count; i += chunkSize)
                 {
-                    string line;
-                    while ((line = reader.ReadLine()) != null)
+                    token.ThrowIfCancellationRequested();
+                    var chunk = itemsToAdd.Skip(i).Take(chunkSize).ToList();
+                    await Task.Run(() => File.WriteAllLines(tempFile, chunk, new UTF8Encoding(false)), token).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
+
+                    await SvnRunner.RunLiveAsync(new[] { "add", "--force", "--parents", "--targets", tempFile }, root, line =>
                     {
-                        if (line.StartsWith("?"))
+                        if (string.IsNullOrWhiteSpace(line) || !line.Trim().StartsWith("A", StringComparison.Ordinal)) return;
+                        int current = Interlocked.Increment(ref processed);
+                        var now = DateTime.UtcNow;
+                        if ((now - lastUi).TotalMilliseconds < 200) return;
+                        lastUi = now;
+                        double elapsed = Math.Max((now - start).TotalSeconds, 0.1);
+                        float progress = Mathf.Clamp01(0.1f + (total > 0 ? current / (float)total : 0f) * 0.8f);
+                        PostToMainThread(() =>
                         {
-                            string rawPath = line.Substring(8).TrimStart();
-                            string cleanPath = SvnRunner.NormalizeRepositoryPath(rawPath).Replace('\\', '/');
-                            if (!string.IsNullOrWhiteSpace(cleanPath)) unversioned.Add(cleanPath);
-                        }
-                    }
-                }
-
-                SVNLogBridge.LogLine($"Found <b>{unversioned.Count}</b> unversioned item(s). Preparing safe add...");
-
-                string normalizedRoot = root.Replace("\\", "/").TrimEnd('/');
-                var itemsToAdd = EnsureParentDirectoriesAreIncluded(unversioned, normalizedRoot);
-
-                if (itemsToAdd.Count == 0)
-                {
-                    SVNLogBridge.LogLine("<color=yellow>No existing items to add.</color>");
-                    return;
-                }
-
-                int chunkSize = 500;
-                int totalItems = itemsToAdd.Count;
-                int processedItems = 0;
-                DateTime startTime = DateTime.Now;
-                DateTime lastUiUpdateTime = DateTime.MinValue;
-
-                string tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_all_{Guid.NewGuid():N}.txt");
-
-                try
-                {
-                    for (int i = 0; i < itemsToAdd.Count; i += chunkSize)
-                    {
-                        if (token.IsCancellationRequested) break;
-
-                        var chunk = itemsToAdd.Skip(i).Take(chunkSize).ToList();
-                        await Task.Run(() => File.WriteAllLines(tempFile, chunk, new UTF8Encoding(false)));
-
-                        await SvnRunner.RunLiveAsync($"add --force --parents --targets \"{tempFile}\"", root, line =>
-                        {
-                            if (string.IsNullOrWhiteSpace(line)) return;
-                            string cleanLine = line.Trim();
-
-                            if (cleanLine.Length > 1 && cleanLine[0] == 'A')
+                            try
                             {
-                                int currentProcessed = Interlocked.Increment(ref processedItems);
-                                DateTime now = DateTime.Now;
-
-                                if ((now - lastUiUpdateTime).TotalMilliseconds > 200)
-                                {
-                                    lastUiUpdateTime = now;
-
-                                    double elapsedSec = (now - startTime).TotalSeconds;
-                                    double speed = currentProcessed / Math.Max(elapsedSec, 0.1);
-
-                                    PostToMainThread(() =>
-                                    {
-                                        float progress = Mathf.Clamp01(0.1f + ((float)elapsedSec / 10f) * 0.8f);
-                                        if (svnUI?.OperationProgressBar != null)
-                                            svnUI.OperationProgressBar.value = progress;
-
-                                        SVNLogBridge.LogLine($"<color=yellow>[Adding]</color> {currentProcessed} files processed | Speed: <b>{speed:F0} files/s</b>");
-                                    });
-                                }
+                                if (svnUI?.OperationProgressBar != null) svnUI.OperationProgressBar.value = progress;
+                                SVNLogBridge.LogLine($"<color=yellow>[Adding]</color> {current}/{total} items | Speed: <b>{current / elapsed:F0} items/s</b>");
                             }
-                        }, token);
-                    }
-                }
-                finally { SafeDelete(tempFile); }
-
-                if (token.IsCancellationRequested)
-                {
-                    SVNLogBridge.LogLine("<color=orange>Operation cancelled by user during add.</color>");
-                    return;
+                            catch { }
+                        });
+                    }, token).ConfigureAwait(false);
                 }
 
-                double totalTime = (DateTime.Now - startTime).TotalSeconds;
-
-                SVNLogBridge.LogLine($"\n<color=green><b>[SUCCESS]</b> {processedItems} items marked as 'Added' in {totalTime:F1}s.</color>");
+                token.ThrowIfCancellationRequested();
+                double totalTime = Math.Max((DateTime.UtcNow - start).TotalSeconds, 0.01);
+                SVNLogBridge.LogLine($"<color=green><b>[SUCCESS]</b> {processed} of {total} top-level targets marked as 'Added' in {totalTime:F1}s.</color>");
                 SVNLogBridge.LogLine("<color=white>Note: You still need to <b>Commit</b> to upload them to the server.</color>");
-
-                SVNLogBridge.LogLine("<color=#4FC3F7>Rebuilding tree...</color>");
-                var statusModule = svnManager.GetModule<SVNStatus>();
-                if (statusModule != null)
-                {
-                    statusModule.ClearSVNTreeView();
-                    statusModule.ClearCurrentData();
-                    await statusModule.RefreshModifiedInternal();
-                }
+                await RefreshStatusTreeAsync(token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) { SVNLogBridge.LogLine("<color=orange>Operation cancelled by user.</color>"); }
-            catch (Exception ex) { SVNLogBridge.LogError($"\n<color=#FFAA00>Error during AddAll: {ex.Message}</color>"); }
-            finally { FinalizeOperation(hasLock); }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange><b>[ABORTED]</b> Add operation cancelled by user.</color>");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[Add] Error during AddAll: {ex.Message}");
+            }
+            finally
+            {
+                SafeDelete(tempFile);
+                FinalizeOperation(hasLock, localCts, ownsProcessing);
+            }
         }
 
         private async Task AddSingleItemAsync(SvnTreeElement element)
         {
-            bool hasLock = false;
+            bool hasLock = false, ownsProcessing = false;
+            CancellationTokenSource localCts = null;
+            string tempFile = null;
+
             try
             {
-                hasLock = await _operationLock.WaitAsync(0);
+                hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
                 if (!hasLock || IsProcessing) return;
 
+                string root = NormalizeRoot(svnManager.WorkingDir);
+                if (string.IsNullOrWhiteSpace(root)) return;
+
+                ownsProcessing = true;
                 IsProcessing = true;
-                var token = ResetAndGetToken();
+                localCts = new CancellationTokenSource();
+                Volatile.Write(ref _activeCTS, localCts);
+                CancellationToken token = localCts.Token;
+
                 ShowProgressBar();
 
-                string root = svnManager.WorkingDir;
-                if (string.IsNullOrEmpty(root)) return;
+                bool cleanupOk = await CleanupWorkingCopyAsync(root, token).ConfigureAwait(false);
+                if (!cleanupOk) return;
 
-                if (!await CleanupWorkingCopyAsync(root, token))
+                if (!TryGetRelativePath(root, element.FullPath, out string relativePath))
                 {
-                    SVNLogBridge.LogLine("<color=#FFAA00>Warning: Cleanup timed out. Proceeding anyway...</color>");
-                }
-
-                string normalizedRoot = root.Replace("\\", "/").TrimEnd('/');
-                string fullPath = Path.Combine(normalizedRoot, element.FullPath.Replace('/', Path.DirectorySeparatorChar));
-
-                if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
-                {
-                    SVNLogBridge.LogLine($"<color=yellow>Skipped: {element.Name} (file no longer exists on disk).</color>");
+                    SVNLogBridge.LogLine($"<color=#FF4444>Cannot add '{element.Name}'. Path is outside the working copy or invalid.</color>");
                     return;
                 }
 
+                string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                if (!File.Exists(fullPath) && !Directory.Exists(fullPath)) return;
+
                 SVNLogBridge.LogLine($"<b>[Add]</b> Adding item: {element.Name}...");
+                var paths = ReduceToTopLevelItems(new List<string> { relativePath });
+                if (paths.Count == 0) return;
 
-                var paths = EnsureParentDirectoriesAreIncluded(new List<string> { element.FullPath }, normalizedRoot);
+                tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_single_{Guid.NewGuid():N}.txt");
+                await Task.Run(() => File.WriteAllLines(tempFile, paths, new UTF8Encoding(false)), token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
 
-                string tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_single_{Guid.NewGuid():N}.txt");
+                await SvnRunner.RunAsync(new[] { "add", "--force", "--parents", "--targets", tempFile }, root, false, token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
 
-                try
-                {
-                    await Task.Run(() => File.WriteAllLines(tempFile, paths, new UTF8Encoding(false)));
-                    await SvnRunner.RunAsync($"add --force --parents --targets \"{tempFile}\"", root, false, token);
-                }
-                finally { SafeDelete(tempFile); }
-
-                SVNLogBridge.LogLine($"<color=green>Successfully added:</color> {element.Name}");
-                SVNLogBridge.LogLine("<color=#4FC3F7>Rebuilding tree...</color>");
-
-                var statusModule = svnManager.GetModule<SVNStatus>();
-                if (statusModule != null) await statusModule.RefreshModifiedInternal();
+                SVNLogBridge.LogLine($"<color=green>Successfully added: {element.Name}</color>");
+                await RefreshStatusTreeAsync(token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) { SVNLogBridge.LogLine("<color=orange>Operation cancelled by user.</color>"); }
-            catch (Exception ex) { SVNLogBridge.LogError($"<color=#FFAA00>Add Error: {ex.Message}</color>"); }
-            finally { FinalizeOperation(hasLock); }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange><b>[ABORTED]</b> Add operation cancelled.</color>");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"<color=#FFAA00>Add Error: {ex.Message}</color>");
+            }
+            finally
+            {
+                SafeDelete(tempFile);
+                FinalizeOperation(hasLock, localCts, ownsProcessing);
+            }
         }
 
         private async Task<bool> CleanupWorkingCopyAsync(string root, CancellationToken token)
         {
-            SVNLogBridge.LogLine("Checking working copy locks...");
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(CleanupTimeoutSeconds));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, timeoutCts.Token);
             try
             {
-                await SvnRunner.RunAsync("cleanup", root, false, linkedCts.Token);
-                SVNLogBridge.LogLine("<color=green>Working copy is clean.</color>");
+                await SvnRunner.RunAsync("cleanup", root, false, linkedCts.Token).ConfigureAwait(false);
                 return true;
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
             {
+                SVNLogBridge.LogLine("<color=#FF4444><b>Cleanup timed out.</b></color>");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[Add] Cleanup failed: {ex.Message}");
                 return false;
             }
         }
 
-        private List<string> EnsureParentDirectoriesAreIncluded(List<string> paths, string root)
+        private async Task RefreshStatusTreeAsync(CancellationToken token)
         {
-            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var rawPath in paths)
+            token.ThrowIfCancellationRequested();
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            if (statusModule == null) return;
+            try
             {
-                string current = rawPath?.Replace('\\', '/').Trim('/');
-                if (string.IsNullOrEmpty(current))
-                    continue;
-
-                result.Add(current);
-
-                string parent = Path.GetDirectoryName(current)?.Replace('\\', '/').Trim('/');
-                while (!string.IsNullOrEmpty(parent))
-                {
-                    result.Add(parent);
-                    parent = Path.GetDirectoryName(parent)?.Replace('\\', '/').Trim('/');
-                }
+                statusModule.ClearSVNTreeView();
+                statusModule.ClearCurrentData();
+                await statusModule.RefreshModifiedInternal().ConfigureAwait(false);
             }
-
-            return result.OrderBy(p => p.Count(c => c == '/'))
-                          .ThenBy(p => p, StringComparer.OrdinalIgnoreCase)
-                          .ToList();
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { SVNLogBridge.LogError($"[Add] Failed to refresh status tree: {ex.Message}"); }
         }
 
-        private CancellationToken ResetAndGetToken()
+        private string NormalizeRoot(string root)
         {
-            var oldCts = Interlocked.Exchange(ref _activeCTS, null);
-            try { oldCts?.Cancel(); oldCts?.Dispose(); } catch { }
-            var newCts = new CancellationTokenSource();
-            _activeCTS = newCts;
-            return newCts.Token;
+            if (string.IsNullOrWhiteSpace(root)) return string.Empty;
+            try { return Path.GetFullPath(root.Trim()).Replace('\\', '/').TrimEnd('/'); }
+            catch { return root.Replace('\\', '/').TrimEnd('/'); }
         }
 
-        private void FinalizeOperation(bool hasLock)
+        private bool TryGetRelativePath(string root, string path, out string relativePath)
         {
-            _activeCTS?.Dispose();
-            _activeCTS = null;
+            relativePath = null;
+            if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(path)) return false;
+            string normRoot = NormalizeRoot(root);
+            string normInput = path.Replace('\\', '/').Trim();
+            try
+            {
+                string candidate = Path.IsPathRooted(normInput)
+                    ? Path.GetFullPath(normInput)
+                    : Path.GetFullPath(Path.Combine(normRoot, normInput));
+                candidate = candidate.Replace('\\', '/').TrimEnd('/');
+                if (candidate.Equals(normRoot, StringComparison.OrdinalIgnoreCase)) { relativePath = ""; return true; }
+                string rootWithSlash = normRoot + "/";
+                if (!candidate.StartsWith(rootWithSlash, StringComparison.OrdinalIgnoreCase)) return false;
+                relativePath = candidate.Substring(rootWithSlash.Length).Replace('\\', '/').Trim('/');
+                return !string.IsNullOrWhiteSpace(relativePath);
+            }
+            catch { return false; }
+        }
 
+        private string NormalizeRelativePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            string value = path.Replace('\\', '/').Trim().Trim('/');
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            if (value.Split('/', StringSplitOptions.RemoveEmptyEntries).Any(p => p == "..")) return null;
+            return string.Join("/", value.Split('/', StringSplitOptions.RemoveEmptyEntries));
+        }
+
+        private List<string> ReduceToTopLevelItems(IEnumerable<string> paths)
+        {
+            var normalized = paths.Select(NormalizeRelativePath).Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            return normalized.Where(p => !normalized.Any(parent => parent != p && p.StartsWith(parent + "/", StringComparison.OrdinalIgnoreCase))).ToList();
+        }
+
+        private void FinalizeOperation(bool hasLock, CancellationTokenSource localCts, bool ownsProcessing)
+        {
+            if (localCts != null)
+            {
+                Interlocked.CompareExchange(ref _activeCTS, null, localCts);
+                try { localCts.Dispose(); } catch { }
+            }
             if (hasLock)
             {
-                IsProcessing = false;
+                if (ownsProcessing) IsProcessing = false;
                 try { _operationLock.Release(); }
                 catch (SemaphoreFullException) { }
                 catch (ObjectDisposedException) { }
             }
-            HideProgressBarAfterDelay(1.5f);
+            HideProgressBarAfterDelay(1.0f);
         }
 
-        private void ShowProgressBar()
+        private void ShowProgressBar() => PostToMainThread(() =>
         {
-            PostToMainThread(() =>
+            try
             {
-                if (svnUI?.OperationProgressBar != null)
-                {
-                    svnUI.OperationProgressBar.gameObject.SetActive(true);
-                    svnUI.OperationProgressBar.value = 0.1f;
-                }
-            });
-        }
+                if (svnUI?.OperationProgressBar == null) return;
+                svnUI.OperationProgressBar.gameObject.SetActive(true);
+                svnUI.OperationProgressBar.value = 0.1f;
+            }
+            catch { }
+        });
 
-        private void HideProgressBarAfterDelay(float seconds)
+        private void HideProgressBarAfterDelay(float seconds) => _ = Task.Run(async () =>
         {
-            _ = Task.Run(async () =>
+            try
             {
-                try { await Task.Delay((int)(seconds * 1000)); } catch { }
+                await Task.Delay((int)(seconds * 1000)).ConfigureAwait(false);
                 PostToMainThread(() =>
                 {
-                    if (svnUI?.OperationProgressBar != null && !IsProcessing)
+                    try
                     {
+                        if (svnUI?.OperationProgressBar == null || IsProcessing) return;
                         svnUI.OperationProgressBar.gameObject.SetActive(false);
                         svnUI.OperationProgressBar.value = 0f;
                     }
+                    catch { }
                 });
-            });
+            }
+            catch { }
+        });
+
+        private static void SafeDelete(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
 
-        private static void SafeDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+            Cancel();
+            try { _operationLock.Dispose(); } catch { }
+            GC.SuppressFinalize(this);
+        }
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,6 +13,7 @@ namespace SVN.Core
     {
         private CancellationTokenSource _cts;
         private int _processingFlag;
+        private int _disposed;
         private readonly SynchronizationContext _mainThreadContext;
 
         public SVNBlame(SVNUI ui, SVNManager manager) : base(ui, manager)
@@ -21,15 +23,29 @@ namespace SVN.Core
 
         public void Dispose()
         {
-            _cts?.Cancel();
-            _cts?.Dispose();
-            _cts = null;
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+            var cts = Interlocked.Exchange(ref _cts, null);
+            if (cts != null)
+            {
+                try { cts.Cancel(); } catch { }
+                try { cts.Dispose(); } catch { }
+            }
         }
 
-        public void Cancel() => _cts?.Cancel();
+        public void Cancel()
+        {
+            try
+            {
+                var cts = Volatile.Read(ref _cts);
+                if (cts == null || cts.IsCancellationRequested) return;
+                cts.Cancel();
+            }
+            catch (ObjectDisposedException) { }
+        }
 
         private bool TryEnterProcessing()
         {
+            if (Volatile.Read(ref _disposed) == 1) return false;
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1) return false;
             IsProcessing = true;
             return true;
@@ -80,8 +96,15 @@ namespace SVN.Core
                     return;
                 }
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                _cts = cts;
+                if (!IsValidPath(relativePath))
+                {
+                    PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
+                    ExitProcessing();
+                    return;
+                }
+
+                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                Interlocked.Exchange(ref _cts, cts);
                 try
                 {
                     await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
@@ -93,7 +116,8 @@ namespace SVN.Core
                 }
                 finally
                 {
-                    _cts = null;
+                    Interlocked.CompareExchange(ref _cts, null, cts);
+                    try { cts.Dispose(); } catch { }
                     ExitProcessing();
                 }
             });
@@ -101,14 +125,25 @@ namespace SVN.Core
 
         public async Task ShowBlame(string relativePath, CancellationToken token = default)
         {
+            if (!IsValidPath(relativePath))
+            {
+                PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
+                return;
+            }
             await ShowBlameInternal(relativePath, token).ConfigureAwait(false);
         }
 
         public async Task ShowBlameInExternalEditor(string relativePath)
         {
             if (!TryEnterProcessing()) return;
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            _cts = cts;
+            if (!IsValidPath(relativePath))
+            {
+                PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
+                ExitProcessing();
+                return;
+            }
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            Interlocked.Exchange(ref _cts, cts);
             try
             {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
@@ -116,7 +151,8 @@ namespace SVN.Core
             }
             finally
             {
-                _cts = null;
+                Interlocked.CompareExchange(ref _cts, null, cts);
+                try { cts.Dispose(); } catch { }
                 ExitProcessing();
             }
         }
@@ -124,8 +160,14 @@ namespace SVN.Core
         public async Task ShowBlameInMainConsole(string relativePath)
         {
             if (!TryEnterProcessing()) return;
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            _cts = cts;
+            if (!IsValidPath(relativePath))
+            {
+                PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
+                ExitProcessing();
+                return;
+            }
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            Interlocked.Exchange(ref _cts, cts);
             try
             {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
@@ -133,9 +175,19 @@ namespace SVN.Core
             }
             finally
             {
-                _cts = null;
+                Interlocked.CompareExchange(ref _cts, null, cts);
+                try { cts.Dispose(); } catch { }
                 ExitProcessing();
             }
+        }
+
+        private static bool IsValidPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+            return !path.Contains("..") &&
+                   path.IndexOf('\0') < 0 &&
+                   !path.Any(char.IsControl);
         }
 
         private async Task ShowBlameInternal(string relativePath, CancellationToken token, bool forceMainConsole = false)
@@ -384,8 +436,11 @@ namespace SVN.Core
             }
         }
 
-        private static string EscapeSvnArg(string arg) =>
-            string.IsNullOrWhiteSpace(arg) ? arg : arg.Replace("\"", "\\\"");
+        private static string EscapeSvnArg(string arg)
+        {
+            if (string.IsNullOrWhiteSpace(arg)) return arg;
+            return arg.Replace("\"", "\\\"");
+        }
 
         private string GetBlameToolPath()
         {
@@ -395,7 +450,7 @@ namespace SVN.Core
 
             if (!string.IsNullOrWhiteSpace(path))
             {
-                path = path.Trim().Replace("\"", "").Replace('/', '\\');
+                path = path.Trim().Trim('"');
             }
 
             return path;
@@ -419,7 +474,7 @@ namespace SVN.Core
 
             if (!string.IsNullOrWhiteSpace(path))
             {
-                path = path.Trim().Replace("\"", "").Replace('/', '\\');
+                path = path.Trim().Trim('"');
             }
 
             return path;
@@ -479,7 +534,7 @@ namespace SVN.Core
             catch { }
         }
 
-        private void DisplayBlameMessage(string message, bool targetMainConsole = false)
+        private void DisplayBlameMessage(string message)
         {
             bool updatedAny = false;
 

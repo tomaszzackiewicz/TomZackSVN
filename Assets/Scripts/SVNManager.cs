@@ -5,6 +5,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace SVN.Core
 {
@@ -22,6 +25,7 @@ namespace SVN.Core
         public const string KEY_RESOLVE_TOOL = "SVN_Persisted_ResolveTool";
         public const string KEY_DIFF_TOOL = "SVN_Persisted_DiffTool";
         public const string KEY_BLAME_TOOL = "SVN_Persisted_BlameTool";
+        public const string KEY_SSH_OPTIONS = "SVN_Persisted_SshOptions";
 
         [Header("UI References")]
         [SerializeField] private SVNUI svnUI = null;
@@ -49,6 +53,8 @@ namespace SVN.Core
         private int _diskChangesDetectedFlag = 0;
         private int _diskDebouncePending = 0;
         private DateTime _lastDiskEventTime = DateTime.MinValue;
+        private string sshOptions = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
+        
 
         private SVNPollingService _cachedPoller;
 
@@ -76,6 +82,7 @@ namespace SVN.Core
         public string DiffToolPath { get; set; } = string.Empty;
         public string ResolveToolPath { get; set; } = string.Empty;
         public string BlameToolPath { get; set; } = string.Empty;
+        public string SshOptions { get => sshOptions; set => sshOptions = value; }
 
         public void SetCurrentStatus(Dictionary<string, (string status, string size)> data)
         {
@@ -216,7 +223,6 @@ namespace SVN.Core
             }
             return null;
         }
-
         public string GetRepoRoot() => SVNAssetLocator.GetRepoRoot(RepositoryUrl);
         public string ParseRevision(string input) => SVNAssetLocator.ParseRevision(input);
 
@@ -351,6 +357,8 @@ namespace SVN.Core
                 ResolveToolPath = GetSettingWithFallback(project.resolveToolPath, KEY_RESOLVE_TOOL);
                 BlameToolPath = GetSettingWithFallback(project.blameToolPath, KEY_BLAME_TOOL);
                 SvnRunner.KeyPath = CurrentKey;
+                SshOptions = GetSettingWithFallback(project.sshOptions, KEY_SSH_OPTIONS) ?? "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
+                SvnRunner.SshOptions = SshOptions;
 
                 var projects = ProjectSettings.LoadProjects();
                 string normalizedDir = WorkingDir.Replace("\\", "/").TrimEnd('/');
@@ -411,6 +419,27 @@ namespace SVN.Core
             await RefreshRepositoryInfo();
             if (this == null) return;
 
+            string repoRoot = GetRepoRoot();
+            if (!string.IsNullOrEmpty(RepositoryUrl) &&
+                !string.IsNullOrEmpty(repoRoot) &&
+                RepositoryUrl.TrimEnd('/').Equals(repoRoot.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+            {
+                SVNLogBridge.LogToOutput("<color=#00CCFF>[SVN Init] Working copy is rooted at repository root. Auto-switching to standard branch layout (trunk) to conform to SVN standards...</color>");
+
+                try
+                {
+                    // POPRAWKA: Trunk jest bezpośrednio pod rootem, nie w branches/trunk
+                    string standardBranchUrl = $"{repoRoot}/trunk";
+                    await SvnRunner.RunAsync($"switch \"{standardBranchUrl}\" \"{WorkingDir}\" --non-interactive", WorkingDir, false, _lifetimeCts.Token);
+
+                    RepositoryUrl = standardBranchUrl;
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogErrorToOutput($"[SVN Init] Auto-switch from root failed: {ex.Message}");
+                }
+            }
+
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
@@ -467,6 +496,7 @@ namespace SVN.Core
             svnUI.SettingsResolveToolPathInput?.SetTextWithoutNotify(ResolveToolPath);
             svnUI.SettingsDiffToolPathInput?.SetTextWithoutNotify(DiffToolPath);
             svnUI.SettingsBlameToolPathInput?.SetTextWithoutNotify(BlameToolPath);
+            // svnUI.SettingsSshOptionsInput?.SetTextWithoutNotify(SshOptions);
         }
 
         public void ApplySettingsSnapshot()
@@ -855,6 +885,7 @@ namespace SVN.Core
                     current.diffToolPath = DiffToolPath;
                     current.resolveToolPath = ResolveToolPath;
                     current.blameToolPath = BlameToolPath;
+                    current.sshOptions = SshOptions;
                     ProjectSettings.SaveProjects(projects);
                 }
             }
@@ -1111,5 +1142,27 @@ namespace SVN.Core
 
             _managerLock?.Dispose();
         }
+
+        #if UNITY_EDITOR
+
+    [InitializeOnLoad]
+    public static class SvnEditorLifecycle
+    {
+        static SvnEditorLifecycle()
+        {
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+        }
+
+        private static void OnPlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredPlayMode)
+            {
+                SvnProcessTracker.KillAll();
+
+                SvnRunner.ResetStaticState();
+            }
+        }
+    }
+    #endif
     }
 }

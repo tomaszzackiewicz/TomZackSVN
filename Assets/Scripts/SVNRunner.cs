@@ -27,6 +27,8 @@ namespace SVN.Core
         private static readonly TimeSpan InfoCacheDuration = TimeSpan.FromSeconds(2);
         private static readonly object _infoCacheLock = new();
 
+        public static string SshOptions { get; set; } = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
+
         public static string KeyPath
         {
             get
@@ -76,6 +78,26 @@ namespace SVN.Core
                     InvokeProcessingStateChanged(false);
                 }
             }
+        }
+
+        private static string BuildSshEnvironmentString(string keyPath)
+        {
+            // Base command with NON-NEGOTIABLE flags for automated Unity environment
+            string baseCmd = "ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=QUIET";
+
+            if (!string.IsNullOrEmpty(keyPath))
+            {
+                string safeKeyPath = keyPath.Trim().Replace("\"", "").Replace('\\', '/');
+                baseCmd += $" -i \"{safeKeyPath}\"";
+            }
+
+            // Append user-configurable options
+            if (!string.IsNullOrWhiteSpace(SshOptions))
+            {
+                baseCmd += " " + SshOptions.Trim();
+            }
+
+            return baseCmd;
         }
 
         private static void InvokeProcessingStateChanged(bool state)
@@ -236,25 +258,11 @@ namespace SVN.Core
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 StandardOutputEncoding = new UTF8Encoding(false),
-                StandardErrorEncoding = new UTF8Encoding(false)
+                StandardErrorEncoding = new UTF8Encoding(false),
+                Arguments = BuildSafeArguments(args)
             };
 
-            foreach (var arg in args)
-                psi.ArgumentList.Add(arg);
-
-            if (!string.IsNullOrEmpty(KeyPath))
-            {
-                string safeKeyPath = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
-                psi.EnvironmentVariables["SVN_SSH"] =
-                    $"ssh -i \"{safeKeyPath}\" " +
-                    "-o IdentitiesOnly=yes " +
-                    "-o StrictHostKeyChecking=no " +
-                    "-o BatchMode=yes " +
-                    "-o LogLevel=QUIET " +
-                    "-o ServerAliveInterval=15 " +
-                    "-o ServerAliveCountMax=10 " +
-                    "-o IPQoS=throughput";
-            }
+            psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
 
             using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             SvnProcessTracker.Register(process);
@@ -372,25 +380,11 @@ namespace SVN.Core
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     StandardOutputEncoding = new UTF8Encoding(false),
-                    StandardErrorEncoding = new UTF8Encoding(false)
+                    StandardErrorEncoding = new UTF8Encoding(false),
+                    Arguments = BuildSafeArguments(finalArgs)
                 };
 
-                foreach (var arg in finalArgs)
-                    psi.ArgumentList.Add(arg);
-
-                if (!string.IsNullOrEmpty(KeyPath))
-                {
-                    string safeKey = KeyPath.Trim().Replace("\"", "").Replace('\\', '/');
-                    psi.EnvironmentVariables["SVN_SSH"] =
-                        $"ssh -i \"{safeKey}\" " +
-                        "-o IdentitiesOnly=yes " +
-                        "-o StrictHostKeyChecking=no " +
-                        "-o BatchMode=yes " +
-                        "-o LogLevel=QUIET " +
-                        "-o ServerAliveInterval=15 " +
-                        "-o ServerAliveCountMax=10 " +
-                        "-o IPQoS=throughput";
-                }
+                psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
 
                 process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 SvnProcessTracker.Register(process);
@@ -505,19 +499,11 @@ namespace SVN.Core
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     StandardOutputEncoding = new UTF8Encoding(false),
-                    StandardErrorEncoding = new UTF8Encoding(false)
+                    StandardErrorEncoding = new UTF8Encoding(false),
+                    Arguments = BuildSafeArguments(finalArgs)
                 };
 
-                foreach (var arg in finalArgs)
-                    psi.ArgumentList.Add(arg);
-
-                string sshKeyPath = KeyPath;
-                if (!string.IsNullOrWhiteSpace(sshKeyPath))
-                {
-                    string safeKeyPath = sshKeyPath.Trim().Trim('"').Replace("\\", "/");
-                    psi.EnvironmentVariables["SVN_SSH"] =
-                        $"ssh -i \"{safeKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=QUIET";
-                }
+                psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
 
                 using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 SvnProcessTracker.Register(process);
@@ -613,26 +599,11 @@ namespace SVN.Core
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     StandardOutputEncoding = new UTF8Encoding(false),
-                    StandardErrorEncoding = new UTF8Encoding(false)
+                    StandardErrorEncoding = new UTF8Encoding(false),
+                    Arguments = BuildSafeArguments(finalArgs)
                 };
 
-                foreach (var arg in finalArgs)
-                    psi.ArgumentList.Add(arg);
-
-                string sshKeyPath = KeyPath;
-                if (!string.IsNullOrWhiteSpace(sshKeyPath))
-                {
-                    string safeKeyPath = sshKeyPath.Trim().Trim('"').Replace("\\", "/");
-                    psi.EnvironmentVariables["SVN_SSH"] =
-                        $"ssh -i \"{safeKeyPath}\" " +
-                        "-o IdentitiesOnly=yes " +
-                        "-o StrictHostKeyChecking=no " +
-                        "-o BatchMode=yes " +
-                        "-o LogLevel=QUIET " +
-                        "-o ServerAliveInterval=15 " +
-                        "-o ServerAliveCountMax=10 " +
-                        "-o IPQoS=throughput";
-                }
+                psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
 
                 using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 SvnProcessTracker.Register(process);
@@ -941,66 +912,63 @@ namespace SVN.Core
         }
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(
-            string workingDir,
-            bool includeIgnored = true)
+    string workingDir,
+    bool includeIgnored = true)
         {
-            string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
+            if (string.IsNullOrWhiteSpace(workingDir))
+                throw new ArgumentException("Working directory cannot be null or empty.", nameof(workingDir));
 
+            string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
             string output = await RunAsync("status --no-ignore", cleanWorkingDir);
 
-            var statusDict = new Dictionary<string, (string status, string size)>();
+            var statusDict = new Dictionary<string, (string status, string size)>(StringComparer.OrdinalIgnoreCase);
 
-            if (string.IsNullOrEmpty(output))
+            if (string.IsNullOrWhiteSpace(output))
                 return statusDict;
 
-            using (var reader = new StringReader(output))
+            using var reader = new StringReader(output);
+            string rawLine;
+
+            while ((rawLine = reader.ReadLine()) != null)
             {
-                string rawLine;
-                while ((rawLine = reader.ReadLine()) != null)
+                if (string.IsNullOrWhiteSpace(rawLine)) continue;
+                string line = rawLine;
+
+                if (line.Length < 9) continue;
+
+                char contentStatus = line[0];
+                char propertyStatus = line[1];
+                char treeConflictStatus = line.Length > 6 ? line[6] : ' ';
+
+                string stat = contentStatus.ToString();
+
+                if (propertyStatus == 'C' || treeConflictStatus == 'C')
                 {
-                    if (string.IsNullOrWhiteSpace(rawLine)) continue;
-                    string line = rawLine;
+                    stat = "C";
+                }
 
-                    if (line.Length < 9) continue;
+                string pathPart = line.Substring(8).TrimStart();
+                if (string.IsNullOrWhiteSpace(pathPart)) continue;
 
-                    char contentStatus = line[0];
-                    char propStatus = line[1];
+                string rawPath = new string(pathPart.Where(c => !char.IsControl(c) && c != '\t' && c != '\u00A0').ToArray()).Trim();
+                if (string.IsNullOrWhiteSpace(rawPath)) continue;
 
-                    string stat = contentStatus.ToString();
+                string cleanPath = rawPath.Replace('\\', '/').Trim('/');
+                if (string.IsNullOrWhiteSpace(cleanPath)) continue;
 
-                    if (stat == " " && propStatus == 'C')
-                        stat = "C";
+                bool isRelevant = "MADR?!C".Contains(stat) || (includeIgnored && stat == "I");
+                if (!isRelevant) continue;
 
-                    string pathPart = line.Length >= 9 ? line.Substring(8).TrimStart() : "";
+                string fullPath = Path.Combine(cleanWorkingDir, rawPath);
+                string size = "";
 
-                    if (string.IsNullOrWhiteSpace(pathPart)) continue;
-
-                    string rawPath = new string(pathPart
-                        .Where(c => !char.IsControl(c) && c != '\t' && c != '\u00A0')
-                        .ToArray())
-                        .Trim();
-
-                    if (string.IsNullOrWhiteSpace(rawPath)) continue;
-
-                    string cleanPath = rawPath.Replace('\\', '/').Trim('/');
-
-                    bool isRelevant = "MA?!DC".Contains(stat) || (includeIgnored && stat == "I");
-                    if (!isRelevant) continue;
-
-                    string fullPath = Path.Combine(cleanWorkingDir, rawPath);
-
-                    if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
-                    {
-                        statusDict[cleanPath] = (stat, "");
-                        continue;
-                    }
-
-                    string size = "";
+                if (File.Exists(fullPath))
+                {
                     try { size = GetFileSizeSafe(fullPath); }
                     catch { size = ""; }
-
-                    statusDict[cleanPath] = (stat, size);
                 }
+
+                statusDict[cleanPath] = (stat, size);
             }
 
             SVNLogBridge.LogToOutput($"<color=green>[SVN]</color> Parser finished. Dictionary count: {statusDict.Count}");
@@ -1126,5 +1094,15 @@ namespace SVN.Core
 
             return path;
         }
+
+#if UNITY_EDITOR
+        public static void ResetStaticState()
+        {
+            lock (_infoCacheLock)
+            {
+                _infoCache.Clear();
+            }
+        }
+#endif
     }
 }

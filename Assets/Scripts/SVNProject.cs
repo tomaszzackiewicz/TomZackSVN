@@ -16,6 +16,7 @@ namespace SVN.Core
         public string resolveToolPath;
         public string diffToolPath;
         public string blameToolPath;
+        public string sshOptions;
 
         [SerializeField]
         private string lastOpenedString;

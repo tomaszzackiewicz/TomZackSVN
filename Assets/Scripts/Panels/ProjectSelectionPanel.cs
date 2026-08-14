@@ -376,6 +376,20 @@ public class ProjectSelectionPanel : MonoBehaviour
         svnManager.CurrentSnapshot = null;
         svnManager.IsUpdateRunning = false;
 
+        UnityMainThreadDispatcher.Enqueue(() =>
+        {
+            if (svnUI == null) return;
+
+            SVNLogBridge.LogLine("", append: false);
+
+            var graphModule = svnManager?.GetModule<SVNRevGraph>();
+            graphModule?.ClearGraph();
+
+            var statusModule = svnManager?.GetModule<SVNStatus>();
+            statusModule?.ClearCurrentData();
+            statusModule?.ClearSVNTreeView();
+        });
+
         project.lastOpened = DateTime.UtcNow;
         UpdateProjectLastOpened(project);
 
@@ -383,8 +397,7 @@ public class ProjectSelectionPanel : MonoBehaviour
         {
             var statusModule = svnManager.GetModule<SVNStatus>();
             var settingsModule = svnManager.GetModule<SVNSettings>();
-            statusModule?.ClearCurrentData();
-            statusModule?.ClearSVNTreeView();
+
             svnManager.CurrentKey = string.IsNullOrWhiteSpace(project.privateKeyPath) ? "" : project.privateKeyPath;
 
             await svnManager.LoadProject(project);

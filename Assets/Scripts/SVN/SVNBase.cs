@@ -48,16 +48,20 @@ namespace SVN.Core
             string cleaned = Regex.Replace(text, pattern, "", RegexOptions.IgnoreCase);
 
             string[] lines = cleaned.Split(
-                new[] { "\n", "\r" },
-                StringSplitOptions.RemoveEmptyEntries);
+                new[] { "\r\n", "\n", "\r" },
+                StringSplitOptions.None);
 
             var finalLines = new System.Collections.Generic.List<string>(lines.Length);
 
             foreach (var line in lines)
             {
                 string trimmed = line.Trim();
-                if (trimmed.Contains("*****") || trimmed.Contains("@@@@@"))
+
+                if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@") ||
+                    trimmed.EndsWith("*****") || trimmed.EndsWith("@@@@@"))
+                {
                     continue;
+                }
 
                 finalLines.Add(line);
             }
@@ -65,10 +69,7 @@ namespace SVN.Core
             return string.Join("\n", finalLines);
         }
 
-        protected virtual TMP_Text GetConsole()
-        {
-            return null;
-        }
+        protected virtual TMP_Text GetConsole() => null;
 
         protected void Append(string msg, string color)
         {
@@ -77,14 +78,9 @@ namespace SVN.Core
                 console.text += $"<color={color}>{msg}</color>\n";
         }
 
-        protected void LogInfo(string msg)
-            => Append(msg, "#0400ff");
-
-        protected void LogSuccess(string msg)
-            => Append(msg, "#01ff09");
-
-        protected void LogWarning(string msg)
-            => Append(msg, "#FFEB3B");
+        protected void LogInfo(string msg) => Append(msg, "#0400ff");
+        protected void LogSuccess(string msg) => Append(msg, "#01ff09");
+        protected void LogWarning(string msg) => Append(msg, "#FFEB3B");
 
         protected void LogErrorLocal(string msg)
         {

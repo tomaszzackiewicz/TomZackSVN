@@ -24,16 +24,28 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(url)) return string.Empty;
 
             url = url.TrimEnd('/');
-            string[] markers = { "/trunk", "/branches", "/tags" };
 
-            foreach (var marker in markers)
+            // 1. Jeśli URL kończy się dokładnie na "/trunk" (np. .../Test/trunk), korzeniem jest to co przed nim.
+            if (url.EndsWith("/trunk", StringComparison.OrdinalIgnoreCase))
             {
-                int index = url.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-                if (index != -1)
-                {
-                    return url.Substring(0, index);
-                }
+                return url.Substring(0, url.Length - 6); // 6 to długość "/trunk"
             }
+
+            // 2. Szukamy ostatniego wystąpienia pełnego folderu "/branches/"
+            int branchesIdx = url.LastIndexOf("/branches/", StringComparison.OrdinalIgnoreCase);
+            if (branchesIdx >= 0)
+            {
+                return url.Substring(0, branchesIdx);
+            }
+
+            // 3. Szukamy ostatniego wystąpienia pełnego folderu "/tags/"
+            int tagsIdx = url.LastIndexOf("/tags/", StringComparison.OrdinalIgnoreCase);
+            if (tagsIdx >= 0)
+            {
+                return url.Substring(0, tagsIdx);
+            }
+
+            // 4. Jeśli nie ma żadnego ze standardowych folderów, zwracamy URL bez zmian
             return url;
         }
 

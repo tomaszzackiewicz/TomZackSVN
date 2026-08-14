@@ -11,11 +11,15 @@ namespace SVN.Core
 
         private bool isExpanded = false;
 
-        private void Start()
+        private void OnEnable()
         {
             svnUI = SVNUI.Instance;
             svnManager = SVNManager.Instance;
             terminal = svnManager?.GetModule<SVNTerminal>();
+        }
+
+        private void Start()
+        {
             terminal?.SetInputField(svnUI?.TerminalInputField);
 
             if (svnUI?.TerminalInputField != null)

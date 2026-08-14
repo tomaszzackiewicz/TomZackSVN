@@ -4,9 +4,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Text.RegularExpressions;
 using UnityEngine;
 
 namespace SVN.Core
@@ -55,16 +55,8 @@ namespace SVN.Core
             catch (Exception ex) { PostUI(() => SVNLogBridge.LogErrorToOutput($"[SVN] Unhandled: {ex.Message}")); }
         }
 
-        public void RefreshIgnoredPanel()
-        {
-            SafeFireAndForget(RefreshIgnoredPanelAsync);
-        }
-
-        public void OpenIgnoredFilesInEditor()
-        {
-            SafeFireAndForget(OpenIgnoredFilesInEditorAsync);
-        }
-
+        public void RefreshIgnoredPanel() => SafeFireAndForget(() => RefreshIgnoredPanelAsync());
+        public void OpenIgnoredFilesInEditor() => SafeFireAndForget(() => OpenIgnoredFilesInEditorAsync());
         public void ReloadIgnoreRules()
         {
             if (svnManager != null && !string.IsNullOrEmpty(svnManager.WorkingDir))
@@ -73,17 +65,14 @@ namespace SVN.Core
                 SVNLogBridge.LogErrorToOutput("[SVN] Cannot reload: WorkingDir is null or empty.");
         }
 
-        public void PushLocalRulesToSvn()
-        {
-            SafeFireAndForget(PushLocalRulesToSvnAsync);
-        }
+        public void PushLocalRulesToSvn() => SafeFireAndForget(() => PushLocalRulesToSvnAsync());
 
-        public async Task<Dictionary<string, (string status, string size)>> GetIgnoredOnlyAsync(string workingDir)
+        public async Task<Dictionary<string, (string status, string size)>> GetIgnoredOnlyAsync(string workingDir, CancellationToken token = default)
         {
             workingDir = NormalizePath(workingDir);
             var ignoredDict = new Dictionary<string, (string status, string size)>(StringComparer.OrdinalIgnoreCase);
 
-            string output = await SvnRunner.RunAsync("status --no-ignore", workingDir, false, CancellationToken.None).ConfigureAwait(false);
+            string output = await SvnRunner.RunAsync("status --no-ignore", workingDir, false, token).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(output))
             {
                 foreach (var line in output.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries))
@@ -97,7 +86,7 @@ namespace SVN.Core
                 }
             }
 
-            List<string> activeRules = await GetIgnoreRulesFromSvnAsync(workingDir).ConfigureAwait(false);
+            List<string> activeRules = await GetIgnoreRulesFromSvnAsync(workingDir, token).ConfigureAwait(false);
             lock (_cacheLock)
             {
                 foreach (var rule in _cachedIgnoreRules)
@@ -109,7 +98,9 @@ namespace SVN.Core
 
             if (activeRules.Count > 0 && Directory.Exists(workingDir))
             {
-                string[] allEntries = Directory.GetFileSystemEntries(workingDir, "*", SearchOption.AllDirectories);
+                string[] allEntries = await Task.Run(() =>
+                    Directory.GetFileSystemEntries(workingDir, "*", SearchOption.AllDirectories), token).ConfigureAwait(false);
+
                 foreach (var entry in allEntries)
                 {
                     string relPath = entry.Replace(workingDir, "").TrimStart('\\', '/').Replace('\\', '/');
@@ -126,7 +117,7 @@ namespace SVN.Core
             return ignoredDict;
         }
 
-        public async Task RefreshIgnoredPanelAsync()
+        public async Task RefreshIgnoredPanelAsync(CancellationToken token = default)
         {
             if (!TryEnterProcessing()) return;
 
@@ -158,7 +149,7 @@ namespace SVN.Core
                     sb.AppendLine("--------------------------------------------------\n");
                 }
 
-                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root).ConfigureAwait(false);
+                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root, token).ConfigureAwait(false);
 
                 lock (_cacheLock)
                 {
@@ -203,7 +194,7 @@ namespace SVN.Core
             }
         }
 
-        private async Task OpenIgnoredFilesInEditorAsync()
+        private async Task OpenIgnoredFilesInEditorAsync(CancellationToken token = default)
         {
             if (!TryEnterProcessing())
             {
@@ -222,7 +213,7 @@ namespace SVN.Core
 
                 PostUI(() => UpdateStatusInUI("<color=yellow><b>[DISK SCAN]</b> Scanning all local files against ignore rules...\nThis may take 10-30 seconds for large projects. Please wait.</color>"));
 
-                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root).ConfigureAwait(false);
+                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root, token).ConfigureAwait(false);
                 lock (_cacheLock)
                 {
                     if (_cachedIgnoreRules != null)
@@ -239,21 +230,20 @@ namespace SVN.Core
 
                 if (activeRules.Count > 0 && Directory.Exists(root))
                 {
-                    await Task.Run(() =>
-                    {
-                        string[] allEntries = Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories);
-                        foreach (var entry in allEntries)
-                        {
-                            string name = Path.GetFileName(entry);
-                            string relPath = entry.Replace(root, "").TrimStart('\\', '/').Replace('\\', '/');
-                            if (relPath.Contains(".svn")) continue;
+                    string[] allEntries = await Task.Run(() =>
+                        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories), token).ConfigureAwait(false);
 
-                            if (IsIgnoredByRules(name, relPath, activeRules))
-                            {
-                                fullIgnoredList.Add(relPath);
-                            }
+                    foreach (var entry in allEntries)
+                    {
+                        string name = Path.GetFileName(entry);
+                        string relPath = entry.Replace(root, "").TrimStart('\\', '/').Replace('\\', '/');
+                        if (relPath.Contains(".svn")) continue;
+
+                        if (IsIgnoredByRules(name, relPath, activeRules))
+                        {
+                            fullIgnoredList.Add(relPath);
                         }
-                    }).ConfigureAwait(false);
+                    }
                 }
 
                 if (fullIgnoredList.Count == 0)
@@ -298,38 +288,45 @@ namespace SVN.Core
 
                 string editorPath = svnManager?.MergeToolPath;
 
-                if (!string.IsNullOrWhiteSpace(editorPath) && File.Exists(editorPath))
+                try
                 {
-                    Process.Start(new ProcessStartInfo
+                    if (!string.IsNullOrWhiteSpace(editorPath) && File.Exists(editorPath))
                     {
-                        FileName = editorPath,
-                        Arguments = $"\"{tempFilePath}\"",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    });
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = editorPath,
+                            Arguments = $"\"{tempFilePath}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        });
+                    }
+                    else
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = tempFilePath,
+                            UseShellExecute = true
+                        });
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = tempFilePath,
-                        UseShellExecute = true
-                    });
+                    SVNLogBridge.LogErrorToOutput($"[SVN Ignore] Could not open text editor: {ex.Message}");
                 }
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogErrorToOutput($"[SVN Ignore] Could not open text editor: {ex.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN Ignore] Could not create report: {ex.Message}");
             }
         }
 
-        public async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir)
+        public async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir, CancellationToken token = default)
         {
             var rules = new List<string>();
             try
             {
-                string globalOutput = await SvnRunner.RunAsync("propget svn:global-ignores -R .", workingDir, false, CancellationToken.None).ConfigureAwait(false);
-                string standardOutput = await SvnRunner.RunAsync("propget svn:ignore -R .", workingDir, false, CancellationToken.None).ConfigureAwait(false);
+                string globalOutput = await SvnRunner.RunAsync("propget svn:global-ignores -R .", workingDir, false, token).ConfigureAwait(false);
+                string standardOutput = await SvnRunner.RunAsync("propget svn:ignore -R .", workingDir, false, token).ConfigureAwait(false);
 
                 string combinedOutput = (globalOutput ?? "") + "\n" + (standardOutput ?? "");
 
@@ -360,6 +357,9 @@ namespace SVN.Core
         {
             if (!TryEnterProcessing()) return;
 
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            CancellationToken token = cts.Token;
+
             try
             {
                 string root = svnManager?.WorkingDir;
@@ -376,13 +376,13 @@ namespace SVN.Core
                     return;
                 }
 
-                string rules = await File.ReadAllTextAsync(ignoreFilePath).ConfigureAwait(false);
-                bool success = await SetSvnGlobalIgnorePropertyAsync(root, rules).ConfigureAwait(false);
+                string rules = await File.ReadAllTextAsync(ignoreFilePath, token).ConfigureAwait(false);
+                bool success = await SetSvnGlobalIgnorePropertyAsync(root, rules, token).ConfigureAwait(false);
 
                 if (success)
                 {
                     PostUI(() => UpdateStatusInUI("SUCCESS: Global ignores set. Commit the root folder."));
-                    await RefreshIgnoredPanelAsync().ConfigureAwait(false);
+                    await RefreshIgnoredPanelAsync(token).ConfigureAwait(false);
                 }
             }
             finally
@@ -391,14 +391,14 @@ namespace SVN.Core
             }
         }
 
-        public static async Task<bool> SetSvnGlobalIgnorePropertyAsync(string workingDir, string rulesRawText)
+        public static async Task<bool> SetSvnGlobalIgnorePropertyAsync(string workingDir, string rulesRawText, CancellationToken token = default)
         {
             string tempFilePath = Path.Combine(workingDir, "temp_global_ignore.txt");
             try
             {
-                await File.WriteAllTextAsync(tempFilePath, rulesRawText.Replace("\r\n", "\n")).ConfigureAwait(false);
+                await File.WriteAllTextAsync(tempFilePath, rulesRawText.Replace("\r\n", "\n"), token).ConfigureAwait(false);
 
-                string result = await SvnRunner.RunAsync($"propset svn:global-ignores -F \"{tempFilePath}\" .", workingDir, false, CancellationToken.None).ConfigureAwait(false);
+                string result = await SvnRunner.RunAsync($"propset svn:global-ignores -F \"{tempFilePath}\" .", workingDir, false, token).ConfigureAwait(false);
 
                 return !result.StartsWith("ERROR");
             }

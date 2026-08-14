@@ -16,6 +16,8 @@ namespace SVN.Core
         private readonly SynchronizationContext _mainThreadContext;
         private static readonly Regex DiffSectionRegex = new Regex(@"@@ -(\d+),?\d* \+(\d+),?\d* @@", RegexOptions.Compiled);
 
+        private CancellationTokenSource _operationCts;
+
         public SVNDiff(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
@@ -66,7 +68,57 @@ namespace SVN.Core
         private async Task FireAndForget(Func<Task> operation)
         {
             try { await operation().ConfigureAwait(false); }
+            catch (OperationCanceledException) { PostLog("<color=orange>Operation cancelled.</color>"); }
             catch (Exception ex) { PostLog($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
+        }
+
+        private CancellationToken RefreshToken()
+        {
+            try
+            {
+                _operationCts?.Cancel();
+                _operationCts?.Dispose();
+            }
+            catch { }
+            _operationCts = new CancellationTokenSource();
+            return _operationCts.Token;
+        }
+
+        public void CancelOperation()
+        {
+            try { _operationCts?.Cancel(); }
+            catch { }
+        }
+
+        private bool TryGetRelativePath(string root, string input, out string safeRelative)
+        {
+            safeRelative = null;
+            if (string.IsNullOrWhiteSpace(root) || string.IsNullOrWhiteSpace(input)) return false;
+            try
+            {
+                // Path.GetFullPath zablokuje nielegalne znaki (np. |, ?, *) rzucając wyjątkiem,
+                // co uchroni nas przed command injection.
+                string fullRoot = Path.GetFullPath(root).Replace('\\', '/').TrimEnd('/');
+                string fullInput = Path.GetFullPath(Path.Combine(fullRoot, input)).Replace('\\', '/');
+
+                if (fullInput.Equals(fullRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    safeRelative = "";
+                    return true;
+                }
+
+                if (fullInput.StartsWith(fullRoot + "/", StringComparison.OrdinalIgnoreCase))
+                {
+                    safeRelative = fullInput.Substring(fullRoot.Length + 1);
+                    return true;
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public void Button_BrowseDiffFilePath()
@@ -117,7 +169,8 @@ namespace SVN.Core
                     }
 
                     await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                    await ShowDiffInternal(relativePath, openExternal: true).ConfigureAwait(false);
+                    var token = RefreshToken();
+                    await ShowDiffInternal(relativePath, openExternal: true, token).ConfigureAwait(false);
                 }
                 finally { ExitProcessing(); }
             });
@@ -125,12 +178,14 @@ namespace SVN.Core
 
         public async Task ShowDiff(string relativePath)
         {
-            await ShowDiffInternal(relativePath, openExternal: true).ConfigureAwait(false);
+            var token = RefreshToken();
+            await ShowDiffInternal(relativePath, openExternal: true, token).ConfigureAwait(false);
         }
 
         public async Task ShowPreviewInUnity(string relativePath)
         {
-            await ShowDiffInternal(relativePath, openExternal: false).ConfigureAwait(false);
+            var token = RefreshToken();
+            await ShowDiffInternal(relativePath, openExternal: false, token).ConfigureAwait(false);
         }
 
         public void OpenExternalDiff(SvnTreeElement element)
@@ -145,7 +200,7 @@ namespace SVN.Core
             SafeFireAndForget(() => ShowPreviewInUnity(element.FullPath));
         }
 
-        private async Task ShowDiffInternal(string relativePath, bool openExternal)
+        private async Task ShowDiffInternal(string relativePath, bool openExternal, CancellationToken token)
         {
             try
             {
@@ -155,26 +210,32 @@ namespace SVN.Core
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(relativePath))
+                if (!TryGetRelativePath(svnManager.WorkingDir, relativePath, out string safePath))
+                {
+                    PostLog("<color=#FFAA00>Error:</color> Invalid path or outside working directory.");
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(safePath))
                 {
                     PostLog("<color=yellow>No file selected.</color>");
                     return;
                 }
 
-                string fullPath = Path.Combine(svnManager.WorkingDir, relativePath);
+                string fullPath = Path.Combine(svnManager.WorkingDir, safePath);
                 if (Directory.Exists(fullPath))
                 {
                     PostLog("<color=yellow>Preview for directories is not supported. Select a file.</color>");
                     return;
                 }
 
-                PostLog($"Comparing: <color=green>{relativePath}</color>...");
+                PostLog($"Comparing: <color=green>{safePath}</color>...");
 
                 string diffContent = await SvnRunner.RunAsync(
-                    $"diff \"{EscapeSvnArg(relativePath)}\"",
+                    $"diff \"{EscapeSvnArg(safePath)}\"",
                     svnManager.WorkingDir,
                     false,
-                    CancellationToken.None).ConfigureAwait(false);
+                    token).ConfigureAwait(false);
 
                 if (string.IsNullOrWhiteSpace(diffContent))
                 {
@@ -205,18 +266,18 @@ namespace SVN.Core
                         PostLog("<color=yellow>Launching external visual diff tool...</color>");
                         try
                         {
-                            string fileName = Path.GetFileName(relativePath);
+                            string fileName = Path.GetFileName(safePath);
                             string tempBasePath = Path.Combine(Application.temporaryCachePath, $"svn_base_{Guid.NewGuid():N}_{fileName}");
 
                             string baseContent = await SvnRunner.RunAsync(
-                                $"cat \"{EscapeSvnArg(relativePath)}\"",
+                                $"cat \"{EscapeSvnArg(safePath)}\"",
                                 svnManager.WorkingDir,
                                 false,
-                                CancellationToken.None).ConfigureAwait(false);
+                                token).ConfigureAwait(false);
 
                             if (!string.IsNullOrEmpty(baseContent))
                             {
-                                await File.WriteAllTextAsync(tempBasePath, baseContent).ConfigureAwait(false);
+                                await File.WriteAllTextAsync(tempBasePath, baseContent, token).ConfigureAwait(false);
                                 string workingCopyPath = Path.GetFullPath(fullPath);
 
                                 string processArgs;
@@ -238,6 +299,10 @@ namespace SVN.Core
                                         Arguments = processArgs,
                                         UseShellExecute = true
                                     });
+                                    if (process == null)
+                                    {
+                                        PostLog("<color=orange>Warning:</color> Could not launch the external diff tool.");
+                                    }
                                 });
 
                                 CleanupOldDiffFiles();
@@ -285,13 +350,21 @@ namespace SVN.Core
                     string uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
                     string tempDiffPath = Path.Combine(Application.temporaryCachePath, $"svn_diff_preview_{uniqueId}.diff");
                     string enrichedContent = FormatDiffForExternalEditor(diffContent);
-                    await File.WriteAllTextAsync(tempDiffPath, enrichedContent).ConfigureAwait(false);
+                    await File.WriteAllTextAsync(tempDiffPath, enrichedContent, token).ConfigureAwait(false);
 
                     PostUI(() =>
                     {
                         using var process = Process.Start(new ProcessStartInfo(tempDiffPath) { UseShellExecute = true });
+                        if (process == null)
+                        {
+                            PostLog("<color=orange>Warning:</color> Could not open the diff file. No default application associated with .diff.");
+                        }
                     });
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                PostLog("<color=orange>Diff operation cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -333,7 +406,7 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(path))
                 path = PlayerPrefs.GetString(SVNManager.KEY_DIFF_TOOL, "");
 
-            return path?.Trim().Replace("\"", "");
+            return path?.Trim().Trim('"');
         }
 
         private string FormatDiffForExternalEditor(string rawDiff)
@@ -415,7 +488,7 @@ namespace SVN.Core
                 string sOld = oldLine.ToString().PadLeft(wNum); string sNew = newLine.ToString().PadLeft(wNum);
                 if (line.StartsWith("-")) { removed++; sb.Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sOld).Append("</color>").Append(monoEnd).Append(gap).Append(monoStart).Append(new string(' ', wNum)).Append(monoEnd).Append(gap).Append("<color=").Append(colRem).Append(">-</color>").Append(gap).Append("<color=").Append(colRem).Append('>').Append(line.Substring(1)).AppendLine("</color>"); oldLine++; }
                 else if (line.StartsWith("+")) { added++; sb.Append(monoStart).Append(new string(' ', wNum)).Append(monoEnd).Append(gap).Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sNew).Append("</color>").Append(monoEnd).Append(gap).Append("<color=").Append(colAdd).Append(">+</color>").Append(gap).Append("<color=").Append(colAdd).Append('>').Append(line.Substring(1)).AppendLine("</color>"); newLine++; }
-                else { unchanged++; sb.Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sOld).Append("</color>").Append(monoEnd).Append(gap).Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sNew).Append("</color>").Append(monoEnd).Append(gap).Append("   ").Append(gap).AppendLine(line); oldLine++; newLine++; }
+                else { unchanged++; sb.Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sOld).Append("</color>").Append(monoEnd).Append(gap).Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sNew).Append("</color>").Append(monoEnd).Append(gap).Append("   ").Append(gap).AppendLine(line.Length > 0 ? line.Substring(1) : ""); oldLine++; newLine++; }
             }
 
             var header = new StringBuilder(512);
@@ -432,6 +505,7 @@ namespace SVN.Core
         }
 
         private static string[] SplitLines(string text) { if (string.IsNullOrEmpty(text)) return Array.Empty<string>(); return text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'); }
+
         private static string EscapeSvnArg(string arg) { if (string.IsNullOrWhiteSpace(arg)) return arg; return arg.Replace("\"", "\\\""); }
     }
 }
