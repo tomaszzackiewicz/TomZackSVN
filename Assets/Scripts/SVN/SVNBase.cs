@@ -8,8 +8,8 @@ namespace SVN.Core
 {
     public abstract class SVNBase
     {
-        protected SVNManager svnManager;
-        protected SVNUI svnUI;
+        public SVNManager svnManager;
+        public SVNUI svnUI;
 
         private int _isProcessing = 0; // 0 = false, 1 = true
 
@@ -19,12 +19,12 @@ namespace SVN.Core
             set => Interlocked.Exchange(ref _isProcessing, value ? 1 : 0);
         }
 
-        protected bool TryStart()
+        public bool TryStart()
         {
             return Interlocked.CompareExchange(ref _isProcessing, 1, 0) == 0;
         }
 
-        protected void End()
+        public void End()
         {
             Interlocked.Exchange(ref _isProcessing, 0);
         }
@@ -78,11 +78,11 @@ namespace SVN.Core
                 console.text += $"<color={color}>{msg}</color>\n";
         }
 
-        protected void LogInfo(string msg) => Append(msg, "#0400ff");
-        protected void LogSuccess(string msg) => Append(msg, "#01ff09");
-        protected void LogWarning(string msg) => Append(msg, "#FFEB3B");
+        public void LogInfo(string msg) => Append(msg, "#0400ff");
+        public void LogSuccess(string msg) => Append(msg, "#01ff09");
+        public void LogWarning(string msg) => Append(msg, "#FFEB3B");
 
-        protected void LogErrorLocal(string msg)
+        public void LogErrorLocal(string msg)
         {
             Append(msg, "#610402");
             SVNLogBridge.LogError(msg);

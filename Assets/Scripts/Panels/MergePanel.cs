@@ -128,11 +128,9 @@ public class MergePanel : MonoBehaviour
             _svnUI.MergeSourceInput.onEndEdit.RemoveAllListeners();
     }
 
-    public void Button_CancelMerge()
-    {
-        if (EnsureReady()) _mergeModule.CancelMerge();
-    }
+    #region UI Button Methods
 
+    public void Button_CancelMerge() => SafeFireAndForget(() => _mergeModule.CancelMerge());
     public void Button_RefreshBranchDropdown() => SafeFireAndForget(() => RefreshBranchDropdownAsync(true));
     public void Button_Compare() => SafeFireAndForget(() => _mergeModule.CompareWithTrunk());
     public void Button_SyncWithTrunk() => SafeFireAndForget(AutoSyncAsync);
@@ -143,6 +141,10 @@ public class MergePanel : MonoBehaviour
     public void Button_CancelLocalMerge() => SafeFireAndForget(() => _mergeModule.CancelLocalMerge());
     public void Button_RevertToHead() => SafeFireAndForget(() => _mergeModule.RevertToHead());
     public void Button_UndoMerge() => SafeFireAndForget(() => _mergeModule.UndoLastMerge());
+    public void Button_CherryPickConfirm() => SafeFireAndForget(CherryPickAsync);
+    public void Button_CherryPickDryRun() => SafeFireAndForget(CherryPickDryRunAsync);
+
+    #endregion
 
     private async void SafeFireAndForget(Func<Task> operation)
     {
@@ -163,7 +165,9 @@ public class MergePanel : MonoBehaviour
         if (_svnUI?.MergeBranchesDropdown == null) return;
 
         string currentSelection = null;
-        if (_svnUI.MergeBranchesDropdown.options.Count > 0 && _svnUI.MergeBranchesDropdown.value >= 0)
+        if (_svnUI.MergeBranchesDropdown.options.Count > 0 &&
+            _svnUI.MergeBranchesDropdown.value >= 0 &&
+            _svnUI.MergeBranchesDropdown.value < _svnUI.MergeBranchesDropdown.options.Count)
         {
             currentSelection = _svnUI.MergeBranchesDropdown.options[_svnUI.MergeBranchesDropdown.value].text;
         }
@@ -279,6 +283,8 @@ public class MergePanel : MonoBehaviour
     {
         if (!EnsureReady()) return;
 
+        HandleDryRunResult(new SVNMerge.MergeFileResult());
+
         string source = GetSafeSource();
         if (string.IsNullOrWhiteSpace(source)) return;
 
@@ -288,6 +294,64 @@ public class MergePanel : MonoBehaviour
 
         await _mergeModule.ExecuteMerge(source, false).ConfigureAwait(false);
     }
+
+    #region Cherry-Pick Methods
+
+    private async Task CherryPickAsync()
+    {
+        if (!EnsureReady()) return;
+
+        string source = GetSafeSource();
+        string revision = GetCherryPickRevision();
+
+        if (string.IsNullOrEmpty(source))
+        {
+            SVNLogBridge.LogError("[Cherry-Pick] Select source (e.g. trunk or branch name).");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(revision))
+        {
+            SVNLogBridge.LogError("[Cherry-Pick] Enter revision number (e.g. 150) or range (e.g. 140:150).");
+            return;
+        }
+
+        HandleDryRunResult(new SVNMerge.MergeFileResult());
+
+        try
+        {
+            await SvnMergeOperations.CherryPickMergeAsync(_mergeModule, source, revision, isDryRun: false).ConfigureAwait(false);
+        }
+        finally
+        {
+            await RefreshBranchDropdownAsync().ConfigureAwait(false);
+        }
+    }
+
+    private async Task CherryPickDryRunAsync()
+    {
+        if (!EnsureReady()) return;
+
+        string source = GetSafeSource();
+        string revision = GetCherryPickRevision();
+
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(revision)) return;
+
+        HandleDryRunResult(new SVNMerge.MergeFileResult());
+
+        try
+        {
+            await SvnMergeOperations.CherryPickMergeAsync(_mergeModule, source, revision, isDryRun: true).ConfigureAwait(false);
+        }
+        finally
+        {
+            await RefreshBranchDropdownAsync().ConfigureAwait(false);
+        }
+    }
+
+    private string GetCherryPickRevision() => _svnUI?.MergeCherryPickRevisionInput?.text?.Trim() ?? string.Empty;
+
+    #endregion
 
     private void HandleDryRunResult(SVNMerge.MergeFileResult result)
     {
@@ -304,12 +368,19 @@ public class MergePanel : MonoBehaviour
 
         if (result.RealChanges > 0 || result.Conflicts > 0)
         {
-            var headerObj = new GameObject("MergeSummaryHeader", typeof(TMPro.TextMeshProUGUI));
+            var headerObj = new GameObject("MergeSummaryHeader", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
             headerObj.transform.SetParent(_svnUI.MergeFilesContainer, false);
+
+            var rectTransform = headerObj.GetComponent<RectTransform>();
+            rectTransform.anchorMin = new Vector2(0, 1);
+            rectTransform.anchorMax = new Vector2(1, 1);
+            rectTransform.pivot = new Vector2(0.5f, 1);
+            rectTransform.sizeDelta = new Vector2(0, 25);
 
             var headerText = headerObj.GetComponent<TMPro.TextMeshProUGUI>();
             headerText.richText = true;
             headerText.fontSize = 13;
+            headerText.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
 
             string summary = $"<b>Files to change: {result.RealChanges}</b>  |  " +
                              $"<color=#55FF55>Added: {result.Added}</color>  |  " +

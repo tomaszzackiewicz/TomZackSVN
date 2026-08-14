@@ -46,6 +46,7 @@ namespace SVN.Core
         [SerializeField] private MergeFileItem mergeFileItemPrefab;
         [SerializeField] private TMP_InputField branchSourcePathInput;
         [SerializeField] private Toggle ignoreAncestryToggle;
+        [SerializeField] private TMP_InputField mergeCherryPickRevisionInput;
         [Header("Status Info")]
         [SerializeField] private TextMeshProUGUI statusInfoText;
         [SerializeField] private TMP_InputField commitMessageInput;
@@ -150,6 +151,7 @@ namespace SVN.Core
         public MergeFileItem MergeFileItemPrefab => mergeFileItemPrefab;
         public TMP_InputField BranchSourcePathInput => branchSourcePathInput;
         public Toggle IgnoreAncestryToggle => ignoreAncestryToggle;
+        public TMP_InputField MergeCherryPickRevisionInput => mergeCherryPickRevisionInput;
         public TextMeshProUGUI StatusInfoText => statusInfoText;
         public TMP_InputField CommitMessageInput => commitMessageInput;
         public TMP_InputField FilterTreeViewInput => filterTreeViewInput;
