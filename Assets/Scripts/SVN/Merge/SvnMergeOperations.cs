@@ -911,6 +911,26 @@ namespace SVN.Core
                     merge.LogInfoBlock("CHERRY-PICK SNAPSHOT", $"Created rollback point for r{snapshotBefore} → r{snapshotAfter}");
                 }
 
+                merge.LogInfo($"[Cherry-pick] Fetching file changes for r{revisionInput}...");
+                string logArgs = $"{SVNMerge.SshConfigOption}log -r {revisionInput} -v --xml {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)}";
+                string logXml = await SvnRunner.RunAsync(logArgs, merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
+
+                var previewResult = ParseCherryPickLogXml(logXml, out string commitMsg);
+
+                if (previewResult.Files.Count > 0)
+                {
+                    merge.LogInfoBlock("REVISION CONTENTS", $"Commit msg: {commitMsg}\nFiles affected: {previewResult.Files.Count}");
+
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                    {
+                        merge.RaiseDryRunCompleted(previewResult);
+                    });
+                }
+                else
+                {
+                    merge.LogWarning($"[Cherry-pick] Revision r{revisionInput} seems empty or contains no file changes.");
+                }
+
                 string dryRunFlag = isDryRun ? "--dry-run " : string.Empty;
                 string args = $"{SVNMerge.SshConfigOption}merge {revisionArg} {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
                 merge.LogInfo($"[Cherry-pick] Executing: svn {args}");
@@ -957,6 +977,72 @@ namespace SVN.Core
                 merge.ExitMerging();
                 merge.End();
             }
+        }
+
+        private static SVNMerge.MergeFileResult ParseCherryPickLogXml(string xmlOutput, out string message)
+        {
+            var result = new SVNMerge.MergeFileResult();
+            result.Files = new List<SVNMerge.MergeFileInfo>();
+            message = "N/A";
+
+            if (string.IsNullOrWhiteSpace(xmlOutput)) return result;
+
+            try
+            {
+                var doc = new XmlDocument();
+                doc.LoadXml(xmlOutput);
+
+                var logEntries = doc.SelectNodes("//logentry");
+                if (logEntries == null) return result;
+
+                var messages = new List<string>();
+
+                foreach (XmlNode logEntry in logEntries)
+                {
+                    string msg = logEntry.SelectSingleNode("msg")?.InnerText?.Trim();
+                    if (!string.IsNullOrWhiteSpace(msg)) messages.Add(msg);
+
+                    var pathNodes = logEntry.SelectNodes(".//path");
+                    if (pathNodes == null) continue;
+
+                    foreach (XmlNode pathNode in pathNodes)
+                    {
+                        string action = pathNode.Attributes?["action"]?.Value ?? "M";
+                        string filePath = pathNode.InnerText?.Trim() ?? "";
+                        if (string.IsNullOrEmpty(filePath)) continue;
+
+                        if (filePath.Equals("/trunk", StringComparison.OrdinalIgnoreCase))
+                        {
+                            filePath = ". (Root / Property Change)";
+                        }
+                        else if (filePath.StartsWith("/trunk/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            filePath = filePath.Substring("/trunk/".Length);
+                        }
+
+                        char stateChar = action.Length > 0 ? char.ToUpper(action[0]) : 'M';
+
+                        result.Files.Add(new SVNMerge.MergeFileInfo
+                        {
+                            Path = filePath,
+                            State = stateChar
+                        });
+                    }
+                }
+
+                message = messages.Count > 0 ? string.Join(" | ", messages) : "No commit message provided.";
+
+                result.RealChanges = result.Files.Count;
+                result.Added = result.Files.Count(f => f.State == 'A');
+                result.Updated = result.Files.Count(f => f.State == 'M' || f.State == 'R');
+                result.Deleted = result.Files.Count(f => f.State == 'D');
+            }
+            catch (Exception)
+            {
+            
+            }
+
+            return result;
         }
     }
 }

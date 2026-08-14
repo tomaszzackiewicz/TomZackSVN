@@ -1,6 +1,7 @@
 using SVN.Core;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -164,6 +165,7 @@ public class MergePanel : MonoBehaviour
         if (!EnsureReady()) return;
         if (_svnUI?.MergeBranchesDropdown == null) return;
 
+        // Pobieramy tylko to, co było wybrane wcześniej (jeśli listę odświeżamy manualnie)
         string currentSelection = null;
         if (_svnUI.MergeBranchesDropdown.options.Count > 0 &&
             _svnUI.MergeBranchesDropdown.value >= 0 &&
@@ -176,7 +178,7 @@ public class MergePanel : MonoBehaviour
         {
             string[] branches = await _mergeModule.FetchAvailableBranches(force).ConfigureAwait(false);
 
-            var options = new List<string> { "trunk" };
+            var options = new List<string> { "trunk" }; // Trunk jest zawsze na indeksie 0
             if (branches != null)
             {
                 foreach (string b in branches)
@@ -202,8 +204,10 @@ public class MergePanel : MonoBehaviour
                     _svnUI.MergeBranchesDropdown.ClearOptions();
                     _svnUI.MergeBranchesDropdown.AddOptions(options);
 
-                    int indexToSelect = 0;
-                    if (!string.IsNullOrEmpty(currentSelection))
+                    int indexToSelect = 0; // ZAWSZE 0 (czyli "trunk")
+
+                    // Jeśli użytkownik手动nie odświeża listę przyciskiem, zachowaj to co wybrał
+                    if (force && !string.IsNullOrEmpty(currentSelection))
                     {
                         int foundIndex = options.FindIndex(o => string.Equals(o, currentSelection, StringComparison.OrdinalIgnoreCase));
                         if (foundIndex >= 0) indexToSelect = foundIndex;
@@ -211,6 +215,12 @@ public class MergePanel : MonoBehaviour
 
                     _svnUI.MergeBranchesDropdown.value = indexToSelect;
                     _svnUI.MergeBranchesDropdown.RefreshShownValue();
+
+                    // Ustawienie pola tekstowego
+                    if (_svnUI.MergeSourceInput != null)
+                    {
+                        _svnUI.MergeSourceInput.text = options[indexToSelect];
+                    }
 
                     tcs.SetResult(true);
                 }
@@ -301,18 +311,18 @@ public class MergePanel : MonoBehaviour
     {
         if (!EnsureReady()) return;
 
-        string source = GetSafeSource();
+        string source = GetSafeSourceWithFallback();
         string revision = GetCherryPickRevision();
 
         if (string.IsNullOrEmpty(source))
         {
-            SVNLogBridge.LogError("[Cherry-Pick] Select source (e.g. trunk or branch name).");
+            _mergeModule.LogErrorLocal("[Cherry-Pick] Select source (e.g. trunk or branch name).");
             return;
         }
 
         if (string.IsNullOrEmpty(revision))
         {
-            SVNLogBridge.LogError("[Cherry-Pick] Enter revision number (e.g. 150) or range (e.g. 140:150).");
+            _mergeModule.LogErrorLocal("[Cherry-Pick] Wpisz numer rewizji (np. 150) lub zakres (np. 140:150).");
             return;
         }
 
@@ -332,10 +342,15 @@ public class MergePanel : MonoBehaviour
     {
         if (!EnsureReady()) return;
 
-        string source = GetSafeSource();
+        string source = GetSafeSourceWithFallback();
         string revision = GetCherryPickRevision();
 
-        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(revision)) return;
+        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(revision))
+        {
+            if (string.IsNullOrEmpty(source)) _mergeModule.LogErrorLocal("[Cherry-Pick Dry-Run] Select source.");
+            if (string.IsNullOrEmpty(revision)) _mergeModule.LogErrorLocal("[Cherry-Pick Dry-Run] Enter revision.");
+            return;
+        }
 
         HandleDryRunResult(new SVNMerge.MergeFileResult());
 
@@ -350,6 +365,22 @@ public class MergePanel : MonoBehaviour
     }
 
     private string GetCherryPickRevision() => _svnUI?.MergeCherryPickRevisionInput?.text?.Trim() ?? string.Empty;
+
+    private string GetSafeSourceWithFallback()
+    {
+        string source = _svnUI?.MergeSourceInput?.text?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrEmpty(source) && _svnUI?.MergeBranchesDropdown != null)
+        {
+            int idx = _svnUI.MergeBranchesDropdown.value;
+            if (idx >= 0 && idx < _svnUI.MergeBranchesDropdown.options.Count)
+            {
+                source = _svnUI.MergeBranchesDropdown.options[idx].text;
+            }
+        }
+
+        return source;
+    }
 
     #endregion
 
