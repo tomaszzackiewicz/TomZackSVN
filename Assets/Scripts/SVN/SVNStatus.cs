@@ -516,6 +516,17 @@ namespace SVN.Core
             IsProcessing = true;
             string expectedWorkingDir = svnManager.WorkingDir;
 
+            void ResetScanningText(string message = "")
+            {
+                RunOnMainThread(() =>
+                {
+                    if (svnUI != null && svnUI.TreeDisplay != null && svnUI.TreeDisplay.text.Contains("Scanning"))
+                    {
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, message, "TREE", append: false);
+                    }
+                });
+            }
+
             try
             {
                 RunOnMainThread(() =>
@@ -556,6 +567,7 @@ namespace SVN.Core
                 if (svnManager.WorkingDir != expectedWorkingDir)
                 {
                     SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Project changed during refresh — discarding results.");
+                    ResetScanningText();
                     return;
                 }
 
@@ -633,10 +645,12 @@ namespace SVN.Core
             catch (OperationCanceledException)
             {
                 SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Refresh canceled.");
+                ResetScanningText("<i>Refresh canceled.</i>");
             }
             catch (Exception ex)
             {
                 SVNLogBridge.LogErrorToOutput($"Refresh Error: {ex}");
+                ResetScanningText("<color=red>Error during scan. Press Refresh.</color>");
             }
             finally
             {

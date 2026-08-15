@@ -13,17 +13,50 @@ public class MergePanel : MonoBehaviour
 
     private void Awake() => ResolveReferences();
 
-    private void OnEnable()
+    private async void OnEnable()
     {
         if (_svnManager == null || _mergeModule == null)
             ResolveReferences();
 
         SubscribeEvents();
         ClearMergeUI();
+        if (_svnManager != null && string.IsNullOrEmpty(_svnManager.WorkingDir) && _svnManager.IsProcessing)
+        {
+            while (_svnManager.IsProcessing && gameObject.activeInHierarchy)
+            {
+                await Task.Yield();
+            }
+        }
 
-        if (_svnManager?.CurrentProject != null && _mergeModule != null)
+        if (!string.IsNullOrEmpty(_svnManager?.WorkingDir) && _mergeModule != null)
         {
             SafeFireAndForget(() => RefreshBranchDropdownAsync(false));
+        }
+    }
+
+    private void SubscribeEvents()
+    {
+        if (_mergeModule == null) return;
+
+        _mergeModule.OnDryRunCompleted -= HandleDryRunResult;
+        _mergeModule.OnDryRunCompleted += HandleDryRunResult;
+
+        if (_svnManager != null)
+        {
+            _svnManager.OnProjectChanged -= OnProjectChanged;
+            _svnManager.OnProjectChanged += OnProjectChanged;
+        }
+
+        if (_svnUI?.MergeBranchesDropdown != null)
+        {
+            _svnUI.MergeBranchesDropdown.onValueChanged.RemoveListener(OnBranchSelected);
+            _svnUI.MergeBranchesDropdown.onValueChanged.AddListener(OnBranchSelected);
+        }
+
+        if (_svnUI?.MergeSourceInput != null)
+        {
+            _svnUI.MergeSourceInput.onEndEdit.RemoveListener(OnManualSourceInput);
+            _svnUI.MergeSourceInput.onEndEdit.AddListener(OnManualSourceInput);
         }
     }
 
@@ -54,32 +87,6 @@ public class MergePanel : MonoBehaviour
         if (_mergeModule != null && _svnManager != null) return true;
         ResolveReferences();
         return _mergeModule != null;
-    }
-
-    private void SubscribeEvents()
-    {
-        if (_mergeModule == null) return;
-
-        _mergeModule.OnDryRunCompleted -= HandleDryRunResult;
-        _mergeModule.OnDryRunCompleted += HandleDryRunResult;
-
-        if (_svnManager != null)
-        {
-            _svnManager.OnProjectChanged -= OnProjectChanged;
-            _svnManager.OnProjectChanged += OnProjectChanged;
-        }
-
-        if (_svnUI?.MergeBranchesDropdown != null)
-        {
-            _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
-            _svnUI.MergeBranchesDropdown.onValueChanged.AddListener(OnBranchSelected);
-        }
-
-        if (_svnUI?.MergeSourceInput != null)
-        {
-            _svnUI.MergeSourceInput.onEndEdit.RemoveAllListeners();
-            _svnUI.MergeSourceInput.onEndEdit.AddListener(OnManualSourceInput);
-        }
     }
 
     public void OnBranchSelected(int index)
@@ -165,7 +172,6 @@ public class MergePanel : MonoBehaviour
         if (!EnsureReady()) return;
         if (_svnUI?.MergeBranchesDropdown == null) return;
 
-        // Pobieramy tylko to, co było wybrane wcześniej (jeśli listę odświeżamy manualnie)
         string currentSelection = null;
         if (_svnUI.MergeBranchesDropdown.options.Count > 0 &&
             _svnUI.MergeBranchesDropdown.value >= 0 &&
@@ -178,7 +184,7 @@ public class MergePanel : MonoBehaviour
         {
             string[] branches = await _mergeModule.FetchAvailableBranches(force).ConfigureAwait(false);
 
-            var options = new List<string> { "trunk" }; // Trunk jest zawsze na indeksie 0
+            var options = new List<string> { "trunk" };
             if (branches != null)
             {
                 foreach (string b in branches)
@@ -204,9 +210,9 @@ public class MergePanel : MonoBehaviour
                     _svnUI.MergeBranchesDropdown.ClearOptions();
                     _svnUI.MergeBranchesDropdown.AddOptions(options);
 
-                    int indexToSelect = 0; // ZAWSZE 0 (czyli "trunk")
+                    int indexToSelect = 0;
 
-                    // Jeśli użytkownik手动nie odświeża listę przyciskiem, zachowaj to co wybrał
+
                     if (force && !string.IsNullOrEmpty(currentSelection))
                     {
                         int foundIndex = options.FindIndex(o => string.Equals(o, currentSelection, StringComparison.OrdinalIgnoreCase));
@@ -216,7 +222,6 @@ public class MergePanel : MonoBehaviour
                     _svnUI.MergeBranchesDropdown.value = indexToSelect;
                     _svnUI.MergeBranchesDropdown.RefreshShownValue();
 
-                    // Ustawienie pola tekstowego
                     if (_svnUI.MergeSourceInput != null)
                     {
                         _svnUI.MergeSourceInput.text = options[indexToSelect];

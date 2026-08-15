@@ -57,9 +57,11 @@ namespace SVN.Core
                 if (!sourceIsTrunk && currentIsTrunk && !isDryRun)
                 {
                     merge.LogInfo("[Merge] Reintegrate detected. Checking synchronization...");
-                    string eligible = await SvnRunner.RunAsync(
+
+                    string eligible = await RunWithHeartbeatAsync(merge,
                         $"{SVNMerge.SshConfigOption}mergeinfo {SvnMergeUrlResolver.EscapeSvnArg($"{repoRoot}/trunk")} {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --show-revs eligible",
-                        merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
+                        merge.SVNManager.WorkingDir, false, token, "Checking Reintegrate Sync").ConfigureAwait(false);
+
                     int missing = CountRevisions(eligible);
                     if (missing > 0)
                     {
@@ -73,9 +75,11 @@ namespace SVN.Core
                 if (sourceIsTrunk && !currentIsTrunk && !isDryRun)
                 {
                     merge.LogInfo("[Merge] Sync merge detected. Checking eligible revisions...");
-                    string eligible = await SvnRunner.RunAsync(
+
+                    string eligible = await RunWithHeartbeatAsync(merge,
                         $"{SVNMerge.SshConfigOption}mergeinfo {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} . --show-revs eligible",
-                        merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
+                        merge.SVNManager.WorkingDir, false, token, "Checking Sync Merge").ConfigureAwait(false);
+
                     if (CountRevisions(eligible) == 0)
                     {
                         merge.LogInfoBlock("Merge Blocked", "Branch is already fully synchronized with Trunk.");
@@ -98,7 +102,7 @@ namespace SVN.Core
                     return;
                 }
 
-                await SvnRunner.RunAsync("update", merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
+                await RunWithHeartbeatAsync(merge, "update", merge.SVNManager.WorkingDir, true, token, "Updating Working Copy").ConfigureAwait(false);
 
                 if (!isDryRun)
                 {
@@ -481,7 +485,9 @@ namespace SVN.Core
                 }
 
                 merge.LogInfo($"[Force Merge] Executing: svn {args}");
-                string output = await SvnRunner.RunAsync(args, merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
+
+                string output = await RunWithHeartbeatAsync(merge, args, merge.SVNManager.WorkingDir, true, token, "Force Merge").ConfigureAwait(false);
+
                 await ProcessMergeResultAsync(merge, output, false, token).ConfigureAwait(false);
 
                 await merge.SVNManager.RefreshStatus().ConfigureAwait(false);
@@ -649,9 +655,11 @@ namespace SVN.Core
             string args = $"{SVNMerge.SshConfigOption}merge {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
             merge.LogInfoBlock("SVN MERGE COMMAND", args);
 
+            string context = isDryRun ? "Dry-Run Merge" : "Live Merge";
+
             try
             {
-                return await SvnRunner.RunAsync(args, merge.SVNManager.WorkingDir, !isDryRun, token).ConfigureAwait(false);
+                return await RunWithHeartbeatAsync(merge, args, merge.SVNManager.WorkingDir, !isDryRun, token, context).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex.Message.Contains("E155015"))
             {
@@ -662,7 +670,8 @@ namespace SVN.Core
             {
                 merge.LogWarningBlock("ANCESTRY PROBLEM DETECTED", "Retrying with --ignore-ancestry.");
                 string retryArgs = $"{SVNMerge.SshConfigOption}merge --ignore-ancestry {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
-                return await SvnRunner.RunAsync(retryArgs, merge.SVNManager.WorkingDir, !isDryRun, token).ConfigureAwait(false);
+
+                return await RunWithHeartbeatAsync(merge, retryArgs, merge.SVNManager.WorkingDir, !isDryRun, token, $"{context} (Retry)").ConfigureAwait(false);
             }
         }
 
@@ -695,6 +704,274 @@ namespace SVN.Core
                     merge.LogErrorLocal("[MERGE COMPLETED WITH CONFLICTS] " + summary);
                 else
                     merge.LogSuccessBlock("MERGE COMPLETED", summary);
+            }
+        }
+
+        public static async Task CherryPickMergeAsync(SVNMerge merge, string sourceInput, string revisionInput, bool isDryRun)
+        {
+            if (merge == null || merge.SVNManager == null || merge.SVNUI == null)
+            {
+                merge.LogErrorLocal("[Error] SVN Manager or UI not initialized.");
+                return;
+            }
+
+            if (!SvnMergeUrlResolver.ValidateSourceInput(sourceInput))
+            {
+                merge.LogErrorLocal("SECURITY: Provide only branch/tag name or internal path, not a full URL.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(revisionInput))
+            {
+                merge.LogErrorLocal("[Cherry-pick] No revision specified.");
+                return;
+            }
+
+            if (!merge.TryEnterMerging()) return;
+            if (!merge.TryStart()) { merge.ExitMerging(); return; }
+
+            using var cts = new CancellationTokenSource();
+            merge._mergeCts = cts;
+            CancellationToken token = cts.Token;
+
+            try
+            {
+                await merge.EnsureWcRootAsync(token).ConfigureAwait(false);
+
+                string repoRoot = await merge.GetRepoRootSafeAsync(token).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(repoRoot)) { merge.LogErrorLocal("Repo Root not found."); return; }
+
+                string sourceUrl = SvnMergeUrlResolver.ResolveSourceUrl(sourceInput, repoRoot);
+                string currentUrl = await SvnRunner.GetRepoUrlAsync(merge.SVNManager.WorkingDir).ConfigureAwait(false);
+
+                if (SVNMerge.Normalize(sourceUrl) == SVNMerge.Normalize(currentUrl))
+                {
+                    merge.LogErrorLocal("Cannot cherry-pick from the same branch into itself.");
+                    return;
+                }
+
+                string revisionArg;
+                string snapshotBefore;
+                string snapshotAfter;
+
+                if (revisionInput.Contains(":"))
+                {
+                    string[] parts = revisionInput.Split(':');
+                    if (parts.Length != 2 || !long.TryParse(parts[0], out long rStart) || !long.TryParse(parts[1], out long rEnd))
+                    {
+                        merge.LogErrorLocal("[Cherry-pick] Invalid revision range format. Use START:END (e.g., 140:150).");
+                        return;
+                    }
+                    revisionArg = $"-r {revisionInput}";
+                    snapshotBefore = rStart.ToString();
+                    snapshotAfter = rEnd.ToString();
+                }
+                else if (long.TryParse(revisionInput, out long singleRev))
+                {
+                    revisionArg = $"-c {singleRev}";
+                    snapshotBefore = (singleRev - 1).ToString();
+                    snapshotAfter = singleRev.ToString();
+                }
+                else
+                {
+                    merge.LogErrorLocal("[Cherry-pick] Invalid revision format. Use a single number (e.g., 150) or a range (140:150).");
+                    return;
+                }
+
+                merge.LogInfoBlock("CHERRY-PICK SESSION START", $"Source: {sourceUrl}\nTarget: {currentUrl}\nRevision(s): {revisionInput}\nMode: {(isDryRun ? "DRY RUN" : "LIVE")}");
+
+                string currentUuid = (await SvnRunner.RunAsync($"{SVNMerge.SshConfigOption}info --show-item repos-uuid", merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
+                string sourceUuid = (await SvnRunner.RunAsync($"{SVNMerge.SshConfigOption}info {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --show-item repos-uuid", merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
+                if (!string.Equals(currentUuid, sourceUuid, StringComparison.Ordinal))
+                {
+                    merge.LogErrorLocal("Repository UUID mismatch.");
+                    return;
+                }
+
+                merge._hadLocalChangesBeforeMerge = await merge.HasPendingMergeChanges(token).ConfigureAwait(false);
+                if (merge._hadLocalChangesBeforeMerge)
+                {
+                    merge.LogWarningBlock("MERGE BLOCKED", "Working copy contains uncommitted changes.\nCommit, revert or cleanup before cherry-picking.");
+                    return;
+                }
+                await RunWithHeartbeatAsync(merge, "update", merge.SVNManager.WorkingDir, true, token, "Cherry-Pick Update").ConfigureAwait(false);
+
+                if (!isDryRun)
+                {
+                    merge._snapshotManager.SetSnapshot(sourceUrl, snapshotBefore, snapshotAfter);
+                    merge._snapshotManager.SaveRollbackSnapshot();
+                    merge.LogInfoBlock("CHERRY-PICK SNAPSHOT", $"Created rollback point for r{snapshotBefore} → r{snapshotAfter}");
+                }
+
+                merge.LogInfo($"[Cherry-pick] Fetching file changes for r{revisionInput}...");
+                string logArgs = $"{SVNMerge.SshConfigOption}log -r {revisionInput} -v --xml {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)}";
+                string logXml = await SvnRunner.RunAsync(logArgs, merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
+
+                var previewResult = ParseCherryPickLogXml(logXml, out string commitMsg);
+
+                if (previewResult.Files.Count > 0)
+                {
+                    merge.LogInfoBlock("REVISION CONTENTS", $"Commit msg: {commitMsg}\nFiles affected: {previewResult.Files.Count}");
+
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                    {
+                        merge.RaiseDryRunCompleted(previewResult);
+                    });
+                }
+                else
+                {
+                    merge.LogWarning($"[Cherry-pick] Revision r{revisionInput} seems empty or contains no file changes.");
+                }
+
+                string dryRunFlag = isDryRun ? "--dry-run " : string.Empty;
+                string args = $"{SVNMerge.SshConfigOption}merge {revisionArg} {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
+                merge.LogInfo($"[Cherry-pick] Executing: svn {args}");
+
+                string output;
+                try
+                {
+                    output = await RunWithHeartbeatAsync(merge, args, merge.SVNManager.WorkingDir, !isDryRun, token, "Cherry-Pick Merge").ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex.Message.Contains("E155015"))
+                {
+                    merge.LogWarning(isDryRun ? "[Cherry-pick] Conflicts in simulation." : "[Cherry-pick] Conflicts detected.");
+                    output = ex.Message;
+                }
+                catch (Exception ex) when (IsAncestryError(ex))
+                {
+                    merge.LogWarning("[Cherry-pick] Ancestry problem – retrying with --ignore-ancestry...");
+                    string retryArgs = $"{SVNMerge.SshConfigOption}merge {revisionArg} {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --ignore-ancestry --non-interactive --accept postpone";
+
+                    output = await RunWithHeartbeatAsync(merge, retryArgs, merge.SVNManager.WorkingDir, !isDryRun, token, "Cherry-Pick Merge (Retry)").ConfigureAwait(false);
+                }
+
+                await ProcessMergeResultAsync(merge, output, isDryRun, token).ConfigureAwait(false);
+
+                if (!isDryRun)
+                {
+                    await merge.SVNManager.RefreshStatus().ConfigureAwait(false);
+                    await merge.RefreshResolveUI().ConfigureAwait(false);
+                    merge.LogSuccess("[Cherry-pick Complete]");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                merge.LogWarning("[Cherry-pick] Cancelled by user.");
+                await merge.SafeCleanupAfterCancel().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                merge.LogErrorLocal($"[Cherry-pick Error] {ex.Message}");
+            }
+            finally
+            {
+                merge._hadLocalChangesBeforeMerge = false;
+                merge._mergeCts = null;
+                merge.ExitMerging();
+                merge.End();
+            }
+        }
+
+        private static SVNMerge.MergeFileResult ParseCherryPickLogXml(string xmlOutput, out string message)
+        {
+            var result = new SVNMerge.MergeFileResult();
+            result.Files = new List<SVNMerge.MergeFileInfo>();
+            message = "N/A";
+
+            if (string.IsNullOrWhiteSpace(xmlOutput)) return result;
+
+            try
+            {
+                var doc = new XmlDocument();
+                doc.LoadXml(xmlOutput);
+
+                var logEntries = doc.SelectNodes("//logentry");
+                if (logEntries == null) return result;
+
+                var messages = new List<string>();
+
+                foreach (XmlNode logEntry in logEntries)
+                {
+                    string msg = logEntry.SelectSingleNode("msg")?.InnerText?.Trim();
+                    if (!string.IsNullOrWhiteSpace(msg)) messages.Add(msg);
+
+                    var pathNodes = logEntry.SelectNodes(".//path");
+                    if (pathNodes == null) continue;
+
+                    foreach (XmlNode pathNode in pathNodes)
+                    {
+                        string action = pathNode.Attributes?["action"]?.Value ?? "M";
+                        string filePath = pathNode.InnerText?.Trim() ?? "";
+                        if (string.IsNullOrEmpty(filePath)) continue;
+
+                        if (filePath.Equals("/trunk", StringComparison.OrdinalIgnoreCase))
+                        {
+                            filePath = ". (Root / Property Change)";
+                        }
+                        else if (filePath.StartsWith("/trunk/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            filePath = filePath.Substring("/trunk/".Length);
+                        }
+
+                        char stateChar = action.Length > 0 ? char.ToUpper(action[0]) : 'M';
+
+                        result.Files.Add(new SVNMerge.MergeFileInfo
+                        {
+                            Path = filePath,
+                            State = stateChar
+                        });
+                    }
+                }
+
+                message = messages.Count > 0 ? string.Join(" | ", messages) : "No commit message provided.";
+
+                result.RealChanges = result.Files.Count;
+                result.Added = result.Files.Count(f => f.State == 'A');
+                result.Updated = result.Files.Count(f => f.State == 'M' || f.State == 'R');
+                result.Deleted = result.Files.Count(f => f.State == 'D');
+            }
+            catch (Exception)
+            {
+
+            }
+
+            return result;
+        }
+
+        #region Private Helpers - Heartbeat & Parsing
+
+        private static async Task<string> RunWithHeartbeatAsync(SVNMerge merge, string command, string workingDir, bool logErrors, CancellationToken token, string context)
+        {
+            using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var heartbeatTask = RunHeartbeatLoopAsync(merge, heartbeatCts.Token, context);
+
+            try
+            {
+                return await SvnRunner.RunAsync(command, workingDir, logErrors, token).ConfigureAwait(false);
+            }
+            finally
+            {
+                heartbeatCts.Cancel();
+                try { await heartbeatTask.ConfigureAwait(false); } catch { }
+            }
+        }
+
+        private static async Task RunHeartbeatLoopAsync(SVNMerge merge, CancellationToken token, string context)
+        {
+            int seconds = 0;
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(15000, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                seconds += 15;
+                merge.LogInfo($"[{context}] Still working... ({seconds}s elapsed)");
             }
         }
 
@@ -814,235 +1091,6 @@ namespace SVN.Core
             return -1;
         }
 
-        public static async Task CherryPickMergeAsync(SVNMerge merge, string sourceInput, string revisionInput, bool isDryRun)
-        {
-            if (merge == null || merge.SVNManager == null || merge.SVNUI == null)
-            {
-                merge.LogErrorLocal("[Error] SVN Manager or UI not initialized.");
-                return;
-            }
-
-            if (!SvnMergeUrlResolver.ValidateSourceInput(sourceInput))
-            {
-                merge.LogErrorLocal("SECURITY: Provide only branch/tag name or internal path, not a full URL.");
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(revisionInput))
-            {
-                merge.LogErrorLocal("[Cherry-pick] No revision specified.");
-                return;
-            }
-
-            if (!merge.TryEnterMerging()) return;
-            if (!merge.TryStart()) { merge.ExitMerging(); return; }
-
-            using var cts = new CancellationTokenSource();
-            merge._mergeCts = cts;
-            CancellationToken token = cts.Token;
-
-            try
-            {
-                await merge.EnsureWcRootAsync(token).ConfigureAwait(false);
-
-                string repoRoot = await merge.GetRepoRootSafeAsync(token).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(repoRoot)) { merge.LogErrorLocal("Repo Root not found."); return; }
-
-                string sourceUrl = SvnMergeUrlResolver.ResolveSourceUrl(sourceInput, repoRoot);
-                string currentUrl = await SvnRunner.GetRepoUrlAsync(merge.SVNManager.WorkingDir).ConfigureAwait(false);
-
-                if (SVNMerge.Normalize(sourceUrl) == SVNMerge.Normalize(currentUrl))
-                {
-                    merge.LogErrorLocal("Cannot cherry-pick from the same branch into itself.");
-                    return;
-                }
-
-                string revisionArg;
-                string snapshotBefore;
-                string snapshotAfter;
-
-                if (revisionInput.Contains(":"))
-                {
-                    string[] parts = revisionInput.Split(':');
-                    if (parts.Length != 2 || !long.TryParse(parts[0], out long rStart) || !long.TryParse(parts[1], out long rEnd))
-                    {
-                        merge.LogErrorLocal("[Cherry-pick] Invalid revision range format. Use START:END (e.g., 140:150).");
-                        return;
-                    }
-                    revisionArg = $"-r {revisionInput}";
-                    snapshotBefore = rStart.ToString();
-                    snapshotAfter = rEnd.ToString();
-                }
-                else if (long.TryParse(revisionInput, out long singleRev))
-                {
-                    revisionArg = $"-c {singleRev}";
-                    snapshotBefore = (singleRev - 1).ToString();
-                    snapshotAfter = singleRev.ToString();
-                }
-                else
-                {
-                    merge.LogErrorLocal("[Cherry-pick] Invalid revision format. Use a single number (e.g., 150) or a range (140:150).");
-                    return;
-                }
-
-                merge.LogInfoBlock("CHERRY-PICK SESSION START", $"Source: {sourceUrl}\nTarget: {currentUrl}\nRevision(s): {revisionInput}\nMode: {(isDryRun ? "DRY RUN" : "LIVE")}");
-
-                string currentUuid = (await SvnRunner.RunAsync($"{SVNMerge.SshConfigOption}info --show-item repos-uuid", merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
-                string sourceUuid = (await SvnRunner.RunAsync($"{SVNMerge.SshConfigOption}info {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --show-item repos-uuid", merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
-                if (!string.Equals(currentUuid, sourceUuid, StringComparison.Ordinal))
-                {
-                    merge.LogErrorLocal("Repository UUID mismatch.");
-                    return;
-                }
-
-                merge._hadLocalChangesBeforeMerge = await merge.HasPendingMergeChanges(token).ConfigureAwait(false);
-                if (merge._hadLocalChangesBeforeMerge)
-                {
-                    merge.LogWarningBlock("MERGE BLOCKED", "Working copy contains uncommitted changes.\nCommit, revert or cleanup before cherry-picking.");
-                    return;
-                }
-
-                await SvnRunner.RunAsync("update", merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
-
-                if (!isDryRun)
-                {
-                    merge._snapshotManager.SetSnapshot(sourceUrl, snapshotBefore, snapshotAfter);
-                    merge._snapshotManager.SaveRollbackSnapshot();
-                    merge.LogInfoBlock("CHERRY-PICK SNAPSHOT", $"Created rollback point for r{snapshotBefore} → r{snapshotAfter}");
-                }
-
-                merge.LogInfo($"[Cherry-pick] Fetching file changes for r{revisionInput}...");
-                string logArgs = $"{SVNMerge.SshConfigOption}log -r {revisionInput} -v --xml {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)}";
-                string logXml = await SvnRunner.RunAsync(logArgs, merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
-
-                var previewResult = ParseCherryPickLogXml(logXml, out string commitMsg);
-
-                if (previewResult.Files.Count > 0)
-                {
-                    merge.LogInfoBlock("REVISION CONTENTS", $"Commit msg: {commitMsg}\nFiles affected: {previewResult.Files.Count}");
-
-                    UnityMainThreadDispatcher.Enqueue(() =>
-                    {
-                        merge.RaiseDryRunCompleted(previewResult);
-                    });
-                }
-                else
-                {
-                    merge.LogWarning($"[Cherry-pick] Revision r{revisionInput} seems empty or contains no file changes.");
-                }
-
-                string dryRunFlag = isDryRun ? "--dry-run " : string.Empty;
-                string args = $"{SVNMerge.SshConfigOption}merge {revisionArg} {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
-                merge.LogInfo($"[Cherry-pick] Executing: svn {args}");
-
-                string output;
-                try
-                {
-                    output = await SvnRunner.RunAsync(args, merge.SVNManager.WorkingDir, !isDryRun, token).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex.Message.Contains("E155015"))
-                {
-                    merge.LogWarning(isDryRun ? "[Cherry-pick] Conflicts in simulation." : "[Cherry-pick] Conflicts detected.");
-                    output = ex.Message;
-                }
-                catch (Exception ex) when (IsAncestryError(ex))
-                {
-                    merge.LogWarning("[Cherry-pick] Ancestry problem – retrying with --ignore-ancestry...");
-                    string retryArgs = $"{SVNMerge.SshConfigOption}merge {revisionArg} {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --ignore-ancestry --non-interactive --accept postpone";
-                    output = await SvnRunner.RunAsync(retryArgs, merge.SVNManager.WorkingDir, !isDryRun, token).ConfigureAwait(false);
-                }
-
-                await ProcessMergeResultAsync(merge, output, isDryRun, token).ConfigureAwait(false);
-
-                if (!isDryRun)
-                {
-                    await merge.SVNManager.RefreshStatus().ConfigureAwait(false);
-                    await merge.RefreshResolveUI().ConfigureAwait(false);
-                    merge.LogSuccess("[Cherry-pick Complete]");
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                merge.LogWarning("[Cherry-pick] Cancelled by user.");
-                await merge.SafeCleanupAfterCancel().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                merge.LogErrorLocal($"[Cherry-pick Error] {ex.Message}");
-            }
-            finally
-            {
-                merge._hadLocalChangesBeforeMerge = false;
-                merge._mergeCts = null;
-                merge.ExitMerging();
-                merge.End();
-            }
-        }
-
-        private static SVNMerge.MergeFileResult ParseCherryPickLogXml(string xmlOutput, out string message)
-        {
-            var result = new SVNMerge.MergeFileResult();
-            result.Files = new List<SVNMerge.MergeFileInfo>();
-            message = "N/A";
-
-            if (string.IsNullOrWhiteSpace(xmlOutput)) return result;
-
-            try
-            {
-                var doc = new XmlDocument();
-                doc.LoadXml(xmlOutput);
-
-                var logEntries = doc.SelectNodes("//logentry");
-                if (logEntries == null) return result;
-
-                var messages = new List<string>();
-
-                foreach (XmlNode logEntry in logEntries)
-                {
-                    string msg = logEntry.SelectSingleNode("msg")?.InnerText?.Trim();
-                    if (!string.IsNullOrWhiteSpace(msg)) messages.Add(msg);
-
-                    var pathNodes = logEntry.SelectNodes(".//path");
-                    if (pathNodes == null) continue;
-
-                    foreach (XmlNode pathNode in pathNodes)
-                    {
-                        string action = pathNode.Attributes?["action"]?.Value ?? "M";
-                        string filePath = pathNode.InnerText?.Trim() ?? "";
-                        if (string.IsNullOrEmpty(filePath)) continue;
-
-                        if (filePath.Equals("/trunk", StringComparison.OrdinalIgnoreCase))
-                        {
-                            filePath = ". (Root / Property Change)";
-                        }
-                        else if (filePath.StartsWith("/trunk/", StringComparison.OrdinalIgnoreCase))
-                        {
-                            filePath = filePath.Substring("/trunk/".Length);
-                        }
-
-                        char stateChar = action.Length > 0 ? char.ToUpper(action[0]) : 'M';
-
-                        result.Files.Add(new SVNMerge.MergeFileInfo
-                        {
-                            Path = filePath,
-                            State = stateChar
-                        });
-                    }
-                }
-
-                message = messages.Count > 0 ? string.Join(" | ", messages) : "No commit message provided.";
-
-                result.RealChanges = result.Files.Count;
-                result.Added = result.Files.Count(f => f.State == 'A');
-                result.Updated = result.Files.Count(f => f.State == 'M' || f.State == 'R');
-                result.Deleted = result.Files.Count(f => f.State == 'D');
-            }
-            catch (Exception)
-            {
-            
-            }
-
-            return result;
-        }
+        #endregion
     }
 }

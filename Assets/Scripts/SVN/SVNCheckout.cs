@@ -41,6 +41,9 @@ namespace SVN.Core
             return keyPath;
         }
 
+        private static string FormatSshConfig(string config) =>
+            string.IsNullOrWhiteSpace(config) ? "" : " " + config.TrimStart();
+
         public async void UpdateProjectInfo()
         {
             try { await UpdateProjectInfoAsync().ConfigureAwait(false); }
@@ -117,7 +120,7 @@ namespace SVN.Core
             try
             {
                 string output = await SvnRunner.RunAsync(
-                    $"list \"{baseUrl}\" --non-interactive --trust-server-cert" + sshConfig,
+                    $"list \"{baseUrl}\" --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig),
                     Path.GetTempPath(), false, CancellationToken.None).ConfigureAwait(false);
 
                 if (string.IsNullOrWhiteSpace(output))
@@ -160,7 +163,7 @@ namespace SVN.Core
             try
             {
                 string output = await SvnRunner.RunAsync(
-                    $"list \"{targetUrl}\" --xml --non-interactive --trust-server-cert" + sshConfig,
+                    $"list \"{targetUrl}\" --xml --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig),
                     Path.GetTempPath(), false, CancellationToken.None).ConfigureAwait(false);
 
                 if (string.IsNullOrWhiteSpace(output)) return 0;
@@ -226,7 +229,7 @@ namespace SVN.Core
             SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "Calculating repository size...", "SVN");
             _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url, sshConfig).ConfigureAwait(false);
 
-            string checkoutArgs = $"checkout \"{url}\" \"{fullPath}\" --non-interactive --trust-server-cert" + sshConfig;
+            string checkoutArgs = $"checkout \"{url}\" \"{fullPath}\" --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
             await ExecuteSvnOperationAsync(url, fullPath, checkoutArgs, false, keyPath, "Downloading").ConfigureAwait(false);
         }
 
@@ -285,7 +288,7 @@ namespace SVN.Core
             if (_cachedTotalSizeBytes <= 0)
                 _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url, sshConfig).ConfigureAwait(false);
 
-            string updateArgs = "update --non-interactive --trust-server-cert" + sshConfig;
+            string updateArgs = "update --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
             await ExecuteSvnOperationAsync(url, fullPath, updateArgs, true, keyPath, "Resuming").ConfigureAwait(false);
         }
 
@@ -348,7 +351,7 @@ namespace SVN.Core
 
             try
             {
-                string args = $"list --xml -R \"{url}\" --non-interactive --trust-server-cert" + sshConfig;
+                string args = $"list --xml -R \"{url}\" --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
                 string output = await SvnRunner.RunAsync(args, Path.GetTempPath(), false, CancellationToken.None).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(output)) return 0;
 
@@ -440,7 +443,7 @@ namespace SVN.Core
                     try
                     {
                         await SvnRunner.RunAsync(
-                            $"cleanup --non-interactive --trust-server-cert" + sshConfig, path, false, linkedCts.Token).ConfigureAwait(false);
+                            $"cleanup --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig), path, false, linkedCts.Token).ConfigureAwait(false);
                         PostToMainThread(() =>
                             SVNLogBridge.LogCheckoutConsole($"<color=green>[Cleanup]</color> Complete.\n"));
                     }
@@ -641,24 +644,22 @@ namespace SVN.Core
                 int finalAdded = addedCount;
                 long diskSize = GetDirectorySizeFast(path);
 
-                string statusMsg;
+                bool isPaused;
                 lock (_stateLock)
                 {
-                    statusMsg = _state == OperationState.Pausing ? "PAUSED" : "CANCELLED";
-                    _state = _state == OperationState.Pausing ? OperationState.Paused : OperationState.Cancelled;
+                    isPaused = (_state == OperationState.Pausing);
+                    _state = isPaused ? OperationState.Paused : OperationState.Cancelled;
                 }
 
-                if (statusMsg == "CANCELLED")
+                if (!isPaused)
+                {
                     ClearPausedState();
+                }
+
+                string statusMsg = isPaused ? "PAUSED" : "CANCELLED";
 
                 PostToMainThread(() =>
                 {
-                    lock (_stateLock)
-                    {
-                        statusMsg = _state == OperationState.Pausing ? "PAUSED" : "CANCELLED";
-                        _state = _state == OperationState.Pausing ? OperationState.Paused : OperationState.Cancelled;
-                    }
-
                     var report = new StringBuilder(256);
                     report.AppendLine();
                     report.AppendLine($"<color=#FFAA00><b>=========================================</b></color>");
@@ -721,7 +722,7 @@ namespace SVN.Core
             }
 
             string sshConfig = BuildSshConfigOption(keyPath);
-            string exportArgs = $"export \"{url}\" \"{fullPath}\" --force --non-interactive --trust-server-cert" + sshConfig;
+            string exportArgs = $"export \"{url}\" \"{fullPath}\" --force --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
             await ExecuteSvnOperationAsync(url, fullPath, exportArgs, false, keyPath, "Exporting").ConfigureAwait(false);
         }
 
@@ -747,7 +748,7 @@ namespace SVN.Core
 
             string revArg = string.IsNullOrWhiteSpace(revision) ? "" : $" -r {revision}";
             string sshConfig = BuildSshConfigOption(keyPath);
-            string exportArgs = $"export{revArg} \"{url}\" \"{fullPath}\" --force --non-interactive --trust-server-cert" + sshConfig;
+            string exportArgs = $"export{revArg} \"{url}\" \"{fullPath}\" --force --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
             await ExecuteSvnOperationAsync(url, fullPath, exportArgs, false, keyPath, "Exporting").ConfigureAwait(false);
         }
 
@@ -845,7 +846,7 @@ namespace SVN.Core
                 foreach (FileInfo file in files)
                 {
                     try { size += file.Length; }
-                    catch {}
+                    catch { }
                 }
 
                 DirectoryInfo[] subDirectories = directory.GetDirectories();
@@ -854,12 +855,8 @@ namespace SVN.Core
                     size += CalculateDirectorySizeSafe(subDir);
                 }
             }
-            catch (UnauthorizedAccessException)
-            {
-            }
-            catch
-            {
-            }
+            catch (UnauthorizedAccessException) { }
+            catch { }
 
             return size;
         }

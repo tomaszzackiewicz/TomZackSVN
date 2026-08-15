@@ -226,6 +226,15 @@ public class ProjectSelectionPanel : MonoBehaviour
                 existing.projectName = newName;
                 ProjectSettings.SaveProjects(projects);
                 SVNLogBridge.LogLine($"<color=green>Project renamed to:</color> {newName}");
+
+                if (svnManager != null && svnManager.CurrentProject != null)
+                {
+                    string currentNormalizedDir = svnManager.CurrentProject.workingDir.Replace("\\", "/").TrimEnd('/');
+                    if (currentNormalizedDir == normalizedDir)
+                    {
+                        svnManager.CurrentProject.projectName = newName;
+                    }
+                }
             }
             else
             {
@@ -401,6 +410,8 @@ public class ProjectSelectionPanel : MonoBehaviour
             svnManager.CurrentKey = string.IsNullOrWhiteSpace(project.privateKeyPath) ? "" : project.privateKeyPath;
 
             await svnManager.LoadProject(project);
+
+            svnManager.RaiseProjectChanged(project);
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {

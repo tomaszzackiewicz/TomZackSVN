@@ -51,10 +51,10 @@ namespace SVN.Core
         private FileSystemWatcher _folderWatcher;
         private int _isUpdatingSize = 0;
         private int _diskChangesDetectedFlag = 0;
-        private int _diskDebouncePending = 0;
-        private DateTime _lastDiskEventTime = DateTime.MinValue;
         private string sshOptions = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
-        
+
+        private long _lastDiskEventTimestamp = 0;
+        private const int DiskDebounceMs = 1500;
 
         private SVNPollingService _cachedPoller;
 
@@ -64,7 +64,6 @@ namespace SVN.Core
         private CancellationTokenSource _lifetimeCts;
 
         private CancellationTokenSource _saveProjectDebounceCts;
-        private SVNProject _pendingSaveProject;
 
         public string SessionToken { get; private set; } = Guid.NewGuid().ToString("N")[..8].ToUpper();
         public SVNProject CurrentProject { get; private set; }
@@ -169,6 +168,27 @@ namespace SVN.Core
             _cachedPoller = GetComponent<SVNPollingService>();
         }
 
+        private void Update()
+        {
+            if (DiskChangesDetected)
+            {
+                long currentTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+                long elapsedTicks = currentTimestamp - Interlocked.Read(ref _lastDiskEventTimestamp);
+
+                double elapsedMs = (double)elapsedTicks / System.Diagnostics.Stopwatch.Frequency * 1000.0;
+
+                if (elapsedMs >= DiskDebounceMs)
+                {
+                    DiskChangesDetected = false;
+
+                    if (!IsUpdateRunning && !string.IsNullOrEmpty(WorkingDir) && gameObject.activeInHierarchy)
+                    {
+                        _ = RefreshStatus(force: false);
+                    }
+                }
+            }
+        }
+
         private void InitializeAllModules()
         {
             _modules.Clear();
@@ -255,14 +275,6 @@ namespace SVN.Core
             }, TaskScheduler.Default);
         }
 
-        public void RaiseSnapshotChanged(SVNProjectInfoSnapshot snapshot)
-        {
-            UnityMainThreadDispatcher.Enqueue(() =>
-            {
-                OnSnapshotChanged?.Invoke(snapshot);
-            });
-        }
-
         private async Task StartAsync()
         {
             if (svnUI == null) return;
@@ -347,8 +359,8 @@ namespace SVN.Core
             {
                 CurrentProject = project;
 
+                // OPTYMALIZACJA: Usunięto podwójne czyszczenie ścieżki (ForceCleanPath)
                 WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
-                workingDir = SvnRunner.ForceCleanPath(workingDir);
 
                 RepositoryUrl = project.repoUrl;
                 CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
@@ -428,7 +440,6 @@ namespace SVN.Core
 
                 try
                 {
-                    // POPRAWKA: Trunk jest bezpośrednio pod rootem, nie w branches/trunk
                     string standardBranchUrl = $"{repoRoot}/trunk";
                     await SvnRunner.RunAsync($"switch \"{standardBranchUrl}\" \"{WorkingDir}\" --non-interactive", WorkingDir, false, _lifetimeCts.Token);
 
@@ -496,7 +507,6 @@ namespace SVN.Core
             svnUI.SettingsResolveToolPathInput?.SetTextWithoutNotify(ResolveToolPath);
             svnUI.SettingsDiffToolPathInput?.SetTextWithoutNotify(DiffToolPath);
             svnUI.SettingsBlameToolPathInput?.SetTextWithoutNotify(BlameToolPath);
-            // svnUI.SettingsSshOptionsInput?.SetTextWithoutNotify(SshOptions);
         }
 
         public void ApplySettingsSnapshot()
@@ -554,10 +564,6 @@ namespace SVN.Core
                 var statusModule = GetModule<SVNStatus>();
                 if (statusModule == null) return;
 
-                UnityMainThreadDispatcher.Enqueue(() => ClearStatusUI(statusModule));
-
-                await Task.Yield();
-
                 await statusModule.ExecuteRefreshWithAutoExpand(force: force);
 
                 await PostProcessStatus();
@@ -600,7 +606,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogToOutput("<color=orange>[SVN] RefreshStatus canceled.</color>");
+                SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> RefreshStatus canceled.");
             }
             catch (Exception e)
             {
@@ -615,13 +621,6 @@ namespace SVN.Core
         private void OnSvnProcessingChanged(bool isProcessing)
         {
             IsProcessing = isProcessing;
-        }
-
-        private void ClearStatusUI(SVNStatus statusModule)
-        {
-            statusModule.ClearCurrentData();
-            statusModule.ClearSVNTreeView();
-            statusModule.ResetTreeView();
         }
 
         private async Task RefreshLocksSafe()
@@ -723,11 +722,9 @@ namespace SVN.Core
             if (IsUpdateRunning) return;
 
             var barModule = GetModule<SVNBar>();
-            if (barModule != null)
+            if (barModule != null && CurrentProject != null)
             {
-                string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
-                var lastProject = ProjectSettings.LoadProjects().Find(p => p.workingDir == lastPath);
-                await barModule.ShowProjectInfo(lastProject, WorkingDir, isRefreshing: false);
+                await barModule.ShowProjectInfo(CurrentProject, WorkingDir, isRefreshing: false);
             }
         }
 
@@ -750,7 +747,10 @@ namespace SVN.Core
 
         public void BroadcastWorkingDirChange(string path)
         {
-            WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(path));
+            string cleaned = CleanPath(SVNAssetLocator.NormalizePath(path));
+            if (workingDir == cleaned) return;
+
+            WorkingDir = cleaned;
             svnUI.SettingsWorkingDirInput?.SetTextWithoutNotify(WorkingDir);
             svnUI.CheckoutDestFolderInput?.SetTextWithoutNotify(WorkingDir);
             svnUI.LoadDestFolderInput?.SetTextWithoutNotify(WorkingDir);
@@ -758,7 +758,10 @@ namespace SVN.Core
 
         public void BroadcastSshKeyChange(string newKeyPath)
         {
-            CurrentKey = SVNAssetLocator.NormalizePath(newKeyPath);
+            string cleaned = SVNAssetLocator.NormalizePath(newKeyPath);
+            if (currentKey == cleaned) return;
+
+            CurrentKey = cleaned;
             SvnRunner.KeyPath = CurrentKey;
             svnUI.SettingsSshKeyPathInput?.SetTextWithoutNotify(CurrentKey);
             svnUI.CheckoutPrivateKeyInput?.SetTextWithoutNotify(CurrentKey);
@@ -767,7 +770,10 @@ namespace SVN.Core
 
         public void BroadcastUrlChange(string newUrl)
         {
-            RepositoryUrl = newUrl.Trim();
+            string trimmed = newUrl.Trim();
+            if (RepositoryUrl == trimmed) return;
+
+            RepositoryUrl = trimmed;
             svnUI.SettingsRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
             svnUI.CheckoutRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
             svnUI.LoadRepoUrlInput?.SetTextWithoutNotify(RepositoryUrl);
@@ -1065,37 +1071,8 @@ namespace SVN.Core
         {
             if (e.FullPath.Contains(".svn")) return;
 
-            Interlocked.Exchange(ref _diskChangesDetectedFlag, 1);
-            _lastDiskEventTime = DateTime.UtcNow;
-
-            if (Interlocked.CompareExchange(ref _diskDebouncePending, 1, 0) == 0)
-            {
-                Task.Run(async () =>
-                {
-                    try
-                    {
-                        while ((DateTime.UtcNow - _lastDiskEventTime).TotalSeconds < 1.5)
-                        {
-                            await Task.Delay(250);
-                        }
-
-                        if (Interlocked.CompareExchange(ref _diskChangesDetectedFlag, 0, 1) == 1)
-                        {
-                            UnityMainThreadDispatcher.Enqueue(() =>
-                            {
-                                if (this == null || !gameObject.activeInHierarchy || IsUpdateRunning) return;
-                                var status = GetModule<SVNStatus>();
-                                if (status != null)
-                                    _ = status.ExecuteRefreshWithAutoExpand(false);
-                            });
-                        }
-                    }
-                    finally
-                    {
-                        Interlocked.Exchange(ref _diskDebouncePending, 0);
-                    }
-                });
-            }
+            Interlocked.Exchange(ref _lastDiskEventTimestamp, System.Diagnostics.Stopwatch.GetTimestamp());
+            DiskChangesDetected = true;
         }
 
         private string GetSettingWithFallback(string projectValue, string playerPrefsKey)
@@ -1108,6 +1085,22 @@ namespace SVN.Core
             }
 
             return normalized;
+        }
+
+        public void RaiseSnapshotChanged(SVNProjectInfoSnapshot snapshot)
+        {
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                OnSnapshotChanged?.Invoke(snapshot);
+            });
+        }
+
+        public void RaiseProjectChanged(SVNProject project)
+        {
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                OnProjectChanged?.Invoke(project);
+            });
         }
 
         private void OnDestroy()
@@ -1143,26 +1136,26 @@ namespace SVN.Core
             _managerLock?.Dispose();
         }
 
-        #if UNITY_EDITOR
+#if UNITY_EDITOR
 
-    [InitializeOnLoad]
-    public static class SvnEditorLifecycle
-    {
-        static SvnEditorLifecycle()
+        [InitializeOnLoad]
+        public static class SvnEditorLifecycle
         {
-            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
-        }
-
-        private static void OnPlayModeStateChanged(PlayModeStateChange state)
-        {
-            if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredPlayMode)
+            static SvnEditorLifecycle()
             {
-                SvnProcessTracker.KillAll();
+                EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            }
 
-                SvnRunner.ResetStaticState();
+            private static void OnPlayModeStateChanged(PlayModeStateChange state)
+            {
+                if (state == PlayModeStateChange.ExitingPlayMode || state == PlayModeStateChange.EnteredPlayMode)
+                {
+                    SvnProcessTracker.KillAll();
+
+                    SvnRunner.ResetStaticState();
+                }
             }
         }
-    }
-    #endif
+#endif
     }
 }

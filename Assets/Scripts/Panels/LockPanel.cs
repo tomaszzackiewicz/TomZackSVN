@@ -23,10 +23,28 @@ public class LockPanel : MonoBehaviour
         svnManager = SVNManager.Instance;
     }
 
-    private void OnEnable()
+    private async void OnEnable()
     {
         if (!Application.isPlaying) return;
-        Button_RefreshLocks();
+
+        if (svnManager != null && string.IsNullOrEmpty(svnManager.WorkingDir) && svnManager.IsProcessing)
+        {
+            LogToPanel("<color=yellow>[System]</color> Waiting for project initialization...", append: false);
+
+            while (svnManager.IsProcessing && gameObject.activeInHierarchy)
+            {
+                await Task.Yield();
+            }
+        }
+
+        if (!string.IsNullOrEmpty(svnManager?.WorkingDir))
+        {
+            Button_RefreshLocks();
+        }
+        else
+        {
+            LogToPanel("<color=#FFAA00>[System]</color> No project loaded.", append: false);
+        }
     }
 
     private void OnDisable()
@@ -41,7 +59,7 @@ public class LockPanel : MonoBehaviour
         if (isProcessing || !Application.isPlaying) return;
 
         isProcessing = true;
-        LogToPanel("<color=orange>[System]</color> Fetching locks...");
+        LogToPanel("<color=orange>[System]</color> Fetching locks...", append: false);
         ClearContainer();
 
         try
@@ -118,18 +136,19 @@ public class LockPanel : MonoBehaviour
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
             LogToPanel($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
-            await Task.Delay(600);
 
             SVNStatus.ClearLockCache();
             var statusModule = svnManager.GetModule<SVNStatus>();
             if (statusModule != null) await statusModule.RefreshAfterAction();
 
-            isProcessing = false;
             Button_RefreshLocks();
         }
         catch (Exception ex)
         {
             LogToPanel($"<color=#FFAA00>[Error]</color> Steal failed: {ex.Message}");
+        }
+        finally
+        {
             isProcessing = false;
         }
     }
@@ -147,18 +166,19 @@ public class LockPanel : MonoBehaviour
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
             LogToPanel($"<color=green>[Success]</color> Lock broken: {lockDetails.Path}");
-            await Task.Delay(600);
 
             SVNStatus.ClearLockCache();
             var statusModule = svnManager.GetModule<SVNStatus>();
             if (statusModule != null) await statusModule.RefreshAfterAction();
 
-            isProcessing = false;
             Button_RefreshLocks();
         }
         catch (Exception ex)
         {
             LogToPanel($"<color=#FFAA00>[Error]</color> Break failed: {ex.Message}");
+        }
+        finally
+        {
             isProcessing = false;
         }
     }
@@ -169,9 +189,15 @@ public class LockPanel : MonoBehaviour
         foreach (Transform child in locksContainer) Destroy(child.gameObject);
     }
 
-    private void LogToPanel(string msg)
+    private void LogToPanel(string msg, bool append = true)
     {
-        if (stealLockConsole != null) stealLockConsole.text += msg + "\n";
+        if (stealLockConsole != null)
+        {
+            if (append)
+                stealLockConsole.text += msg + "\n";
+            else
+                stealLockConsole.text = msg + "\n";
+        }
     }
 
     private static void SafeFireAndForget(Func<Task> operation) => _ = FireAndForgetInternal(operation);

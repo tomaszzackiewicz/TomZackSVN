@@ -1,4 +1,5 @@
 using SVN.Core;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class ResolvePanel : MonoBehaviour
@@ -7,9 +8,56 @@ public class ResolvePanel : MonoBehaviour
     private SVNResolve _resolveModule;
     private SVNExternal _externalModule;
 
+    private bool _isRefreshing;
+
     private void Awake() => ResolveReferences();
-    private void Start() => _svnManager?.GetModule<SVNResolve>()?.AutoRefreshConflictList();
-    private void OnEnable() { if (_svnManager == null || _resolveModule == null) ResolveReferences(); }
+
+    private async void Start()
+    {
+        if (_svnManager != null && string.IsNullOrEmpty(_svnManager.WorkingDir) && _svnManager.IsProcessing)
+        {
+            while (_svnManager.IsProcessing && gameObject.activeInHierarchy)
+            {
+                await System.Threading.Tasks.Task.Yield();
+            }
+        }
+
+        if (!string.IsNullOrEmpty(_svnManager?.WorkingDir))
+        {
+            TriggerSafeRefresh();
+        }
+    }
+
+    private async void OnEnable()
+    {
+        if (_svnManager == null || _resolveModule == null)
+            ResolveReferences();
+
+        if (_svnManager != null && string.IsNullOrEmpty(_svnManager.WorkingDir) && _svnManager.IsProcessing)
+        {
+            while (_svnManager.IsProcessing && gameObject.activeInHierarchy)
+            {
+                await System.Threading.Tasks.Task.Yield();
+            }
+        }
+
+        if (!string.IsNullOrEmpty(_svnManager?.WorkingDir))
+        {
+            TriggerSafeRefresh();
+        }
+    }
+
+    private void OnDisable()
+    {
+        _isRefreshing = false;
+    }
+
+    private void TriggerSafeRefresh()
+    {
+        if (_isRefreshing) return;
+        _isRefreshing = true;
+        _resolveModule?.AutoRefreshConflictList();
+    }
 
     private void ResolveReferences()
     {

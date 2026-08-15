@@ -443,7 +443,7 @@ namespace SVN.Core
                     }
                 }
 
-                LogBoth("[Shell] Triggered Windows Explorer icon cache update.");
+                //LogBoth("[Shell] Triggered Windows Explorer icon cache update.");
             }
             catch (Exception ex)
             {

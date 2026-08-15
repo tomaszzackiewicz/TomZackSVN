@@ -38,7 +38,23 @@ public class RevGraphPanel : MonoBehaviour
     private async void OnEnable()
     {
         if (!CanLoadGraph())
-            return;
+        {
+            if (_svnManager != null && _svnManager.IsProcessing)
+            {
+                SVNLogBridge.LogLine("<color=yellow>[Graph]</color> Waiting for project initialization...");
+
+                while (_svnManager.IsProcessing && gameObject.activeInHierarchy)
+                {
+                    await Task.Yield();
+                }
+            }
+
+            if (!CanLoadGraph())
+            {
+                SVNLogBridge.LogLine("<color=#FFAA00>Please select a project first.</color>");
+                return;
+            }
+        }
 
         if (HasWorkingDirChanged())
         {

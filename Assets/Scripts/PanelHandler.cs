@@ -324,20 +324,9 @@ namespace SVN.Core
             {
                 revGraphPanel.SetActive(true);
 
-                StartCoroutine(ForceRefresh_Coroutine());
+                Canvas.ForceUpdateCanvases();
+                UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(revGraphPanel.GetComponent<RectTransform>());
             }
-        }
-
-        IEnumerator ForceRefresh_Coroutine()
-        {
-            yield return null;
-
-            var graph = revGraphPanel.GetComponent<RevGraphPanel>();
-
-            yield return null;
-
-            if (graph != null)
-                graph.ForceRefresh();
         }
 
         public void Button_CloseRevGraph()

@@ -38,7 +38,6 @@ namespace SVN.Core
 
         internal readonly SvnMergeSnapshotManager _snapshotManager;
 
-        // FIX: Widoczne dla klas statycznych w tym samym assembly
         internal SVNManager SVNManager => base.svnManager;
         internal SVNUI SVNUI => base.svnUI;
 
@@ -68,6 +67,7 @@ namespace SVN.Core
             get
             {
                 string currentKey = SvnRunner.KeyPath;
+                
                 if (_cachedSshConfigOption != null &&
                     string.Equals(_lastCachedKeyPath, currentKey, StringComparison.OrdinalIgnoreCase))
                 {
@@ -84,6 +84,14 @@ namespace SVN.Core
             }
         }
 
+        internal void RaiseDryRunCompleted(MergeFileResult result)
+        {
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                OnDryRunCompleted?.Invoke(result);
+            });
+        }
+
         internal void OnProjectChangedHandler(SVNProject project)
         {
             _cachedRepoRoot = null;
@@ -94,6 +102,9 @@ namespace SVN.Core
             _cachedTags = null;
             _obstructionsJustDeleted = false;
             _snapshotManager.ClearRollbackSnapshot();
+
+            _cachedSshConfigOption = null;
+            _lastCachedKeyPath = null;
         }
 
         internal string EnsureRepoRoot()
@@ -112,7 +123,6 @@ namespace SVN.Core
             return _cachedRepoRoot;
         }
 
-        // FIX: Dodano ConfigureAwait(false)
         internal async Task<string> GetRepoRootSafeAsync(CancellationToken token = default)
         {
             string root = EnsureRepoRoot();
@@ -134,7 +144,6 @@ namespace SVN.Core
             return null;
         }
 
-        // FIX: Dodano ConfigureAwait(false)
         internal async Task EnsureWcRootAsync(CancellationToken token = default)
         {
             if (!string.IsNullOrWhiteSpace(_cachedWcRoot)) return;
@@ -172,7 +181,6 @@ namespace SVN.Core
 
         internal void ExitMerging() => Interlocked.Exchange(ref _isMergingFlag, 0);
 
-        // FIX: Dodano ConfigureAwait(false)
         internal async Task<string[]> GetRepoListAsync(string url, CancellationToken token = default)
         {
             try
@@ -219,14 +227,13 @@ namespace SVN.Core
             catch { return true; }
         }
 
-        // FIX: Dodano ConfigureAwait(false)
+
         internal async Task RefreshResolveUI()
         {
             try { await svnManager.RefreshStatus().ConfigureAwait(false); }
             catch (Exception ex) { LogWarning($"[RefreshResolveUI] {ex.Message}"); }
         }
 
-        // FIX: Dodano ConfigureAwait(false)
         internal async Task SafeCleanupAfterCancel()
         {
             try
@@ -278,11 +285,6 @@ namespace SVN.Core
             foreach (var line in message.Split('\n'))
                 LogWarning(line);
             LogWarning("====================================");
-        }
-
-        internal void RaiseDryRunCompleted(MergeFileResult result)
-        {
-            OnDryRunCompleted?.Invoke(result);
         }
 
         public Task CancelMerge()

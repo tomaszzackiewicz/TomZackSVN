@@ -78,6 +78,9 @@ namespace SVN.Core
         private readonly BranchColorSystem _branchColorSystem = new();
 
         private Coroutine _renderCoroutine;
+        private float _renderYPosition;
+        private float _renderItemHeight;
+        private float _renderSpacing;
 
         public IReadOnlyList<GameObject> InstantiatedItems => _instantiatedItems;
 
@@ -86,6 +89,12 @@ namespace SVN.Core
             if (nodes == null || nodes.Count == 0)
             {
                 SVNLogBridge.LogToOutput("[SVN] No revisions to render.");
+                return;
+            }
+
+            if (svnUI == null || svnUI.GraphContainer == null)
+            {
+                SVNLogBridge.LogErrorToOutput("[SVN] GraphContainer is not assigned in SVNUI.");
                 return;
             }
 
@@ -106,6 +115,24 @@ namespace SVN.Core
             DisableAutoLayout();
             ReleaseActiveItemsToPool();
             ResetState();
+
+            var layoutGroup = svnUI.GraphContainer?.GetComponent<VerticalLayoutGroup>();
+            _renderSpacing = layoutGroup != null ? layoutGroup.spacing : 0f;
+            _renderYPosition = 0f;
+
+            if (svnUI.GraphItemPrefab != null)
+            {
+                var prefabRect = svnUI.GraphItemPrefab.GetComponent<RectTransform>();
+                if (prefabRect != null)
+                {
+                    _renderItemHeight = prefabRect.rect.height;
+                    if (_renderItemHeight <= 0)
+                    {
+                        var le = svnUI.GraphItemPrefab.GetComponent<UnityEngine.UI.LayoutElement>();
+                        if (le != null) _renderItemHeight = le.preferredHeight;
+                    }
+                }
+            }
 
             var branchColumns = AnalyzeBranches(workingNodes, out int columnCount);
 
@@ -456,7 +483,7 @@ namespace SVN.Core
         }
 
         private void InstantiateGraphItem(string graphText, SVNRevisionNode node, string branchName,
-            string colorHex, string prefix)
+    string colorHex, string prefix)
         {
             if (svnUI.GraphItemPrefab == null || svnUI.GraphContainer == null)
             {
@@ -489,6 +516,17 @@ namespace SVN.Core
             }
 
             _instantiatedItems.Add(itemGo);
+
+            if (itemGo.TryGetComponent<RectTransform>(out var rt))
+            {
+                rt.anchorMin = new Vector2(0, 1);
+                rt.anchorMax = new Vector2(0, 1);
+                rt.pivot = new Vector2(0, 1);
+                rt.anchoredPosition = new Vector2(0, -_renderYPosition);
+
+                float heightToAdd = _renderItemHeight > 0 ? _renderItemHeight : 40f;
+                _renderYPosition += heightToAdd + _renderSpacing;
+            }
 
             if (itemGo.TryGetComponent<SVNGraphItem>(out var item))
                 item.Setup(graphText, node, branchName, colorHex, svnManager, prefix);
