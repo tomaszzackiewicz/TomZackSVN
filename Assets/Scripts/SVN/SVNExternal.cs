@@ -426,7 +426,6 @@ namespace SVN.Core
 #if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
             try
             {
-                // Celowo nie zabijamy TSVNCache
                 string full = Path.Combine(svnManager.WorkingDir ?? "", targetPath ?? "");
                 string dir = File.Exists(full) ? Path.GetDirectoryName(full) : full;
 
@@ -442,8 +441,6 @@ namespace SVN.Core
                         Marshal.FreeHGlobal(ptr);
                     }
                 }
-
-                //LogBoth("[Shell] Triggered Windows Explorer icon cache update.");
             }
             catch (Exception ex)
             {

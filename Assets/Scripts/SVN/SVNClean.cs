@@ -153,22 +153,6 @@ namespace SVN.Core
             }
         }
 
-        private void PostUnversionedRemovedUI() => UnityMainThreadDispatcher.Enqueue(() =>
-        {
-            try
-            {
-                if (_isDisposed || svnUI == null || svnManager == null) return;
-
-                svnUI.SvnTreeView?.ClearView();
-                svnUI.SVNCommitTreeDisplay?.ClearView();
-                if (svnUI.TreeDisplay != null)
-                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", false);
-
-                (_cachedStatusModule ??= svnManager?.GetModule<SVNStatus>())?.ClearCurrentData();
-            }
-            catch { }
-        });
-
         private async Task RunAsync(Func<CancellationToken, Task> op, CancellationTokenSource cts)
         {
             try
@@ -316,7 +300,6 @@ namespace SVN.Core
 
             await SvnRunner.RunAsync("cleanup --remove-unversioned", path, false, t).ConfigureAwait(false);
 
-            PostUnversionedRemovedUI();
             LogClean("<color=green>Unversioned files removed successfully.</color>");
         }
 
@@ -333,7 +316,6 @@ namespace SVN.Core
             await SvnRunner.RunAsync("update --force --accept theirs-full", path, true, t).ConfigureAwait(false);
 
             LogClean("<color=orange>Hard Reset Complete.</color>");
-            PostUnversionedRemovedUI();
         }
 
         public async Task RepairStructureAsync(CancellationToken t)
@@ -459,9 +441,16 @@ namespace SVN.Core
         private async Task RefreshStatusSafeAsync()
         {
             if (_isDisposed || svnManager == null) return;
-            try { await svnManager.RefreshStatus(true).ConfigureAwait(false); }
+
+            try
+            {
+                await svnManager.RefreshStatus(true).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) { }
-            catch (Exception ex) { SVNLogBridge.LogError($"Refresh failed: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"Refresh failed: {ex.Message}");
+            }
         }
 
         private static void TryCancel(CancellationTokenSource cts, ref bool flag)

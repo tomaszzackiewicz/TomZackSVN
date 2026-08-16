@@ -106,7 +106,7 @@ namespace SVN.Core
                     string cleanPath = SvnRunner.NormalizeRepositoryPath(rawPath);
 
                     if (!string.IsNullOrEmpty(cleanPath))
-                        cleanPath = cleanPath.Replace('\\', '/').Trim().Trim('/'); // bez trailing '/'
+                        cleanPath = cleanPath.Replace('\\', '/').Trim().Trim('/');
 
                     if (string.IsNullOrEmpty(cleanPath) || cleanPath == ".")
                     {
@@ -156,7 +156,6 @@ namespace SVN.Core
                         }
                     }
 
-                    // Wymuś DIR, jeśli to katalog
                     if (existsOnDisk && Directory.Exists(fullPathNative))
                     {
                         isDir = true;
@@ -177,7 +176,6 @@ namespace SVN.Core
                     }
                     else
                     {
-                        // NIE pomijaj '?'
                         string nameOnly = cleanPath.Contains('/')
                             ? cleanPath.Substring(cleanPath.LastIndexOf('/') + 1)
                             : cleanPath;
@@ -196,7 +194,6 @@ namespace SVN.Core
 
                 if (expandUnversioned)
                 {
-                    // Toggle ON → rozwiń foldery ?
                     var unversionedDirs = dict
                         .Where(kvp => kvp.Value.Status == "?" && kvp.Value.Size == directoryLabel)
                         .Select(kvp => kvp.Key)
@@ -212,7 +209,6 @@ namespace SVN.Core
 
                         if (!Directory.Exists(fullDirPathNative)) continue;
 
-                        // Pliki
                         string[] filesInDir;
                         try
                         {
@@ -249,7 +245,6 @@ namespace SVN.Core
                             };
                         }
 
-                        // Podfoldery
                         string[] dirsInDir;
                         try
                         {
@@ -285,9 +280,6 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // Toggle OFF:
-                    // svn status zwraca tylko top-level ?
-                    // Zostaw WSZYSTKIE katalogi ?, usuń tylko pliki ?
                     var toRemove = new List<string>();
 
                     foreach (var kvp in dict)
@@ -298,15 +290,12 @@ namespace SVN.Core
                             .Replace('\\', '/')
                             .Replace('/', Path.DirectorySeparatorChar);
 
-                        // Katalog na dysku → ZOSTAW
                         if (Directory.Exists(native))
                             continue;
 
-                        // Wpis oznaczony jako DIR i top-level → ZOSTAW
                         if (kvp.Value.Size == directoryLabel && kvp.Key.IndexOf('/') < 0)
                             continue;
 
-                        // Reszta (pliki ?) → usuń
                         toRemove.Add(kvp.Key);
                     }
 
@@ -314,7 +303,6 @@ namespace SVN.Core
                         dict.Remove(key);
                 }
 
-                // DIAGNOSTYKA – zobacz w Console Unity
                 int qTotal = dict.Count(k => k.Value.Status == "?");
                 int qDir = dict.Count(k => k.Value.Status == "?" && k.Value.Size == directoryLabel);
                 Debug.Log($"[SVN] expandUnversioned={expandUnversioned} | ? total={qTotal} | ? DIR={qDir} | " +
@@ -497,8 +485,13 @@ namespace SVN.Core
                 _cts?.Cancel();
                 _cts?.Dispose();
                 _cts = null;
-
                 IsProcessing = false;
+
+                if (svnManager != null)
+                {
+                    svnManager.ExpandedPaths.Clear();
+                    svnManager.ExpandedPaths.Add("");
+                }
 
                 ClearCurrentData();
                 ClearSVNTreeView();
@@ -521,59 +514,76 @@ namespace SVN.Core
         {
             if (folder == null)
             {
-                Debug.LogError("[SVN Status] ToggleFolderVisibility: Kliknięto strzałkę, ale obiekt folderu to NULL! (Błąd w skrypcie UI)");
+                Debug.LogError("[SVN Status] ToggleFolderVisibility: folder is NULL");
                 return;
             }
-
             if (!folder.IsFolder)
             {
-                Debug.LogWarning($"[SVN Status] ToggleFolderVisibility: Element '{folder.Name}' nie jest folderem (IsFolder=false). Ignoruję.");
+                Debug.LogWarning($"[SVN Status] ToggleFolderVisibility: '{folder.Name}' is not a folder");
                 return;
             }
 
             folder.IsExpanded = !folder.IsExpanded;
 
+            if (svnManager != null)
+            {
+                if (folder.IsExpanded)
+                    svnManager.ExpandedPaths.Add(folder.FullPath);
+                else
+                    svnManager.ExpandedPaths.Remove(folder.FullPath);
+            }
+
             if (_flatTreeData == null || _flatTreeData.Count == 0)
             {
-                Debug.LogWarning("[SVN Status] ToggleFolderVisibility: _flatTreeData jest puste!");
+                Debug.LogWarning("[SVN Status] ToggleFolderVisibility: _flatTreeData is empty");
                 return;
             }
 
             int startIndex = _flatTreeData.FindIndex(e => e == folder);
             if (startIndex == -1)
             {
-                Debug.LogError($"[SVN Status] ToggleFolderVisibility: ZNALAZŁEM STARY OBIEKT! Kliknięty folder '{folder.FullPath}' nie istnieje w aktualnej liście _flatTreeData. Prawdopodobnie lista została podmieniona przez tło.");
+                Debug.LogError($"[SVN Status] ToggleFolderVisibility: folder '{folder.FullPath}' not found in current list");
                 return;
             }
 
             string folderPath = folder.FullPath;
             string prefix = folderPath.EndsWith("/") ? folderPath : folderPath + "/";
-
-            var localLookup = new Dictionary<string, SvnTreeElement>(32) { [folderPath] = folder };
+            var localLookup = new Dictionary<string, SvnTreeElement>(32, StringComparer.OrdinalIgnoreCase)
+            {
+                [folderPath] = folder
+            };
 
             for (int i = startIndex + 1; i < _flatTreeData.Count; i++)
             {
                 var e = _flatTreeData[i];
-                if (!e.FullPath.StartsWith(prefix)) break;
+                if (!e.FullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) break;
 
                 localLookup[e.FullPath] = e;
                 string parentPath = GetParentPath(e.FullPath);
                 if (string.IsNullOrEmpty(parentPath)) continue;
 
                 if (localLookup.TryGetValue(parentPath, out var parent))
-                {
                     e.IsVisible = parent.IsVisible && parent.IsExpanded;
+            }
+
+            if (_commitTreeData != null)
+            {
+                var commitFolder = _commitTreeData.FirstOrDefault(e =>
+                    e.IsFolder && string.Equals(e.FullPath, folder.FullPath, StringComparison.OrdinalIgnoreCase));
+                if (commitFolder != null)
+                {
+                    commitFolder.IsExpanded = folder.IsExpanded;
+                    RestoreExpandedPaths(_commitTreeData,
+                        new HashSet<string>(svnManager?.ExpandedPaths ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase));
                 }
-            }  
+            }
 
             svnUI.SvnTreeView?.RefreshUI(_flatTreeData, this);
 
             bool commitPanelVisible = svnUI.SVNCommitTreeDisplay != null &&
                                       svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
             if (commitPanelVisible && _commitTreeData != null)
-            {
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
-            }
         }
 
         public void ExpandAll()
@@ -597,6 +607,8 @@ namespace SVN.Core
                 }
                 svnUI.SVNCommitTreeDisplay?.RefreshUI(_commitTreeData, this);
             }
+
+            SyncExpandedPathsFromTree();
         }
 
         public void CollapseAll()
@@ -620,6 +632,12 @@ namespace SVN.Core
                 }
                 svnUI.SVNCommitTreeDisplay?.RefreshUI(_commitTreeData, this);
             }
+
+            if (svnManager != null)
+            {
+                svnManager.ExpandedPaths.Clear();
+                svnManager.ExpandedPaths.Add("");
+            }
         }
 
         private string GetParentPath(string path)
@@ -630,8 +648,6 @@ namespace SVN.Core
 
         public async Task RefreshAfterAction()
         {
-            svnManager.ExpandedPaths.Clear();
-            svnManager.ExpandedPaths.Add("");
             ClearSVNTreeView();
             await ExecuteRefreshWithAutoExpand(force: true);
         }
@@ -644,10 +660,7 @@ namespace SVN.Core
 
         public async Task RefreshModifiedInternal()
         {
-            svnManager.ExpandedPaths.Clear();
-            svnManager.ExpandedPaths.Add("");
             ClearSVNTreeView();
-
             RunOnMainThread(() =>
             {
                 if (svnUI.TreeDisplay != null)
@@ -655,7 +668,6 @@ namespace SVN.Core
                 if (svnUI.CommitTreeDisplay != null)
                     SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing...", "COMMIT_TREE", append: false);
             });
-
             _isCurrentViewIgnored = false;
             await ExecuteRefreshWithAutoExpand(force: true);
         }
@@ -665,6 +677,7 @@ namespace SVN.Core
             var oldCts = _cts;
             _cts = new CancellationTokenSource();
             CancellationToken token = _cts.Token;
+
             if (oldCts != null)
             {
                 oldCts.Cancel();
@@ -679,14 +692,14 @@ namespace SVN.Core
                 RunOnMainThread(() =>
                 {
                     if (svnUI != null && svnUI.TreeDisplay != null && svnUI.TreeDisplay.text.Contains("Scanning"))
-                    {
                         SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, message, "TREE", append: false);
-                    }
                 });
             }
 
             try
             {
+                var expandedPaths = CaptureExpandedPaths();
+
                 RunOnMainThread(() =>
                 {
                     if (svnUI != null)
@@ -696,7 +709,6 @@ namespace SVN.Core
                         if (svnUI.CommitTreeDisplay != null && svnUI.CommitTreeDisplay.gameObject.activeInHierarchy)
                             SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "Refreshing commit list...", "COMMIT_TREE", append: false);
                     }
-
                     svnUI?.SvnTreeView?.ClearView();
                     svnUI?.SVNCommitTreeDisplay?.ClearView();
                 });
@@ -705,7 +717,6 @@ namespace SVN.Core
                 token.ThrowIfCancellationRequested();
 
                 string root = svnManager.WorkingDir;
-
                 Dictionary<string, SvnChangeInfo> statusDict = null;
                 Dictionary<string, SVNLockDetails> lockDict = null;
 
@@ -715,7 +726,6 @@ namespace SVN.Core
                     var locksTask = GetLocksDictionaryAsync(root, token);
                     await Task.WhenAll(statusTask, locksTask);
                     token.ThrowIfCancellationRequested();
-
                     statusDict = statusTask.Result;
                     lockDict = locksTask.Result;
                 }, token).ConfigureAwait(false);
@@ -746,7 +756,7 @@ namespace SVN.Core
                     }
                 });
 
-                var previousSelectionStates = new Dictionary<string, bool>(StringComparer.Ordinal);
+                var previousSelectionStates = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                 foreach (var e in _flatTreeData)
                 {
                     if (!string.IsNullOrEmpty(e.FullPath))
@@ -755,20 +765,18 @@ namespace SVN.Core
 
                 var buildResult = await Task.Run(() => BuildFlatTreeStructureText(root, statusDict, previousSelectionStates), token);
                 token.ThrowIfCancellationRequested();
-
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
 
                 var newCommitData = await Task.Run(() => BuildCommitView(buildResult.Elements), token);
                 token.ThrowIfCancellationRequested();
-
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
 
                 _flatTreeData = buildResult.Elements;
                 _commitTreeData = newCommitData;
                 totalCommitBytes = buildResult.TotalBytes;
 
-                foreach (var e in _flatTreeData) e.IsVisible = (e.Depth <= 1);
-                foreach (var e in _commitTreeData) e.IsVisible = (e.Depth <= 1);
+                RestoreExpandedPaths(_flatTreeData, expandedPaths);
+                RestoreExpandedPaths(_commitTreeData, expandedPaths);
 
                 if (lockDict != null && lockDict.Count > 0)
                     ApplyLockColors(_flatTreeData, lockDict);
@@ -789,10 +797,8 @@ namespace SVN.Core
                     if (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
                     {
                         foreach (var e in localCommitData) e.IsCommitDelegate = true;
-
                         if (svnUI.CommitTreeDisplay != null)
                             SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
-
                         svnUI.SVNCommitTreeDisplay.RefreshUI(localCommitData, this);
                         UpdateSelectedSizeDisplay();
                     }
@@ -884,7 +890,7 @@ namespace SVN.Core
                 if (isFolder)
                 {
                     stats.FolderCount++;
-                    if (s == "?") stats.NewFilesCount++; // folder ? też widać w statystykach
+                    if (s == "?") stats.NewFilesCount++;
                     continue;
                 }
 
@@ -1084,6 +1090,99 @@ namespace SVN.Core
 
             totalCommitBytes = selectedBytes;
             svnUI.CommitSizeText.text = $"Total Commit Size: <color=#FFFF00>{FormatSize(selectedBytes)}</color>";
+        }
+
+        private HashSet<string> CaptureExpandedPaths()
+        {
+            var expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (_flatTreeData != null)
+            {
+                foreach (var e in _flatTreeData)
+                {
+                    if (e.IsFolder && e.IsExpanded && !string.IsNullOrEmpty(e.FullPath))
+                        expanded.Add(e.FullPath);
+                }
+            }
+
+            if (expanded.Count == 0 && svnManager?.ExpandedPaths != null)
+            {
+                foreach (var p in svnManager.ExpandedPaths)
+                {
+                    if (!string.IsNullOrEmpty(p))
+                        expanded.Add(p);
+                }
+            }
+
+            if (svnManager != null)
+            {
+                svnManager.ExpandedPaths.Clear();
+                foreach (var p in expanded)
+                    svnManager.ExpandedPaths.Add(p);
+                svnManager.ExpandedPaths.Add("");
+            }
+
+            return expanded;
+        }
+
+        private void RestoreExpandedPaths(List<SvnTreeElement> elements, HashSet<string> expanded)
+        {
+            if (elements == null || elements.Count == 0) return;
+
+            expanded ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var e in elements)
+            {
+                if (!e.IsFolder) continue;
+                e.IsExpanded = !string.IsNullOrEmpty(e.FullPath) && expanded.Contains(e.FullPath);
+            }
+
+            var byPath = new Dictionary<string, SvnTreeElement>(elements.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var e in elements)
+            {
+                if (!string.IsNullOrEmpty(e.FullPath))
+                    byPath[e.FullPath] = e;
+            }
+
+            foreach (var e in elements)
+            {
+                if (e.Depth <= 1)
+                {
+                    e.IsVisible = true;
+                    continue;
+                }
+
+                string parentPath = GetParentPath(e.FullPath);
+                bool visible = true;
+
+                while (!string.IsNullOrEmpty(parentPath))
+                {
+                    if (!byPath.TryGetValue(parentPath, out var parent) || !parent.IsExpanded)
+                    {
+                        visible = false;
+                        break;
+                    }
+                    parentPath = GetParentPath(parentPath);
+                }
+
+                e.IsVisible = visible;
+            }
+        }
+
+        private void SyncExpandedPathsFromTree()
+        {
+            if (svnManager == null) return;
+
+            svnManager.ExpandedPaths.Clear();
+            svnManager.ExpandedPaths.Add("");
+
+            if (_flatTreeData == null) return;
+
+            foreach (var e in _flatTreeData)
+            {
+                if (e.IsFolder && e.IsExpanded && !string.IsNullOrEmpty(e.FullPath))
+                    svnManager.ExpandedPaths.Add(e.FullPath);
+            }
         }
     }
 }

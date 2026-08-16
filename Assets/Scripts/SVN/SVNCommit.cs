@@ -58,7 +58,6 @@ namespace SVN.Core
         {
             if (targets == null) return new List<string>();
 
-            // Sortujemy od najdłuższych do najkrótszych (konkretne pliki przed folderami)
             var sorted = targets
                 .Where(t => !string.IsNullOrWhiteSpace(t))
                 .Select(t => t.Replace('\\', '/').Trim().Trim('/'))
@@ -71,10 +70,8 @@ namespace SVN.Core
             var result = new List<string>();
             foreach (string path in sorted)
             {
-                // Sprawdzamy, czy już dodany jakiś plik (dziecko), który znajduje się w tym folderze
                 bool isParentOfSelectedChild = result.Any(child => child.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase));
 
-                // Jeśli folder nie jest rodzicem żadnego już dodanego pliku, dodajemy go
                 if (!isParentOfSelectedChild)
                 {
                     result.Add(path);
@@ -158,10 +155,8 @@ namespace SVN.Core
                 string root = NormalizeRoot(svnManager.WorkingDir);
                 var statusModule = svnManager.GetModule<SVNStatus>();
 
-                // Pobierz flagę z modułu statusu
                 bool expandUnversioned = statusModule?.ShowUnversionedFiles ?? true;
 
-                // Przekaż flagę do słownika statusu
                 var statusDict = await SVNStatus.GetChangesDictionaryAsync(root, expandUnversioned);
 
                 _items = statusDict.Where(x => DisplayStatuses.Contains(x.Value.Status))
@@ -596,37 +591,6 @@ namespace SVN.Core
             finally { TryDeleteFile(targetsFile); }
         }
 
-        private async Task AddNewFiles(string root, IEnumerable<string> relativePaths, CancellationToken token)
-        {
-            LogToConsole("<b>[3/4]</b> Indexing new files...");
-            if (relativePaths == null) { LogToConsole("<color=green>No new files to add.</color>"); return; }
-            var rawAdditions = relativePaths.Where(p => !string.IsNullOrWhiteSpace(p))
-                .Select(NormalizeRelativeTarget).Where(p => !string.IsNullOrWhiteSpace(p))
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (rawAdditions.Count == 0) { LogToConsole("<color=green>No new files to add.</color>"); return; }
-
-            var validAdditions = new List<string>();
-            await Task.Run(() =>
-            {
-                foreach (string relPath in rawAdditions)
-                {
-                    string fullPhysicalPath = Path.Combine(root, relPath.Replace('/', Path.DirectorySeparatorChar));
-                    if (File.Exists(fullPhysicalPath) || Directory.Exists(fullPhysicalPath)) validAdditions.Add(relPath);
-                }
-            }, token);
-            if (validAdditions.Count == 0) { LogToConsole("<color=green>No existing new files to add.</color>"); return; }
-
-            var minimalAddTargets = ReduceCommitTargets(validAdditions);
-            if (minimalAddTargets.Count == 0) { LogToConsole("<color=yellow>No valid add targets remained.</color>"); return; }
-
-            LogToConsole($"Adding {minimalAddTargets.Count} target(s) to SVN index...");
-            string targetsFile = Path.Combine(Path.GetTempPath(), $"svn_add_{Guid.NewGuid():N}.txt");
-            var formattedTargets = minimalAddTargets.Select(FormatPathForSvn).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
-            await Task.Run(() => File.WriteAllLines(targetsFile, formattedTargets, new UTF8Encoding(false)), token);
-            try { await SvnRunner.RunAsync($"add --parents --targets \"{targetsFile}\"", root, false, token); }
-            finally { TryDeleteFile(targetsFile); }
-        }
-
 		#endregion
 
 		#region Commit Process
@@ -844,45 +808,6 @@ namespace SVN.Core
                 LogToConsole("<color=#FF4444><b>[ABORTED]</b> Cleanup timed out. Commit aborted for safety.</color>");
                 return false;
             }
-        }
-
-        private List<string> EnsureAddedParentsIncluded(
-    List<string> targets,
-    Dictionary<string, (string status, string size)> statusDict)
-        {
-            var result = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
-
-            foreach (string target in targets)
-            {
-                string[] parts = target.Split('/');
-
-                // Budujemy wszystkie ścieżki nadrzędne: "A", "A/B", "A/B/C" ...
-                for (int i = 1; i < parts.Length; i++)
-                {
-                    string parentPath = string.Join("/", parts, 0, i);
-
-                    // Rodzic musi być w commicie, jeśli:
-                    // - ma status A lub R (już scheduled)
-                    // - lub ma status ? (jeszcze nie dodany)
-                    // - lub w ogóle nie istnieje w statusDict (bardzo nowy folder)
-                    if (statusDict.TryGetValue(parentPath, out var parentStatus))
-                    {
-                        if ("AR?".Contains(parentStatus.status))
-                        {
-                            result.Add(parentPath);
-                        }
-                    }
-                    else
-                    {
-                        // Folder nie pojawia się w statusie → najprawdopodobniej nowy
-                        // (bezpieczniej go dodać, niż ryzykować E200009)
-                        result.Add(parentPath);
-                    }
-                }
-            }
-
-            // Zachowujemy kolejność od najkrótszych do najdłuższych (rodzice przed dziećmi)
-            return result.OrderBy(t => t.Length).ThenBy(t => t, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         #endregion

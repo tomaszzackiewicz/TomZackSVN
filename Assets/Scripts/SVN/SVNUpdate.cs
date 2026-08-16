@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -429,7 +430,7 @@ namespace SVN.Core
 
                 using (var reader = new StringReader(logOutput))
                 {
-                    reader.ReadLine(); // separator
+                    reader.ReadLine();
                     string revisionLine = reader.ReadLine();
 
                     if (string.IsNullOrWhiteSpace(revisionLine)) return string.Empty;
@@ -503,10 +504,12 @@ namespace SVN.Core
                 return;
             }
 
-            using (var cts = new CancellationTokenSource())
+            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
             {
                 CancellationToken token = cts.Token;
                 IsProcessing = true;
+                var remoteFiles = new List<string>();
+                var conflictFiles = new List<string>();
 
                 try
                 {
@@ -527,25 +530,53 @@ namespace SVN.Core
                         while ((line = reader.ReadLine()) != null)
                         {
                             token.ThrowIfCancellationRequested();
+
                             if (line.Length > 8 && line[8] == '*')
                             {
                                 remoteChangesCount++;
                                 string pathPart = line.Substring(9).TrimStart();
                                 pathPart = RevisionPrefixRegex.Replace(pathPart, "");
                                 string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart.TrimEnd());
-                                SVNLogBridge.LogLine($"<color=orange>Update available:</color> {cleanPath}");
+                                remoteFiles.Add(cleanPath);
+                            }
+
+                            if (line.Length > 1 && (line[0] == 'C' || (line.Length > 1 && line[1] == 'C')))
+                            {
+                                string rawPath = line.Length > 8 ? line.Substring(8).Trim() : line.Trim();
+                                string cleanPath = SvnRunner.NormalizeRepositoryPath(SvnRunner.CleanSvnPath(rawPath));
+                                if (!conflictFiles.Contains(cleanPath))
+                                    conflictFiles.Add(cleanPath);
                             }
                         }
                     }
 
+                    if (conflictFiles.Count > 0)
+                    {
+                        SVNLogBridge.LogLine($"<color=#FF4444><b>WARNING: {conflictFiles.Count} local conflict(s) detected!</b></color>");
+                        SVNLogBridge.LogLine("<color=#FF4444>Resolve before updating or merge will fail.</color>");
+                        foreach (var c in conflictFiles.Take(10))
+                            SVNLogBridge.LogLine($"<color=#FF4444>  • {c}</color>");
+                        if (conflictFiles.Count > 10)
+                            SVNLogBridge.LogLine($"<color=#FF4444>  ... and {conflictFiles.Count - 10} more</color>");
+                        SVNLogBridge.LogLine("");
+                    }
+
                     if (remoteChangesCount > 0)
-                        SVNLogBridge.LogLine($"\n<b>Summary:</b> Found <color=#FFAA00>{remoteChangesCount}</color> items to update.");
+                    {
+                        string tempFile = await WriteRemoteChangesToTempFileAsync(remoteFiles, root, token);
+                        OpenInEditor(tempFile);
+
+                        SVNLogBridge.LogLine($"<b>Summary:</b> Found <color=#FFAA00>{remoteChangesCount}</color> items to update.");
+                        SVNLogBridge.LogLine("<color=yellow>Full list opened in external text editor.</color>");
+                    }
                     else
+                    {
                         SVNLogBridge.LogLine("<color=green>Your working copy is up to date.</color>");
+                    }
                 }
                 catch (OperationCanceledException)
                 {
-                    SVNLogBridge.LogLine("<color=yellow>Remote update check canceled.</color>");
+                    SVNLogBridge.LogLine("<color=yellow>Remote update check canceled or timed out.</color>");
                 }
                 catch (Exception ex)
                 {
@@ -556,6 +587,77 @@ namespace SVN.Core
                     IsProcessing = false;
                 }
             }
+        }
+
+        private async Task<string> WriteRemoteChangesToTempFileAsync(List<string> files, string root, CancellationToken token)
+        {
+            CleanupOldTempFiles("svn_remote_changes_*.txt");
+
+            string tempFilePath = Path.Combine(Path.GetTempPath(), $"svn_remote_changes_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+            var sb = new StringBuilder();
+            sb.AppendLine($"# SVN Remote Changes Report");
+            sb.AppendLine($"# Root: {root}");
+            sb.AppendLine($"# Generated: {DateTime.Now:G}");
+            sb.AppendLine($"# Total items to update: {files.Count}");
+            sb.AppendLine(new string('-', 60));
+
+            foreach (var path in files)
+            {
+                sb.AppendLine(path);
+            }
+
+            await File.WriteAllTextAsync(tempFilePath, sb.ToString(), new UTF8Encoding(false), token).ConfigureAwait(false);
+            return tempFilePath;
+        }
+
+        private void OpenInEditor(string filePath)
+        {
+            try
+            {
+                string editorPath = svnManager?.MergeToolPath;
+                if (!string.IsNullOrWhiteSpace(editorPath) && File.Exists(editorPath))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = editorPath,
+                        Arguments = $"\"{filePath}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+                }
+                else
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = filePath,
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN] Could not open editor: {ex.Message}");
+            }
+        }
+
+        private static void CleanupOldTempFiles(string pattern)
+        {
+            try
+            {
+                string temp = Path.GetTempPath();
+                foreach (var file in Directory.GetFiles(temp, pattern))
+                {
+                    if (File.Exists(file))
+                    {
+                        var fi = new FileInfo(file);
+                        if (fi.CreationTime < DateTime.Now.AddHours(-24))
+                        {
+                            try { File.Delete(file); } catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         public async Task<bool> HasLocalModificationsAsync(string workingDir, CancellationToken token = default)

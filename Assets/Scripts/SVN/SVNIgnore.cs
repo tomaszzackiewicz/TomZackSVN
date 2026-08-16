@@ -18,6 +18,9 @@ namespace SVN.Core
         private int _processingFlag;
         private readonly SynchronizationContext _mainThreadContext;
 
+        private static readonly Dictionary<string, Regex> _regexCache = new Dictionary<string, Regex>();
+        private static readonly object _regexCacheLock = new object();
+
         public SVNIgnore(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
@@ -104,7 +107,9 @@ namespace SVN.Core
                 foreach (var entry in allEntries)
                 {
                     string relPath = entry.Replace(workingDir, "").TrimStart('\\', '/').Replace('\\', '/');
-                    if (relPath.Contains(".svn") || ignoredDict.ContainsKey(relPath)) continue;
+
+                    if (relPath.Split('/').Any(seg => seg == ".svn") || ignoredDict.ContainsKey(relPath))
+                        continue;
 
                     string name = Path.GetFileName(entry);
                     if (IsIgnoredByRules(name, relPath, activeRules))
@@ -202,6 +207,10 @@ namespace SVN.Core
                 return;
             }
 
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            cts.CancelAfter(TimeSpan.FromSeconds(120));
+            CancellationToken linkedToken = cts.Token;
+
             try
             {
                 string root = svnManager?.WorkingDir;
@@ -213,7 +222,7 @@ namespace SVN.Core
 
                 PostUI(() => UpdateStatusInUI("<color=yellow><b>[DISK SCAN]</b> Scanning all local files against ignore rules...\nThis may take 10-30 seconds for large projects. Please wait.</color>"));
 
-                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root, token).ConfigureAwait(false);
+                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root, linkedToken).ConfigureAwait(false);
                 lock (_cacheLock)
                 {
                     if (_cachedIgnoreRules != null)
@@ -231,13 +240,17 @@ namespace SVN.Core
                 if (activeRules.Count > 0 && Directory.Exists(root))
                 {
                     string[] allEntries = await Task.Run(() =>
-                        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories), token).ConfigureAwait(false);
+                        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories), linkedToken).ConfigureAwait(false);
 
                     foreach (var entry in allEntries)
                     {
+                        linkedToken.ThrowIfCancellationRequested();
+
                         string name = Path.GetFileName(entry);
                         string relPath = entry.Replace(root, "").TrimStart('\\', '/').Replace('\\', '/');
-                        if (relPath.Contains(".svn")) continue;
+
+                        if (relPath.Split('/').Any(seg => seg == ".svn"))
+                            continue;
 
                         if (IsIgnoredByRules(name, relPath, activeRules))
                         {
@@ -256,6 +269,10 @@ namespace SVN.Core
 
                 PostUI(() => UpdateStatusInUI($"<color=green>Success!</color> Exported {fullIgnoredList.Count} ignored files to text editor."));
             }
+            catch (OperationCanceledException)
+            {
+                PostUI(() => UpdateStatusInUI("<color=yellow>Operation canceled or timed out.</color>"));
+            }
             catch (Exception ex)
             {
                 PostUI(() => UpdateStatusInUI($"<color=red>Error opening editor:</color> {ex.Message}"));
@@ -268,9 +285,12 @@ namespace SVN.Core
 
         private void OpenFullIgnoredListInEditor(List<string> ignoredFiles)
         {
+            string tempFilePath = null;
             try
             {
-                string tempFilePath = Path.Combine(Path.GetTempPath(), $"svn_ignored_list_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                CleanupOldTempFiles();
+
+                tempFilePath = Path.Combine(Path.GetTempPath(), $"svn_ignored_list_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
                 var fileSb = new StringBuilder();
 
                 fileSb.AppendLine($"# SVN Ignored Files Report");
@@ -318,7 +338,30 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogErrorToOutput($"[SVN Ignore] Could not create report: {ex.Message}");
             }
+
         }
+
+
+        private static void CleanupOldTempFiles()
+        {
+            try
+            {
+                string temp = Path.GetTempPath();
+                foreach (var file in Directory.GetFiles(temp, "svn_ignored_list_*.txt"))
+                {
+                    if (File.Exists(file))
+                    {
+                        var fi = new FileInfo(file);
+                        if (fi.CreationTime < DateTime.Now.AddHours(-24))
+                        {
+                            try { File.Delete(file); } catch { /* ignore */ }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
 
         public async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir, CancellationToken token = default)
         {
@@ -330,8 +373,15 @@ namespace SVN.Core
 
                 string combinedOutput = (globalOutput ?? "") + "\n" + (standardOutput ?? "");
 
-                if (string.IsNullOrWhiteSpace(combinedOutput) || combinedOutput.Contains("ERROR"))
+                if (string.IsNullOrWhiteSpace(combinedOutput))
                     return rules;
+
+                if (combinedOutput.TrimStart().StartsWith("svn:", StringComparison.OrdinalIgnoreCase) ||
+                    combinedOutput.TrimStart().StartsWith("propget:", StringComparison.OrdinalIgnoreCase))
+                {
+                    SVNLogBridge.LogErrorToOutput($"[SVN Ignore] SVN returned error: {combinedOutput.Trim()}");
+                    return rules;
+                }
 
                 foreach (var line in combinedOutput.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries))
                 {
@@ -339,11 +389,11 @@ namespace SVN.Core
                     int separatorIndex = line.IndexOf(" - ");
                     if (separatorIndex >= 0)
                     {
-                        pattern = line.Substring(separatorIndex + 3);
+                        pattern = line.Substring(0, separatorIndex);
                     }
 
                     string trimmed = pattern.Trim();
-                    if (!string.IsNullOrEmpty(trimmed) && !trimmed.Contains(" ") && !rules.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+                    if (!string.IsNullOrEmpty(trimmed) && !rules.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
                     {
                         rules.Add(trimmed);
                     }
@@ -441,16 +491,34 @@ namespace SVN.Core
 
         private static bool IsIgnoredByRules(string name, string relPath, List<string> rules)
         {
-            foreach (var rule in rules)
+            foreach (var rawRule in rules)
             {
+                string rule = rawRule.Trim();
+                if (string.IsNullOrEmpty(rule)) continue;
+
+                bool isNegation = rule.StartsWith("!");
+                if (isNegation) rule = rule.Substring(1);
+
+                bool folderOnly = rule.EndsWith("/");
+                if (folderOnly) rule = rule.TrimEnd('/');
+
+                bool matches = false;
+
                 if (name.Equals(rule, StringComparison.OrdinalIgnoreCase))
-                    return true;
+                    matches = true;
 
-                if (relPath.Split('/').Any(part => part.Equals(rule, StringComparison.OrdinalIgnoreCase)))
-                    return true;
+                if (!matches && relPath.Split('/').Any(part => part.Equals(rule, StringComparison.OrdinalIgnoreCase)))
+                    matches = true;
 
-                if (rule.Contains("*") && IsMatch(name, rule))
+                if (!matches && rule.Contains("*") && IsMatch(name, rule))
+                    matches = true;
+
+                if (matches)
+                {
+                    if (isNegation)
+                        return false;
                     return true;
+                }
             }
             return false;
         }
@@ -460,8 +528,17 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(pattern)) return false;
             if (pattern == "*") return true;
 
-            string regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
-            return Regex.IsMatch(text, regexPattern, RegexOptions.IgnoreCase);
+            Regex regex;
+            lock (_regexCacheLock)
+            {
+                if (!_regexCache.TryGetValue(pattern, out regex))
+                {
+                    string regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+                    regex = new Regex(regexPattern, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+                    _regexCache[pattern] = regex;
+                }
+            }
+            return regex.IsMatch(text);
         }
 
         private void UpdateStatusInUI(string message)

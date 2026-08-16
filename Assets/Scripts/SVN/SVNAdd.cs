@@ -251,14 +251,19 @@ namespace SVN.Core
             token.ThrowIfCancellationRequested();
             var statusModule = svnManager.GetModule<SVNStatus>();
             if (statusModule == null) return;
+
             try
             {
-                statusModule.ClearSVNTreeView();
-                statusModule.ClearCurrentData();
                 await statusModule.RefreshModifiedInternal().ConfigureAwait(false);
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { SVNLogBridge.LogError($"[Add] Failed to refresh status tree: {ex.Message}"); }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[Add] Failed to refresh status tree: {ex.Message}");
+            }
         }
 
         private string NormalizeRoot(string root)
@@ -387,11 +392,9 @@ namespace SVN.Core
                 string root = NormalizeRoot(svnManager.WorkingDir);
                 if (string.IsNullOrWhiteSpace(root)) return;
 
-                // Pobierz zaznaczone elementy z drzewa statusu
                 var statusModule = svnManager.GetModule<SVNStatus>();
                 var selectedItems = statusModule?.GetCurrentData().Where(e => e.IsChecked).ToList() ?? new List<SvnTreeElement>();
 
-                // Filtruj tylko unversioned (?)
                 var unversionedSelected = selectedItems
                     .Where(e => e.Status == "?" && !string.IsNullOrWhiteSpace(e.FullPath))
                     .Select(e =>
@@ -409,7 +412,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Redukcja: jeśli zaznaczono plik wewnątrz folderu, nie dodawaj folderu osobno
                 var itemsToAdd = ReduceToTopLevelItems(unversionedSelected);
                 if (itemsToAdd.Count == 0) return;
 

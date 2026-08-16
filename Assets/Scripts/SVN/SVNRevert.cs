@@ -26,19 +26,6 @@ namespace SVN.Core
             PostToMainThread(() => SVNLogBridge.LogLine(msg));
         }
 
-        private void ClearAllUI()
-        {
-            PostToMainThread(() =>
-            {
-                svnUI?.SvnTreeView?.ClearView();
-                svnUI?.SVNCommitTreeDisplay?.ClearView();
-                if (svnUI?.TreeDisplay != null)
-                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-                if (svnUI?.CommitTreeDisplay != null)
-                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
-            });
-        }
-
         private bool ConfirmAction(float currentTime, ref float lastClickTime, string warningMessage)
         {
             const float ConfirmationWindow = 5f;
@@ -121,7 +108,6 @@ namespace SVN.Core
         public async void RevertAll()
         {
             float clickTime = Time.unscaledTime;
-
             if (!ConfirmAction(clickTime, ref _lastRevertAllClickTime,
                 "<color=#FFAA00><b>[Revert All]</b></color> This will discard <b>ALL local changes</b>!\n" +
                 "Press the button again within <b>5 seconds</b> to confirm."))
@@ -153,19 +139,17 @@ namespace SVN.Core
                 CancellationToken token = localCts.Token;
 
                 var opStart = DateTime.UtcNow;
-
                 LogToConsole("<b>[Revert All]</b> Starting revert of all changes...");
+
                 bool cleanupOk = await CleanupWorkingCopyAsync(root, token).ConfigureAwait(false);
                 if (!cleanupOk) return;
 
                 token.ThrowIfCancellationRequested();
                 LogToConsole("<b>[Revert All]</b> Reverting all local modifications...");
-                await SvnRunner.RunAsync(new[] { "revert", "-R", "." }, root, false, token).ConfigureAwait(false);
 
+                await SvnRunner.RunAsync(new[] { "revert", "-R", "." }, root, false, token).ConfigureAwait(false);
                 svnManager.DiskChangesDetected = true;
-                var status = svnManager.GetModule<SVNStatus>();
-                status?.ClearCurrentData();
-                ClearAllUI();
+
                 await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
 
                 var durationMs = (long)(DateTime.UtcNow - opStart).TotalMilliseconds;
@@ -183,7 +167,12 @@ namespace SVN.Core
             {
                 ClearOperationToken(localCts);
                 if (ownsProcessing) IsProcessing = false;
-                if (hasLock) { try { _operationLock.Release(); } catch (SemaphoreFullException) { } catch (ObjectDisposedException) { } }
+                if (hasLock)
+                {
+                    try { _operationLock.Release(); }
+                    catch (SemaphoreFullException) { }
+                    catch (ObjectDisposedException) { }
+                }
             }
         }
 
@@ -196,7 +185,6 @@ namespace SVN.Core
             }
 
             float clickTime = Time.unscaledTime;
-
             if (!ConfirmAction(clickTime, ref _lastRevertSingleClickTime,
                 $"<color=#FFAA00><b>[Revert]</b></color> Revert <b>{element.Name}</b>?\n" +
                 "Press the button again within <b>5 seconds</b> to confirm."))
@@ -242,11 +230,8 @@ namespace SVN.Core
                 LogToConsole($"<b>[Revert]</b> Reverting: {safePath}...");
 
                 await SvnRunner.RunAsync(new[] { "revert", "-R", safePath }, root, false, token).ConfigureAwait(false);
-
                 svnManager.DiskChangesDetected = true;
-                var status = svnManager.GetModule<SVNStatus>();
-                status?.ClearCurrentData();
-                ClearAllUI();
+
                 await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
 
                 var durationMs = (long)(DateTime.UtcNow - opStart).TotalMilliseconds;
@@ -264,7 +249,12 @@ namespace SVN.Core
             {
                 ClearOperationToken(localCts);
                 if (ownsProcessing) IsProcessing = false;
-                if (hasLock) { try { _operationLock.Release(); } catch (SemaphoreFullException) { } catch (ObjectDisposedException) { } }
+                if (hasLock)
+                {
+                    try { _operationLock.Release(); }
+                    catch (SemaphoreFullException) { }
+                    catch (ObjectDisposedException) { }
+                }
             }
         }
 

@@ -67,27 +67,10 @@ namespace SVN.Core
                 await Task.Delay(250, token).ConfigureAwait(false);
 
                 var statusModule = svnManager.GetModule<SVNStatus>();
-
-                PostToMainThread(() =>
-                {
-                    if (statusModule != null)
-                        statusModule.ClearCurrentData();
-
-                    svnUI.SvnTreeView?.ClearView();
-                    svnUI.SVNCommitTreeDisplay?.ClearView();
-
-                    if (svnUI.TreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-                    if (svnUI.CommitTreeDisplay != null)
-                        SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
-
-                    svnManager.ExpandedPaths.Clear();
-                    svnManager.ExpandedPaths.Add("");
-                });
-
                 if (statusModule != null)
                 {
                     LogToConsole("<color=#4FC3F7>Refreshing SVN status...</color>");
+
                     await statusModule.ExecuteRefreshWithAutoExpand(force: true).ConfigureAwait(false);
 
                     PostToMainThread(() =>
