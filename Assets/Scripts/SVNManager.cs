@@ -161,6 +161,8 @@ namespace SVN.Core
 
             SVNLogger.Initialize();
 
+            svnUI.SvnManager = this;
+
             InitializeAllModules();
 
             SVN.Core.SvnRunner.OnProcessingStateChanged += OnSvnProcessingChanged;

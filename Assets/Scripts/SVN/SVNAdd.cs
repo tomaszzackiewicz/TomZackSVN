@@ -366,5 +366,89 @@ namespace SVN.Core
             try { _operationLock.Dispose(); } catch { }
             GC.SuppressFinalize(this);
         }
+
+        public async void AddSelected()
+        {
+            try { await AddSelectedAsync().ConfigureAwait(false); }
+            catch (Exception ex) { SVNLogBridge.LogError($"[Add] AddSelected failed: {ex.Message}"); }
+        }
+
+        private async Task AddSelectedAsync()
+        {
+            bool hasLock = false, ownsProcessing = false;
+            CancellationTokenSource localCts = null;
+            string tempFile = null;
+
+            try
+            {
+                hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
+                if (!hasLock || IsProcessing) return;
+
+                string root = NormalizeRoot(svnManager.WorkingDir);
+                if (string.IsNullOrWhiteSpace(root)) return;
+
+                // Pobierz zaznaczone elementy z drzewa statusu
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                var selectedItems = statusModule?.GetCurrentData().Where(e => e.IsChecked).ToList() ?? new List<SvnTreeElement>();
+
+                // Filtruj tylko unversioned (?)
+                var unversionedSelected = selectedItems
+                    .Where(e => e.Status == "?" && !string.IsNullOrWhiteSpace(e.FullPath))
+                    .Select(e =>
+                    {
+                        TryGetRelativePath(root, e.FullPath, out string rel);
+                        return rel;
+                    })
+                    .Where(r => !string.IsNullOrWhiteSpace(r))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (unversionedSelected.Count == 0)
+                {
+                    SVNLogBridge.LogLine("<color=yellow>No unversioned items selected.</color>");
+                    return;
+                }
+
+                // Redukcja: jeśli zaznaczono plik wewnątrz folderu, nie dodawaj folderu osobno
+                var itemsToAdd = ReduceToTopLevelItems(unversionedSelected);
+                if (itemsToAdd.Count == 0) return;
+
+                ownsProcessing = true;
+                IsProcessing = true;
+                localCts = new CancellationTokenSource();
+                Volatile.Write(ref _activeCTS, localCts);
+                CancellationToken token = localCts.Token;
+
+                ShowProgressBar();
+
+                bool cleanupOk = await CleanupWorkingCopyAsync(root, token).ConfigureAwait(false);
+                if (!cleanupOk) return;
+
+                SVNLogBridge.LogLine($"<b>[Add Selected]</b> Adding {itemsToAdd.Count} item(s)...");
+
+                tempFile = Path.Combine(Path.GetTempPath(), $"svn_add_selected_{Guid.NewGuid():N}.txt");
+                await Task.Run(() => File.WriteAllLines(tempFile, itemsToAdd, new UTF8Encoding(false)), token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+
+                await SvnRunner.RunAsync(new[] { "add", "--force", "--parents", "--targets", tempFile }, root, false, token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+
+                SVNLogBridge.LogLine($"<color=green><b>[SUCCESS]</b> {itemsToAdd.Count} item(s) scheduled for addition. You can now Commit Selected.</color>");
+                await RefreshStatusTreeAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange><b>[ABORTED]</b> Add Selected cancelled.</color>");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"<color=#FFAA00>Add Selected Error: {ex.Message}</color>");
+            }
+            finally
+            {
+                SafeDelete(tempFile);
+                FinalizeOperation(hasLock, localCts, ownsProcessing);
+            }
+        }
     }
 }

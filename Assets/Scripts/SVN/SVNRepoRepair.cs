@@ -455,7 +455,7 @@ namespace SVN.Core
                 var path = line.Substring(7).Trim();
                 if (string.IsNullOrWhiteSpace(path) || path.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
                 try { path = SvnRunner.NormalizeRepositoryPath(path); } catch { }
-                var color = status switch { 'A' => "#00FF41", 'D' => "#FF4444", 'M' => "#FFD700", '!' => "#FF00FF", '?' => "#AAAAAA", 'C' => "#FF8800", 'R' => "#00FFFF", _ => "#E6E6E6" };
+                var color = status switch { 'A' => "#00FF41", 'D' => "#FF4444", 'M' => "#FFD700", '!' => "#FF00FF", '?' => "yellow", 'C' => "#FF8800", 'R' => "#00FFFF", _ => "#E6E6E6" };
                 sb.AppendLine($"<color={color}>[{status}]</color> {EscapeRichText(path)}");
             }
             return sb.ToString();

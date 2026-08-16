@@ -18,6 +18,9 @@ namespace SVN.Core
         private const double BytesConversionFactor = 1024.0;
         private const int CleanupTimeoutSeconds = 30;
         private const int RefreshStatusTimeoutMs = 5000;
+        private volatile string _liveCommitFile = "";
+        private DateTime _lastCommitUiUpdate = DateTime.MinValue;
+        private const int CommitUiUpdateIntervalMs = 75;
 
         private const string DisplayStatuses = "MADR?!";
         private const string PreProcessStatuses = "MADR?!";
@@ -54,64 +57,30 @@ namespace SVN.Core
         private List<string> ReduceCommitTargets(IEnumerable<string> targets)
         {
             if (targets == null) return new List<string>();
+
+            // Sortujemy od najdłuższych do najkrótszych (konkretne pliki przed folderami)
             var sorted = targets
                 .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Replace('\\', '/').Trim())
+                .Select(t => t.Replace('\\', '/').Trim().Trim('/'))
                 .Where(t => !string.IsNullOrWhiteSpace(t) && !Path.IsPathRooted(t))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(t => t.Length)
-                .ThenBy(t => t, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(t => t.Length)
+                .ThenByDescending(t => t, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             var result = new List<string>();
             foreach (string path in sorted)
             {
-                bool isNested = result.Any(parent => path.StartsWith(parent + "/", StringComparison.OrdinalIgnoreCase));
-                if (!isNested) result.Add(path);
-            }
-            return result;
-        }
+                // Sprawdzamy, czy już dodany jakiś plik (dziecko), który znajduje się w tym folderze
+                bool isParentOfSelectedChild = result.Any(child => child.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase));
 
-        private (HashSet<string> targets, bool includesTopLevelAddedFolder) ResolveRequiredTargets(
-            HashSet<string> selectedRelPaths,
-            Dictionary<string, (string status, string size)> currentStatusDict)
-        {
-            var requiredTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            bool hasTopLevelAddedFolder = false;
-
-            foreach (var selectedPath in selectedRelPaths)
-            {
-                string currentSegment = selectedPath;
-
-                while (!string.IsNullOrWhiteSpace(currentSegment))
+                // Jeśli folder nie jest rodzicem żadnego już dodanego pliku, dodajemy go
+                if (!isParentOfSelectedChild)
                 {
-                    if (requiredTargets.Contains(currentSegment)) break;
-
-                    bool isTopLevel = !currentSegment.Contains("/");
-
-                    if (currentStatusDict.TryGetValue(currentSegment, out var statusData) &&
-                        CommittableStatuses.Contains(statusData.status))
-                    {
-                        if (isTopLevel && ("AR".Contains(statusData.status)))
-                        {
-                            hasTopLevelAddedFolder = true;
-                        }
-
-                        requiredTargets.Add(currentSegment);
-                    }
-                    else
-                    {
-                        break;
-                    }
-
-                    string parentDir = Path.GetDirectoryName(currentSegment)?.Replace('\\', '/').Trim();
-                    if (string.IsNullOrWhiteSpace(parentDir)) break;
-
-                    currentSegment = parentDir;
+                    result.Add(path);
                 }
             }
-
-            return (requiredTargets, hasTopLevelAddedFolder);
+            return result;
         }
 
         #endregion
@@ -187,9 +156,21 @@ namespace SVN.Core
             try
             {
                 string root = NormalizeRoot(svnManager.WorkingDir);
-                var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root);
-                _items = statusDict.Where(x => DisplayStatuses.Contains(x.Value.status))
-                    .Select(x => new SVNStatusElement { FullPath = x.Key?.Replace('\\', '/'), Status = x.Value.status, IsChecked = true })
+                var statusModule = svnManager.GetModule<SVNStatus>();
+
+                // Pobierz flagę z modułu statusu
+                bool expandUnversioned = statusModule?.ShowUnversionedFiles ?? true;
+
+                // Przekaż flagę do słownika statusu
+                var statusDict = await SVNStatus.GetChangesDictionaryAsync(root, expandUnversioned);
+
+                _items = statusDict.Where(x => DisplayStatuses.Contains(x.Value.Status))
+                    .Select(x => new SVNStatusElement
+                    {
+                        FullPath = x.Key?.Replace('\\', '/'),
+                        Status = x.Value.Status,
+                        IsChecked = true
+                    })
                     .Where(x => !string.IsNullOrWhiteSpace(x.FullPath))
                     .ToList();
 
@@ -207,6 +188,7 @@ namespace SVN.Core
                     }
                     return size;
                 });
+
                 RenderCommitList(_items, totalSize);
             }
             finally { IsProcessing = false; }
@@ -386,126 +368,207 @@ namespace SVN.Core
             finally { IsProcessing = false; }
         }
 
-        #endregion
+		#endregion
 
-        #region Commit Selected
+		#region Commit Selected
 
-        public async Task ExecuteCommitSelected(string message)
-        {
-            if (IsProcessing) return;
-            IsProcessing = true;
-            try
-            {
-                await svnManager.CancelBackgroundTasksAsync();
-                string root = NormalizeRoot(svnManager.WorkingDir);
-                var statusModule = svnManager.GetModule<SVNStatus>();
-                if (statusModule == null) { LogToConsole("<color=#FFAA00>Error:</color> SVN Status module not found."); return; }
+		public async Task ExecuteCommitSelected(string message)
+		{
+			if (IsProcessing) return;
+			IsProcessing = true;
+			try
+			{
+				await svnManager.CancelBackgroundTasksAsync();
+				string root = NormalizeRoot(svnManager.WorkingDir);
+				var statusModule = svnManager.GetModule<SVNStatus>();
+				if (statusModule == null)
+				{
+					LogToConsole("<color=#FFAA00>Error:</color> SVN Status module not found.");
+					return;
+				}
 
-                var allElements = statusModule.GetCurrentData();
-                var selectedItems = allElements?.Where(e => e.IsChecked).ToList() ?? new List<SvnTreeElement>();
-                if (allElements == null || allElements.Count == 0) { LogToConsole("<color=yellow>No SVN changes detected.</color>"); return; }
-                if (selectedItems.Count == 0) { LogToConsole("<color=orange>Nothing selected for commit.</color>"); return; }
+				var allElements = statusModule.GetCurrentData();
+				var selectedItems = allElements?.Where(e => e.IsChecked).ToList() ?? new List<SvnTreeElement>();
 
-                selectedItems = selectedItems.Where(e => PreProcessStatuses.Contains(e.Status)).ToList();
-                if (selectedItems.Count == 0) { LogToConsole("<color=yellow>No valid files to commit.</color>"); return; }
+				if (allElements == null || allElements.Count == 0)
+				{
+					LogToConsole("<color=yellow>No SVN changes detected.</color>");
+					return;
+				}
+				if (selectedItems.Count == 0)
+				{
+					LogToConsole("<color=orange>Nothing selected for commit.</color>");
+					return;
+				}
 
-                using CancellationTokenSource localCts = new CancellationTokenSource();
-                _commitCTS = localCts;
-                CancellationToken token = localCts.Token;
-                string msgFile = Path.Combine(Path.GetTempPath(), $"svn_msg_{Guid.NewGuid():N}.txt");
+				selectedItems = selectedItems.Where(e => PreProcessStatuses.Contains(e.Status)).ToList();
+				if (selectedItems.Count == 0)
+				{
+					LogToConsole("<color=yellow>No valid files to commit.</color>");
+					return;
+				}
 
-                ShowProgressBar(0.05f);
-                ClearCommitConsole();
-                try
-                {
-                    await Task.Run(() => File.WriteAllText(msgFile, message, new UTF8Encoding(false)), token);
-                    LogToConsole("<b>Initiating Commit Selected...</b>");
+				using CancellationTokenSource localCts = new CancellationTokenSource();
+				_commitCTS = localCts;
+				CancellationToken token = localCts.Token;
 
-                    bool cleanupOk = await CleanupWorkingCopy(root, token);
-                    if (!cleanupOk) return;
-                    UpdateProgress(0.15f);
+				string msgFile = Path.Combine(Path.GetTempPath(), $"svn_msg_{Guid.NewGuid():N}.txt");
+				ShowProgressBar(0.05f);
+				ClearCommitConsole();
 
-                    var missingRelPaths = selectedItems.Where(e => e.Status == "!")
-                        .Select(e => MakeRelative(root, e.FullPath)).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
-                    await ScheduleMissingForDeletion(root, missingRelPaths, token);
-                    UpdateProgress(0.35f);
+				try
+				{
+					await Task.Run(() => File.WriteAllText(msgFile, message, new UTF8Encoding(false)), token);
+					LogToConsole("<b>Initiating Commit Selected...</b>");
 
-                    var newRelPaths = selectedItems.Where(e => e.Status == "?")
-                        .Select(e => MakeRelative(root, e.FullPath)).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
-                    await AddNewFiles(root, newRelPaths, token);
-                    UpdateProgress(0.55f);
+					bool cleanupOk = await CleanupWorkingCopy(root, token);
+					if (!cleanupOk) return;
 
-                    LogToConsole("<b>[3/4]</b> Synchronizing final commit tree...");
-                    var currentStatusDict = await SvnRunner.GetFullStatusDictionaryAsync(root);
+					UpdateProgress(0.15f);
 
-                    var selectedRelPathsSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var item in selectedItems)
-                    {
-                        string relative;
-                        if (Path.IsPathRooted(item.FullPath))
-                            relative = MakeRelative(root, item.FullPath);
-                        else
-                            relative = item.FullPath;
+					var missingRelPaths = selectedItems
+						.Where(e => e.Status == "!")
+						.Select(e => MakeRelative(root, e.FullPath))
+						.Where(p => !string.IsNullOrWhiteSpace(p))
+						.ToList();
+					await ScheduleMissingForDeletion(root, missingRelPaths, token);
 
-                        string normalizedRelative = NormalizeRelativeTarget(relative);
+					UpdateProgress(0.35f);
+					LogToConsole("<b>[3/4]</b> Synchronizing final commit tree...");
 
-                        if (!string.IsNullOrWhiteSpace(normalizedRelative))
-                            selectedRelPathsSet.Add(normalizedRelative);
-                        else
-                            LogToConsole($"<color=#FF8800>[Warning] Invalid path skipped: {item.FullPath}</color>");
-                    }
+					var selectedRelPathsSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+					foreach (var item in selectedItems)
+					{
+						string relative = Path.IsPathRooted(item.FullPath)
+							? MakeRelative(root, item.FullPath)
+							: item.FullPath;
 
-                    var (rawFinalTargets, includesTopLevelAddedFolder) = ResolveRequiredTargets(selectedRelPathsSet, currentStatusDict);
+						string normalizedRelative = NormalizeRelativeTarget(relative);
+						if (!string.IsNullOrWhiteSpace(normalizedRelative))
+							selectedRelPathsSet.Add(normalizedRelative);
+						else
+							LogToConsole($"<color=#FF8800>[Warning] Invalid path skipped: {item.FullPath}</color>");
+					}
 
-                    if (includesTopLevelAddedFolder)
-                    {
-                        var topFolders = rawFinalTargets.Where(t => !t.Contains("/") && currentStatusDict.TryGetValue(t, out var s) && "AR".Contains(s.status));
-                        foreach (var folder in topFolders)
-                        {
-                            LogToConsole($" <color=#FFD700>[WARNING]</color> To commit the selected file(s), the new folder <b>{folder}</b> must also be committed. All files inside it will be included in this commit.");
-                        }
-                    }
+					var reducedTargets = ReduceCommitTargets(selectedRelPathsSet);
 
-                    var finalTargets = ReduceCommitTargets(rawFinalTargets);
-                    UpdateProgress(0.7f);
+					var deleteStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "!", "D" };
+					var finalTargets = new List<string>();
+					var missingOnDisk = new List<string>();
 
-                    if (finalTargets.Count == 0) { LogToConsole("<color=yellow>Filtered targets resulted in 0 items to commit.</color>"); return; }
-                    LogToConsole($"<color=#AAAAAA>Final target set: {finalTargets.Count}</color>");
+					foreach (var t in reducedTargets)
+					{
+						string fullNative = Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar));
+						bool exists = File.Exists(fullNative) || Directory.Exists(fullNative);
 
-                    try
-                    {
-                        await CommitTargetsLiveAsync(root, finalTargets, msgFile, token);
+						var match = selectedItems.FirstOrDefault(e =>
+						{
+							string rel = Path.IsPathRooted(e.FullPath) ? MakeRelative(root, e.FullPath) : e.FullPath;
+							return string.Equals(NormalizeRelativeTarget(rel), t, StringComparison.OrdinalIgnoreCase);
+						});
 
-                        UpdateProgress(1.0f);
-                        SVNStatus.ClearLockCache();
-                        svnManager.DiskChangesDetected = true;
-                        statusModule.ClearCurrentData();
+						bool isDelete = match != null && deleteStatuses.Contains(match.Status);
 
-                        PostToMainThread(() =>
-                        {
-                            ClearCommitUI();
-                            if (svnUI.CommitMessageInput != null) svnUI.CommitMessageInput.text = "";
-                        });
-                    }
-                    catch (OperationCanceledException) { LogToConsole("<color=orange><b>[ABORTED]</b> Commit cancelled.</color>"); }
-                    catch (Exception ex) { LogToConsole($"<color=#FFAA00>Error:</color> {ex.Message}"); }
-                }
-                finally
-                {
-                    ClearCommitCts(localCts);
-                    SafeResetProgress();
-                    TryDeleteFile(msgFile);
-                    await SafeRefreshStatusAsync();
-                }
-            }
-            finally { IsProcessing = false; }
-        }
+						if (exists || isDelete)
+							finalTargets.Add(t);
+						else
+							missingOnDisk.Add(t);
+					}
 
-        #endregion
+					if (missingOnDisk.Count > 0)
+					{
+						LogToConsole($"<color=#FFAA00>Warning: {missingOnDisk.Count} selected path(s) missing on disk — skipped:</color>");
+						foreach (var m in missingOnDisk.Take(10))
+							LogToConsole($"<color=#FFAA00>  - {m}</color>");
+						if (missingOnDisk.Count > 10)
+							LogToConsole($"<color=#FFAA00>  ... and {missingOnDisk.Count - 10} more</color>");
+					}
 
-        #region SVN Operations
+					UpdateProgress(0.55f);
 
-        private async Task ScheduleMissingForDeletion(string root, IEnumerable<string> relativePaths, CancellationToken token)
+					if (finalTargets.Count == 0)
+					{
+						LogToConsole("<color=yellow>No existing targets left to commit.</color>");
+						return;
+					}
+
+					LogToConsole($"<color=#4FC3F7>Final target set: {finalTargets.Count}</color>");
+
+					if (missingOnDisk.Count > 0)
+						LogToConsole($"<color=#FFAA00>Skipped missing on disk: {missingOnDisk.Count}</color>");
+
+					PostToMainThread(() =>
+					{
+						if (svnUI?.CommitCurrentFileText != null)
+							svnUI.CommitCurrentFileText.text = $"Queued: {finalTargets.Count} item(s)";
+					});
+
+					string addTargetsFile = Path.Combine(Path.GetTempPath(), $"svn_commit_add_{Guid.NewGuid():N}.txt");
+					try
+					{
+						var toAdd = finalTargets.Where(t =>
+						{
+							string fullNative = Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar));
+							return File.Exists(fullNative) || Directory.Exists(fullNative);
+						}).ToList();
+
+						if (toAdd.Count > 0)
+						{
+							await Task.Run(() => File.WriteAllLines(addTargetsFile, toAdd, new UTF8Encoding(false)), token);
+							await SvnRunner.RunAsync(
+								$"add --parents --force --targets \"{addTargetsFile}\"",
+								root, false, token);
+						}
+					}
+					finally
+					{
+						TryDeleteFile(addTargetsFile);
+					}
+
+					UpdateProgress(0.75f);
+
+					try
+					{
+						await CommitTargetsLiveAsync(root, finalTargets, msgFile, token);
+						UpdateProgress(1.0f);
+						SVNStatus.ClearLockCache();
+						svnManager.DiskChangesDetected = true;
+						statusModule.ClearCurrentData();
+						PostToMainThread(() =>
+						{
+							ClearCommitUI();
+							if (svnUI.CommitMessageInput != null)
+								svnUI.CommitMessageInput.text = "";
+						});
+					}
+					catch (OperationCanceledException)
+					{
+						LogToConsole("<color=orange><b>[ABORTED]</b> Commit cancelled.</color>");
+					}
+					catch (Exception ex)
+					{
+						LogToConsole($"<color=#FFAA00>Error:</color> {ex.Message}");
+					}
+				}
+				finally
+				{
+					ClearCommitCts(localCts);
+					SafeResetProgress();
+					TryDeleteFile(msgFile);
+					await SafeRefreshStatusAsync();
+				}
+			}
+			finally
+			{
+				IsProcessing = false;
+			}
+		}
+
+		#endregion
+
+		#region SVN Operations
+
+		private async Task ScheduleMissingForDeletion(string root, IEnumerable<string> relativePaths, CancellationToken token)
         {
             LogToConsole("<b>[2/4]</b> Scheduling missing files for deletion...");
             if (relativePaths == null) { LogToConsole("<color=green>No missing files to delete.</color>"); return; }
@@ -560,32 +623,48 @@ namespace SVN.Core
             string targetsFile = Path.Combine(Path.GetTempPath(), $"svn_add_{Guid.NewGuid():N}.txt");
             var formattedTargets = minimalAddTargets.Select(FormatPathForSvn).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
             await Task.Run(() => File.WriteAllLines(targetsFile, formattedTargets, new UTF8Encoding(false)), token);
-            try { await SvnRunner.RunAsync($"add --force --parents --targets \"{targetsFile}\"", root, false, token); }
+            try { await SvnRunner.RunAsync($"add --parents --targets \"{targetsFile}\"", root, false, token); }
             finally { TryDeleteFile(targetsFile); }
         }
 
-        #endregion
+		#endregion
 
-        #region Commit Process
+		#region Commit Process
 
-        private async Task<string> CommitTargetsLiveAsync(string root, IEnumerable<string> targets, string msgFilePath, CancellationToken token)
-        {
-            var list = targets.Select(FormatPathForSvn).Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            if (list.Count == 0) { LogToConsole("<color=yellow>No valid commit targets.</color>"); return string.Empty; }
+		private async Task<string> CommitTargetsLiveAsync(string root, IEnumerable<string> targets, string msgFilePath, CancellationToken token)
+		{
+			var list = targets.Select(FormatPathForSvn).Where(x => !string.IsNullOrWhiteSpace(x))
+				.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-            LogToConsole($"<b>[4/4]</b> Sending {list.Count} target(s) to server...");
-            string targetsFile = Path.Combine(Path.GetTempPath(), $"svn_targets_{Guid.NewGuid():N}.txt");
-            await Task.Run(() => File.WriteAllLines(targetsFile, list, new UTF8Encoding(false)), token);
-            try
-            {
-                string command = $"commit --targets \"{targetsFile}\" -F \"{msgFilePath}\" --non-interactive";
-                return await RunCommitProcessAsync(command, root, token);
-            }
-            finally { TryDeleteFile(targetsFile); }
-        }
+			if (list.Count == 0)
+			{
+				LogToConsole("<color=yellow>No valid commit targets.</color>");
+				return string.Empty;
+			}
 
-        private async Task<string> RunCommitProcessAsync(string command, string root, CancellationToken token)
+			LogToConsole($"<b>[4/4]</b> Sending {list.Count} target(s) to server...");
+
+			string first = list[0];
+			PostToMainThread(() =>
+			{
+				if (svnUI?.CommitCurrentFileText != null)
+					svnUI.CommitCurrentFileText.text = first;
+			});
+
+			string targetsFile = Path.Combine(Path.GetTempPath(), $"svn_targets_{Guid.NewGuid():N}.txt");
+			await Task.Run(() => File.WriteAllLines(targetsFile, list, new UTF8Encoding(false)), token);
+			try
+			{
+				string command = $"commit --targets \"{targetsFile}\" -F \"{msgFilePath}\" --non-interactive";
+				return await RunCommitProcessAsync(command, root, token);
+			}
+			finally
+			{
+				TryDeleteFile(targetsFile);
+			}
+		}
+
+		private async Task<string> RunCommitProcessAsync(string command, string root, CancellationToken token)
         {
             string committedRevision = null;
 
@@ -607,63 +686,105 @@ namespace SVN.Core
                 : "Committed successfully.";
         }
 
-        private void ProcessCommitLiveLine(string rawLine)
-        {
-            if (string.IsNullOrWhiteSpace(rawLine)) return;
-            string line = rawLine.Replace("\r", "").Trim();
-            if (line.StartsWith("[SVN ERROR]", StringComparison.OrdinalIgnoreCase))
-                line = line["[SVN ERROR]".Length..].Trim();
-            if (string.IsNullOrWhiteSpace(line)) return;
+		private void ProcessCommitLiveLine(string rawLine)
+		{
+			if (string.IsNullOrWhiteSpace(rawLine)) return;
 
-            if (line.Length > 3)
-            {
-                const string decorative = "@*#=-_/\\|";
-                double decorativeRatio = (double)line.Count(c => decorative.Contains(c)) / line.Length;
-                if (decorativeRatio > 0.75) return;
-            }
+			var segments = rawLine.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+			foreach (string rawSegment in segments)
+			{
+				string line = rawSegment.Trim();
+				if (string.IsNullOrWhiteSpace(line)) continue;
 
-            string lower = line.ToLowerInvariant();
-            if (lower.Contains("restricted access") || lower.Contains("unauthorized access") || lower.Contains("prosecution") ||
-                lower.Contains("monitoring") || lower.Contains("by continuing, you consent") || lower.Contains("strictly prohibited") ||
-                lower.Contains("all activity on this system") || lower.Contains("warning! you are entering") ||
-                lower.Contains("you consent to monitoring") || lower.Contains("entering a restricted")) return;
+				if (line.StartsWith("[SVN ERROR]", StringComparison.OrdinalIgnoreCase))
+					line = line["[SVN ERROR]".Length..].Trim();
 
-            if (line.StartsWith("Sending ", StringComparison.OrdinalIgnoreCase) || line.StartsWith("Adding ", StringComparison.OrdinalIgnoreCase) ||
-                line.StartsWith("Deleting ", StringComparison.OrdinalIgnoreCase) || line.StartsWith("Replacing ", StringComparison.OrdinalIgnoreCase))
-            {
-                string filePath = line.Substring(line.IndexOf(' ') + 1).Trim();
+				if (string.IsNullOrWhiteSpace(line)) continue;
 
-                if (filePath.StartsWith("("))
-                {
-                    int closeParen = filePath.IndexOf(')');
-                    if (closeParen != -1)
-                    {
-                        filePath = filePath.Substring(closeParen + 1).Trim();
-                    }
-                }
+				if (line.Length > 3)
+				{
+					const string decorative = "@*#=-_/\\|";
+					double decorativeRatio = (double)line.Count(c => decorative.Contains(c)) / line.Length;
+					if (decorativeRatio > 0.75) continue;
+				}
 
-                PostToMainThread(() =>
-                {
-                    if (svnUI?.CommitCurrentFileText != null)
-                    {
-                        svnUI.CommitCurrentFileText.text = filePath;
-                    }
-                });
-                return;
-            }
+				string lower = line.ToLowerInvariant();
+				if (lower.Contains("restricted access") || lower.Contains("unauthorized access") ||
+					lower.Contains("prosecution") || lower.Contains("monitoring") ||
+					lower.Contains("by continuing, you consent") || lower.Contains("strictly prohibited") ||
+					lower.Contains("all activity on this system") || lower.Contains("warning! you are entering") ||
+					lower.Contains("you consent to monitoring") || lower.Contains("entering a restricted"))
+					continue;
 
-            if (line.StartsWith("Transmitting file data", StringComparison.OrdinalIgnoreCase)) { LogToConsole("<color=#AAAAAA>Transmitting data...</color>"); return; }
-            if (line.StartsWith("Committing transaction", StringComparison.OrdinalIgnoreCase)) { LogToConsole("<color=#FFCC00><b>Finalizing commit...</b></color>"); return; }
-            if (line.StartsWith("Committed revision", StringComparison.OrdinalIgnoreCase)) { LogToConsole($"<color=green><b>[SUCCESS] {line}</b></color>"); return; }
-            if (line.StartsWith("svn: E", StringComparison.OrdinalIgnoreCase) || line.StartsWith("Error", StringComparison.OrdinalIgnoreCase))
-            { LogToConsole($"<color=#FF4444><b>{line}</b></color>"); }
-        }
+				if (line.StartsWith("Sending ", StringComparison.OrdinalIgnoreCase) ||
+					line.StartsWith("Adding ", StringComparison.OrdinalIgnoreCase) ||
+					line.StartsWith("Deleting ", StringComparison.OrdinalIgnoreCase) ||
+					line.StartsWith("Replacing ", StringComparison.OrdinalIgnoreCase))
+				{
+					int spaceIndex = line.IndexOf(' ');
+					if (spaceIndex < 0) continue;
 
-        #endregion
+					string filePath = line[(spaceIndex + 1)..].Trim();
+					if (filePath.StartsWith("("))
+					{
+						int closeParen = filePath.IndexOf(')');
+						if (closeParen >= 0)
+							filePath = filePath[(closeParen + 1)..].Trim();
+					}
 
-        #region UI
+					if (string.IsNullOrWhiteSpace(filePath)) continue;
 
-        private void ClearCommitConsole() => PostToMainThread(() => { if (svnUI?.CommitConsoleContent != null) svnUI.CommitConsoleContent.text = ""; });
+					_liveCommitFile = filePath;
+
+					if ((DateTime.UtcNow - _lastCommitUiUpdate).TotalMilliseconds > CommitUiUpdateIntervalMs)
+					{
+						_lastCommitUiUpdate = DateTime.UtcNow;
+						string capturedPath = _liveCommitFile;
+						PostToMainThread(() =>
+						{
+							if (svnUI?.CommitCurrentFileText != null)
+								svnUI.CommitCurrentFileText.text = capturedPath;
+						});
+					}
+					continue;
+				}
+
+				if (line.StartsWith("Transmitting file data", StringComparison.OrdinalIgnoreCase))
+				{
+					LogToConsole("<color=#4FC3F7>Transmitting data...</color>");
+					continue;
+				}
+
+				if (line.StartsWith("Committing transaction", StringComparison.OrdinalIgnoreCase))
+				{
+					LogToConsole("<color=#FFCC00><b>Finalizing commit...</b></color>");
+					continue;
+				}
+
+				if (line.StartsWith("Committed revision", StringComparison.OrdinalIgnoreCase))
+				{
+					LogToConsole($"<color=green><b>[SUCCESS] {line}</b></color>");
+					PostToMainThread(() =>
+					{
+						if (svnUI?.CommitCurrentFileText != null)
+							svnUI.CommitCurrentFileText.text = "Done";
+					});
+					continue;
+				}
+
+				if (line.StartsWith("svn: E", StringComparison.OrdinalIgnoreCase) ||
+					line.StartsWith("Error", StringComparison.OrdinalIgnoreCase))
+				{
+					LogToConsole($"<color=#FF4444><b>{line}</b></color>");
+				}
+			}
+		}
+
+		#endregion
+
+		#region UI
+
+		private void ClearCommitConsole() => PostToMainThread(() => { if (svnUI?.CommitConsoleContent != null) svnUI.CommitConsoleContent.text = ""; });
         private void ClearCommitUI() => PostToMainThread(() =>
         {
             svnUI?.SvnTreeView?.ClearView();
@@ -681,17 +802,16 @@ namespace SVN.Core
 
         private void UpdateProgress(float value) => PostToMainThread(() => { if (svnUI.OperationProgressBar != null) svnUI.OperationProgressBar.value = Mathf.Clamp01(value); });
 
-        private void SafeResetProgress() => PostToMainThread(() =>
-        {
-            if (svnUI.OperationProgressBar == null) return;
-            svnUI.OperationProgressBar.value = 0f;
-            svnUI.OperationProgressBar.gameObject.SetActive(false);
+		private void SafeResetProgress() => PostToMainThread(() =>
+		{
+			if (svnUI.OperationProgressBar == null) return;
+			svnUI.OperationProgressBar.value = 0f;
+			svnUI.OperationProgressBar.gameObject.SetActive(false);
+			if (svnUI.CommitCurrentFileText != null)
+				svnUI.CommitCurrentFileText.text = "";
+		});
 
-            if (svnUI.CommitCurrentFileText != null)
-                svnUI.CommitCurrentFileText.text = "";
-        });
-
-        private void LogToConsole(string msg)
+		private void LogToConsole(string msg)
         {
             string normalized = msg?.Trim() ?? "";
             if (string.IsNullOrEmpty(normalized)) return;
@@ -724,6 +844,45 @@ namespace SVN.Core
                 LogToConsole("<color=#FF4444><b>[ABORTED]</b> Cleanup timed out. Commit aborted for safety.</color>");
                 return false;
             }
+        }
+
+        private List<string> EnsureAddedParentsIncluded(
+    List<string> targets,
+    Dictionary<string, (string status, string size)> statusDict)
+        {
+            var result = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
+
+            foreach (string target in targets)
+            {
+                string[] parts = target.Split('/');
+
+                // Budujemy wszystkie ścieżki nadrzędne: "A", "A/B", "A/B/C" ...
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    string parentPath = string.Join("/", parts, 0, i);
+
+                    // Rodzic musi być w commicie, jeśli:
+                    // - ma status A lub R (już scheduled)
+                    // - lub ma status ? (jeszcze nie dodany)
+                    // - lub w ogóle nie istnieje w statusDict (bardzo nowy folder)
+                    if (statusDict.TryGetValue(parentPath, out var parentStatus))
+                    {
+                        if ("AR?".Contains(parentStatus.status))
+                        {
+                            result.Add(parentPath);
+                        }
+                    }
+                    else
+                    {
+                        // Folder nie pojawia się w statusie → najprawdopodobniej nowy
+                        // (bezpieczniej go dodać, niż ryzykować E200009)
+                        result.Add(parentPath);
+                    }
+                }
+            }
+
+            // Zachowujemy kolejność od najkrótszych do najdłuższych (rodzice przed dziećmi)
+            return result.OrderBy(t => t.Length).ThenBy(t => t, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
         #endregion

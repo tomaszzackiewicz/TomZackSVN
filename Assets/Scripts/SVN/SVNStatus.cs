@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -23,6 +24,7 @@ namespace SVN.Core
         private static (DateTime time, string root, Dictionary<string, SVNLockDetails> data) _lockCache;
         private static readonly TimeSpan LockCacheDuration = TimeSpan.FromMinutes(2);
         private static readonly object _cacheLock = new object();
+        public bool ShowUnversionedFiles { get; set; } = true;
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -61,8 +63,9 @@ namespace SVN.Core
         }
 
         public static async Task<Dictionary<string, SvnChangeInfo>> GetChangesDictionaryAsync(
-            string workingDir,
-            CancellationToken cancellationToken = default)
+    string workingDir,
+    bool expandUnversioned = true,
+    CancellationToken cancellationToken = default)
         {
             const int svnStatusPrefixLength = 8;
             const string allowedSvnStatuses = "MA?!DC~R";
@@ -78,60 +81,86 @@ namespace SVN.Core
             );
 
             if (string.IsNullOrWhiteSpace(output))
-                return new Dictionary<string, SvnChangeInfo>(2048);
+                return new Dictionary<string, SvnChangeInfo>(2048, StringComparer.OrdinalIgnoreCase);
 
             var statusDict = await Task.Run(() =>
             {
-                var dict = new Dictionary<string, SvnChangeInfo>(2048);
+                var dict = new Dictionary<string, SvnChangeInfo>(2048, StringComparer.OrdinalIgnoreCase);
                 string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
 
                 foreach (var line in lines)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-
                     if (line.Length < svnStatusPrefixLength) continue;
 
                     char itemStatus = line[0];
                     char propStatus = line[1];
+                    char activeChar = itemStatus != ' '
+                        ? char.ToUpperInvariant(itemStatus)
+                        : char.ToUpperInvariant(propStatus);
 
-                    char activeChar = itemStatus != ' ' ? char.ToUpperInvariant(itemStatus) : char.ToUpperInvariant(propStatus);
                     if (allowedSvnStatuses.IndexOf(activeChar) < 0) continue;
 
                     string stat = activeChar.ToString();
-
                     string rawPath = line.Substring(svnStatusPrefixLength).TrimStart();
                     string cleanPath = SvnRunner.NormalizeRepositoryPath(rawPath);
+
                     if (!string.IsNullOrEmpty(cleanPath))
-                        cleanPath = cleanPath.Replace('\\', '/').Trim();
+                        cleanPath = cleanPath.Replace('\\', '/').Trim().Trim('/'); // bez trailing '/'
 
-                    bool isRootChange = cleanPath == ".";
-
-                    if (isRootChange)
+                    if (string.IsNullOrEmpty(cleanPath) || cleanPath == ".")
                     {
-                        dict["."] = new SvnChangeInfo { Status = stat, Size = "DIR", Bytes = 0, Exists = true };
+                        if (cleanPath == ".")
+                        {
+                            dict["."] = new SvnChangeInfo
+                            {
+                                Status = stat,
+                                Size = directoryLabel,
+                                Bytes = 0,
+                                Exists = true
+                            };
+                        }
                         continue;
                     }
 
-                    string fullPath = (workingDir + "/" + cleanPath.TrimStart('/')).Replace("\\", "/");
+                    string fullPathNative = (workingDir + "/" + cleanPath)
+                        .Replace('\\', '/')
+                        .Replace('/', Path.DirectorySeparatorChar);
 
-                    bool isActuallyFile = false;
-                    bool isActuallyDir = false;
+                    bool isDir = false;
+                    bool isFile = false;
                     bool existsOnDisk = false;
-
                     bool isDeletedOrMissing = (activeChar == 'D' || activeChar == '!');
 
                     if (!isDeletedOrMissing)
                     {
                         try
                         {
-                            var attr = File.GetAttributes(fullPath);
-                            isActuallyDir = (attr & FileAttributes.Directory) == FileAttributes.Directory;
-                            isActuallyFile = !isActuallyDir;
+                            var attr = File.GetAttributes(fullPathNative);
+                            isDir = (attr & FileAttributes.Directory) == FileAttributes.Directory;
+                            isFile = !isDir;
                             existsOnDisk = true;
                         }
-                        catch (FileNotFoundException) { }
-                        catch (DirectoryNotFoundException) { }
-                        catch { }
+                        catch
+                        {
+                            if (Directory.Exists(fullPathNative))
+                            {
+                                isDir = true;
+                                existsOnDisk = true;
+                            }
+                            else if (File.Exists(fullPathNative))
+                            {
+                                isFile = true;
+                                existsOnDisk = true;
+                            }
+                        }
+                    }
+
+                    // Wymuś DIR, jeśli to katalog
+                    if (existsOnDisk && Directory.Exists(fullPathNative))
+                    {
+                        isDir = true;
+                        isFile = false;
                     }
 
                     string sizeLabel;
@@ -139,19 +168,21 @@ namespace SVN.Core
 
                     if (existsOnDisk)
                     {
-                        sizeLabel = isActuallyFile ? fileLabel : directoryLabel;
-
-                        if (isActuallyFile)
+                        sizeLabel = isDir ? directoryLabel : fileLabel;
+                        if (isFile)
                         {
-                            try { bytes = new FileInfo(fullPath).Length; }
+                            try { bytes = new FileInfo(fullPathNative).Length; }
                             catch { bytes = 0; }
                         }
                     }
                     else
                     {
-                        if (activeChar == '?') continue;
-
-                        sizeLabel = cleanPath.Contains(".") ? fileLabel : directoryLabel;
+                        // NIE pomijaj '?'
+                        string nameOnly = cleanPath.Contains('/')
+                            ? cleanPath.Substring(cleanPath.LastIndexOf('/') + 1)
+                            : cleanPath;
+                        bool hasExtension = nameOnly.LastIndexOf('.') > 0;
+                        sizeLabel = hasExtension ? fileLabel : directoryLabel;
                     }
 
                     dict[cleanPath] = new SvnChangeInfo
@@ -162,6 +193,133 @@ namespace SVN.Core
                         Exists = existsOnDisk
                     };
                 }
+
+                if (expandUnversioned)
+                {
+                    // Toggle ON → rozwiń foldery ?
+                    var unversionedDirs = dict
+                        .Where(kvp => kvp.Value.Status == "?" && kvp.Value.Size == directoryLabel)
+                        .Select(kvp => kvp.Key)
+                        .ToList();
+
+                    foreach (var dirRelPath in unversionedDirs)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        string fullDirPathNative = (workingDir + "/" + dirRelPath)
+                            .Replace('\\', '/')
+                            .Replace('/', Path.DirectorySeparatorChar);
+
+                        if (!Directory.Exists(fullDirPathNative)) continue;
+
+                        // Pliki
+                        string[] filesInDir;
+                        try
+                        {
+                            filesInDir = Directory.GetFiles(fullDirPathNative, "*", SearchOption.AllDirectories);
+                        }
+                        catch { continue; }
+
+                        foreach (var fileFullPath in filesInDir)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+
+                            var pathParts = fileFullPath.Split(Path.DirectorySeparatorChar, '/');
+                            if (pathParts.Any(p => p.Equals(".svn", StringComparison.OrdinalIgnoreCase)))
+                                continue;
+
+                            string normalizedFullPath = fileFullPath.Replace('\\', '/');
+                            if (!normalizedFullPath.StartsWith(workingDir + "/", StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            string fileRelPath = normalizedFullPath.Substring(workingDir.Length + 1).Trim('/');
+                            if (string.IsNullOrWhiteSpace(fileRelPath) || dict.ContainsKey(fileRelPath))
+                                continue;
+
+                            long fileBytes = 0;
+                            try { fileBytes = new FileInfo(fileFullPath).Length; }
+                            catch { }
+
+                            dict[fileRelPath] = new SvnChangeInfo
+                            {
+                                Status = "?",
+                                Size = fileLabel,
+                                Bytes = fileBytes,
+                                Exists = true
+                            };
+                        }
+
+                        // Podfoldery
+                        string[] dirsInDir;
+                        try
+                        {
+                            dirsInDir = Directory.GetDirectories(fullDirPathNative, "*", SearchOption.AllDirectories);
+                        }
+                        catch { continue; }
+
+                        foreach (var dirFullPath in dirsInDir)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+
+                            var pathParts = dirFullPath.Split(Path.DirectorySeparatorChar, '/');
+                            if (pathParts.Any(p => p.Equals(".svn", StringComparison.OrdinalIgnoreCase)))
+                                continue;
+
+                            string normalizedDirPath = dirFullPath.Replace('\\', '/');
+                            if (!normalizedDirPath.StartsWith(workingDir + "/", StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            string dirRel = normalizedDirPath.Substring(workingDir.Length + 1).Trim('/');
+                            if (string.IsNullOrWhiteSpace(dirRel) || dict.ContainsKey(dirRel))
+                                continue;
+
+                            dict[dirRel] = new SvnChangeInfo
+                            {
+                                Status = "?",
+                                Size = directoryLabel,
+                                Bytes = 0,
+                                Exists = true
+                            };
+                        }
+                    }
+                }
+                else
+                {
+                    // Toggle OFF:
+                    // svn status zwraca tylko top-level ?
+                    // Zostaw WSZYSTKIE katalogi ?, usuń tylko pliki ?
+                    var toRemove = new List<string>();
+
+                    foreach (var kvp in dict)
+                    {
+                        if (kvp.Value.Status != "?") continue;
+
+                        string native = (workingDir + "/" + kvp.Key)
+                            .Replace('\\', '/')
+                            .Replace('/', Path.DirectorySeparatorChar);
+
+                        // Katalog na dysku → ZOSTAW
+                        if (Directory.Exists(native))
+                            continue;
+
+                        // Wpis oznaczony jako DIR i top-level → ZOSTAW
+                        if (kvp.Value.Size == directoryLabel && kvp.Key.IndexOf('/') < 0)
+                            continue;
+
+                        // Reszta (pliki ?) → usuń
+                        toRemove.Add(kvp.Key);
+                    }
+
+                    foreach (var key in toRemove)
+                        dict.Remove(key);
+                }
+
+                // DIAGNOSTYKA – zobacz w Console Unity
+                int qTotal = dict.Count(k => k.Value.Status == "?");
+                int qDir = dict.Count(k => k.Value.Status == "?" && k.Value.Size == directoryLabel);
+                Debug.Log($"[SVN] expandUnversioned={expandUnversioned} | ? total={qTotal} | ? DIR={qDir} | " +
+                          string.Join(", ", dict.Where(k => k.Value.Status == "?").Select(k => $"{k.Key}[{k.Value.Size}]")));
+
                 return dict;
             }, cancellationToken);
 
@@ -553,7 +711,7 @@ namespace SVN.Core
 
                 await Task.Run(async () =>
                 {
-                    var statusTask = GetChangesDictionaryAsync(root, token);
+                    var statusTask = GetChangesDictionaryAsync(root, ShowUnversionedFiles, token);
                     var locksTask = GetLocksDictionaryAsync(root, token);
                     await Task.WhenAll(statusTask, locksTask);
                     token.ThrowIfCancellationRequested();
@@ -723,9 +881,14 @@ namespace SVN.Core
                 bool isFolder = item.Size == "DIR";
                 string s = item.Status;
 
-                if (isFolder) { stats.FolderCount++; continue; }
-                stats.FileCount++;
+                if (isFolder)
+                {
+                    stats.FolderCount++;
+                    if (s == "?") stats.NewFilesCount++; // folder ? też widać w statystykach
+                    continue;
+                }
 
+                stats.FileCount++;
                 switch (s)
                 {
                     case "M": stats.ModifiedCount++; break;

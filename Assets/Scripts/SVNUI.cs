@@ -8,6 +8,7 @@ namespace SVN.Core
     public class SVNUI : MonoBehaviour
     {
         public static SVNUI Instance { get; private set; }
+        public SVNManager SvnManager;
 
         [Header("Tooltip")]
         [SerializeField] private TextMeshProUGUI tooltipText;
@@ -62,6 +63,7 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI commitConsoleContent;
         [SerializeField] private UnityEngine.UI.Slider operationProgressBar;
         [SerializeField] private TextMeshProUGUI commitCurrentFileText;
+        [SerializeField] private Toggle showUnversionedToggle;
         [Header("Loading Indicator")]
         [SerializeField] private TextMeshProUGUI treeDisplay;
         [SerializeField] private TextMeshProUGUI statsText;
@@ -176,6 +178,7 @@ namespace SVN.Core
         public TextMeshProUGUI OutputText => outputText;
         public UnityEngine.UI.Slider OperationProgressBar => operationProgressBar;
         public TextMeshProUGUI CommitCurrentFileText => commitCurrentFileText;
+        public Toggle ShowUnversionedToggle => showUnversionedToggle;
         public GameObject ConflictGroup => conflictGroup;
         public TMP_InputField SettingsRepoUrlInput => settingsRepoUrlInput;
         public TMP_InputField SettingsWorkingDirInput => settingsWorkingDirInput;
@@ -222,6 +225,42 @@ namespace SVN.Core
                 Destroy(gameObject); return;
             }
             Instance = this;
+        }
+
+        private void Start()
+        {
+            if (ShowUnversionedToggle != null)
+            {
+                var statusModule = SvnManager?.GetModule<SVNStatus>();
+                if (statusModule != null)
+                {
+                    ShowUnversionedToggle.isOn = statusModule.ShowUnversionedFiles;
+                }
+
+                ShowUnversionedToggle.onValueChanged.AddListener(OnToggleUnversioned);
+            }
+        }
+
+        private void OnToggleUnversioned(bool show)
+        {
+            if (SvnManager != null)
+            {
+                var statusModule = SvnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                    statusModule.ShowUnversionedFiles = show;
+
+                statusModule?.ShowOnlyModified();
+            }
+
+            SVNLogBridge.LogLine(show
+                ? "<color=yellow>Unversioned files visible.</color>"
+                : "<color=yellow>Unversioned files hidden (folders only).</color>");
+        }
+
+        private void OnDestroy()
+        {
+            if (ShowUnversionedToggle != null)
+                ShowUnversionedToggle.onValueChanged.RemoveListener(OnToggleUnversioned);
         }
 
         public void ShowNotificationWithTimer(string message, float delay = 5f)
