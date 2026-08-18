@@ -470,11 +470,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: DeleteAllObstructionsButton
+      value: DeleteBlockingFilesObstructionsButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Delete All Obstructions
+      value: Delete Blocking Files (Obstructions)
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Pivot.x
@@ -502,7 +502,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 110
+      value: 170
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.y
@@ -538,7 +538,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 232.78462
+      value: 641.594
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -4419,8 +4419,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 698.4, y: -204.705}
-  m_SizeDelta: {x: 1395.3, y: 369.41}
+  m_AnchoredPosition: {x: 874.35, y: -204.705}
+  m_SizeDelta: {x: 1749.751, y: 369.41}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &67361907
 MonoBehaviour:
@@ -12039,8 +12039,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -530.4419}
-  m_SizeDelta: {x: 1500, y: 5}
+  m_AnchoredPosition: {x: 877.0959, y: -530.4419}
+  m_SizeDelta: {x: 1752.1875, y: 5}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &197527052
 GameObject:
@@ -13014,7 +13014,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1911977654}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.02281704
+  m_Size: 0.02282167
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -13945,8 +13945,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 701.355, y: -117.5}
-  m_SizeDelta: {x: 1398.7256, y: 225}
+  m_AnchoredPosition: {x: 876.3779, y: -117.5}
+  m_SizeDelta: {x: 1748.7715, y: 225}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &240853390
 MonoBehaviour:
@@ -15258,11 +15258,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: ResolveAllMineButton
+      value: KeepAllMyVersionsMineButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Resolve All as Mine
+      value: Keep All My Versions (Mine)
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Pivot.x
@@ -15290,7 +15290,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 110
+      value: 150
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.y
@@ -15326,7 +15326,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1163.9231
+      value: 378.9564
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -19965,8 +19965,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 683.732, y: -10}
-  m_SizeDelta: {x: 1358.3472, y: 20}
+  m_AnchoredPosition: {x: 864.07745, y: -10}
+  m_SizeDelta: {x: 1725.1926, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &393241909
 MonoBehaviour:
@@ -21286,15 +21286,19 @@ RectTransform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
-  - {fileID: 13306465}
   - {fileID: 565600065}
   - {fileID: 256041429}
+  - {fileID: 13306465}
+  - {fileID: 1003290627}
+  - {fileID: 1607710345}
+  - {fileID: 476526665}
+  - {fileID: 1316341155}
   m_Father: {fileID: 1449331132}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -568.72705}
-  m_SizeDelta: {x: 1396.7078, y: 70}
+  m_AnchoredPosition: {x: 877.0959, y: -568.72705}
+  m_SizeDelta: {x: 1748.4631, y: 70}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &413075438
 MonoBehaviour:
@@ -23552,6 +23556,124 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 474531158}
   m_CullTransparentMesh: 1
+--- !u!1001 &476526664
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 413075437}
+    m_Modifications:
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1212322079}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: Button_ResolveAllTreeBase
+      objectReference: {fileID: 0}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: ResolvePanel, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Name
+      value: RestoreAllBaseVersionsTreeButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_text
+      value: Restore All Base Versions (Tree)
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 150
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 40
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 1409.5067
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -35
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+--- !u!224 &476526665 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+  m_PrefabInstance: {fileID: 476526664}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &481117763
 GameObject:
   m_ObjectHideFlags: 0
@@ -24447,7 +24569,7 @@ GameObject:
   - component: {fileID: 510279155}
   - component: {fileID: 510279154}
   m_Layer: 5
-  m_Name: SSHKeyText
+  m_Name: ResolveFileText
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -25344,8 +25466,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -614.5122}
-  m_SizeDelta: {x: 1396.5808, y: 20}
+  m_AnchoredPosition: {x: 877.0959, y: -614.5122}
+  m_SizeDelta: {x: 1751.1172, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &526727603
 MonoBehaviour:
@@ -27013,11 +27135,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: ResolveAllTheirsButton
+      value: AcceptAllServerVersionsTheirsButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Resolve All as Theirs
+      value: Accept All Server Versions (Theirs)
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Pivot.x
@@ -27045,7 +27167,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 110
+      value: 150
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.y
@@ -27081,7 +27203,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 698.3539
+      value: 126.318794
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -29048,7 +29170,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1323.6853
+      value: 1617.3303
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -30769,8 +30891,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 698.4, y: -10}
-  m_SizeDelta: {x: 1396.5808, y: 20}
+  m_AnchoredPosition: {x: 874.35, y: -10}
+  m_SizeDelta: {x: 1745.9131, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &663451203
 MonoBehaviour:
@@ -31648,7 +31770,7 @@ GameObject:
   - component: {fileID: 688052207}
   - component: {fileID: 688052208}
   m_Layer: 5
-  m_Name: SSHKeyPath
+  m_Name: ResolveFilePath
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -31673,8 +31795,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -30.392582}
-  m_SizeDelta: {x: 1391.1, y: 60}
+  m_AnchoredPosition: {x: 877.0959, y: -30.392582}
+  m_SizeDelta: {x: 1745.4767, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &688052208
 MonoBehaviour:
@@ -39596,8 +39718,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 683.732, y: -10}
-  m_SizeDelta: {x: 1358.3472, y: 20}
+  m_AnchoredPosition: {x: 862.8307, y: -10}
+  m_SizeDelta: {x: 1725.4097, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &843951541
 MonoBehaviour:
@@ -43537,8 +43659,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -134.4629}
-  m_SizeDelta: {x: 1500, y: 5}
+  m_AnchoredPosition: {x: 877.0959, y: -134.4629}
+  m_SizeDelta: {x: 1751.3806, y: 5}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1001 &945679809
 PrefabInstance:
@@ -44970,8 +45092,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -96.17775}
-  m_SizeDelta: {x: 1396.7078, y: 70}
+  m_AnchoredPosition: {x: 877.0959, y: -96.17775}
+  m_SizeDelta: {x: 1747.6931, y: 70}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &988663331
 MonoBehaviour:
@@ -45850,6 +45972,124 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!1001 &1003290626
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 413075437}
+    m_Modifications:
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1212322079}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: Button_ResolveAllTreeMine
+      objectReference: {fileID: 0}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: ResolvePanel, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Name
+      value: AcceptAllServerVersionsTreeButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_text
+      value: Accept All Server Versions (Tree)
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 150
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 40
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 904.2315
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -35
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+--- !u!224 &1003290627 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+  m_PrefabInstance: {fileID: 1003290626}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1006573055
 GameObject:
   m_ObjectHideFlags: 0
@@ -48945,7 +49185,7 @@ GameObject:
   - component: {fileID: 1078187115}
   - component: {fileID: 1078187114}
   m_Layer: 5
-  m_Name: SSHKeyField
+  m_Name: ResolveInputField
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -48968,8 +49208,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 805.1614, y: -30}
-  m_SizeDelta: {x: 427.8183, y: 30}
+  m_AnchoredPosition: {x: 951.98395, y: -30}
+  m_SizeDelta: {x: 600, y: 30}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1078187114
 MonoBehaviour:
@@ -51812,8 +52052,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 698.4, y: -194.705}
-  m_SizeDelta: {x: 1396.8, y: 389.41}
+  m_AnchoredPosition: {x: 874.35, y: -194.705}
+  m_SizeDelta: {x: 1748.7, y: 389.41}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1142754949
 MonoBehaviour:
@@ -54245,8 +54485,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 22.818607}
-  m_SizeDelta: {x: 1500, y: 912.5048}
+  m_AnchoredPosition: {x: -8.4778, y: 22.818607}
+  m_SizeDelta: {x: 1791.6401, y: 912.5048}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1212322076
 MonoBehaviour:
@@ -59327,6 +59567,124 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1314041313}
   m_CullTransparentMesh: 1
+--- !u!1001 &1316341154
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 413075437}
+    m_Modifications:
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1212322079}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: Button_CancelResolve
+      objectReference: {fileID: 0}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: ResolvePanel, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Name
+      value: CancelResolveButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_text
+      value: Cancel Resolve
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 110
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 40
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 1642.1443
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -35
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+--- !u!224 &1316341155 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+  m_PrefabInstance: {fileID: 1316341154}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1318650427
 GameObject:
   m_ObjectHideFlags: 0
@@ -59694,7 +60052,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7750361092450764457, guid: ad5fb3769074bbf44a0a7cb9f7aae1af, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1382.0225
+      value: 1735.7872
       objectReference: {fileID: 0}
     - target: {fileID: 7750361092450764457, guid: ad5fb3769074bbf44a0a7cb9f7aae1af, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -65205,11 +65563,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: ResolveTheirsButton
+      value: AcceptServerVersionTheirsButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Resolve as Theirs
+      value: Accept Server Version (Theirs)
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Pivot.x
@@ -65237,7 +65595,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 100
+      value: 150
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.y
@@ -65273,7 +65631,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 872.9424
+      value: 1062.3082
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -66769,8 +67127,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 750, y: -481.70612}
-  m_SizeDelta: {x: 1443.9, y: 860.69}
+  m_AnchoredPosition: {x: 895.82007, y: -481.70612}
+  m_SizeDelta: {x: 1754.1918, y: 860.69}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1449331133
 MonoBehaviour:
@@ -72049,8 +72407,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -332.45242}
-  m_SizeDelta: {x: 1396.7634, y: 389.4087}
+  m_AnchoredPosition: {x: 877.0959, y: -332.45242}
+  m_SizeDelta: {x: 1748.655, y: 389.4087}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1583850023
 MonoBehaviour:
@@ -72942,6 +73300,124 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!1001 &1607710344
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 413075437}
+    m_Modifications:
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 1212322079}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: Button_ResolveAllTreeTheirs
+      objectReference: {fileID: 0}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: ResolvePanel, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Name
+      value: KeepAllMyVersionsTreeButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_text
+      value: Keep All My Versions (Tree)
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 150
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 40
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 1156.8691
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -35
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+--- !u!224 &1607710345 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+  m_PrefabInstance: {fileID: 1607710344}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1607824764
 GameObject:
   m_ObjectHideFlags: 0
@@ -75373,7 +75849,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 38670.97}
+  m_SizeDelta: {x: 0, y: 38662.938}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1662562891
 MonoBehaviour:
@@ -75514,7 +75990,15 @@ MonoBehaviour:
     tips:</b></size>\n\n- If you have a working copy that was checked out using TortoiseSVN
     or another SVN client, you can add it here and continue working with TomZackSVN.\n-
     The private key path is optional, but for repositories using <i>svn+ssh://</i>
-    it is required \u2013 without it, every command will fail with a connection error.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Update</b></size>\n\nSync
+    it is required \u2013 without it, every command will fail with a connection error.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r\n\r\n<size=120%><b>Check
+    Remote</b></size>\n\nThe <b>Check Remote</b> button sits in the top bar menu,
+    right before <b>Update</b>. It quickly shows which files on the server have been
+    changed by others, without downloading anything. It lists all items that would
+    be updated if you ran a full Update, so you can see what is coming before you
+    actually sync.\n\n<size=110%><b>Additional tips:</b></size>\n\n- Use <b>Check
+    Remote</b> before starting work \u2013 it gives you a preview of incoming changes
+    without touching your local files.\n- It is especially useful when you want to
+    avoid surprises and plan your work around the team\u2019s latest commits.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r\n\r\n<size=120%><b>Update</b></size>\n\nSync
     local files with the server. Use this daily before starting work. Shows per-file
     progress and a final report with counts of <b>Updated</b>, <b>Added</b>, <b>Deleted</b>,
     and <b>Conflicts</b>. The report includes the old and new revision numbers and
@@ -75587,47 +76071,65 @@ MonoBehaviour:
     the panel contains:</b></size>\n\n- A console that logs every resolve action
     so you can track what was done.\n- A list of conflict items \u2013 each item
     shows the file path and its conflict type (<b>Text</b>, <b>Manual</b>, or <b>Tree</b>).
-    For every item you have the following action buttons:\n  - <b>Resolve as Mine</b>
-    \u2013 keep your local version and discard the server changes.\n  - <b>Resolve
-    as Theirs</b> \u2013 accept the server version and discard your own changes.\n 
-    - <b>Open in Editor</b> \u2013 open the file in your configured merge tool (from
-    Settings) so you can combine both versions manually.\n  - <b>Mark as Resolved</b>
-    \u2013 tell SVN that you have fixed the file (only works after conflict markers
-    like <i><<<<<<<</i>, <i>=======</i>, <i>>>>>>>></i> have been removed).\n- Global
-    buttons at the top (or bottom) that affect all conflicts at once:\n  - <b>Resolve
-    All (Mine)</b> \u2013 keep your local version for every conflict.\n  - <b>Resolve
-    All (Theirs)</b> \u2013 discard all your changes and accept the server version
-    everywhere.\n  - <b>Delete All Obstructions</b> \u2013 batch-resolve every tree
-    conflict by removing the obstructing local files.\n  - <b>Mark as Resolved</b>
-    \u2013 attempts to mark all conflicts as resolved (only works if no conflict
-    markers remain).\n  - <b>Open in Editor</b> \u2013 opens the merge tool for a
-    specific file. You can type the file path in the input field, or leave it blank
-    to open the first pending conflict. The <b>Browse</b> button next to the input
-    field lets you select a file from a file dialog.\n\n<size=110%><b>How to use
-    it:</b></size>\n\n1. After an Update or Merge, open the Resolve panel. The list
-    automatically refreshes and shows every file with a conflict.\n2. Decide how
-    to fix each file:\n   - If you want to keep your work and ignore the other change,
-    click <b>Resolve as Mine</b> on that file's row.\n   - If the other change is
-    the correct one and you want to discard your modifications, click <b>Resolve
-    as Theirs</b>.\n   - If you need to combine both changes, click <b>Open in Editor</b>.
-    This launches your external merge tool (configured in <i>Settings</i>). After
-    you have saved the merged file, click <b>Mark as Resolved</b> to let SVN know
-    the conflict is over.\n3. For tree conflicts (a file exists locally but was added
-    on the server, or vice-versa):\n   - Use the global <b>Delete All Obstructions</b>
-    button to remove all obstructing local files at once and accept the server versions.\n  
-    - If you prefer to keep a local file, use <b>Resolve as Mine</b> on that specific
-    item.\n4. When all conflicts are fixed, you can commit your changes as usual.
-    The panel automatically refreshes after every action, so you always see the current
-    state.\n\n<size=110%><b>Additional tips:</b></size>\n\n- Never commit with unresolved
-    conflicts \u2013 SVN will block the commit and may leave the working copy in
-    a dirty state.\n- If you are unsure which version is correct, use <b>Open in
-    Editor</b> to compare them side-by-side before making a decision.\n- Tree conflicts
-    are often caused by files being moved or renamed outside SVN \u2013 the <b>Delete
-    All Obstructions</b> button is usually the quickest fix.\n\nThe global buttons
-    let you resolve everything in one step \u2013 for example, after a large merge
-    you can click <b>Resolve All (Theirs)</b> to accept all incoming changes, or
-    <b>Delete All Obstructions</b> to clear every tree conflict at once. The console
-    log helps you track exactly what was done.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Branch/Tag</b></size>\n\nThe
+    For every item you have the following action buttons:\n\n  - <b>Keep My Version</b>
+    \u2013 keep your local version and discard the server changes.\n  - <b>Take Server
+    Version</b> \u2013 accept the server version and discard your own changes.\n 
+    - <b>Open File in Editor</b> \u2013 open the file in your configured merge tool
+    (from Settings) so you can combine both versions manually.\n  - <b>Mark File
+    as Resolved</b> \u2013 tell SVN that you have fixed the file (only works after
+    conflict markers like <i><<<<<<<</i>, <i>=======</i>, <i>>>>>>>></i> have been
+    removed).\n\n- For <b>Tree conflicts</b>, each item additionally shows these
+    specialised buttons:\n\n  - <b>Keep My Version (Tree)</b> \u2013 keep your local
+    file or directory and discard the repository version.\n  - <b>Take Server Version
+    (Tree)</b> \u2013 accept the repository version and discard your local file or
+    directory.\n  - <b>Restore Base Version (Tree)</b> \u2013 restore the file or
+    directory to the base version from before the conflict.\n  - <b>Delete Blocking
+    File</b> \u2013 remove the local file or directory that is blocking the repository
+    version. After using this, you must either <b>Revert</b> to restore the file
+    or <b>Commit</b> to accept the deletion.\n\n- Global buttons at the top (or bottom)
+    that affect all conflicts at once:\n\n  - <b>Resolve All: Keep Mine</b> \u2013
+    keep your local version for every conflict.\n  - <b>Resolve All: Take Theirs</b>
+    \u2013 discard all your changes and accept the server version everywhere.\n 
+    - <b>Delete All Obstructions</b> \u2013 batch-resolve every tree conflict by
+    removing the obstructing local files.\n  - <b>Mark All as Resolved</b> \u2013
+    attempts to mark all conflicts as resolved (only works if no conflict markers
+    remain).\n  - <b>Open File in Editor</b> \u2013 opens the merge tool for a specific
+    file. You can type the file path in the input field, or leave it blank to open
+    the first pending conflict. The <b>Browse</b> button next to the input field
+    lets you select a file from a file dialog.\n  - <b>Resolve All Tree: Keep Mine</b>
+    \u2013 resolve all tree conflicts by keeping your local version.\n  - <b>Resolve
+    All Tree: Take Theirs</b> \u2013 resolve all tree conflicts by accepting the
+    repository version.\n  - <b>Resolve All Tree: Restore Base</b> \u2013 resolve
+    all tree conflicts by restoring the base version.\n  - <b>Cancel Resolve</b>
+    \u2013 immediately stop the currently running resolve operation.\n\n<size=110%><b>How
+    to use it:</b></size>\n\n1. After an Update or Merge, open the Resolve panel.
+    The list automatically refreshes and shows every file with a conflict.\n2. Decide
+    how to fix each file:\n   - If you want to keep your work and ignore the other
+    change, click <b>Keep My Version</b> on that file's row.\n   - If the other change
+    is the correct one and you want to discard your modifications, click <b>Take
+    Server Version</b>.\n   - If you need to combine both changes, click <b>Open
+    File in Editor</b>. This launches your external merge tool (configured in <i>Settings</i>).
+    After you have saved the merged file, click <b>Mark File as Resolved</b> to let
+    SVN know the conflict is over.\n3. For tree conflicts (a file exists locally
+    but was added on the server, or vice-versa):\n   - Use the per-item buttons <b>Keep
+    My Version (Tree)</b>, <b>Take Server Version (Tree)</b>, <b>Restore Base Version
+    (Tree)</b>, or <b>Delete Blocking File</b>.\n   - If you prefer a batch solution,
+    use the global buttons <b>Resolve All Tree: Keep Mine</b>, <b>Resolve All Tree:
+    Take Theirs</b>, <b>Resolve All Tree: Restore Base</b>, or <b>Delete All Obstructions</b>.\n4.
+    When all conflicts are fixed, you can commit your changes as usual. The panel
+    automatically refreshes after every action, so you always see the current state.\n\n<size=110%><b>Additional
+    tips:</b></size>\n\n- Never commit with unresolved conflicts \u2013 SVN will
+    block the commit and may leave the working copy in a dirty state.\n- If you are
+    unsure which version is correct, use <b>Open File in Editor</b> to compare them
+    side-by-side before making a decision.\n- Tree conflicts are often caused by
+    files being moved or renamed outside SVN \u2013 <b>Delete Blocking File</b> is
+    usually the quickest fix.\n- The global <b>Resolve All Tree: \u2026</b> buttons
+    are helpful after a large merge when many tree conflicts appear at once.\n\nThe
+    global buttons let you resolve everything in one step \u2013 for example, after
+    a large merge you can click <b>Resolve All: Take Theirs</b> to accept all incoming
+    changes, or <b>Resolve All Tree: Restore Base</b> to restore all tree conflicts
+    to the state before the merge. The console log helps you track exactly what was
+    done.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Branch/Tag</b></size>\n\nThe
     <b>Branch/Tag</b> panel lets you create, switch, compare, delete and inspect
     branches and tags directly from the server.\n\n<size=110%><b>Layout:</b></size>\n\n-
     A type selector (<b>branches</b> or <b>tags</b>).\n- A text field for the name
@@ -75801,33 +76303,18 @@ MonoBehaviour:
     to your diff tool or text editor). Press the adjacent <b>Save</b> button to store
     the path. It updates the current project and the global merge-tool setting. This
     tool is launched when you use <b>Diff</b> or <b>Open in Editor</b> from the Resolve
-    panel.\n\n<size=110%><b>Additional tips:</b></size>\n\n- The SSH private key
-    must be in the correct format (OpenSSH or PuTTY). If you are unsure, ask your
-    system administrator.\n- Test your settings by using the <b>Test Connection</b>
-    button after saving.\n\nWhen you open the Settings panel, it automatically fills
-    all fields with the values currently held in memory for the active project \u2013
-    so you always see what is actually being used.\n\nIf no project is loaded, the
-    fields will show the global defaults from PlayerPrefs. Changes made here affect
-    the current working copy immediately and are remembered the next time you start
-    the application.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Show
-    Ignored</b></size>\n\nDisplays all files and folders currently excluded from
-    version control (marked with the <b>I</b> status), together with the active ignore
-    rules.\n\nWhen opened, the panel shows:\n\n- System information (working directory,
-    <i>.svnignore</i> file path, whether the file exists).\n- Active ignore rules
-    \u2013 patterns from the local <i>.svnignore</i> file (marked <b>[FILE]</b>)
-    and from SVN properties (marked <b>[SVN]</b>).\n- Currently ignored files \u2013
-    up to 200 files matching the active rules.\n\n<size=110%><b>Buttons:</b></size>\n\n-
-    <b>Refresh Rules</b> \u2013 rescans the working copy and updates the display.\n-
-    <b>Load New Rules</b> \u2013 reloads the ignore patterns from the local <i>.svnignore</i>
-    file into the application's cache.\n- <b>Apply New Rules</b> \u2013 writes the
-    contents of your local <i>.svnignore</i> file to the <i>svn:global-ignores</i>
-    property on the root of the working copy. After this, you must commit the root
-    folder so that other team members also get the same ignore rules.\n\n<size=110%><b>Common
-    workflow:</b></size>\n\nEdit <i>.svnignore</i>, click <b>Load New Rules</b>,
-    verify with <b>Refresh Rules</b>, then <b>Apply New Rules</b> and commit.\n\n<size=110%><b>Additional
-    tips:</b></size>\n\n- Ignored files are not included in commits or updates, but
-    they still take up disk space.\n- Use ignore rules to exclude temporary files,
-    build outputs, and personal notes that should not be shared with the team.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Explore</b></size>\n\nOpens
+    panel.\r\n- <b>Show Ignored</b> \u2013 displays all files and folders currently
+    excluded from version control (marked with the <b>I</b> status), together with
+    the active ignore rules. It is now part of the Settings panel, so you can access
+    it directly from there.\n\n<size=110%><b>Additional tips:</b></size>\n\n- The
+    SSH private key must be in the correct format (OpenSSH or PuTTY). If you are
+    unsure, ask your system administrator.\n- Test your settings by using the <b>Test
+    Connection</b> button after saving.\n\nWhen you open the Settings panel, it automatically
+    fills all fields with the values currently held in memory for the active project
+    \u2013 so you always see what is actually being used.\n\nIf no project is loaded,
+    the fields will show the global defaults from PlayerPrefs. Changes made here
+    affect the current working copy immediately and are remembered the next time
+    you start the application.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Explore</b></size>\n\nOpens
     the root folder of your current working copy directly in Windows Explorer.\n\n<size=110%><b>Additional
     tips:</b></size>\n\n- Use Explore when you need to manually copy or inspect files
     outside the application \u2013 just remember to click <b>Refresh</b> afterwards
@@ -75885,18 +76372,15 @@ MonoBehaviour:
     \u2013 toggles between showing every folder fully expanded or completely collapsed.
     Because large working copies can contain thousands of changed files, the tree
     always starts with all folders collapsed to keep the interface fast and responsive.\n\n-
-    <b>Check Remote</b> \u2013 quickly shows which files on the server have been
-    changed by others, without downloading anything. It lists all items that would
-    be updated if you ran a full Update. Use this to see what's coming before actually
-    syncing.\n\n- <b>Commit</b> \u2013 opens the Commit panel, where you can review
-    and send your local changes to the repository. The panel itself contains the
-    following buttons:\n  - <b>Refresh</b> \u2013 rescans the working copy and rebuilds
-    the list of files that are ready to commit. Useful after you have manually resolved
-    conflicts or added files.\n  - <b>Commit All</b> \u2013 executes a full, four-step
-    process: (1) cleans up the database, (2) scans and fixes missing files, (3) adds
-    all new unversioned items, and (4) sends everything to the server. A success
-    message shows the new revision number.\n  - <b>Commit Selected</b> \u2013 commits
-    only the files you have checked in the main tree. It automatically handles additions,
+    <b>Commit</b> \u2013 opens the Commit panel, where you can review and send your
+    local changes to the repository. The panel itself contains the following buttons:\n 
+    - <b>Refresh</b> \u2013 rescans the working copy and rebuilds the list of files
+    that are ready to commit. Useful after you have manually resolved conflicts or
+    added files.\n  - <b>Commit All</b> \u2013 executes a full, four-step process:
+    (1) cleans up the database, (2) scans and fixes missing files, (3) adds all new
+    unversioned items, and (4) sends everything to the server. A success message
+    shows the new revision number.\n  - <b>Commit Selected</b> \u2013 commits only
+    the files you have checked in the main tree. It automatically handles additions,
     deletions, and modifications for those items.\n  - <b>Cancel Commit</b> \u2013
     safely aborts a running commit and runs a cleanup to keep the database healthy.\n\n-
     <b>Add</b> \u2013 tells SVN to start tracking files that are currently unversioned
@@ -76062,7 +76546,7 @@ MonoBehaviour:
     --key \"C:/Users/PC/.ssh/committer_key\" -m \"Message\"</color>\n\nRemember:
     if you omit <b>--key</b>, the terminal will use whatever key is set in <b>Settings
     > SSH Private Key</b>. Use the <b>--key</b> option only when you need to override
-    it temporarily.\r\n<line-height=150%>\\n</line-height>\r\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>End
+    it temporarily.\n<line-height=150%>\\n</line-height>\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>End
     of Documentation</b></size>\n\n<br><br><br>"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -84315,11 +84799,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: MarkAsResolvedButton
+      value: MarkFileAsResolvedButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Mark as Resolved
+      value: Mark File as Resolved
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Pivot.x
@@ -84347,7 +84831,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 100
+      value: 110
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.y
@@ -84383,7 +84867,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 523.7654
+      value: 625.3849
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -87855,7 +88339,7 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1657918751}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.977183}
+  m_AnchorMin: {x: 0, y: 0.97717834}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}
@@ -90541,8 +91025,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 721.95, y: -742.79736}
-  m_SizeDelta: {x: 1402.71, y: 235}
+  m_AnchoredPosition: {x: 877.0959, y: -742.79736}
+  m_SizeDelta: {x: 1752.7559, y: 235}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1961079329
 MonoBehaviour:
@@ -92059,11 +92543,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: ResolveMineButton
+      value: KeepMyVersionMineButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Resolve as Mine
+      value: Keep My Version (Mine)
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Pivot.x
@@ -92091,7 +92575,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 100
+      value: 150
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.y
@@ -92127,7 +92611,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1222.1193
+      value: 1519.2314
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -93801,7 +94285,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 960, y: -10.675232}
+  m_AnchoredPosition: {x: 960, y: -10.67525}
   m_SizeDelta: {x: 1920, y: 21.3505}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &2045958854
@@ -94760,7 +95244,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7750361092450764457, guid: ad5fb3769074bbf44a0a7cb9f7aae1af, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1382.0225
+      value: 1739.636
       objectReference: {fileID: 0}
     - target: {fileID: 7750361092450764457, guid: ad5fb3769074bbf44a0a7cb9f7aae1af, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -98826,11 +99310,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Name
-      value: OpenInEditorButton
+      value: OpenFileInEditorButton
       objectReference: {fileID: 0}
     - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_text
-      value: Open in Editor
+      value: Open File in Editor
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_Pivot.x
@@ -98858,7 +99342,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 100
+      value: 110
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_SizeDelta.y
@@ -98894,7 +99378,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 174.58847
+      value: 208.46164
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -98956,7 +99440,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_SizeDelta.x
-      value: 1447.7563
+      value: 1780.0906
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_SizeDelta.y
@@ -98992,7 +99476,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 750
+      value: 895.82007
       objectReference: {fileID: 0}
     - target: {fileID: 2143355175463112917, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -99024,7 +99508,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2776955487470277373, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 190.8113
+      value: 229.9257
       objectReference: {fileID: 0}
     - target: {fileID: 2776955487470277373, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -99040,7 +99524,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3630292181935682570, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 731.62256
+      value: 848.9658
       objectReference: {fileID: 0}
     - target: {fileID: 3630292181935682570, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -99056,7 +99540,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3711847270542635936, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1254.3989
+      value: 1449.971
       objectReference: {fileID: 0}
     - target: {fileID: 3711847270542635936, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -99072,7 +99556,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3939994985998483358, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1467.1753
+      value: 1740.9761
       objectReference: {fileID: 0}
     - target: {fileID: 3939994985998483358, guid: ee105041866b0ea49b1492fdbe83dadb, type: 3}
       propertyPath: m_AnchoredPosition.y

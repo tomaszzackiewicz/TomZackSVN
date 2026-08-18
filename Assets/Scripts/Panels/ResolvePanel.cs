@@ -1,6 +1,8 @@
 using SVN.Core;
-using System.Collections.Generic;
 using UnityEngine;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 
 public class ResolvePanel : MonoBehaviour
 {
@@ -9,54 +11,67 @@ public class ResolvePanel : MonoBehaviour
     private SVNExternal _externalModule;
 
     private bool _isRefreshing;
+    private CancellationTokenSource _refreshCts;
 
     private void Awake() => ResolveReferences();
-
-    private async void Start()
-    {
-        if (_svnManager != null && string.IsNullOrEmpty(_svnManager.WorkingDir) && _svnManager.IsProcessing)
-        {
-            while (_svnManager.IsProcessing && gameObject.activeInHierarchy)
-            {
-                await System.Threading.Tasks.Task.Yield();
-            }
-        }
-
-        if (!string.IsNullOrEmpty(_svnManager?.WorkingDir))
-        {
-            TriggerSafeRefresh();
-        }
-    }
 
     private async void OnEnable()
     {
         if (_svnManager == null || _resolveModule == null)
             ResolveReferences();
 
-        if (_svnManager != null && string.IsNullOrEmpty(_svnManager.WorkingDir) && _svnManager.IsProcessing)
-        {
-            while (_svnManager.IsProcessing && gameObject.activeInHierarchy)
-            {
-                await System.Threading.Tasks.Task.Yield();
-            }
-        }
+        await WaitForWorkingDirIfNeeded();
 
-        if (!string.IsNullOrEmpty(_svnManager?.WorkingDir))
-        {
+        if (this != null && !string.IsNullOrEmpty(_svnManager?.WorkingDir))
             TriggerSafeRefresh();
-        }
     }
 
     private void OnDisable()
     {
-        _isRefreshing = false;
+        _refreshCts?.Cancel();
+        _refreshCts?.Dispose();
+        _refreshCts = null;
     }
 
-    private void TriggerSafeRefresh()
+    private async Task WaitForWorkingDirIfNeeded()
     {
-        if (_isRefreshing) return;
+        if (_svnManager == null) return;
+
+        _refreshCts = new CancellationTokenSource();
+        var token = _refreshCts.Token;
+
+        const float timeoutSeconds = 10f;
+        float elapsed = 0f;
+
+        while (this != null
+               && gameObject.activeInHierarchy
+               && string.IsNullOrEmpty(_svnManager.WorkingDir)
+               && _svnManager.IsProcessing
+               && elapsed < timeoutSeconds
+               && !token.IsCancellationRequested)
+        {
+            await Task.Yield();
+            elapsed += Time.unscaledDeltaTime;
+        }
+    }
+
+    private async void TriggerSafeRefresh()
+    {
+        if (_isRefreshing || _resolveModule == null) return;
+
         _isRefreshing = true;
-        _resolveModule?.AutoRefreshConflictList();
+        try
+        {
+            await _resolveModule.AutoRefreshConflictListAsync();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[ResolvePanel] Refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            _isRefreshing = false;
+        }
     }
 
     private void ResolveReferences()
@@ -71,15 +86,68 @@ public class ResolvePanel : MonoBehaviour
     {
         if (_resolveModule == null) ResolveReferences();
         if (_resolveModule == null) return false;
-        return !_svnManager.IsProcessing;
+
+        return !_resolveModule.IsResolveBusy;
     }
 
-    public void Button_OpenInEditor() { if (CanExecute()) _resolveModule.OpenInEditor(); }
-    public void Button_MarkAsResolved() { if (CanExecute()) _resolveModule.MarkAsResolved(); }
-    public void Button_ResolveTheirs() { if (CanExecute()) _resolveModule.ResolveTheirs(); }
-    public void Button_ResolveMine() { if (CanExecute()) _resolveModule.ResolveMine(); }
-    public void Button_DeleteAllObstructions() { if (CanExecute()) _resolveModule.DeleteAllObstructions(); }
-    public void Button_ResolveAllTheirs() { if (CanExecute()) _resolveModule.ResolveAllTheirs(); }
-    public void Button_ResolveAllMine() { if (CanExecute()) _resolveModule.ResolveAllMine(); }
-    public void Button_ResolveFilePath() => _externalModule?.BrowseResolveFilePath();
+    public void Button_OpenInEditor()
+    {
+        if (CanExecute()) _resolveModule.OpenInEditor();
+    }
+
+    public void Button_MarkAsResolved()
+    {
+        if (CanExecute()) _resolveModule.MarkAsResolved();
+    }
+
+    public void Button_ResolveTheirs()
+    {
+        if (CanExecute()) _resolveModule.ResolveTheirs();
+    }
+
+    public void Button_ResolveMine()
+    {
+        if (CanExecute()) _resolveModule.ResolveMine();
+    }
+
+    public void Button_DeleteAllObstructions()
+    {
+        if (CanExecute()) _resolveModule.DeleteAllObstructions();
+    }
+
+    public void Button_ResolveAllTheirs()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllTheirs();
+    }
+
+    public void Button_ResolveAllMine()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllMine();
+    }
+
+    public void Button_ResolveFilePath()
+    {
+        if (_externalModule == null) ResolveReferences();
+        _externalModule?.BrowseResolveFilePath();
+    }
+
+    public void Button_ResolveAllTreeMine()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllTreeMine();
+    }
+
+    public void Button_ResolveAllTreeTheirs()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllTreeTheirs();
+    }
+
+    public void Button_ResolveAllTreeBase()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllTreeBase();
+    }
+
+    public void Button_CancelResolve()
+    {
+        _resolveModule?.CancelResolve();
+    }
 }

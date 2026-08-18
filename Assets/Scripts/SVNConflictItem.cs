@@ -9,60 +9,61 @@ public class SVNConflictItem : MonoBehaviour
     [SerializeField] private TMP_Text fileNameText;
     [SerializeField] private TMP_Text conflictTypeText;
 
-    [Header("Buttons")]
+    [Header("Buttons - Text / Manual")]
     [SerializeField] private Button mineButton;
     [SerializeField] private Button theirsButton;
     [SerializeField] private Button resolvedButton;
     [SerializeField] private Button openButton;
-    [SerializeField] private Button deleteButton;
+
+    [Header("Buttons - Tree")]
+    [SerializeField] private Button treeMineButton;
+    [SerializeField] private Button treeTheirsButton;
+    [SerializeField] private Button treeBaseButton;
+    [SerializeField] private Button treeDeleteButton;
 
     private string _path;
 
-    public enum ConflictType
-    {
-        Text,
-        Manual,
-        Tree
-    }
+    public enum ConflictType { Text, Manual, Tree }
 
-    public void Setup(
-        string path,
-        ConflictType type,
-        bool hasMarkers)
+    public void Setup(string path, ConflictType type, bool hasMarkers, string treeReason = null)
     {
         _path = path;
 
         if (conflictTypeText != null)
         {
-            conflictTypeText.text = type switch
+            string typeText = type switch
             {
                 ConflictType.Text => "Text conflict",
                 ConflictType.Manual => "Manual conflict",
-                ConflictType.Tree => "Tree conflict",
+                ConflictType.Tree => string.IsNullOrEmpty(treeReason)
+                                        ? "Tree conflict"
+                                        : $"Tree: {treeReason}",
                 _ => "Unknown"
             };
+
+            if (typeText.Length > 60)
+                typeText = typeText.Substring(0, 57) + "...";
+
+            conflictTypeText.text = typeText;
         }
 
         if (fileNameText != null)
             fileNameText.text = path;
 
-        ClearButton(mineButton);
-        ClearButton(theirsButton);
-        ClearButton(resolvedButton);
-        ClearButton(openButton);
-        ClearButton(deleteButton);
-
-        SetButton(mineButton, false);
-        SetButton(theirsButton, false);
-        SetButton(resolvedButton, false);
-        SetButton(openButton, false);
-        SetButton(deleteButton, false);
+        ClearAndHide(mineButton);
+        ClearAndHide(theirsButton);
+        ClearAndHide(resolvedButton);
+        ClearAndHide(openButton);
+        ClearAndHide(treeMineButton);
+        ClearAndHide(treeTheirsButton);
+        ClearAndHide(treeBaseButton);
+        ClearAndHide(treeDeleteButton);
 
         if (type == ConflictType.Text)
         {
-            SetButton(mineButton, true);
-            SetButton(theirsButton, true);
-            SetButton(openButton, true);
+            Show(mineButton);
+            Show(theirsButton);
+            Show(openButton);
 
             mineButton.onClick.AddListener(async () =>
             {
@@ -82,11 +83,10 @@ public class SVNConflictItem : MonoBehaviour
                 catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
         }
-
         else if (type == ConflictType.Manual)
         {
-            SetButton(openButton, true);
-            SetButton(resolvedButton, true);
+            Show(openButton);
+            Show(resolvedButton);
 
             openButton.onClick.AddListener(async () =>
             {
@@ -95,19 +95,38 @@ public class SVNConflictItem : MonoBehaviour
             });
 
             resolvedButton.interactable = !hasMarkers;
-
             resolvedButton.onClick.AddListener(async () =>
             {
                 try { await SVNManager.Instance.GetModule<SVNResolve>().MarkSingleResolved(_path); }
                 catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
         }
-
         else if (type == ConflictType.Tree)
         {
-            SetButton(deleteButton, true);
+            Show(treeMineButton);
+            Show(treeTheirsButton);
+            Show(treeBaseButton);
+            Show(treeDeleteButton);
 
-            deleteButton.onClick.AddListener(async () =>
+            treeMineButton.onClick.AddListener(async () =>
+            {
+                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeMine(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
+            });
+
+            treeTheirsButton.onClick.AddListener(async () =>
+            {
+                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeTheirs(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
+            });
+
+            treeBaseButton.onClick.AddListener(async () =>
+            {
+                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeBase(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
+            });
+
+            treeDeleteButton.onClick.AddListener(async () =>
             {
                 try { await SVNManager.Instance.GetModule<SVNResolve>().DeleteObstruction(_path); }
                 catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
@@ -115,19 +134,16 @@ public class SVNConflictItem : MonoBehaviour
         }
     }
 
-    private void ClearButton(Button button)
+    private void ClearAndHide(Button button)
     {
-        if (button == null)
-            return;
-
+        if (button == null) return;
         button.onClick.RemoveAllListeners();
+        button.gameObject.SetActive(false);
     }
 
-    private void SetButton(Button button, bool state)
+    private void Show(Button button)
     {
-        if (button == null)
-            return;
-
-        button.gameObject.SetActive(state);
+        if (button == null) return;
+        button.gameObject.SetActive(true);
     }
 }
