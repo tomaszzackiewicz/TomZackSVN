@@ -19,13 +19,9 @@ namespace SVN.Core
         private const double BytesConversionFactor = 1024.0;
         private const int CleanupTimeoutSeconds = 30;
         private const int RefreshStatusTimeoutMs = 5000;
-        private volatile string _liveCommitFile = "";
-        private DateTime _lastCommitUiUpdate = DateTime.MinValue;
-        private const int CommitUiUpdateIntervalMs = 75;
 
         private const string DisplayStatuses = "MADR?!";
         private const string PreProcessStatuses = "MADR?!";
-        private const string CommittableStatuses = "MADR";
 
         private static readonly Regex CommittedRevisionRegex = new(@"Committed revision\s+(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SanitizeMessageRegex = new(@"[\uFEFF\u200B-\u200D\u202A-\u202E\u2060-\u2069\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", RegexOptions.Compiled);
@@ -84,12 +80,10 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(path))
                 return null;
 
-            // Normalizacja separatorów
             string normalized = path.Replace('/', Path.DirectorySeparatorChar)
                                     .Replace('\\', Path.DirectorySeparatorChar)
                                     .Trim();
 
-            // Usuwamy ewentualne "./" na początku
             if (normalized.StartsWith("." + Path.DirectorySeparatorChar))
                 normalized = normalized.Substring(2);
 
@@ -177,7 +171,7 @@ namespace SVN.Core
                 foreach (var file in dirInfo.EnumerateFiles("*", SearchOption.AllDirectories))
                 {
                     try { size += file.Length; }
-                    catch { /* plik zablokowany / brak dostępu */ }
+                    catch { }
                 }
             }
             catch { }
@@ -266,7 +260,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Zawsze pobieramy nieśledzone pliki
             bool expandUnversioned = true;
             var statusDict = await SVNStatus.GetChangesDictionaryAsync(root, expandUnversioned);
 
@@ -289,7 +282,6 @@ namespace SVN.Core
 
                 foreach (var item in localItems)
                 {
-                    // Pomijamy tylko rzeczy, których nie wysyłamy
                     if (item.Status == "!" || item.Status == "D")
                         continue;
 
@@ -305,13 +297,11 @@ namespace SVN.Core
                         }
                         else if (Directory.Exists(fullPhysicalPath))
                         {
-                            // Foldery ze statusem ? też liczymy
                             size += CalculateDirectorySize(fullPhysicalPath);
                         }
                     }
                     catch
                     {
-                        // ignorujemy błędy dostępu / nieistniejące ścieżki
                     }
                 }
 
@@ -974,7 +964,7 @@ namespace SVN.Core
                         if (svnUI?.CommitCurrentFileText != null)
                         {
                             svnUI.CommitCurrentFileText.text = capturedPath;
-                            Canvas.ForceUpdateCanvases(); // natychmiastowe odświeżenie
+                            Canvas.ForceUpdateCanvases();
                         }
                     });
 

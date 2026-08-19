@@ -727,7 +727,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Wspólny parser – akceptuje pojedyncze rewizje, zakresy i listy
             var revisionItems = SvnRevisionRangeParser.Parse(revisionInput);
 
             if (revisionItems.Count == 0)
@@ -790,7 +789,6 @@ namespace SVN.Core
                 await RunWithHeartbeatAsync(merge, "update", merge.SVNManager.WorkingDir,
                     true, token, "Cherry-Pick Update").ConfigureAwait(false);
 
-                // Budujemy argument rewizji: dla każdego elementu -c (pojedyncza) lub -r (zakres)
                 var revisionArgs = new System.Text.StringBuilder();
                 foreach (var item in revisionItems)
                 {

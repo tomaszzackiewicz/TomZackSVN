@@ -178,8 +178,6 @@ namespace SVN.Core
                 var revArgs = new StringBuilder();
                 foreach (var item in revisionItems)
                 {
-                    // Dla reverta zawsze używamy pojedynczej rewizji: -c -REV
-                    // Zakresy rozbijamy na pojedyncze rev.
                     if (item.IsRange)
                     {
                         for (long rev = item.Start; rev <= item.End; rev++)
