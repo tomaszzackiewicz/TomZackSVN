@@ -1024,7 +1024,7 @@ namespace SVN.Core
                             localTotalBytes += bytes;
                     }
 
-                    bool isChecked = !string.IsNullOrWhiteSpace(displayStatus) && displayStatus != " " && displayStatus != "?" && displayStatus != "I";
+                    bool isChecked = !string.IsNullOrWhiteSpace(displayStatus) && displayStatus != " " && displayStatus != "I";
                     if (previousSelectionStates.TryGetValue(currentPath, out bool prev))
                         isChecked = prev;
 

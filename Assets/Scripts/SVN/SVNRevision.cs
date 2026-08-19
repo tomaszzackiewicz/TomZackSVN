@@ -122,36 +122,25 @@ namespace SVN.Core
             string inputText = svnUI.UpdateRevisionInput.text?.Trim();
             if (string.IsNullOrWhiteSpace(inputText))
             {
-                LogToRevisionPanel("<color=#FFAA00>[Revert] Please enter revision numbers (e.g. 150 or 148, 150, 155).</color>");
+                LogToRevisionPanel("<color=#FFAA00>[Revert] Please enter revision numbers (e.g. 150, 148:150, 155).</color>");
                 return;
             }
 
-            var rawRevisions = inputText.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            var validRevisions = new List<string>();
+            var revisionItems = SvnRevisionRangeParser.Parse(inputText);
 
-            foreach (var raw in rawRevisions)
-            {
-                string cleanRev = raw.Trim().TrimStart('r', 'R');
-                if (int.TryParse(cleanRev, out int _))
-                {
-                    validRevisions.Add(cleanRev);
-                }
-                else
-                {
-                    LogToRevisionPanel($"<color=yellow>[Revert] Ignoring invalid format: '{raw}'</color>");
-                }
-            }
-
-            if (validRevisions.Count == 0)
+            if (revisionItems.Count == 0)
             {
                 LogToRevisionPanel("<color=#FFAA00>[Revert] No valid revision numbers entered.</color>");
                 return;
             }
 
             var cleanRevs = new List<string>();
-            foreach (var rev in validRevisions)
+            foreach (var item in revisionItems)
             {
-                cleanRevs.Add($"r{rev}");
+                if (item.IsRange)
+                    cleanRevs.Add($"r{item.Start}:r{item.End}");
+                else
+                    cleanRevs.Add($"r{item.Start}");
             }
 
             string revListString = cleanRevs.Count == 1
@@ -187,9 +176,21 @@ namespace SVN.Core
                 }
 
                 var revArgs = new StringBuilder();
-                foreach (var rev in validRevisions)
+                foreach (var item in revisionItems)
                 {
-                    revArgs.Append($"-c -{rev} ");
+                    // Dla reverta zawsze używamy pojedynczej rewizji: -c -REV
+                    // Zakresy rozbijamy na pojedyncze rev.
+                    if (item.IsRange)
+                    {
+                        for (long rev = item.Start; rev <= item.End; rev++)
+                        {
+                            revArgs.Append($"-c -{rev} ");
+                        }
+                    }
+                    else
+                    {
+                        revArgs.Append($"-c -{item.Start} ");
+                    }
                 }
 
                 LogToRevisionPanel($"[REVERT COMMITS] Undoing changes from {revListString}...", append: false);

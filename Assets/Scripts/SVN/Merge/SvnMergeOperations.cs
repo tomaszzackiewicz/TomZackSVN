@@ -727,6 +727,15 @@ namespace SVN.Core
                 return;
             }
 
+            // Wspólny parser – akceptuje pojedyncze rewizje, zakresy i listy
+            var revisionItems = SvnRevisionRangeParser.Parse(revisionInput);
+
+            if (revisionItems.Count == 0)
+            {
+                merge.LogErrorLocal("[Cherry-pick] No valid revisions specified.");
+                return;
+            }
+
             if (!merge.TryEnterMerging()) return;
             if (!merge.TryStart()) { merge.ExitMerging(); return; }
 
@@ -750,38 +759,20 @@ namespace SVN.Core
                     return;
                 }
 
-                string revisionArg;
-                string snapshotBefore;
-                string snapshotAfter;
+                string revisionDescription = string.Join(", ", revisionItems.Select(item =>
+                    item.IsRange ? $"{item.Start}:{item.End}" : item.Start.ToString()));
 
-                if (revisionInput.Contains(":"))
-                {
-                    string[] parts = revisionInput.Split(':');
-                    if (parts.Length != 2 || !long.TryParse(parts[0], out long rStart) || !long.TryParse(parts[1], out long rEnd))
-                    {
-                        merge.LogErrorLocal("[Cherry-pick] Invalid revision range format. Use START:END (e.g., 140:150).");
-                        return;
-                    }
-                    revisionArg = $"-r {revisionInput}";
-                    snapshotBefore = rStart.ToString();
-                    snapshotAfter = rEnd.ToString();
-                }
-                else if (long.TryParse(revisionInput, out long singleRev))
-                {
-                    revisionArg = $"-c {singleRev}";
-                    snapshotBefore = (singleRev - 1).ToString();
-                    snapshotAfter = singleRev.ToString();
-                }
-                else
-                {
-                    merge.LogErrorLocal("[Cherry-pick] Invalid revision format. Use a single number (e.g., 150) or a range (140:150).");
-                    return;
-                }
+                merge.LogInfoBlock("CHERRY-PICK SESSION START",
+                    $"Source: {sourceUrl}\nTarget: {currentUrl}\nRevisions: {revisionDescription}\nMode: {(isDryRun ? "DRY RUN" : "LIVE")}");
 
-                merge.LogInfoBlock("CHERRY-PICK SESSION START", $"Source: {sourceUrl}\nTarget: {currentUrl}\nRevision(s): {revisionInput}\nMode: {(isDryRun ? "DRY RUN" : "LIVE")}");
+                string currentUuid = (await SvnRunner.RunAsync(
+                    $"{SVNMerge.SshConfigOption}info --show-item repos-uuid",
+                    merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
 
-                string currentUuid = (await SvnRunner.RunAsync($"{SVNMerge.SshConfigOption}info --show-item repos-uuid", merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
-                string sourceUuid = (await SvnRunner.RunAsync($"{SVNMerge.SshConfigOption}info {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --show-item repos-uuid", merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
+                string sourceUuid = (await SvnRunner.RunAsync(
+                    $"{SVNMerge.SshConfigOption}info {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --show-item repos-uuid",
+                    merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false))?.Trim();
+
                 if (!string.Equals(currentUuid, sourceUuid, StringComparison.Ordinal))
                 {
                     merge.LogErrorLocal("Repository UUID mismatch.");
@@ -791,46 +782,65 @@ namespace SVN.Core
                 merge._hadLocalChangesBeforeMerge = await merge.HasPendingMergeChanges(token).ConfigureAwait(false);
                 if (merge._hadLocalChangesBeforeMerge)
                 {
-                    merge.LogWarningBlock("MERGE BLOCKED", "Working copy contains uncommitted changes.\nCommit, revert or cleanup before cherry-picking.");
+                    merge.LogWarningBlock("MERGE BLOCKED",
+                        "Working copy contains uncommitted changes.\nCommit, revert or cleanup before cherry-picking.");
                     return;
                 }
-                await RunWithHeartbeatAsync(merge, "update", merge.SVNManager.WorkingDir, true, token, "Cherry-Pick Update").ConfigureAwait(false);
+
+                await RunWithHeartbeatAsync(merge, "update", merge.SVNManager.WorkingDir,
+                    true, token, "Cherry-Pick Update").ConfigureAwait(false);
+
+                // Budujemy argument rewizji: dla każdego elementu -c (pojedyncza) lub -r (zakres)
+                var revisionArgs = new System.Text.StringBuilder();
+                foreach (var item in revisionItems)
+                {
+                    if (item.IsRange)
+                        revisionArgs.Append($"-r {item.Start}:{item.End} ");
+                    else
+                        revisionArgs.Append($"-c {item.Start} ");
+                }
 
                 if (!isDryRun)
                 {
-                    merge._snapshotManager.SetSnapshot(sourceUrl, snapshotBefore, snapshotAfter);
-                    merge._snapshotManager.SaveRollbackSnapshot();
-                    merge.LogInfoBlock("CHERRY-PICK SNAPSHOT", $"Created rollback point for r{snapshotBefore} → r{snapshotAfter}");
+                    if (revisionItems.Count == 1)
+                    {
+                        var single = revisionItems[0];
+                        string snapBefore = single.IsRange ? single.Start.ToString() : (single.Start - 1).ToString();
+                        string snapAfter = single.End.ToString();
+                        merge._snapshotManager.SetSnapshot(sourceUrl, snapBefore, snapAfter);
+                        merge._snapshotManager.SaveRollbackSnapshot();
+                        merge.LogInfoBlock("CHERRY-PICK SNAPSHOT", $"Created rollback point for {revisionDescription}.");
+                    }
+                    else
+                    {
+                        merge.LogWarning("[Cherry-pick] Multiple revisions specified – rollback snapshot not created. Use 'Cancel Local Merge' or 'Revert to HEAD' manually if needed.");
+                    }
                 }
 
-                merge.LogInfo($"[Cherry-pick] Fetching file changes for r{revisionInput}...");
-                string logArgs = $"{SVNMerge.SshConfigOption}log -r {revisionInput} -v --xml {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)}";
+                merge.LogInfo($"[Cherry-pick] Fetching file changes for revisions: {revisionDescription}");
+                string logArgs = $"{SVNMerge.SshConfigOption}log -r {revisionDescription.Replace(" ", "")} -v --xml {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)}";
                 string logXml = await SvnRunner.RunAsync(logArgs, merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
 
                 var previewResult = ParseCherryPickLogXml(logXml, out string commitMsg);
-
                 if (previewResult.Files.Count > 0)
                 {
                     merge.LogInfoBlock("REVISION CONTENTS", $"Commit msg: {commitMsg}\nFiles affected: {previewResult.Files.Count}");
-
-                    UnityMainThreadDispatcher.Enqueue(() =>
-                    {
-                        merge.RaiseDryRunCompleted(previewResult);
-                    });
+                    UnityMainThreadDispatcher.Enqueue(() => merge.RaiseDryRunCompleted(previewResult));
                 }
                 else
                 {
-                    merge.LogWarning($"[Cherry-pick] Revision r{revisionInput} seems empty or contains no file changes.");
+                    merge.LogWarning($"[Cherry-pick] Revisions {revisionDescription} seem empty or contain no file changes.");
                 }
 
                 string dryRunFlag = isDryRun ? "--dry-run " : string.Empty;
-                string args = $"{SVNMerge.SshConfigOption}merge {revisionArg} {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
+                string args = $"{SVNMerge.SshConfigOption}merge {revisionArgs}{dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
                 merge.LogInfo($"[Cherry-pick] Executing: svn {args}");
 
                 string output;
                 try
                 {
-                    output = await RunWithHeartbeatAsync(merge, args, merge.SVNManager.WorkingDir, !isDryRun, token, "Cherry-Pick Merge").ConfigureAwait(false);
+                    output = await RunWithHeartbeatAsync(merge, args, merge.SVNManager.WorkingDir,
+                        !isDryRun, token, "Cherry-Pick Merge").ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex.Message.Contains("E155015"))
                 {
@@ -840,9 +850,9 @@ namespace SVN.Core
                 catch (Exception ex) when (IsAncestryError(ex))
                 {
                     merge.LogWarning("[Cherry-pick] Ancestry problem – retrying with --ignore-ancestry...");
-                    string retryArgs = $"{SVNMerge.SshConfigOption}merge {revisionArg} {dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --ignore-ancestry --non-interactive --accept postpone";
-
-                    output = await RunWithHeartbeatAsync(merge, retryArgs, merge.SVNManager.WorkingDir, !isDryRun, token, "Cherry-Pick Merge (Retry)").ConfigureAwait(false);
+                    string retryArgs = $"{SVNMerge.SshConfigOption}merge {revisionArgs}{dryRunFlag}{SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --ignore-ancestry --non-interactive --accept postpone";
+                    output = await RunWithHeartbeatAsync(merge, retryArgs, merge.SVNManager.WorkingDir,
+                        !isDryRun, token, "Cherry-Pick Merge (Retry)").ConfigureAwait(false);
                 }
 
                 await ProcessMergeResultAsync(merge, output, isDryRun, token).ConfigureAwait(false);
