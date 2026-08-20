@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -580,6 +581,43 @@ namespace SVN.Core
 
         #region Commit Selected
 
+        private List<string> InjectMissingParentPaths(HashSet<string> selectedPaths, List<SvnTreeElement> allElements)
+        {
+            var result = new List<string>(selectedPaths);
+            var elementDict = allElements.Where(e => e != null && !string.IsNullOrEmpty(e.FullPath))
+                                      .ToDictionary(e => e.FullPath.Replace('\\', '/'), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var path in selectedPaths)
+            {
+                if (string.IsNullOrEmpty(path) || !path.Contains("/")) continue;
+
+                var parts = path.Split('/');
+                string currentParent = "";
+
+                for (int i = 0; i < parts.Length - 1; i++)
+                {
+                    currentParent = string.IsNullOrEmpty(currentParent) ? parts[i] : currentParent + "/" + parts[i];
+
+                    if (!result.Contains(currentParent, StringComparer.OrdinalIgnoreCase))
+                    {
+                        if (elementDict.TryGetValue(currentParent, out var parentEl))
+                        {
+                            if (parentEl.Status == "?" || parentEl.Status == "!")
+                            {
+                                result.Add(currentParent);
+                            }
+                        }
+                        else
+                        {
+                            result.Add(currentParent);
+                        }
+                    }
+                }
+            }
+
+            return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
         public async Task ExecuteCommitSelected(string message)
         {
             if (!TryEnterProcessing()) return;
@@ -640,12 +678,10 @@ namespace SVN.Core
 
                     LogToConsole("<b>Initiating Commit Selected...</b>");
 
-                    // 1/4 Cleanup
                     bool cleanupOk = await CleanupWorkingCopy(root, token, "<b>[1/4]</b> Cleaning up working copy...");
                     if (!cleanupOk) return;
                     UpdateProgress(0.15f);
 
-                    // 2/4 Missing files (!) → D
                     var missingRelPaths = selectedItems
                         .Where(e => e.Status == "!")
                         .Select(e => MakeRelative(root, e.FullPath))
@@ -655,7 +691,6 @@ namespace SVN.Core
                     await ScheduleMissingForDeletion(root, missingRelPaths, token, "<b>[2/4]</b> Scheduling missing files for deletion...");
                     UpdateProgress(0.35f);
 
-                    // 3/4 Prepare targets
                     LogToConsole("<b>[3/4]</b> Synchronizing final commit tree...");
 
                     var selectedRelPathsSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -672,12 +707,12 @@ namespace SVN.Core
                             LogToConsole($"<color=#FF8800>[Warning] Invalid path skipped: {item.FullPath}</color>");
                     }
 
-                    var reducedTargets = ReduceCommitTargets(selectedRelPathsSet);
+                    var finalTargets = InjectMissingParentPaths(selectedRelPathsSet, allElements);
                     var deleteStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "!", "D" };
-                    var finalTargets = new List<string>();
                     var missingOnDisk = new List<string>();
+                    var actualTargets = new List<string>();
 
-                    foreach (var t in reducedTargets)
+                    foreach (var t in finalTargets)
                     {
                         string fullNative = Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar));
                         bool exists = File.Exists(fullNative) || Directory.Exists(fullNative);
@@ -691,7 +726,7 @@ namespace SVN.Core
                         bool isDelete = match != null && deleteStatuses.Contains(match.Status);
 
                         if (exists || isDelete)
-                            finalTargets.Add(t);
+                            actualTargets.Add(t);
                         else
                             missingOnDisk.Add(t);
                     }
@@ -707,31 +742,68 @@ namespace SVN.Core
 
                     UpdateProgress(0.55f);
 
-                    if (finalTargets.Count == 0)
+                    if (actualTargets.Count == 0)
                     {
                         LogToConsole("<color=yellow>No existing targets left to commit.</color>");
                         return;
                     }
 
-                    LogToConsole($"<color=#4FC3F7>Final target set: {finalTargets.Count}</color>");
+                    LogToConsole($"<color=#4FC3F7>Final target set: {actualTargets.Count}</color>");
                     if (missingOnDisk.Count > 0)
                         LogToConsole($"<color=#FFAA00>Skipped missing on disk: {missingOnDisk.Count}</color>");
 
                     PostToMainThread(() =>
                     {
                         if (svnUI?.CommitCurrentFileText != null)
-                            svnUI.CommitCurrentFileText.text = $"Queued: {finalTargets.Count} item(s)";
+                            svnUI.CommitCurrentFileText.text = $"Queued: {actualTargets.Count} item(s)";
                     });
 
-                    // Add unversioned (?) → A
+                    var injectedParents = actualTargets
+                        .Where(t => !selectedRelPathsSet.Contains(t, StringComparer.OrdinalIgnoreCase))
+                        .ToList();
+
+                    if (injectedParents.Count > 0)
+                    {
+                        try
+                        {
+                            foreach (var dir in injectedParents)
+                            {
+                                string args = $"mkdir \"{dir.Replace("\"", "\\\"")}\"";
+                                var psi = new ProcessStartInfo
+                                {
+                                    FileName = "svn",
+                                    Arguments = args,
+                                    WorkingDirectory = root,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true,
+                                    RedirectStandardOutput = true,
+                                    RedirectStandardError = true
+                                };
+
+                                using (var p = Process.Start(psi))
+                                {
+                                    p.StandardOutput.ReadToEnd();
+                                    p.StandardError.ReadToEnd();
+                                    p.WaitForExit(15000);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            LogToConsole($"<color=#FFAA00>[Warning] Failed to create parent directories: {ex.Message}</color>");
+                        }
+                    }
+
                     string addTargetsFile = Path.Combine(Path.GetTempPath(), $"svn_commit_add_{Guid.NewGuid():N}.txt");
                     try
                     {
-                        var toAdd = finalTargets.Where(t =>
-                        {
-                            string fullNative = Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar));
-                            return File.Exists(fullNative) || Directory.Exists(fullNative);
-                        }).ToList();
+                        var toAdd = actualTargets
+                            .Where(t => !injectedParents.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            .Where(t =>
+                            {
+                                string fullNative = Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar));
+                                return File.Exists(fullNative) || Directory.Exists(fullNative);
+                            }).ToList();
 
                         if (toAdd.Count > 0)
                         {
@@ -748,10 +820,9 @@ namespace SVN.Core
 
                     UpdateProgress(0.75f);
 
-                    // 4/4 Commit
                     try
                     {
-                        await CommitTargetsLiveAsync(root, finalTargets, msgFile, token);
+                        await CommitTargetsLiveAsync(root, actualTargets, msgFile, token);
                         UpdateProgress(1.0f);
 
                         SVNStatus.ClearLockCache();

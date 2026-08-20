@@ -1049,7 +1049,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 516.67505
+      value: 319.45
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -13014,7 +13014,7 @@ MonoBehaviour:
   m_HandleRect: {fileID: 1911977654}
   m_Direction: 2
   m_Value: 1
-  m_Size: 0.02282167
+  m_Size: 0.019731615
   m_NumberOfSteps: 0
   m_OnValueChanged:
     m_PersistentCalls:
@@ -31656,7 +31656,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 172.225
+      value: 106.48334
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -37285,7 +37285,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 1205.5751
+      value: 745.38336
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -43886,6 +43886,124 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 951734880}
   m_CullTransparentMesh: 1
+--- !u!1001 &960195659
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 1016012580}
+    m_Modifications:
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 511109533}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: Button_DeleteSvnGlobalIgnoreProperty
+      objectReference: {fileID: 0}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: IgnoredPanel, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Name
+      value: DeleteSvnGlobalIgnorePropertyButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_text
+      value: Delete Svn Global Ignore Property
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 150
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 50
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 1246.3167
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -49.4204
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+--- !u!224 &960195660 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+  m_PrefabInstance: {fileID: 960195659}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &960644288
 GameObject:
   m_ObjectHideFlags: 0
@@ -47006,6 +47124,8 @@ RectTransform:
   - {fileID: 15036716}
   - {fileID: 1282596843}
   - {fileID: 799977731}
+  - {fileID: 1709421892}
+  - {fileID: 960195660}
   m_Father: {fileID: 2013603814}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
@@ -58262,7 +58382,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.x
-      value: 861.125
+      value: 532.4167
       objectReference: {fileID: 0}
     - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
       propertyPath: m_AnchoredPosition.y
@@ -75849,7 +75969,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 38662.938}
+  m_SizeDelta: {x: 0, y: 44859.13}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &1662562891
 MonoBehaviour:
@@ -75990,7 +76110,7 @@ MonoBehaviour:
     tips:</b></size>\n\n- If you have a working copy that was checked out using TortoiseSVN
     or another SVN client, you can add it here and continue working with TomZackSVN.\n-
     The private key path is optional, but for repositories using <i>svn+ssh://</i>
-    it is required \u2013 without it, every command will fail with a connection error.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r\n\r\n<size=120%><b>Check
+    it is required \u2013 without it, every command will fail with a connection error.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Check
     Remote</b></size>\n\nThe <b>Check Remote</b> button sits in the top bar menu,
     right before <b>Update</b>. It quickly shows which files on the server have been
     changed by others, without downloading anything. It lists all items that would
@@ -75998,7 +76118,7 @@ MonoBehaviour:
     actually sync.\n\n<size=110%><b>Additional tips:</b></size>\n\n- Use <b>Check
     Remote</b> before starting work \u2013 it gives you a preview of incoming changes
     without touching your local files.\n- It is especially useful when you want to
-    avoid surprises and plan your work around the team\u2019s latest commits.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\r\n\r\n<size=120%><b>Update</b></size>\n\nSync
+    avoid surprises and plan your work around the team\u2019s latest commits.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Update</b></size>\n\nSync
     local files with the server. Use this daily before starting work. Shows per-file
     progress and a final report with counts of <b>Updated</b>, <b>Added</b>, <b>Deleted</b>,
     and <b>Conflicts</b>. The report includes the old and new revision numbers and
@@ -76303,7 +76423,7 @@ MonoBehaviour:
     to your diff tool or text editor). Press the adjacent <b>Save</b> button to store
     the path. It updates the current project and the global merge-tool setting. This
     tool is launched when you use <b>Diff</b> or <b>Open in Editor</b> from the Resolve
-    panel.\r\n- <b>Show Ignored</b> \u2013 displays all files and folders currently
+    panel.\n- <b>Show Ignored</b> \u2013 displays all files and folders currently
     excluded from version control (marked with the <b>I</b> status), together with
     the active ignore rules. It is now part of the Settings panel, so you can access
     it directly from there.\n\n<size=110%><b>Additional tips:</b></size>\n\n- The
@@ -76314,7 +76434,74 @@ MonoBehaviour:
     \u2013 so you always see what is actually being used.\n\nIf no project is loaded,
     the fields will show the global defaults from PlayerPrefs. Changes made here
     affect the current working copy immediately and are remembered the next time
-    you start the application.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Explore</b></size>\n\nOpens
+    you start the application.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Show
+    Ignored</b></size>\n\nThe <b>Show Ignored</b> panel displays all files and folders
+    currently excluded from version control (marked with the <b>I</b> status), together
+    with the active ignore rules. It gives you full control over local and repository-wide
+    ignore patterns.\n\n<size=110%><b>What the panel contains:</b></size>\n\n- <b>System
+    Info</b> \u2013 shows the working directory, the path to the local <b>.svnignore</b>
+    file, whether the file exists, and how many rules were loaded from it.\n- <b>Active
+    Ignore Rules</b> \u2013 lists all patterns that are currently in effect. Each
+    rule is marked as:\n  - <b>[FILE]</b> \u2013 loaded from the local <b>.svnignore</b>
+    file (affects only this working copy).\n  - <b>[SVN]</b> \u2013 stored in the
+    <b>svn:global-ignores</b> or <b>svn:ignore</b> property (shared with the team
+    after commit).\n- A note about using <b>Open in Editor</b> to export the full
+    list of ignored files.\n\n<size=110%><b>Buttons:</b></size>\n\n- <b>Refresh Rules</b>
+    \u2013 rescans the working copy and reloads the current ignore rules from both
+    the local file and SVN properties. Use this whenever you have edited the <b>.svnignore</b>
+    file manually or after changing ignore properties.\n- <b>Load New Rules</b> \u2013
+    reads the local <b>.svnignore</b> file and immediately applies its rules to the
+    commit filtering (local only). This does not modify SVN properties.\n- <b>Apply
+    New Rules</b> \u2013 writes the contents of the local <b>.svnignore</b> file
+    to the <b>svn:global-ignores</b> property on the working copy root. After this
+    operation, you must <b>Commit</b> the root folder so that other team members
+    also receive the same ignore rules. A message will inform you that you can remove
+    the local <b>.svnignore</b> file if it is no longer needed.\n- <b>Open Ignore
+    Config in Editor</b> \u2013 opens the <b>.svnignore</b> file in your configured
+    text editor (or creates it if it does not exist). This allows you to edit the
+    rules directly.\n- <b>Delete SVN Global Ignore Property</b> \u2013 removes the
+    <b>svn:global-ignores</b> property from the working copy root. This operation
+    is local until you commit. Use it when you want to stop ignoring files globally
+    for the entire repository. Double-click confirmation is required.\n\n<size=110%><b>.svnignore
+    file format:</b></size>\n\nThe <b>.svnignore</b> file is a simple text file located
+    in the root of your working copy. It contains one pattern per line. The following
+    rules apply:\n\n- Lines starting with <b>#</b> are comments and are ignored.\n-
+    <b>!</b> at the beginning of a line negates a previously matching pattern (include
+    the file again).\n- A trailing <b>/</b> indicates that the pattern applies only
+    to directories.\n- <b>*</b> matches any sequence of characters except a slash
+    (<b>/</b>).\n- <b>**</b> matches any sequence of characters including slashes
+    (use it for recursive matches).\n- <b>?</b> matches any single character except
+    a slash.\n- Patterns without a slash (<b>/</b>) match the file or folder name
+    anywhere in the working copy.\n- Patterns with a slash are relative to the working
+    copy root.\n- A leading <b>/</b> anchors the pattern to the root.\n\n<b>Examples:</b>\r\n<size=110%><b>Example
+    .svnignore File</b></size>\n\n<color=#00FF99># ============================================</color>\n<color=#00FF99># 
+    .svnignore \u2013 sample rules</color>\n<color=#00FF99># ============================================</color>\n\n<color=#00FF99>#
+    ---------- COMMENTS ----------</color>\n<color=#888888># Lines starting with
+    # are ignored.</color>\n\n<color=#00FF99># ---------- UNITY (common folders)
+    ----------</color>\n<color=#FFD700>Library/</color>\n<color=#FFD700>Temp/</color>\n<color=#FFD700>Obj/</color>\n<color=#FFD700>Build/</color>\n<color=#FFD700>Builds/</color>\n<color=#FFD700>Logs/</color>\n<color=#FFD700>UserSettings/</color>\n\n<color=#00FF99>#
+    ---------- UNREAL ENGINE (common folders) ----------</color>\n<color=#FFD700>Intermediate/</color>\n<color=#FFD700>Saved/</color>\n<color=#FFD700>DerivedDataCache/</color>\n<color=#FFD700>Binaries/</color>\n<color=#FFD700>Build/</color>\n\n<color=#00FF99>#
+    ---------- TEMPORARY FILES ----------</color>\n<color=#FFD700>*.tmp</color>\n<color=#FFD700>*.temp</color>\n<color=#FFD700>*.log</color>\n<color=#FFD700>*.cache</color>\n\n<color=#00FF99>#
+    ---------- BUILD ARTIFACTS ----------</color>\n<color=#FFD700>*.obj</color>\n<color=#FFD700>*.o</color>\n<color=#FFD700>*.pdb</color>\n<color=#FFD700>*.ilk</color>\n<color=#FFD700>*.exp</color>\n<color=#FFD700>*.lib</color>\n<color=#FFD700>*.iobj</color>\n<color=#FFD700>*.ipdb</color>\n\n<color=#00FF99>#
+    ---------- SYSTEM FILES ----------</color>\n<color=#FFD700>.DS_Store</color>\n<color=#FFD700>Thumbs.db</color>\n<color=#FFD700>desktop.ini</color>\n\n<color=#00FF99>#
+    ---------- IDE / EDITORS ----------</color>\n<color=#FFD700>.vs/</color>\n<color=#FFD700>.idea/</color>\n<color=#FFD700>*.sln</color>\n<color=#FFD700>*.suo</color>\n<color=#FFD700>*.user</color>\n<color=#FFD700>*.vcxproj</color>\n<color=#FFD700>*.vcxproj.filters</color>\n<color=#FFD700>*.vcxproj.user</color>\n<color=#FFD700>*.opensdf</color>\n<color=#FFD700>*.sdf</color>\n\n<color=#00FF99>#
+    ---------- LOCAL CONFIG ----------</color>\n<color=#FFD700>Config/DefaultEditor.ini</color>\n<color=#FFD700>Config/DefaultEditorPerProjectUserSettings.ini</color>\n\n<color=#00FF99>#
+    ---------- ADVANCED PATTERNS ----------</color>\n\n<color=#00FF99># Ignore all
+    .tmp files, but keep important.tmp</color>\n<color=#FFD700>*.tmp</color>\n<color=#FF9900>!important.tmp</color>\n\n<color=#00FF99>#
+    Ignore the Build folder only at the root</color>\n<color=#FFD700>/Build/</color>\n\n<color=#00FF99>#
+    Ignore any Build folder anywhere</color>\n<color=#FFD700>Build/</color>\n\n<color=#00FF99>#
+    Ignore .pdb files only inside Binaries/Win64</color>\n<color=#FFD700>Binaries/Win64/*.pdb</color>\n\n<color=#00FF99>#
+    Ignore everything inside Intermediate recursively</color>\n<color=#FFD700>Intermediate/**</color>\n\n<color=#00FF99>#
+    Ignore files with two-character extensions (e.g., .a, .b)</color>\n<color=#FFD700>*.??</color>\n\n<color=#00FF99>#
+    Ignore all files in Config except DefaultGame.ini</color>\n<color=#FFD700>Config/*</color>\n<color=#FF9900>!Config/DefaultGame.ini</color>\nAfter
+    editing <b>.svnignore</b>, click <b>Load New Rules</b> to apply the changes locally,
+    or <b>Apply New Rules</b> to push them to SVN. The panel will always show how
+    many rules were loaded and from which file.\n\n<size=110%><b>Additional tips:</b></size>\n\n-
+    Use the <b>Open Ignore Config in Editor</b> button to quickly create or edit
+    the <b>.svnignore</b> file without leaving the application.\n- If you want to
+    permanently remove the global ignore property, use <b>Delete SVN Global Ignore
+    Property</b> and then commit the change.\n- The local <b>.svnignore</b> file
+    is not automatically committed; if you want the whole team to use the same rules,
+    use <b>Apply New Rules</b> and commit.\n\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>Explore</b></size>\n\nOpens
     the root folder of your current working copy directly in Windows Explorer.\n\n<size=110%><b>Additional
     tips:</b></size>\n\n- Use Explore when you need to manually copy or inspect files
     outside the application \u2013 just remember to click <b>Refresh</b> afterwards
@@ -76547,7 +76734,7 @@ MonoBehaviour:
     if you omit <b>--key</b>, the terminal will use whatever key is set in <b>Settings
     > SSH Private Key</b>. Use the <b>--key</b> option only when you need to override
     it temporarily.\n<line-height=150%>\\n</line-height>\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n<size=120%><b>End
-    of Documentation</b></size>\n\n<br><br><br>"
+    of Documentation</b></size>\n\n<br><br><br>\r\n"
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -78712,6 +78899,124 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1702355782}
   m_CullTransparentMesh: 1
+--- !u!1001 &1709421891
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 1016012580}
+    m_Modifications:
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 511109533}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: Button_OpenIgnoreConfigInEditor
+      objectReference: {fileID: 0}
+    - target: {fileID: 3174885316382008490, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: IgnoredPanel, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5071327366822733214, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Name
+      value: OpenIgnoreConfigInEditorButton
+      objectReference: {fileID: 0}
+    - target: {fileID: 5843206339818834854, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_text
+      value: Open Ignore Config In Editor
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 150
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 50
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: -0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 983.35004
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -49.4204
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+--- !u!224 &1709421892 stripped
+RectTransform:
+  m_CorrespondingSourceObject: {fileID: 8125733410502386194, guid: 3099e815645b81743b95e1825e258bf0, type: 3}
+  m_PrefabInstance: {fileID: 1709421891}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1001 &1710527699
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -88339,7 +88644,7 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1657918751}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0.97717834}
+  m_AnchorMin: {x: 0, y: 0.98026836}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 20, y: 20}

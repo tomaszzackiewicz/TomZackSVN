@@ -220,6 +220,10 @@ namespace SVN.Core
                         {
                             displayLine = "Scanning repository...";
                         }
+                        else if (trimmed.StartsWith("At revision") || trimmed.StartsWith("Checked out revision"))
+                        {
+                            return;
+                        }
                         else if (trimmed.Length > 2 && "UAGDCR ".Contains(activeStatus))
                         {
                             char status = activeStatus;

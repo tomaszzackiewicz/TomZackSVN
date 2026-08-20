@@ -677,16 +677,13 @@ namespace SVN.Core
             var oldCts = _cts;
             _cts = new CancellationTokenSource();
             CancellationToken token = _cts.Token;
-
             if (oldCts != null)
             {
                 oldCts.Cancel();
                 oldCts.Dispose();
             }
-
             IsProcessing = true;
             string expectedWorkingDir = svnManager.WorkingDir;
-
             void ResetScanningText(string message = "")
             {
                 RunOnMainThread(() =>
@@ -695,11 +692,9 @@ namespace SVN.Core
                         SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, message, "TREE", append: false);
                 });
             }
-
             try
             {
                 var expandedPaths = CaptureExpandedPaths();
-
                 RunOnMainThread(() =>
                 {
                     if (svnUI != null)
@@ -712,14 +707,11 @@ namespace SVN.Core
                     svnUI?.SvnTreeView?.ClearView();
                     svnUI?.SVNCommitTreeDisplay?.ClearView();
                 });
-
                 await Task.Yield();
                 token.ThrowIfCancellationRequested();
-
                 string root = svnManager.WorkingDir;
                 Dictionary<string, SvnChangeInfo> statusDict = null;
                 Dictionary<string, SVNLockDetails> lockDict = null;
-
                 await Task.Run(async () =>
                 {
                     var statusTask = GetChangesDictionaryAsync(root, ShowUnversionedFiles, token);
@@ -728,23 +720,28 @@ namespace SVN.Core
                     token.ThrowIfCancellationRequested();
                     statusDict = statusTask.Result;
                     lockDict = locksTask.Result;
+
+                    // === OPCJA B: Filtracja lokalnych reguł z .svnignore ===
+                    var ignoreModule = svnManager.GetModule<SVNIgnore>();
+                    if (ignoreModule != null && statusDict != null && statusDict.Count > 0)
+                    {
+                        ignoreModule.FilterOutLocallyIgnored(statusDict);
+                    }
+                    // ======================================================
+
                 }, token).ConfigureAwait(false);
-
                 await Task.Yield();
-
                 if (svnManager.WorkingDir != expectedWorkingDir)
                 {
                     SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Project changed during refresh — discarding results.");
                     ResetScanningText();
                     return;
                 }
-
                 if (statusDict == null || statusDict.Count == 0)
                 {
                     RunOnMainThread(ShowEmptyState);
                     return;
                 }
-
                 RunOnMainThread(() =>
                 {
                     if (svnUI != null)
@@ -755,45 +752,35 @@ namespace SVN.Core
                             SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
                     }
                 });
-
                 var previousSelectionStates = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                 foreach (var e in _flatTreeData)
                 {
                     if (!string.IsNullOrEmpty(e.FullPath))
                         previousSelectionStates[e.FullPath] = e.IsChecked;
                 }
-
                 var buildResult = await Task.Run(() => BuildFlatTreeStructureText(root, statusDict, previousSelectionStates), token);
                 token.ThrowIfCancellationRequested();
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
-
                 var newCommitData = await Task.Run(() => BuildCommitView(buildResult.Elements), token);
                 token.ThrowIfCancellationRequested();
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
-
                 _flatTreeData = buildResult.Elements;
                 _commitTreeData = newCommitData;
                 totalCommitBytes = buildResult.TotalBytes;
-
                 RestoreExpandedPaths(_flatTreeData, expandedPaths);
                 RestoreExpandedPaths(_commitTreeData, expandedPaths);
-
                 if (lockDict != null && lockDict.Count > 0)
                     ApplyLockColors(_flatTreeData, lockDict);
-
                 var localFlatData = _flatTreeData;
                 var localCommitData = _commitTreeData;
-
                 RunOnMainThread(() =>
                 {
                     if (svnManager.WorkingDir != expectedWorkingDir) return;
-
                     if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
                     {
                         foreach (var e in localFlatData) e.IsCommitDelegate = false;
                         svnUI.SvnTreeView.RefreshUI(localFlatData, this);
                     }
-
                     if (svnUI.SVNCommitTreeDisplay != null && svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy)
                     {
                         foreach (var e in localCommitData) e.IsCommitDelegate = true;
@@ -802,7 +789,6 @@ namespace SVN.Core
                         svnUI.SVNCommitTreeDisplay.RefreshUI(localCommitData, this);
                         UpdateSelectedSizeDisplay();
                     }
-
                     UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
                 });
             }
