@@ -19,6 +19,7 @@ public class RevGraphPanel : MonoBehaviour
     private bool _graphLoaded;
     private CancellationTokenSource _loadCts;
     private string _lastWorkingDir;
+    private readonly HashSet<SVNGraphItem> _selectedItems = new();
 
     private void Awake()
     {
@@ -257,7 +258,21 @@ public class RevGraphPanel : MonoBehaviour
 
     private async Task<List<SVNRevisionNode>> FetchLogEntriesAsync(CancellationToken token = default)
     {
+        Debug.Log("===== FetchLogEntriesAsync STARTED =====");
+
         string xmlOutput = await SvnRunner.RunAsync("log --xml --verbose ^/", _svnManager.WorkingDir, token: token);
+
+        Debug.Log($"===== XML length: {xmlOutput?.Length ?? -1} =====");
+
+        if (!string.IsNullOrEmpty(xmlOutput))
+        {
+            int len = Math.Min(1000, xmlOutput.Length);
+            Debug.Log($"[XML START]\n{xmlOutput.Substring(0, len)}\n[XML END]");
+        }
+        else
+        {
+            Debug.LogError("===== XML is EMPTY or NULL =====");
+        }
 
         if (string.IsNullOrEmpty(xmlOutput))
             return new List<SVNRevisionNode>();
@@ -280,61 +295,84 @@ public class RevGraphPanel : MonoBehaviour
 
     private static void ParseLogXml(string xmlOutput, List<SVNRevisionNode> nodes, CancellationToken token)
     {
-        using var stringReader = new StringReader(xmlOutput);
-        using var reader = XmlReader.Create(stringReader, new XmlReaderSettings
+        Debug.Log("===== USING NEW XMLDOCUMENT PARSER =====");
+
+        var doc = new System.Xml.XmlDocument();
+        doc.LoadXml(xmlOutput);
+
+        XmlNodeList logEntries = doc.SelectNodes("//logentry");
+
+        if (logEntries == null)
         {
-            IgnoreComments = true,
-            IgnoreWhitespace = true,
-            Async = false
-        });
+            Debug.LogError("[ParseLogXml] No logentry nodes found!");
+            return;
+        }
 
-        SVNRevisionNode currentNode = null;
+        int dateCount = 0;
 
-        while (reader.Read())
+        foreach (XmlNode logentry in logEntries)
         {
             token.ThrowIfCancellationRequested();
 
-            if (reader.NodeType != XmlNodeType.Element)
-                continue;
+            var node = new SVNRevisionNode();
 
-            switch (reader.Name)
+            XmlNode revAttr = logentry.Attributes?["revision"];
+            if (revAttr != null && long.TryParse(revAttr.Value, out long rev))
+                node.Revision = rev;
+
+            XmlNode authorNode = logentry.SelectSingleNode("author");
+            if (authorNode != null)
+                node.Author = authorNode.InnerText;
+
+            XmlNode dateNode = logentry.SelectSingleNode("date");
+            if (dateNode != null)
             {
-                case "logentry":
-                    currentNode = new SVNRevisionNode();
-                    if (reader.GetAttribute("revision") is string rev && long.TryParse(rev, out long revision))
-                        currentNode.Revision = revision;
-                    nodes.Add(currentNode);
-                    break;
-
-                case "author" when currentNode != null:
-                    currentNode.Author = reader.ReadElementContentAsString();
-                    break;
-
-                case "date" when currentNode != null:
-                    currentNode.Date = reader.ReadElementContentAsString();
-                    break;
-
-                case "msg" when currentNode != null:
-                    currentNode.Message = reader.ReadElementContentAsString();
-                    break;
-
-                case "path" when currentNode != null:
-                    ParsePathElement(reader, currentNode);
-                    break;
+                node.Date = dateNode.InnerText;
+                dateCount++;
             }
+
+            XmlNode msgNode = logentry.SelectSingleNode("msg");
+            if (msgNode != null)
+                node.Message = msgNode.InnerText;
+
+            XmlNodeList pathNodes = logentry.SelectNodes("paths/path");
+            if (pathNodes != null)
+            {
+                foreach (XmlNode pathNode in pathNodes)
+                {
+                    string action = pathNode.Attributes?["action"]?.Value ?? "";
+                    string propMods = pathNode.Attributes?["prop-mods"]?.Value ?? "";
+                    string filePath = pathNode.InnerText;
+
+                    node.ChangedPaths.Add($"{action} {filePath}");
+
+                    if (propMods == "true" && IsBranchPath(filePath))
+                        node.HasMergeInfoChange = true;
+
+                    if (action == "A" || action == "R")
+                    {
+                        string copyPath = pathNode.Attributes?["copyfrom-path"]?.Value;
+                        string copyRevStr = pathNode.Attributes?["copyfrom-rev"]?.Value;
+
+                        if (!string.IsNullOrEmpty(copyPath))
+                        {
+                            node.CopyFromPath = copyPath;
+                            if (long.TryParse(copyRevStr, out long copyRev))
+                                node.CopyFromRev = copyRev;
+                        }
+                    }
+                }
+            }
+
+            nodes.Add(node);
         }
-    }
 
-    private static void ParsePathElement(XmlReader reader, SVNRevisionNode currentNode)
-    {
-        string action = reader.GetAttribute("action") ?? "";
-        string propMods = reader.GetAttribute("prop-mods") ?? "";
-        string filePath = reader.ReadElementContentAsString();
+        Debug.Log($"[ParseLogXml] Parsed {nodes.Count} nodes, {dateCount} dates found");
 
-        currentNode.ChangedPaths.Add($"{action} {filePath}");
-
-        if (propMods == "true" && IsBranchPath(filePath))
-            currentNode.HasMergeInfoChange = true;
+        for (int i = 0; i < Math.Min(3, nodes.Count); i++)
+        {
+            Debug.Log($"[ParseLogXml] Node {i}: r{nodes[i].Revision}, Date='{nodes[i].Date}', Author='{nodes[i].Author}'");
+        }
     }
 
     private static bool IsBranchPath(string filePath)
@@ -349,5 +387,37 @@ public class RevGraphPanel : MonoBehaviour
         _graphLoaded = false;
         if (gameObject.activeInHierarchy)
             _ = LoadGraphAsync();
+    }
+
+    public void OnItemClicked(SVNGraphItem item, bool multi)
+    {
+        if (item == null) return;
+
+        if (!multi)
+        {
+            foreach (var s in _selectedItems)
+            {
+                if (s != null)
+                    s.SetSelected(false);
+            }
+            _selectedItems.Clear();
+        }
+
+        if (_selectedItems.Contains(item))
+        {
+            item.SetSelected(false);
+            _selectedItems.Remove(item);
+        }
+        else
+        {
+            item.SetSelected(true);
+            _selectedItems.Add(item);
+        }
+    }
+
+    public IReadOnlyCollection<SVNGraphItem> GetSelectedItems()
+    {
+        _selectedItems.RemoveWhere(x => x == null);
+        return _selectedItems;
     }
 }

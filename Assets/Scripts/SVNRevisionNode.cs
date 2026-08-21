@@ -10,7 +10,9 @@ namespace SVN.Core
         public string Date;
         public string Message;
         public List<string> ChangedPaths = new List<string>();
-        public List<long> Parents = new List<long>();
-        public bool HasMergeInfoChange { get; set; }
+        public bool HasMergeInfoChange;
+
+        public string CopyFromPath; //"/trunk"
+        public long CopyFromRev;    //1050
     }
 }
