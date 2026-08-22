@@ -305,8 +305,8 @@ namespace SVN.Core
 
                 int qTotal = dict.Count(k => k.Value.Status == "?");
                 int qDir = dict.Count(k => k.Value.Status == "?" && k.Value.Size == directoryLabel);
-                Debug.Log($"[SVN] expandUnversioned={expandUnversioned} | ? total={qTotal} | ? DIR={qDir} | " +
-                          string.Join(", ", dict.Where(k => k.Value.Status == "?").Select(k => $"{k.Key}[{k.Value.Size}]")));
+                //Debug.Log($"[SVN] expandUnversioned={expandUnversioned} | ? total={qTotal} | ? DIR={qDir} | " +
+                          //string.Join(", ", dict.Where(k => k.Value.Status == "?").Select(k => $"{k.Key}[{k.Value.Size}]")));
 
                 return dict;
             }, cancellationToken);

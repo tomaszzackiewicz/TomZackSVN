@@ -21,6 +21,8 @@ public class RevGraphPanel : MonoBehaviour
     private string _lastWorkingDir;
     private readonly HashSet<SVNGraphItem> _selectedItems = new();
 
+    private string _cachedXmlOutput;
+
     private void Awake()
     {
         _svnManager = SVNManager.Instance;
@@ -43,11 +45,7 @@ public class RevGraphPanel : MonoBehaviour
             if (_svnManager != null && _svnManager.IsProcessing)
             {
                 SVNLogBridge.LogLine("<color=yellow>[Graph]</color> Waiting for project initialization...");
-
-                while (_svnManager.IsProcessing && gameObject.activeInHierarchy)
-                {
-                    await Task.Yield();
-                }
+                while (_svnManager.IsProcessing && gameObject.activeInHierarchy) await Task.Yield();
             }
 
             if (!CanLoadGraph())
@@ -66,7 +64,7 @@ public class RevGraphPanel : MonoBehaviour
         if (!_graphLoaded)
         {
             _graphLoaded = true;
-            SVNLogBridge.LogLine("<color=yellow>[Graph]</color> Loading revision history...");
+            SVNLogBridge.LogLine("<color=yellow>[Graph]</color> Loading revision structure...");
             await LoadGraphAsync();
         }
     }
@@ -83,16 +81,12 @@ public class RevGraphPanel : MonoBehaviour
         StopAllCoroutines();
         _debounceCoroutine = null;
         CancelLoading();
-
-        if (branchFilterInput != null)
-            branchFilterInput.onValueChanged.RemoveListener(OnFilterChanged);
+        if (branchFilterInput != null) branchFilterInput.onValueChanged.RemoveListener(OnFilterChanged);
     }
 
     public void OnFilterChanged(string filterText)
     {
-        if (_debounceCoroutine != null)
-            StopCoroutine(_debounceCoroutine);
-
+        if (_debounceCoroutine != null) StopCoroutine(_debounceCoroutine);
         _debounceCoroutine = StartCoroutine(ApplyFilterAfterDelay(filterText));
     }
 
@@ -105,77 +99,45 @@ public class RevGraphPanel : MonoBehaviour
     private void ApplyFilter(string filterText)
     {
         if (_graphModule == null) return;
-
         var items = _graphModule.InstantiatedItems;
         if (items == null || items.Count == 0)
         {
-            SVNLogBridge.LogLine("<color=yellow>[Graph Filter]</color> Graph is not yet loaded. Please wait for it to finish.");
+            SVNLogBridge.LogLine("<color=yellow>[Graph Filter]</color> Graph is not yet loaded.");
             return;
         }
 
         string filterLower = filterText.Trim();
         bool hasFilter = !string.IsNullOrEmpty(filterLower);
-        int matchedCount = 0;
-        int totalCount = 0;
+        int matchedCount = 0, totalCount = 0;
 
         foreach (var itemGo in items)
         {
-            if (itemGo == null) continue;
-
-            if (!itemGo.TryGetComponent<SVNGraphItem>(out var item))
-                continue;
-
+            if (itemGo == null || !itemGo.TryGetComponent<SVNGraphItem>(out var item)) continue;
             totalCount++;
-
             bool matches = !hasFilter || MatchesFilter(item, filterLower);
-
             itemGo.SetActive(matches);
-
-            if (matches)
-            {
-                matchedCount++;
-                item.ApplyHighlight(hasFilter ? filterText : null);
-            }
+            if (matches) { matchedCount++; item.ApplyHighlight(hasFilter ? filterText : null); }
         }
 
-        SVNLogBridge.LogLine(
-            $"<color=grey>[Graph Filter]</color> Processed {totalCount} revisions. " +
-            $"Found {matchedCount} matching \"{filterText}\".");
+        SVNLogBridge.LogLine($"<color=grey>[Graph Filter]</color> Found {matchedCount} matching \"{filterText}\".");
     }
 
     private static bool MatchesFilter(SVNGraphItem item, string filterLower)
     {
-        if (item.GetBranchName().IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0)
-            return true;
-
-        if (item.GetMessage().IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0)
-            return true;
-
-        if (item.GetAuthor().IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0)
-            return true;
-
-        if (item.GetRevision().ToString().Contains(filterLower))
-            return true;
+        if (item.GetBranchName().IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        if (item.GetMessage().IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        if (item.GetAuthor().IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        if (item.GetRevision().ToString().Contains(filterLower)) return true;
 
         var paths = item.GetChangedPaths();
-        if (paths == null)
-            return false;
-
+        if (paths == null) return false;
         foreach (string fullPath in paths)
         {
             string filePath = fullPath.Length > 2 ? fullPath.Substring(2).Trim() : fullPath;
-
-            if (filePath.IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0)
-                return true;
-
+            if (filePath.IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             string fileName = Path.GetFileName(filePath);
-            if (!string.IsNullOrEmpty(fileName) &&
-                fileName.IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return true;
-            }
+            if (!string.IsNullOrEmpty(fileName) && fileName.IndexOf(filterLower, StringComparison.OrdinalIgnoreCase) >= 0) return true;
         }
-
         return false;
     }
 
@@ -193,22 +155,38 @@ public class RevGraphPanel : MonoBehaviour
                 return;
             }
 
-            List<SVNRevisionNode> nodes = await FetchLogEntriesAsync(token);
+            // FAZA 1: Pobranie XML i szybkie sparsowanie do listy węzłów (Fast Mode)
+            List<SVNRevisionNode> nodes = await FetchLogStructureAsync(token);
+            if (token.IsCancellationRequested) return;
 
-            if (token.IsCancellationRequested)
-                return;
-
-            if (_graphModule != null)
-            {
-                _graphModule.RenderGraph(nodes);
-                SVNLogBridge.LogLine("<color=green>Graph updated successfully.</color>");
-
-                if (branchFilterInput != null && !string.IsNullOrEmpty(branchFilterInput.text))
-                    ApplyFilter(branchFilterInput.text);
-            }
-            else
+            if (_graphModule == null)
             {
                 SVNLogBridge.LogError("Module SVNRevGraph not found in SVNManager!");
+                return;
+            }
+
+            // FAZA 2: Analiza gałęzi w tle (nie blokuje UI)
+            GraphData graphData = await Task.Run(() => SVNGraphRenderer.AnalyzeBranches(nodes), token);
+            if (token.IsCancellationRequested) return;
+
+            if (graphData == null)
+            {
+                SVNLogBridge.LogErrorToOutput("[SVN] Failed to analyze branches.");
+                return;
+            }
+
+            // FAZA 3: Płynne renderowanie
+            _graphModule.RenderGraphWithData(graphData, nodes);
+
+            SVNLogBridge.LogLine("<color=green>Graph structure loaded successfully.</color>");
+
+            if (branchFilterInput != null && !string.IsNullOrEmpty(branchFilterInput.text))
+                ApplyFilter(branchFilterInput.text);
+
+            // FAZA 4: Ciche pobieranie pełnej listy plików w tle
+            if (!string.IsNullOrEmpty(_cachedXmlOutput))
+            {
+                StartCoroutine(PopulateFilesInBackgroundRoutine(token));
             }
         }
         catch (OperationCanceledException)
@@ -218,7 +196,6 @@ public class RevGraphPanel : MonoBehaviour
         catch (Exception ex)
         {
             SVNLogBridge.LogError($"[SVN Graph Error] {ex.Message}");
-            SVNLogBridge.LogLine($"<color=#FFAA00>Error fetching graph:</color> {ex.Message}");
         }
     }
 
@@ -235,54 +212,30 @@ public class RevGraphPanel : MonoBehaviour
 
     private bool CanLoadGraph()
     {
-        if (_svnManager == null)
-            _svnManager = SVNManager.Instance;
-
+        if (_svnManager == null) _svnManager = SVNManager.Instance;
         return _svnManager != null && !string.IsNullOrEmpty(_svnManager.WorkingDir);
     }
 
-    private bool HasWorkingDirChanged()
-    {
-        return _svnManager != null && _svnManager.WorkingDir != _lastWorkingDir;
-    }
+    private bool HasWorkingDirChanged() => _svnManager != null && _svnManager.WorkingDir != _lastWorkingDir;
 
     private void CancelLoading()
     {
-        if (_loadCts != null)
-        {
-            _loadCts.Cancel();
-            _loadCts.Dispose();
-            _loadCts = null;
-        }
+        if (_loadCts != null) { _loadCts.Cancel(); _loadCts.Dispose(); _loadCts = null; }
     }
 
-    private async Task<List<SVNRevisionNode>> FetchLogEntriesAsync(CancellationToken token = default)
+    private async Task<List<SVNRevisionNode>> FetchLogStructureAsync(CancellationToken token = default)
     {
-        Debug.Log("===== FetchLogEntriesAsync STARTED =====");
-
         string xmlOutput = await SvnRunner.RunAsync("log --xml --verbose ^/", _svnManager.WorkingDir, token: token);
+        if (string.IsNullOrEmpty(xmlOutput)) return new List<SVNRevisionNode>();
 
-        Debug.Log($"===== XML length: {xmlOutput?.Length ?? -1} =====");
-
-        if (!string.IsNullOrEmpty(xmlOutput))
-        {
-            int len = Math.Min(1000, xmlOutput.Length);
-            Debug.Log($"[XML START]\n{xmlOutput.Substring(0, len)}\n[XML END]");
-        }
-        else
-        {
-            Debug.LogError("===== XML is EMPTY or NULL =====");
-        }
-
-        if (string.IsNullOrEmpty(xmlOutput))
-            return new List<SVNRevisionNode>();
+        _cachedXmlOutput = xmlOutput;
 
         try
         {
             return await Task.Run(() =>
             {
                 var nodes = new List<SVNRevisionNode>();
-                ParseLogXml(xmlOutput, nodes, token);
+                ParseLogXmlStream(xmlOutput, nodes, token, fastMode: true);
                 return nodes;
             }, token);
         }
@@ -293,86 +246,151 @@ public class RevGraphPanel : MonoBehaviour
         }
     }
 
-    private static void ParseLogXml(string xmlOutput, List<SVNRevisionNode> nodes, CancellationToken token)
+    private static void ParseLogXmlStream(string xmlOutput, List<SVNRevisionNode> nodes, CancellationToken token, bool fastMode = false)
     {
-        Debug.Log("===== USING NEW XMLDOCUMENT PARSER =====");
-
-        var doc = new System.Xml.XmlDocument();
-        doc.LoadXml(xmlOutput);
-
-        XmlNodeList logEntries = doc.SelectNodes("//logentry");
-
-        if (logEntries == null)
+        using (var reader = XmlReader.Create(new StringReader(xmlOutput)))
         {
-            Debug.LogError("[ParseLogXml] No logentry nodes found!");
-            return;
-        }
-
-        int dateCount = 0;
-
-        foreach (XmlNode logentry in logEntries)
-        {
-            token.ThrowIfCancellationRequested();
-
-            var node = new SVNRevisionNode();
-
-            XmlNode revAttr = logentry.Attributes?["revision"];
-            if (revAttr != null && long.TryParse(revAttr.Value, out long rev))
-                node.Revision = rev;
-
-            XmlNode authorNode = logentry.SelectSingleNode("author");
-            if (authorNode != null)
-                node.Author = authorNode.InnerText;
-
-            XmlNode dateNode = logentry.SelectSingleNode("date");
-            if (dateNode != null)
+            while (reader.Read())
             {
-                node.Date = dateNode.InnerText;
-                dateCount++;
-            }
+                if (token.IsCancellationRequested) break;
 
-            XmlNode msgNode = logentry.SelectSingleNode("msg");
-            if (msgNode != null)
-                node.Message = msgNode.InnerText;
-
-            XmlNodeList pathNodes = logentry.SelectNodes("paths/path");
-            if (pathNodes != null)
-            {
-                foreach (XmlNode pathNode in pathNodes)
+                if (reader.NodeType == XmlNodeType.Element && reader.Name == "logentry")
                 {
-                    string action = pathNode.Attributes?["action"]?.Value ?? "";
-                    string propMods = pathNode.Attributes?["prop-mods"]?.Value ?? "";
-                    string filePath = pathNode.InnerText;
+                    var node = new SVNRevisionNode();
+                    if (reader.GetAttribute("revision") != null && long.TryParse(reader.GetAttribute("revision"), out long rev))
+                        node.Revision = rev;
 
-                    node.ChangedPaths.Add($"{action} {filePath}");
-
-                    if (propMods == "true" && IsBranchPath(filePath))
-                        node.HasMergeInfoChange = true;
-
-                    if (action == "A" || action == "R")
+                    while (reader.Read())
                     {
-                        string copyPath = pathNode.Attributes?["copyfrom-path"]?.Value;
-                        string copyRevStr = pathNode.Attributes?["copyfrom-rev"]?.Value;
+                        if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "logentry") break;
+                        if (reader.NodeType != XmlNodeType.Element) continue;
 
-                        if (!string.IsNullOrEmpty(copyPath))
+                        switch (reader.Name)
                         {
-                            node.CopyFromPath = copyPath;
-                            if (long.TryParse(copyRevStr, out long copyRev))
-                                node.CopyFromRev = copyRev;
+                            case "author": node.Author = reader.ReadElementContentAsString(); break;
+                            case "date": node.Date = reader.ReadElementContentAsString(); break;
+                            case "msg": node.Message = reader.ReadElementContentAsString(); break;
+                            case "paths":
+                                bool foundBranchIndicator = false; // Flaga do zapamiętania 1 pliku M/D
+
+                                while (reader.Read())
+                                {
+                                    if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "paths") break;
+                                    if (reader.NodeType == XmlNodeType.Element && reader.Name == "path")
+                                    {
+                                        // 1. KLUCZOWE: Zawsze najpierw pobieramy atrybuty!
+                                        string action = reader.GetAttribute("action") ?? "";
+                                        string propMods = reader.GetAttribute("prop-mods") ?? "";
+                                        string copyPath = reader.GetAttribute("copyfrom-path");
+                                        string copyRevStr = reader.GetAttribute("copyfrom-rev");
+
+                                        // 2. Dopiero teraz pobieramy zawartość (to przesuwa czytnik XML)
+                                        string filePath = reader.ReadElementContentAsString();
+
+                                        if (propMods == "true" && IsBranchPath(filePath))
+                                            node.HasMergeInfoChange = true;
+
+                                        // Dodane i Zastąpione są najważniejsze dla grafu
+                                        if (action == "A" || action == "R")
+                                        {
+                                            node.ChangedPaths.Add($"{action} {filePath}");
+
+                                            if (!string.IsNullOrEmpty(copyPath))
+                                            {
+                                                node.CopyFromPath = copyPath;
+                                                if (long.TryParse(copyRevStr, out long copyRev))
+                                                    node.CopyFromRev = copyRev;
+                                            }
+                                        }
+                                        else if (fastMode)
+                                        {
+                                            // W FAST MODE dla M i D: Pobieramy tylko JEDEN plik.
+                                            // Wystarczy to, żeby SVNGraphRenderer wiedział na jakiej jest to gałęzi
+                                            // (np. widząc "M /branches/feat/plik.cs"), ale oszczędza RAM.
+                                            if (!foundBranchIndicator)
+                                            {
+                                                node.ChangedPaths.Add($"{action} {filePath}");
+                                                foundBranchIndicator = true;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // Normalny tryb (działa w tle) - pobieramy wszystko
+                                            node.ChangedPaths.Add($"{action} {filePath}");
+                                        }
+                                    }
+                                }
+                                break;
+                        }
+                    }
+                    nodes.Add(node);
+                }
+            }
+        }
+    }
+
+    private IEnumerator PopulateFilesInBackgroundRoutine(CancellationToken token)
+    {
+        SVNLogBridge.LogLine("<color=grey>[Graph] Fetching file details in background...</color>");
+
+        var filesDict = new Dictionary<long, List<string>>();
+
+        Task parseTask = Task.Run(() =>
+        {
+            // Tutaj odpalamy pełne parsowanie (fastMode jest domyślnie false)
+            using (var reader = XmlReader.Create(new StringReader(_cachedXmlOutput)))
+            {
+                long currentRev = -1;
+                while (reader.Read())
+                {
+                    if (token.IsCancellationRequested) break;
+                    if (reader.NodeType == XmlNodeType.Element && reader.Name == "logentry")
+                    {
+                        if (reader.GetAttribute("revision") != null && long.TryParse(reader.GetAttribute("revision"), out long rev))
+                            currentRev = rev;
+
+                        while (reader.Read())
+                        {
+                            if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "logentry") break;
+                            if (reader.NodeType == XmlNodeType.Element && reader.Name == "path")
+                            {
+                                string action = reader.GetAttribute("action") ?? "";
+                                string filePath = reader.ReadElementContentAsString();
+
+                                if (!filesDict.ContainsKey(currentRev))
+                                    filesDict[currentRev] = new List<string>();
+
+                                filesDict[currentRev].Add($"{action} {filePath}");
+                            }
                         }
                     }
                 }
             }
+        }, token);
 
-            nodes.Add(node);
-        }
+        while (!parseTask.IsCompleted) yield return null;
 
-        Debug.Log($"[ParseLogXml] Parsed {nodes.Count} nodes, {dateCount} dates found");
+        if (token.IsCancellationRequested) yield break;
 
-        for (int i = 0; i < Math.Min(3, nodes.Count); i++)
+        var items = _graphModule.InstantiatedItems;
+        int processed = 0;
+
+        foreach (var itemGo in items)
         {
-            Debug.Log($"[ParseLogXml] Node {i}: r{nodes[i].Revision}, Date='{nodes[i].Date}', Author='{nodes[i].Author}'");
+            if (itemGo == null || !itemGo.TryGetComponent<SVNGraphItem>(out var item)) continue;
+
+            long rev = item.GetRevision();
+            if (filesDict.TryGetValue(rev, out var paths))
+            {
+                item.SetChangedPaths(paths);
+            }
+
+            processed++;
+            if (processed % 100 == 0) yield return null;
         }
+
+        _cachedXmlOutput = null; // Zwalniamy pamięć
+        SVNLogBridge.LogLine("<color=green>[Graph] All file details loaded.</color>");
     }
 
     private static bool IsBranchPath(string filePath)
@@ -385,34 +403,20 @@ public class RevGraphPanel : MonoBehaviour
     public void ForceRefresh()
     {
         _graphLoaded = false;
-        if (gameObject.activeInHierarchy)
-            _ = LoadGraphAsync();
+        if (gameObject.activeInHierarchy) _ = LoadGraphAsync();
     }
 
     public void OnItemClicked(SVNGraphItem item, bool multi)
     {
         if (item == null) return;
-
         if (!multi)
         {
-            foreach (var s in _selectedItems)
-            {
-                if (s != null)
-                    s.SetSelected(false);
-            }
+            foreach (var s in _selectedItems) { if (s != null) s.SetSelected(false); }
             _selectedItems.Clear();
         }
 
-        if (_selectedItems.Contains(item))
-        {
-            item.SetSelected(false);
-            _selectedItems.Remove(item);
-        }
-        else
-        {
-            item.SetSelected(true);
-            _selectedItems.Add(item);
-        }
+        if (_selectedItems.Contains(item)) { item.SetSelected(false); _selectedItems.Remove(item); }
+        else { item.SetSelected(true); _selectedItems.Add(item); }
     }
 
     public IReadOnlyCollection<SVNGraphItem> GetSelectedItems()

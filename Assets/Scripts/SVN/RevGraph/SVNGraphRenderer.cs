@@ -205,7 +205,8 @@ namespace SVN.Core
                 }
             }
 
-            Debug.LogError($"[SVN Branch Parser] UNKNOWN branch for r{node.Revision}. First path: '{NormalizePath(node.ChangedPaths[0])}'");
+            // Zmieniamy Debug.LogError na mniej kosztowny log
+            SVNLogBridge.LogToOutput($"<color=#FFAA00>[SVN Branch Parser] Unknown branch for r{node.Revision}. Path: '{NormalizePath(node.ChangedPaths[0])}'</color>");
             return BranchInfo.Unknown;
         }
 

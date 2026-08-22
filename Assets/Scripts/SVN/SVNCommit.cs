@@ -527,9 +527,37 @@ namespace SVN.Core
                     UpdateProgress(0.40f);
 
                     // 3/4 Unversioned files (?) → A
-                    LogToConsole("<b>[3/4]</b> Indexing all new/unversioned files...");
-                    await SvnRunner.RunAsync("add --force .", root, false, token);
-                    LogToConsole("<color=green>Indexing complete.</color>");
+                    LogToConsole("<b>[3/4]</b> Checking for new/unversioned files...");
+
+                    var currentStatus = await SvnRunner.GetFullStatusDictionaryAsync(root);
+                    var unversionedPaths = currentStatus
+                        .Where(x => x.Value.status == "?")
+                        .Select(x => MakeRelative(root, x.Key) ?? x.Key)
+                        .Where(p => !string.IsNullOrWhiteSpace(p))
+                        .Select(NormalizeRelativeTarget)
+                        .Where(p => !string.IsNullOrWhiteSpace(p))
+                        .ToList();
+
+                    if (unversionedPaths.Count > 0)
+                    {
+                        LogToConsole($"Found {unversionedPaths.Count} new file(s). Adding to SVN...");
+                        string addTargetsFile = Path.Combine(Path.GetTempPath(), $"svn_add_{Guid.NewGuid():N}.txt");
+                        try
+                        {
+                            await Task.Run(() => File.WriteAllLines(addTargetsFile, unversionedPaths, new UTF8Encoding(false)), token);
+                            await SvnRunner.RunAsync($"add --targets \"{addTargetsFile}\"", root, false, token);
+                            LogToConsole("<color=green>Indexing complete.</color>");
+                        }
+                        finally
+                        {
+                            TryDeleteFile(addTargetsFile);
+                        }
+                    }
+                    else
+                    {
+                        LogToConsole("<color=green>No new files to add.</color>");
+                    }
+
                     UpdateProgress(0.65f);
 
                     // 4/4 Commit
