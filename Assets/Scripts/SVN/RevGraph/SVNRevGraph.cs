@@ -13,8 +13,8 @@ namespace SVN.Core
     public class SVNRevGraph : SVNBase
     {
         private const int MaxPoolSize = 300;
-        private const long MaxFrameBudgetMs = 16; // cel: 60 FPS
-        private const int ItemsPerFrame = 50;     // większa paczka przy zachowaniu budżetu
+        private const long MaxFrameBudgetMs = 16;
+        private const int ItemsPerFrame = 50;
 
         private static readonly Regex HtmlTagRegex = new Regex("<.*?>", RegexOptions.Compiled);
         private static readonly StringBuilder SharedSb = new StringBuilder(512);
@@ -64,9 +64,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Przyjmuje gotowe dane grafu (przeanalizowane w tle) i renderuje je płynnie.
-        /// </summary>
         public void RenderGraphWithData(GraphData graphData, List<SVNRevisionNode> nodes)
         {
             if (graphData == null || nodes == null || nodes.Count == 0)
@@ -91,10 +88,6 @@ namespace SVN.Core
             _renderCoroutine = svnUI.StartCoroutine(RenderGraphRoutineWithData(nodes, graphData));
         }
 
-        /// <summary>
-        /// Tradycyjna metoda – analizuje gałęzie synchronicznie i uruchamia render.
-        /// Używana tylko dla kompatybilności; w nowym przepływie zalecane jest RenderGraphWithData.
-        /// </summary>
         public void RenderGraph(List<SVNRevisionNode> nodes)
         {
             if (nodes == null || nodes.Count == 0)
@@ -103,7 +96,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Analiza w tym samym wątku (może chwilę potrwać przy dużych repo)
             GraphData data = SVNGraphRenderer.AnalyzeBranches(nodes);
             if (data == null)
             {

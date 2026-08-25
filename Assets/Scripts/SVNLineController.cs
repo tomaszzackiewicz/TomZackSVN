@@ -31,6 +31,8 @@ public class SvnLineController : MonoBehaviour
     [SerializeField] private Button blameBtn;
     [SerializeField] private Button resolveBtn;
     [SerializeField] private Button commitBtn;
+    [SerializeField] private Button restoreFromRevBtn;
+    [SerializeField] private Button extractToRevBtn;
 
     private static readonly Color RowBgModified = new(1f, 0.85f, 0f, 0.08f);
     private static readonly Color RowBgAdded = new(0f, 1f, 0f, 0.06f);
@@ -142,6 +144,8 @@ public class SvnLineController : MonoBehaviour
         SetButtonActive(explorerBtn, false);
         SetButtonActive(resolveBtn, false);
         SetButtonActive(commitBtn, false);
+        SetButtonActive(restoreFromRevBtn, false);
+        SetButtonActive(extractToRevBtn, false);
     }
 
     private void RenderIndent()
@@ -375,6 +379,8 @@ public class SvnLineController : MonoBehaviour
         }
 
         SetupBlameButton(status);
+
+        SetupHistoryRevisionButtons(status);
     }
 
     private static void ActivateButton(Button btn, Action action, string tooltip)
@@ -447,6 +453,56 @@ public class SvnLineController : MonoBehaviour
             SVNManager.Instance?.GetModule<SVNBlame>()?.ShowBlameInMainConsole(_element.FullPath);
         });
         BindHover(blameBtn, "See who last modified each line of this file.");
+    }
+
+    private void SetupHistoryRevisionButtons(string status)
+    {
+        bool hasHistory = !_element.IsFolder && status != "?" && status != "A" && !string.IsNullOrEmpty(status);
+
+        if (restoreFromRevBtn != null)
+        {
+            restoreFromRevBtn.gameObject.SetActive(hasHistory);
+            if (hasHistory)
+            {
+                restoreFromRevBtn.onClick.RemoveAllListeners();
+                restoreFromRevBtn.onClick.AddListener(OnSendToRevisionPanelClick);
+                BindHover(restoreFromRevBtn, "Send to Revision Panel to OVERWRITE this file with an older version from history.");
+            }
+        }
+
+        if (extractToRevBtn != null)
+        {
+            extractToRevBtn.gameObject.SetActive(hasHistory);
+            if (hasHistory)
+            {
+                extractToRevBtn.onClick.RemoveAllListeners();
+                extractToRevBtn.onClick.AddListener(OnSendToRevisionPanelClick);
+                BindHover(extractToRevBtn, "Send to Revision Panel to SAVE A COPY of this file from history to a chosen location.");
+            }
+        }
+    }
+
+    private void OnSendToRevisionPanelClick()
+    {
+        var ui = SVNUI.Instance;
+        if (ui == null) return;
+
+        if (ui.RevisionFilePathInput == null || ui.UpdateRevisionInput == null)
+        {
+            SVNLogBridge.LogError("<color=red>[Setup Error]</color> RevisionFilePathInput or UpdateRevisionInput is not assigned in SVNUI Inspector!");
+            return;
+        }
+
+        SVNManager.Instance?.PanelHandler?.Button_OpenRevision();
+
+        ui.RevisionFilePathInput.text = _element.FullPath;
+
+        ui.UpdateRevisionInput.text = "";
+        ui.UpdateRevisionInput.ActivateInputField();
+
+        SVNLogBridge.LogLine("<color=#00E5FF><b>[Revision Tool]</b></color> File path sent to the Revision Panel successfully.");
+        SVNLogBridge.LogLine("<color=yellow>-> Now, type the revision number in the highlighted field (e.g., <b>150</b>).</color>");
+        SVNLogBridge.LogLine("<color=yellow>-> Then click <b>'Restore'</b> to overwrite the file, or <b>'Extract'</b> to save a copy elsewhere.</color>");
     }
 
     private async Task OnCommitClickAsync()

@@ -107,32 +107,6 @@ namespace SVN.Core
                 return null;
             }
         }
-
-        private List<string> ReduceCommitTargets(IEnumerable<string> targets)
-        {
-            if (targets == null) return new List<string>();
-
-            var sorted = targets
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Select(t => t.Replace('\\', '/').Trim().Trim('/'))
-                .Where(t => !string.IsNullOrWhiteSpace(t) && !Path.IsPathRooted(t))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderByDescending(t => t.Length)
-                .ThenByDescending(t => t, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            var result = new List<string>();
-            foreach (string path in sorted)
-            {
-                bool isParentOfSelectedChild = result.Any(child =>
-                    child.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase));
-
-                if (!isParentOfSelectedChild)
-                    result.Add(path);
-            }
-            return result;
-        }
-
         #endregion
 
         #region General Helpers

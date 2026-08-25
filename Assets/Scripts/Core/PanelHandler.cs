@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace SVN.Core
 {
@@ -33,6 +34,25 @@ namespace SVN.Core
             svnManager = SVNManager.Instance;
 
             ResetAllPanels();
+            StartCoroutine(PrepareRevGraphOnStart());
+        }
+
+        private IEnumerator PrepareRevGraphOnStart()
+        {
+            yield return null;
+            yield return null;
+
+            if (revGraphPanel == null) yield break;
+
+            bool wasActive = revGraphPanel.activeSelf;
+            revGraphPanel.SetActive(true);
+
+            Canvas.ForceUpdateCanvases();
+            var rt = revGraphPanel.GetComponent<RectTransform>();
+            if (rt != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
+
+            revGraphPanel.SetActive(wasActive);
         }
 
         private void ResetAllPanels()
@@ -54,88 +74,49 @@ namespace SVN.Core
             Button_CloseRevGraph();
             Button_CloseClean();
             Button_CloseLock();
+            Button_CloseRevision();
         }
 
-        public void Button_OpenHelp()
+        // ============================================================
+        //  REV GRAPH
+        // ============================================================
+        public void Button_OpenRevGraph()
         {
             ResetAllPanels();
 
-            if (helpPanel != null)
-            {
-                helpPanel.SetActive(true);
-            }
+            if (revGraphPanel == null) return;
+
+            revGraphPanel.SetActive(true);
+
+            Canvas.ForceUpdateCanvases();
+            var rt = revGraphPanel.GetComponent<RectTransform>();
+            if (rt != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
+        }
+
+        public void Button_CloseRevGraph()
+        {
+            if (revGraphPanel != null)
+                revGraphPanel.SetActive(false);
+        }
+
+        // ============================================================
+        //  HELP
+        // ============================================================
+        public void Button_OpenHelp()
+        {
+            ResetAllPanels();
+            if (helpPanel != null) helpPanel.SetActive(true);
         }
 
         public void Button_CloseHelp()
         {
-            if (helpPanel != null)
-            {
-                helpPanel.SetActive(false);
-            }
+            if (helpPanel != null) helpPanel.SetActive(false);
         }
 
-        public void Button_CloseResolve()
-        {
-            if (resolvePanel != null)
-            {
-                resolvePanel.SetActive(false);
-            }
-        }
-
-        public void Button_OpenSettings()
-        {
-            ResetAllPanels();
-
-            if (settingsPanel != null)
-            {
-                settingsPanel.SetActive(true);
-            }
-        }
-
-        public void Button_CloseSettings()
-        {
-            if (settingsPanel != null)
-            {
-                settingsPanel.SetActive(false);
-            }
-        }
-
-        public void Button_OpenBranch()
-        {
-            ResetAllPanels();
-
-            if (branchPanel != null)
-            {
-                branchPanel.SetActive(true);
-            }
-        }
-
-        public void Button_CloseBranch()
-        {
-            if (branchPanel != null)
-            {
-                branchPanel.SetActive(false);
-            }
-        }
-
-        public void Button_OpenMerge()
-        {
-            ResetAllPanels();
-
-            if (mergePanel != null)
-            {
-                mergePanel.SetActive(true);
-            }
-        }
-
-        public void Button_CloseMerge()
-        {
-            if (mergePanel != null)
-            {
-                mergePanel.SetActive(false);
-            }
-        }
-
+        // ============================================================
+        //  RESOLVE
+        // ============================================================
         public void Button_OpenResolve()
         {
             ResetAllPanels();
@@ -146,69 +127,107 @@ namespace SVN.Core
             }
         }
 
+        public void Button_CloseResolve()
+        {
+            if (resolvePanel != null) resolvePanel.SetActive(false);
+        }
+
+        // ============================================================
+        //  SETTINGS
+        // ============================================================
+        public void Button_OpenSettings()
+        {
+            ResetAllPanels();
+            if (settingsPanel != null) settingsPanel.SetActive(true);
+        }
+
+        public void Button_CloseSettings()
+        {
+            if (settingsPanel != null) settingsPanel.SetActive(false);
+        }
+
+        // ============================================================
+        //  BRANCH
+        // ============================================================
+        public void Button_OpenBranch()
+        {
+            ResetAllPanels();
+            if (branchPanel != null) branchPanel.SetActive(true);
+        }
+
+        public void Button_CloseBranch()
+        {
+            if (branchPanel != null) branchPanel.SetActive(false);
+        }
+
+        // ============================================================
+        //  MERGE
+        // ============================================================
+        public void Button_OpenMerge()
+        {
+            ResetAllPanels();
+            if (mergePanel != null) mergePanel.SetActive(true);
+        }
+
+        public void Button_CloseMerge()
+        {
+            if (mergePanel != null) mergePanel.SetActive(false);
+        }
+
+        // ============================================================
+        //  COMMIT
+        // ============================================================
         public void Button_OpenCommit()
         {
             ResetAllPanels();
-            if (commitPanel != null)
-            {
-                commitPanel.SetActive(true);
-            }
+            if (commitPanel != null) commitPanel.SetActive(true);
             svnManager?.GetModule<SVNStatus>()?.ShowOnlyModified();
         }
 
         public void Button_CloseCommit()
         {
-            if (commitPanel != null)
-            {
-                commitPanel.SetActive(false);
-            }
+            if (commitPanel != null) commitPanel.SetActive(false);
 
-            if (svnUI.CommitConsoleContent != null)
+            if (svnUI != null && svnUI.CommitConsoleContent != null)
             {
                 SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "", "COMMIT_CONSOLE", append: false);
             }
         }
 
+        // ============================================================
+        //  CHECKOUT
+        // ============================================================
         public void Button_OpenCheckout()
         {
             ResetAllPanels();
-
-            if (checkoutPanel != null)
-            {
-                checkoutPanel.SetActive(true);
-            }
+            if (checkoutPanel != null) checkoutPanel.SetActive(true);
         }
 
         public void Button_CloseCheckout()
         {
-            if (checkoutPanel != null)
-            {
-                checkoutPanel.SetActive(false);
-            }
+            if (checkoutPanel != null) checkoutPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  LOAD
+        // ============================================================
         public void Button_OpenLoad()
         {
             ResetAllPanels();
-
-            if (loadPanel != null)
-            {
-                loadPanel.SetActive(true);
-            }
+            if (loadPanel != null) loadPanel.SetActive(true);
         }
 
         public void Button_CloseLoad()
         {
-            if (loadPanel != null)
-            {
-                loadPanel.SetActive(false);
-            }
+            if (loadPanel != null) loadPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  PROJECT SELECTION
+        // ============================================================
         public void Button_OpenProjectSelection()
         {
             ResetAllPanels();
-
             if (projectSelectionPanel != null)
             {
                 svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
@@ -219,34 +238,29 @@ namespace SVN.Core
 
         public void Button_CloseProjectSelection()
         {
-            if (projectSelectionPanel != null)
-            {
-                projectSelectionPanel.SetActive(false);
-            }
+            if (projectSelectionPanel != null) projectSelectionPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  IGNORED
+        // ============================================================
         public void Button_OpenIgnored()
         {
             ResetAllPanels();
-
-            if (ignoredPanel != null)
-            {
-                ignoredPanel.SetActive(true);
-            }
+            if (ignoredPanel != null) ignoredPanel.SetActive(true);
         }
 
         public void Button_CloseIgnored()
         {
-            if (ignoredPanel != null)
-            {
-                ignoredPanel.SetActive(false);
-            }
+            if (ignoredPanel != null) ignoredPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  SHELVE
+        // ============================================================
         public void Button_OpenShelve()
         {
             ResetAllPanels();
-
             if (shelvePanel != null)
             {
                 shelvePanel.SetActive(true);
@@ -256,141 +270,96 @@ namespace SVN.Core
 
         public void Button_CloseShelve()
         {
-            if (shelvePanel != null)
-            {
-                shelvePanel.SetActive(false);
-            }
+            if (shelvePanel != null) shelvePanel.SetActive(false);
         }
 
+        // ============================================================
+        //  STEAL
+        // ============================================================
         public void Button_OpenSteal()
         {
             ResetAllPanels();
-
-            if (stealPanel != null)
-            {
-                stealPanel.SetActive(true);
-            }
+            if (stealPanel != null) stealPanel.SetActive(true);
         }
 
         public void Button_CloseSteal()
         {
-            if (stealPanel != null)
-            {
-                stealPanel.SetActive(false);
-            }
+            if (stealPanel != null) stealPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  DIFF
+        // ============================================================
         public void Button_OpenDiff()
         {
             ResetAllPanels();
-
-            if (diffPanel != null)
-            {
-                diffPanel.SetActive(true);
-            }
+            if (diffPanel != null) diffPanel.SetActive(true);
         }
 
         public void Button_CloseDiff()
         {
-            if (diffPanel != null)
-            {
-                diffPanel.SetActive(false);
-            }
+            if (diffPanel != null) diffPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  BLAME
+        // ============================================================
         public void Button_OpenBlame()
         {
             ResetAllPanels();
-
-            if (blamePanel != null)
-            {
-                blamePanel.SetActive(true);
-            }
+            if (blamePanel != null) blamePanel.SetActive(true);
         }
 
         public void Button_CloseBlame()
         {
-            if (blamePanel != null)
-            {
-                blamePanel.SetActive(false);
-            }
+            if (blamePanel != null) blamePanel.SetActive(false);
         }
 
-        public void Button_OpenRevGraph()
-        {
-            ResetAllPanels();
-
-            if (revGraphPanel != null)
-            {
-                revGraphPanel.SetActive(true);
-
-                Canvas.ForceUpdateCanvases();
-                UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(revGraphPanel.GetComponent<RectTransform>());
-            }
-        }
-
-        public void Button_CloseRevGraph()
-        {
-            if (revGraphPanel != null)
-            {
-                revGraphPanel.SetActive(false);
-            }
-        }
-
+        // ============================================================
+        //  CLEAN
+        // ============================================================
         public void Button_OpenClean()
         {
             ResetAllPanels();
-
-            if (cleanPanel != null)
-            {
-                cleanPanel.SetActive(true);
-            }
+            if (cleanPanel != null) cleanPanel.SetActive(true);
         }
 
         public void Button_CloseClean()
         {
-            if (cleanPanel != null)
-            {
-                cleanPanel.SetActive(false);
-            }
+            if (cleanPanel != null) cleanPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  LOCK
+        // ============================================================
         public void Button_OpenLock()
         {
             ResetAllPanels();
-
-            if (lockPanel != null)
-            {
-                lockPanel.SetActive(true);
-            }
+            if (lockPanel != null) lockPanel.SetActive(true);
         }
 
         public void Button_CloseLock()
         {
-            if (lockPanel != null)
-            {
-                lockPanel.SetActive(false);
-            }
+            if (lockPanel != null) lockPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  REVISION
+        // ============================================================
         public void Button_OpenRevision()
         {
             ResetAllPanels();
-
-            if (revisionPanel != null)
-            {
-                revisionPanel.SetActive(true);
-            }
+            if (revisionPanel != null) revisionPanel.SetActive(true);
         }
 
         public void Button_CloseRevision()
         {
-            if (revisionPanel != null)
-            {
-                revisionPanel.SetActive(false);
-            }
+            if (revisionPanel != null) revisionPanel.SetActive(false);
         }
 
+        // ============================================================
+        //  EXIT
+        // ============================================================
         public void Button_Exit()
         {
             Application.Quit();

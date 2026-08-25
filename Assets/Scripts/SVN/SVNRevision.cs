@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -281,6 +282,82 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 LogToRevisionPanel($"<color=#FFAA00>[Export Error] {ex.Message}</color>");
+            }
+            finally
+            {
+                ExitProcessing();
+            }
+        }
+
+        public async Task RestoreSingleFileAsync(string relativeFilePath, string revision)
+        {
+            if (IsProcessing) return;
+            if (!TryEnterProcessing()) return;
+
+            try
+            {
+                string cleanPath = relativeFilePath.Replace('\\', '/').TrimStart('/');
+
+                LogToRevisionPanel($"<color=green>[Restore File] Fetching {cleanPath} at r{revision}...</color>");
+
+                string args = $"cat -r {revision} {SvnMergeUrlResolver.EscapeSvnArg(cleanPath)}";
+
+                string fileContent = await SvnRunner.RunAsync(args, svnManager.WorkingDir, false, CancellationToken.None).ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(fileContent))
+                {
+                    LogToRevisionPanel("<color=yellow>[Restore File] File is empty or does not exist in this revision.</color>");
+                    return;
+                }
+
+                string fullDiskPath = Path.Combine(svnManager.WorkingDir, cleanPath.Replace('/', Path.DirectorySeparatorChar));
+
+                File.WriteAllText(fullDiskPath, fileContent, new UTF8Encoding(false));
+
+                LogToRevisionPanel($"<color=green>[Restore File] Successfully restored: {cleanPath}</color>");
+
+                await svnManager.RefreshStatus().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogToRevisionPanel($"<color=red>[Restore File Error] {ex.Message}</color>");
+            }
+            finally
+            {
+                ExitProcessing();
+            }
+        }
+
+        public async Task ExtractSingleFileToAsync(string relativeFilePath, string revision, string destinationPath)
+        {
+            if (IsProcessing) return;
+            if (!TryEnterProcessing()) return;
+
+            try
+            {
+                string cleanPath = relativeFilePath.Replace('\\', '/').TrimStart('/');
+
+                LogToRevisionPanel($"<color=green>[Extract File] Fetching {cleanPath} at r{revision}...</color>");
+
+                string args = $"cat -r {revision} {SvnMergeUrlResolver.EscapeSvnArg(cleanPath)}";
+                string fileContent = await SvnRunner.RunAsync(args, svnManager.WorkingDir, false, CancellationToken.None).ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(fileContent))
+                {
+                    LogToRevisionPanel("<color=yellow>[Extract File] File is empty or does not exist in this revision.</color>");
+                    return;
+                }
+
+                string destDir = Path.GetDirectoryName(destinationPath);
+                if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
+
+                File.WriteAllText(destinationPath, fileContent, new UTF8Encoding(false));
+
+                LogToRevisionPanel($"<color=green>[Extract File] Saved to: {destinationPath}</color>");
+            }
+            catch (Exception ex)
+            {
+                LogToRevisionPanel($"<color=red>[Extract File Error] {ex.Message}</color>");
             }
             finally
             {

@@ -205,7 +205,6 @@ namespace SVN.Core
                 }
             }
 
-            // Zmieniamy Debug.LogError na mniej kosztowny log
             SVNLogBridge.LogToOutput($"<color=#FFAA00>[SVN Branch Parser] Unknown branch for r{node.Revision}. Path: '{NormalizePath(node.ChangedPaths[0])}'</color>");
             return BranchInfo.Unknown;
         }

@@ -82,7 +82,6 @@ namespace SVN.Core
 
         private static string BuildSshEnvironmentString(string keyPath)
         {
-            // Base command with NON-NEGOTIABLE flags for automated Unity environment
             string baseCmd = "ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=QUIET";
 
             if (!string.IsNullOrEmpty(keyPath))
@@ -91,7 +90,6 @@ namespace SVN.Core
                 baseCmd += $" -i \"{safeKeyPath}\"";
             }
 
-            // Append user-configurable options
             if (!string.IsNullOrWhiteSpace(SshOptions))
             {
                 baseCmd += " " + SshOptions.Trim();

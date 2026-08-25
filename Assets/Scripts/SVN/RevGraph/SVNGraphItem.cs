@@ -43,7 +43,7 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
     private SVNManager svnManager;
 
     private Coroutine _fileBuildCoroutine;
-    private HorizontalLayoutGroup[] _layoutGroups; // Optymalizacja: Cache grup layoutu
+    private HorizontalLayoutGroup[] _layoutGroups;
 
     private string rawAuthor;
     private string rawBranchName;
@@ -82,7 +82,6 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
 
     private void Awake()
     {
-        // Pobieramy wszystkie grupy layoutu tylko RAZ przy tworzeniu obiektu (optymalizacja)
         _layoutGroups = GetComponentsInChildren<HorizontalLayoutGroup>(true);
 
         if (editMessageButton != null)
@@ -96,7 +95,6 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
                       string contextLabel = "", NodeType nodeType = NodeType.Unknown, bool isBranchPoint = false,
                       GraphData.NodeInfo details = default)
     {
-        // OPTYMALIZACJA: Usypiamy Layout Groups na czas wstawiania danych tekstowych
         if (_layoutGroups != null)
         {
             for (int i = 0; i < _layoutGroups.Length; i++)
@@ -183,7 +181,6 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
 
         if (filesContainer != null) filesContainer.SetActive(false);
 
-        // OPTYMALIZACJA: Budzimy Layout Groups - przeliczą się raz, na koniec, z ostatecznymi danymi
         if (_layoutGroups != null)
         {
             for (int i = 0; i < _layoutGroups.Length; i++)

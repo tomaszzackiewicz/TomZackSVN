@@ -119,7 +119,7 @@ public class RevGraphPanel : MonoBehaviour
             if (matches) { matchedCount++; item.ApplyHighlight(hasFilter ? filterText : null); }
         }
 
-        SVNLogBridge.LogLine($"<color=grey>[Graph Filter]</color> Found {matchedCount} matching \"{filterText}\".");
+        SVNLogBridge.LogLine($"<color=yellow>[Graph Filter]</color> Found {matchedCount} matching \"{filterText}\".");
     }
 
     private static bool MatchesFilter(SVNGraphItem item, string filterLower)
@@ -155,7 +155,6 @@ public class RevGraphPanel : MonoBehaviour
                 return;
             }
 
-            // FAZA 1: Pobranie XML i szybkie sparsowanie do listy węzłów (Fast Mode)
             List<SVNRevisionNode> nodes = await FetchLogStructureAsync(token);
             if (token.IsCancellationRequested) return;
 
@@ -165,7 +164,6 @@ public class RevGraphPanel : MonoBehaviour
                 return;
             }
 
-            // FAZA 2: Analiza gałęzi w tle (nie blokuje UI)
             GraphData graphData = await Task.Run(() => SVNGraphRenderer.AnalyzeBranches(nodes), token);
             if (token.IsCancellationRequested) return;
 
@@ -175,7 +173,6 @@ public class RevGraphPanel : MonoBehaviour
                 return;
             }
 
-            // FAZA 3: Płynne renderowanie
             _graphModule.RenderGraphWithData(graphData, nodes);
 
             SVNLogBridge.LogLine("<color=green>Graph structure loaded successfully.</color>");
@@ -183,7 +180,6 @@ public class RevGraphPanel : MonoBehaviour
             if (branchFilterInput != null && !string.IsNullOrEmpty(branchFilterInput.text))
                 ApplyFilter(branchFilterInput.text);
 
-            // FAZA 4: Ciche pobieranie pełnej listy plików w tle
             if (!string.IsNullOrEmpty(_cachedXmlOutput))
             {
                 StartCoroutine(PopulateFilesInBackgroundRoutine(token));
@@ -271,26 +267,23 @@ public class RevGraphPanel : MonoBehaviour
                             case "date": node.Date = reader.ReadElementContentAsString(); break;
                             case "msg": node.Message = reader.ReadElementContentAsString(); break;
                             case "paths":
-                                bool foundBranchIndicator = false; // Flaga do zapamiętania 1 pliku M/D
+                                bool foundBranchIndicator = false;
 
                                 while (reader.Read())
                                 {
                                     if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "paths") break;
                                     if (reader.NodeType == XmlNodeType.Element && reader.Name == "path")
                                     {
-                                        // 1. KLUCZOWE: Zawsze najpierw pobieramy atrybuty!
                                         string action = reader.GetAttribute("action") ?? "";
                                         string propMods = reader.GetAttribute("prop-mods") ?? "";
                                         string copyPath = reader.GetAttribute("copyfrom-path");
                                         string copyRevStr = reader.GetAttribute("copyfrom-rev");
 
-                                        // 2. Dopiero teraz pobieramy zawartość (to przesuwa czytnik XML)
                                         string filePath = reader.ReadElementContentAsString();
 
                                         if (propMods == "true" && IsBranchPath(filePath))
                                             node.HasMergeInfoChange = true;
 
-                                        // Dodane i Zastąpione są najważniejsze dla grafu
                                         if (action == "A" || action == "R")
                                         {
                                             node.ChangedPaths.Add($"{action} {filePath}");
@@ -304,9 +297,6 @@ public class RevGraphPanel : MonoBehaviour
                                         }
                                         else if (fastMode)
                                         {
-                                            // W FAST MODE dla M i D: Pobieramy tylko JEDEN plik.
-                                            // Wystarczy to, żeby SVNGraphRenderer wiedział na jakiej jest to gałęzi
-                                            // (np. widząc "M /branches/feat/plik.cs"), ale oszczędza RAM.
                                             if (!foundBranchIndicator)
                                             {
                                                 node.ChangedPaths.Add($"{action} {filePath}");
@@ -315,7 +305,6 @@ public class RevGraphPanel : MonoBehaviour
                                         }
                                         else
                                         {
-                                            // Normalny tryb (działa w tle) - pobieramy wszystko
                                             node.ChangedPaths.Add($"{action} {filePath}");
                                         }
                                     }
@@ -331,13 +320,12 @@ public class RevGraphPanel : MonoBehaviour
 
     private IEnumerator PopulateFilesInBackgroundRoutine(CancellationToken token)
     {
-        SVNLogBridge.LogLine("<color=grey>[Graph] Fetching file details in background...</color>");
+        SVNLogBridge.LogLine("<color=yellow>[Graph] Fetching file details in background...</color>");
 
         var filesDict = new Dictionary<long, List<string>>();
 
         Task parseTask = Task.Run(() =>
         {
-            // Tutaj odpalamy pełne parsowanie (fastMode jest domyślnie false)
             using (var reader = XmlReader.Create(new StringReader(_cachedXmlOutput)))
             {
                 long currentRev = -1;
@@ -389,7 +377,7 @@ public class RevGraphPanel : MonoBehaviour
             if (processed % 100 == 0) yield return null;
         }
 
-        _cachedXmlOutput = null; // Zwalniamy pamięć
+        _cachedXmlOutput = null;
         SVNLogBridge.LogLine("<color=green>[Graph] All file details loaded.</color>");
     }
 

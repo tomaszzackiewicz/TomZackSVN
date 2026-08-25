@@ -114,12 +114,12 @@ namespace SVN.Core
         [SerializeField] private GameObject repoBrowserItemPrefab;
         [SerializeField] private TextMeshProUGUI repoBrowserCurrentPathText;
         [SerializeField] private TMP_InputField repoBrowserFilterInput;
-        [SerializeField] private TMP_InputField repoBrowserNewFolderInput;
         [Header("Lock References")]
         [SerializeField] private TextMeshProUGUI lockDisplayArea;
         [Header("Revision References")]
         [SerializeField] private TMP_InputField updateRevisionInput;
         [SerializeField] private TextMeshProUGUI revisionDisplayArea;
+        [SerializeField] private TMP_InputField revisionFilePathInput;
 
         private Coroutine _notificationCoroutine;
 
@@ -213,10 +213,10 @@ namespace SVN.Core
         public GameObject RepoBrowserItemPrefab => repoBrowserItemPrefab;
         public TextMeshProUGUI RepoBrowserCurrentPathText => repoBrowserCurrentPathText;
         public TMP_InputField RepoBrowserFilterInput => repoBrowserFilterInput;
-        public TMP_InputField RepoBrowserNewFolderInput => repoBrowserNewFolderInput;
         public TextMeshProUGUI LockDisplayArea => lockDisplayArea;
         public TMP_InputField UpdateRevisionInput => updateRevisionInput;
         public TextMeshProUGUI RevisionDisplayArea => revisionDisplayArea;
+        public TMP_InputField RevisionFilePathInput => revisionFilePathInput;
 
         private void Awake()
         {
