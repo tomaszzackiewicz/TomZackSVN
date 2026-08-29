@@ -15,13 +15,13 @@ namespace SVN.Core
     public static class SvnRunner
     {
         private static string _keyPath = "";
-
         private static readonly AsyncReaderWriterLock _svnLock = new();
 
         public static event Action<bool> OnProcessingStateChanged;
         private static int _activeOperationsCount = 0;
         private static bool _processingState = false;
         private static readonly object _processingLock = new();
+        private static readonly SemaphoreSlim _infoFetchLock = new SemaphoreSlim(1, 1);
 
         private static readonly Dictionary<string, (string output, DateTime time)> _infoCache = new();
         private static readonly TimeSpan InfoCacheDuration = TimeSpan.FromSeconds(2);
@@ -31,17 +31,8 @@ namespace SVN.Core
 
         public static string KeyPath
         {
-            get
-            {
-                if (string.IsNullOrEmpty(_keyPath))
-                    _keyPath = PlayerPrefs.GetString("SVN_SSHKeyPath", "");
-                return _keyPath;
-            }
-            set
-            {
-                _keyPath = value ?? "";
-                PlayerPrefs.SetString("SVN_SSHKeyPath", _keyPath);
-            }
+            get => string.IsNullOrEmpty(_keyPath) ? (_keyPath = PlayerPrefs.GetString("SVN_SSHKeyPath", "")) : _keyPath;
+            set { _keyPath = value ?? ""; PlayerPrefs.SetString("SVN_SSHKeyPath", _keyPath); }
         }
 
         public static int ActiveOperationsCount
@@ -68,8 +59,7 @@ namespace SVN.Core
             lock (_processingLock)
             {
                 _activeOperationsCount--;
-                if (_activeOperationsCount < 0)
-                    _activeOperationsCount = 0;
+                if (_activeOperationsCount < 0) _activeOperationsCount = 0;
 
                 if (_processingState && _activeOperationsCount == 0)
                 {
@@ -83,174 +73,74 @@ namespace SVN.Core
         private static string BuildSshEnvironmentString(string keyPath)
         {
             string baseCmd = "ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o LogLevel=QUIET";
-
             if (!string.IsNullOrEmpty(keyPath))
             {
                 string safeKeyPath = keyPath.Trim().Replace("\"", "").Replace('\\', '/');
                 baseCmd += $" -i \"{safeKeyPath}\"";
             }
-
-            if (!string.IsNullOrWhiteSpace(SshOptions))
-            {
-                baseCmd += " " + SshOptions.Trim();
-            }
-
+            if (!string.IsNullOrWhiteSpace(SshOptions)) baseCmd += " " + SshOptions.Trim();
             return baseCmd;
         }
 
         private static void InvokeProcessingStateChanged(bool state)
         {
             var handlers = OnProcessingStateChanged?.GetInvocationList();
-            if (handlers != null)
+            if (handlers == null) return;
+            foreach (var h in handlers)
             {
-                foreach (var h in handlers)
-                {
-                    try { ((Action<bool>)h).Invoke(state); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Event handler error: {ex.Message}"); }
-                }
+                try { ((Action<bool>)h).Invoke(state); }
+                catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Event handler error: {ex.Message}"); }
             }
         }
 
         private static string BuildSafeArguments(IEnumerable<string> args)
         {
             var escaped = new List<string>();
-            foreach (var arg in args)
-            {
-                if (string.IsNullOrEmpty(arg))
-                    escaped.Add("\"\"");
-                else
-                    escaped.Add(EscapeSingleArgument(arg));
-            }
+            foreach (var arg in args) escaped.Add(string.IsNullOrEmpty(arg) ? "\"\"" : EscapeSingleArgument(arg));
             return string.Join(" ", escaped);
         }
 
-        private static string EscapeSingleArgument(string arg)
-        {
-            if (!arg.Contains(' ') && !arg.Contains('"'))
-                return arg;
-            return "\"" + arg.Replace("\"", "\\\"") + "\"";
-        }
+        private static string EscapeSingleArgument(string arg) => (!arg.Contains(' ') && !arg.Contains('"')) ? arg : "\"" + arg.Replace("\"", "\\\"") + "\"";
 
         private static bool IsWriteCommand(IEnumerable<string> args)
         {
             if (args == null) return false;
             foreach (var arg in args)
             {
-                if (string.IsNullOrWhiteSpace(arg)) continue;
-                if (arg.StartsWith("-")) continue;
-                return WriteCommands.Contains(arg.ToLowerInvariant());
+                if (!string.IsNullOrWhiteSpace(arg) && WriteCommands.Contains(arg.ToLowerInvariant()))
+                    return true;
             }
             return false;
         }
 
-        public static async Task<string> RunAsync(
-            string command,
-            string workingDir,
-            bool retryOnLock = true,
-            CancellationToken token = default)
+        private static List<string> SplitArguments(string command)
         {
-            var parts = SplitArguments(command);
-            return await RunAsync(parts, workingDir, retryOnLock, token);
+            var args = new List<string>();
+            if (string.IsNullOrWhiteSpace(command)) return args;
+            using var reader = new StringReader(command.Trim());
+            var current = new StringBuilder();
+            bool inQuotes = false;
+            while (true)
+            {
+                int ch = reader.Read();
+                if (ch == -1) break;
+                if (ch == '"') inQuotes = !inQuotes;
+                else if (ch == ' ' && !inQuotes) { if (current.Length > 0) { args.Add(current.ToString()); current.Clear(); } }
+                else current.Append((char)ch);
+            }
+            if (current.Length > 0) args.Add(current.ToString());
+            return args;
         }
 
-        public static async Task<string> RunAsync(
-            IEnumerable<string> args,
-            string workingDir,
-            bool retryOnLock = true,
-            CancellationToken token = default)
+        #region Core Execution Engines
+
+        private static async Task<(string output, string error, int exitCode)> ExecuteRawProcessAsync(
+            List<string> args, string workingDir, Action<string> stdoutCb, Action<string> stderrCb, CancellationToken token)
         {
-            var argList = args.ToList();
-            string safeArgs = BuildSafeArguments(argList);
-            SVNLogBridge.LogToOutput($"[SVN QUEUE] Waiting: svn {safeArgs}");
-
-            bool write = IsWriteCommand(argList);
-            if (write)
-                await _svnLock.EnterWriteAsync(token);
-            else
-                await _svnLock.EnterReadAsync(token);
-
-            try
-            {
-                IncrementOperations();
-                SVNLogBridge.LogToOutput($"[SVN QUEUE] Acquired: svn {safeArgs}");
-
-                if (string.IsNullOrEmpty(workingDir))
-                    throw new Exception("Working Directory is null!");
-
-                var finalArgs = new List<string>(argList);
-                if (!finalArgs.Contains("--non-interactive"))
-                    finalArgs.Add("--non-interactive");
-                if (!finalArgs.Contains("--trust-server-cert"))
-                    finalArgs.Add("--trust-server-cert");
-
-                int maxAttempts = retryOnLock ? 2 : 1;
-
-                for (int attempt = 0; attempt < maxAttempts; attempt++)
-                {
-                    token.ThrowIfCancellationRequested();
-
-                    var (output, error, exitCode) = await ExecuteProcessAsync(finalArgs, workingDir, token);
-
-                    if (exitCode != 0)
-                    {
-                        bool isLockError = error.Contains("locked") || error.Contains("cleanup");
-
-                        if (attempt == 0 && retryOnLock && isLockError)
-                        {
-                            SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
-                            SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Performing automatic cleanup...");
-
-                            var cleanupArgs = new List<string> { "cleanup", "--non-interactive", "--trust-server-cert" };
-                            await ExecuteProcessAsync(cleanupArgs, workingDir, token);
-
-                            SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
-                            continue;
-                        }
-
-                        string diagnostic =
-                            error.Contains("E170013") || error.Contains("can't connect")
-                                ? " [Connection/URL issue]"
-                                : error.Contains("E215004")
-                                    ? " [Authorization/Password error]"
-                                    : "";
-
-                        string fullError = $"SVN Error (Code {exitCode}): {error}{diagnostic}";
-                        SVNLogBridge.LogErrorToOutput(fullError);
-                        throw new Exception(fullError);
-                    }
-
-                    SVNLogBridge.LogToOutput($"[SvnRunner] Completed successfully.");
-                    return output;
-                }
-
-                throw new Exception("SVN retry system failed.");
-            }
-            finally
-            {
-                try
-                {
-                    if (write) _svnLock.ExitWrite();
-                    else _svnLock.ExitRead();
-                }
-                catch (Exception ex)
-                {
-                    SVNLogBridge.LogErrorToOutput($"[SvnRunner] Lock release failed: {ex.Message}");
-                }
-                DecrementOperations();
-            }
-        }
-
-        private static async Task<(string output, string error, int exitCode)> ExecuteProcessAsync(
-            List<string> args,
-            string workingDir,
-            CancellationToken token)
-        {
-            string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
-
             var psi = new ProcessStartInfo
             {
                 FileName = "svn",
-                WorkingDirectory = cleanWorkingDir,
+                WorkingDirectory = Path.GetFullPath((workingDir ?? "").Trim()),
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -259,39 +149,42 @@ namespace SVN.Core
                 StandardErrorEncoding = new UTF8Encoding(false),
                 Arguments = BuildSafeArguments(args)
             };
-
             psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
 
             using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             SvnProcessTracker.Register(process);
 
-            var outputQueue = new ConcurrentQueue<string>();
-            var errorQueue = new ConcurrentQueue<string>();
+            var stdoutQueue = new ConcurrentQueue<string>();
+            var stderrQueue = new ConcurrentQueue<string>();
 
             process.OutputDataReceived += (s, e) =>
             {
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                    outputQueue.Enqueue(e.Data);
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    stdoutQueue.Enqueue(e.Data);
+                    if (stdoutCb != null) try { stdoutCb(e.Data); } catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Callback error: {ex.Message}"); }
+                }
             };
 
             process.ErrorDataReceived += (s, e) =>
             {
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                    errorQueue.Enqueue(e.Data);
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    stderrQueue.Enqueue(e.Data);
+                    if (stderrCb != null) try { stderrCb(e.Data); } catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Callback error: {ex.Message}"); }
+                }
             };
 
             try
             {
-                SVNLogBridge.LogToOutput($"[SvnRunner] Starting process...");
-                process.Start();
+                if (!process.Start()) throw new Exception("Failed to start SVN process.");
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                await WaitForExitAsync(process, token);
+                // [FIX] Dodano ConfigureAwait(false)
+                await WaitForExitAsync(process, token).ConfigureAwait(false);
 
-                string output = string.Join("\n", outputQueue);
-                string error = string.Join("\n", errorQueue);
-                return (output, error, process.ExitCode);
+                return (string.Join("\n", stdoutQueue), string.Join("\n", stderrQueue), process.ExitCode);
             }
             catch (OperationCanceledException)
             {
@@ -304,390 +197,175 @@ namespace SVN.Core
             }
         }
 
-        private static List<string> SplitArguments(string command)
+        // WARSTWA 2: Logika biznesowa (Locki, retry, logi)
+        private static async Task<(string output, string error, int exitCode)> ExecuteSvnProcessAsync(
+            List<string> argList, string workingDir, bool retryOnLock, Action<string> stdoutCb, Action<string> stderrCb, bool throwOnError, string logPrefix, CancellationToken token)
         {
-            var args = new List<string>();
-            if (string.IsNullOrWhiteSpace(command)) return args;
-
-            using var reader = new StringReader(command.Trim());
-            var current = new StringBuilder();
-            bool inQuotes = false;
-
-            while (true)
-            {
-                int ch = reader.Read();
-                if (ch == -1) break;
-                if (ch == '"')
-                    inQuotes = !inQuotes;
-                else if (ch == ' ' && !inQuotes)
-                {
-                    if (current.Length > 0) { args.Add(current.ToString()); current.Clear(); }
-                }
-                else
-                    current.Append((char)ch);
-            }
-            if (current.Length > 0) args.Add(current.ToString());
-            return args;
-        }
-
-        public static async Task<string> RunLiveAsync(
-            string args,
-            string workingDir,
-            Action<string> onLineReceived,
-            CancellationToken token = default)
-        {
-            var argList = SplitArguments(args);
-            return await RunLiveAsync(argList, workingDir, onLineReceived, token);
-        }
-
-        public static async Task<string> RunLiveAsync(
-            IEnumerable<string> args,
-            string workingDir,
-            Action<string> onLineReceived,
-            CancellationToken token = default)
-        {
-            var argList = args.ToList();
             string safeArgs = BuildSafeArguments(argList);
-            SVNLogBridge.LogToOutput($"[SVN QUEUE] Waiting LIVE: svn {safeArgs}");
+            SVNLogBridge.LogToOutput($"[SVN QUEUE]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Waiting: svn {safeArgs}");
 
             bool write = IsWriteCommand(argList);
-            if (write) await _svnLock.EnterWriteAsync(token);
-            else await _svnLock.EnterReadAsync(token);
 
-            Process process = null;
+            // [FIX] Dodano ConfigureAwait(false)
+            if (write) await _svnLock.EnterWriteAsync(token).ConfigureAwait(false);
+            else await _svnLock.EnterReadAsync(token).ConfigureAwait(false);
 
             try
             {
                 IncrementOperations();
-                SVNLogBridge.LogToOutput($"[SVN QUEUE] Acquired LIVE: svn {safeArgs}");
+                SVNLogBridge.LogToOutput($"[SVN QUEUE]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Acquired: svn {safeArgs}");
 
-                string cleanWorkingDir = Path.GetFullPath((workingDir ?? "").Trim());
+                if (string.IsNullOrEmpty(workingDir)) throw new Exception("Working Directory is null!");
 
                 var finalArgs = new List<string>(argList);
-                if (!finalArgs.Contains("--non-interactive"))
-                    finalArgs.Add("--non-interactive");
-                if (!finalArgs.Contains("--trust-server-cert"))
-                    finalArgs.Add("--trust-server-cert");
+                if (!finalArgs.Contains("--non-interactive")) finalArgs.Add("--non-interactive");
+                if (!finalArgs.Contains("--trust-server-cert")) finalArgs.Add("--trust-server-cert");
 
-                var psi = new ProcessStartInfo
+                int maxAttempts = retryOnLock ? 2 : 1;
+
+                for (int attempt = 0; attempt < maxAttempts; attempt++)
                 {
-                    FileName = "svn",
-                    WorkingDirectory = cleanWorkingDir,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = new UTF8Encoding(false),
-                    StandardErrorEncoding = new UTF8Encoding(false),
-                    Arguments = BuildSafeArguments(finalArgs)
-                };
+                    token.ThrowIfCancellationRequested();
 
-                psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
+                    // [FIX] Dodano ConfigureAwait(false)
+                    var (output, error, exitCode) = await ExecuteRawProcessAsync(finalArgs, workingDir, stdoutCb, stderrCb, token).ConfigureAwait(false);
 
-                process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                SvnProcessTracker.Register(process);
+                    if (exitCode != 0)
+                    {
+                        bool isLockError = error.Contains("locked") || error.Contains("cleanup");
 
-                var errorQueue = new ConcurrentQueue<string>();
+                        if (attempt == 0 && retryOnLock && isLockError)
+                        {
+                            SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
+                            var cleanupArgs = new List<string> { "cleanup", "--non-interactive", "--trust-server-cert" };
 
-                process.OutputDataReceived += (s, e) =>
-                {
-                    if (string.IsNullOrWhiteSpace(e.Data)) return;
-                    try { onLineReceived?.Invoke(e.Data); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner Live] Callback error: {ex.Message}"); }
-                };
+                            // [FIX] Dodano ConfigureAwait(false)
+                            await ExecuteRawProcessAsync(cleanupArgs, workingDir, null, null, token).ConfigureAwait(false);
 
-                process.ErrorDataReceived += (s, e) =>
-                {
-                    if (string.IsNullOrWhiteSpace(e.Data)) return;
-                    errorQueue.Enqueue(e.Data);
-                    try { onLineReceived?.Invoke($"[SVN ERROR] {e.Data}"); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner Live] Callback error: {ex.Message}"); }
-                };
+                            SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
+                            continue;
+                        }
 
-                SVNLogBridge.LogToOutput("[SvnRunner Live] Starting process...");
+                        if (throwOnError)
+                        {
+                            string diagnostic = error.Contains("E170013") || error.Contains("can't connect") ? " [Connection/URL issue]" : error.Contains("E215004") ? " [Authorization/Password error]" : "";
+                            string fullError = $"SVN Error (Code {exitCode}): {error}{diagnostic}";
+                            SVNLogBridge.LogErrorToOutput(fullError);
+                            throw new Exception(fullError);
+                        }
+                    }
 
-                if (!process.Start())
-                    throw new Exception("Failed to start SVN process.");
-
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-
-                await WaitForExitAsync(process, token);
-
-                string errors = string.Join("\n", errorQueue);
-                if (process.ExitCode != 0)
-                {
-                    string finalError = $"SVN Error (Code {process.ExitCode})\n{errors}";
-                    SVNLogBridge.LogErrorToOutput(finalError);
-                    throw new Exception(finalError);
+                    SVNLogBridge.LogToOutput($"[SvnRunner]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Completed successfully.");
+                    return (output, error, exitCode);
                 }
-
-                SVNLogBridge.LogLine("[SvnRunner Live] Completed successfully.");
-                return "";
+                throw new Exception("SVN retry system failed.");
             }
             catch (OperationCanceledException)
             {
                 SVNLogBridge.LogToOutput("<color=#FFD700>[CANCEL]</color> SVN operation canceled.");
-                if (process != null) { try { SvnProcessTracker.Kill(process); } catch { } }
                 throw;
             }
             finally
             {
-                if (process != null)
-                {
-                    try { process.CancelOutputRead(); } catch { }
-                    try { process.CancelErrorRead(); } catch { }
-                    try { SvnProcessTracker.Unregister(process); } catch { }
-                    try { process.Dispose(); } catch { }
-                }
-                try
-                {
-                    if (write) _svnLock.ExitWrite();
-                    else _svnLock.ExitRead();
-                }
-                catch (Exception ex)
-                {
-                    SVNLogBridge.LogErrorToOutput($"[SvnRunner] Lock release failed: {ex.Message}");
-                }
+                try { if (write) _svnLock.ExitWrite(); else _svnLock.ExitRead(); }
+                catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner] Lock release failed: {ex.Message}"); }
                 DecrementOperations();
             }
         }
 
-        public static async Task<int> RunStreamedAsync(
-           string arguments,
-           string workingDirectory,
-           Action<string> onOutput,
-           CancellationToken token)
+        #endregion
+
+        #region Public API Methods
+
+        public static async Task<string> RunAsync(string command, string workingDir, bool retryOnLock = true, CancellationToken token = default)
         {
-            var argList = SplitArguments(arguments);
-            return await RunStreamedAsync(argList, workingDirectory, onOutput, token);
+            // [FIX] Dodano ConfigureAwait(false)
+            return await RunAsync(SplitArguments(command), workingDir, retryOnLock, token).ConfigureAwait(false);
         }
 
-        public static async Task<int> RunStreamedAsync(
-            IEnumerable<string> args,
-            string workingDirectory,
-            Action<string> onOutput,
-            CancellationToken token)
+        public static async Task<string> RunAsync(IEnumerable<string> args, string workingDir, bool retryOnLock = true, CancellationToken token = default)
         {
-            var argList = args.ToList();
-            SVNLogBridge.LogToOutput($"<color=#00FFFF>[SvnRunner]</color> Starting SVN STREAMED: svn {BuildSafeArguments(argList)}");
-
-            bool write = IsWriteCommand(argList);
-            if (write) await _svnLock.EnterWriteAsync(token);
-            else await _svnLock.EnterReadAsync(token);
-
-            try
-            {
-                IncrementOperations();
-
-                string cleanWorkingDir = Path.GetFullPath((workingDirectory ?? "").Trim());
-
-                var finalArgs = new List<string>(argList);
-                if (!finalArgs.Contains("--non-interactive"))
-                    finalArgs.Add("--non-interactive");
-                if (!finalArgs.Contains("--trust-server-cert"))
-                    finalArgs.Add("--trust-server-cert");
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "svn",
-                    WorkingDirectory = cleanWorkingDir,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = new UTF8Encoding(false),
-                    StandardErrorEncoding = new UTF8Encoding(false),
-                    Arguments = BuildSafeArguments(finalArgs)
-                };
-
-                psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
-
-                using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                SvnProcessTracker.Register(process);
-
-                process.OutputDataReceived += (_, e) =>
-                {
-                    if (string.IsNullOrEmpty(e.Data)) return;
-                    try { onOutput?.Invoke(e.Data); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner] Streamed callback error: {ex.Message}"); }
-                };
-                process.ErrorDataReceived += (_, e) =>
-                {
-                    if (string.IsNullOrEmpty(e.Data)) return;
-                    try { onOutput?.Invoke($"<color=#FFAA00>{e.Data}</color>"); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner] Streamed callback error: {ex.Message}"); }
-                };
-
-                try
-                {
-                    if (!process.Start()) throw new Exception("Process.Start() returned false.");
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-
-                    await WaitForExitAsync(process, token);
-                    return process.ExitCode;
-                }
-                catch (OperationCanceledException)
-                {
-                    if (process != null) { try { SvnProcessTracker.Kill(process); } catch { } }
-                    throw;
-                }
-                finally
-                {
-                    try { SvnProcessTracker.Unregister(process); } catch { }
-                }
-            }
-            finally
-            {
-                try
-                {
-                    if (write) _svnLock.ExitWrite();
-                    else _svnLock.ExitRead();
-                }
-                catch (Exception ex)
-                {
-                    SVNLogBridge.LogErrorToOutput($"[SvnRunner] Lock release failed: {ex.Message}");
-                }
-                DecrementOperations();
-            }
+            // [FIX] Dodano ConfigureAwait(false)
+            var result = await ExecuteSvnProcessAsync(args.ToList(), workingDir, retryOnLock, null, null, true, "", token).ConfigureAwait(false);
+            return result.output;
         }
 
-        public static async Task<int> RunStreamedLiveAsync(
-            string arguments,
-            string workingDirectory,
-            Action<string> onOutput,
-            CancellationToken token)
+        public static async Task<string> RunLiveAsync(string args, string workingDir, Action<string> onLineReceived, CancellationToken token = default)
         {
-            var argList = SplitArguments(arguments);
-            return await RunStreamedLiveAsync(argList, workingDirectory, onOutput, token);
+            // [FIX] Dodano ConfigureAwait(false)
+            return await RunLiveAsync(SplitArguments(args), workingDir, onLineReceived, token).ConfigureAwait(false);
         }
 
-        public static async Task<int> RunStreamedLiveAsync(
-            IEnumerable<string> args,
-            string workingDirectory,
-            Action<string> onOutput,
-            CancellationToken token)
+        public static async Task<string> RunLiveAsync(IEnumerable<string> args, string workingDir, Action<string> onLineReceived, CancellationToken token = default)
         {
-            var argList = args.ToList();
-            SVNLogBridge.LogToOutput($"<color=#00FFFF>[SvnRunner]</color> Starting SVN LIVE STREAMED: svn {BuildSafeArguments(argList)}");
+            Action<string> stdout = (line) => { if (!string.IsNullOrWhiteSpace(line)) onLineReceived?.Invoke(line); };
+            Action<string> stderr = (line) => { if (!string.IsNullOrWhiteSpace(line)) onLineReceived?.Invoke($"[SVN ERROR] {line}"); };
 
-            bool write = IsWriteCommand(argList);
-            if (write) await _svnLock.EnterWriteAsync(token);
-            else await _svnLock.EnterReadAsync(token);
-
-            try
-            {
-                IncrementOperations();
-
-                string cleanWorkingDir = Path.GetFullPath((workingDirectory ?? "").Trim());
-
-                var finalArgs = new List<string>(argList);
-                if (!finalArgs.Contains("--non-interactive"))
-                    finalArgs.Add("--non-interactive");
-                if (!finalArgs.Contains("--trust-server-cert"))
-                    finalArgs.Add("--trust-server-cert");
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "svn",
-                    WorkingDirectory = cleanWorkingDir,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    StandardOutputEncoding = new UTF8Encoding(false),
-                    StandardErrorEncoding = new UTF8Encoding(false),
-                    Arguments = BuildSafeArguments(finalArgs)
-                };
-
-                psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
-
-                using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                SvnProcessTracker.Register(process);
-
-                process.OutputDataReceived += (_, e) =>
-                {
-                    if (e.Data == null) return;
-                    try { onOutput?.Invoke(e.Data); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner] Live Streamed callback error: {ex.Message}"); }
-                };
-
-                process.ErrorDataReceived += (_, e) =>
-                {
-                    if (e.Data == null) return;
-                    try { onOutput?.Invoke($"<color=#FFAA00>{e.Data}</color>"); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner] Live Streamed callback error: {ex.Message}"); }
-                };
-
-                try
-                {
-                    if (!process.Start()) throw new Exception("Process.Start() returned false.");
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-
-                    await WaitForExitAsync(process, token);
-
-                    token.ThrowIfCancellationRequested();
-                    return process.ExitCode;
-                }
-                catch (OperationCanceledException)
-                {
-                    try { SvnProcessTracker.Kill(process); } catch { }
-                    throw;
-                }
-                finally
-                {
-                    try { SvnProcessTracker.Unregister(process); } catch { }
-                }
-            }
-            finally
-            {
-                try
-                {
-                    if (write) _svnLock.ExitWrite();
-                    else _svnLock.ExitRead();
-                }
-                catch (Exception ex)
-                {
-                    SVNLogBridge.LogErrorToOutput($"[SvnRunner] Lock release failed: {ex.Message}");
-                }
-                DecrementOperations();
-            }
+            // [FIX] Dodano ConfigureAwait(false)
+            await ExecuteSvnProcessAsync(args.ToList(), workingDir, false, stdout, stderr, true, "LIVE", token).ConfigureAwait(false);
+            return "";
         }
+
+        public static async Task<int> RunStreamedAsync(string arguments, string workingDirectory, Action<string> onOutput, CancellationToken token)
+        {
+            // [FIX] Dodano ConfigureAwait(false)
+            return await RunStreamedAsync(SplitArguments(arguments), workingDirectory, onOutput, token).ConfigureAwait(false);
+        }
+
+        public static async Task<int> RunStreamedAsync(IEnumerable<string> args, string workingDirectory, Action<string> onOutput, CancellationToken token)
+        {
+            Action<string> stdout = (line) => onOutput?.Invoke(line);
+            Action<string> stderr = (line) => onOutput?.Invoke($"<color=#FFAA00>{line}</color>");
+
+            // [FIX] Dodano ConfigureAwait(false)
+            var result = await ExecuteSvnProcessAsync(args.ToList(), workingDirectory, false, stdout, stderr, false, "STREAMED", token).ConfigureAwait(false);
+            return result.exitCode;
+        }
+
+        public static async Task<int> RunStreamedLiveAsync(string arguments, string workingDirectory, Action<string> onOutput, CancellationToken token)
+        {
+            // [FIX] Dodano ConfigureAwait(false)
+            return await RunStreamedLiveAsync(SplitArguments(arguments), workingDirectory, onOutput, token).ConfigureAwait(false);
+        }
+
+        public static async Task<int> RunStreamedLiveAsync(IEnumerable<string> args, string workingDirectory, Action<string> onOutput, CancellationToken token)
+        {
+            Action<string> stdout = (line) => onOutput?.Invoke(line);
+            Action<string> stderr = (line) => onOutput?.Invoke($"<color=#FFAA00>{line}</color>");
+
+            // [FIX] Dodano ConfigureAwait(false)
+            var result = await ExecuteSvnProcessAsync(args.ToList(), workingDirectory, false, stdout, stderr, false, "LIVE STREAMED", token).ConfigureAwait(false);
+
+            token.ThrowIfCancellationRequested(); // Specyficzne zachowanie z oryginału
+            return result.exitCode;
+        }
+
+        #endregion
+
+        #region Utility Methods
 
         private static async Task WaitForExitAsync(Process process, CancellationToken token)
         {
             if (process == null) return;
-
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            EventHandler handler = null;
-            handler = (s, e) => tcs.TrySetResult(true);
+            EventHandler handler = (s, e) => tcs.TrySetResult(true);
             process.Exited += handler;
-
             try
             {
-                if (process.HasExited)
-                {
-                    tcs.TrySetResult(true);
-                    return;
-                }
-
+                if (process.HasExited) { tcs.TrySetResult(true); return; }
                 using (token.Register(() => tcs.TrySetCanceled(token)))
                 {
-                    await tcs.Task;
+                    // [FIX] Dodano ConfigureAwait(false)
+                    await tcs.Task.ConfigureAwait(false);
                 }
             }
-            finally
-            {
-                process.Exited -= handler;
-            }
+            finally { process.Exited -= handler; }
         }
 
         public static async Task WaitForSemaphoreFreeAsync(CancellationToken token = default)
         {
-            await _svnLock.EnterWriteAsync(token);
+            // [FIX] Dodano ConfigureAwait(false)
+            await _svnLock.EnterWriteAsync(token).ConfigureAwait(false);
             _svnLock.ExitWrite();
         }
 
@@ -697,44 +375,41 @@ namespace SVN.Core
 
             lock (_infoCacheLock)
             {
-                var now = DateTime.UtcNow;
-                var expiredKeys = _infoCache.Where(kvp => now - kvp.Value.time >= InfoCacheDuration).Select(kvp => kvp.Key).ToList();
-                foreach (var key in expiredKeys)
-                {
-                    _infoCache.Remove(key);
-                }
-
-                if (_infoCache.TryGetValue(cleanWd, out var cached) && now - cached.time < InfoCacheDuration)
+                if (_infoCache.TryGetValue(cleanWd, out var cached) && DateTime.UtcNow - cached.time < InfoCacheDuration)
                 {
                     SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
                     return cached.output;
                 }
             }
 
-            string result = await RunAsync("info", cleanWd, true, token).ConfigureAwait(false);
-
-            lock (_infoCacheLock)
+            // [FIX] Dodano ConfigureAwait(false)
+            await _infoFetchLock.WaitAsync(token).ConfigureAwait(false);
+            try
             {
-                _infoCache[cleanWd] = (result, DateTime.UtcNow);
-            }
+                lock (_infoCacheLock)
+                {
+                    if (_infoCache.TryGetValue(cleanWd, out var cached) && DateTime.UtcNow - cached.time < InfoCacheDuration)
+                        return cached.output;
+                }
 
-            return result;
+                string result = await RunAsync("info", cleanWd, true, token).ConfigureAwait(false);
+
+                lock (_infoCacheLock) { _infoCache[cleanWd] = (result, DateTime.UtcNow); }
+                return result;
+            }
+            finally { _infoFetchLock.Release(); }
         }
 
         private static readonly HashSet<string> WriteCommands = new(StringComparer.OrdinalIgnoreCase)
         {
             "update", "commit", "lock", "unlock", "switch", "cleanup", "revert",
             "merge", "copy", "delete", "mkdir", "propset", "propdel",
-            "shelf-save", "shelf-restore", "shelf-drop",
-            "import", "export"
+            "shelf-save", "shelf-restore", "shelf-drop", "import", "export"
         };
 
-        public static string ForceCleanPath(string path)
-        {
-            if (string.IsNullOrEmpty(path)) return string.Empty;
-            return new string(path.Where(c => !char.IsControl(c) || c == ' ').ToArray()).Trim();
-        }
+        public static string ForceCleanPath(string path) => string.IsNullOrEmpty(path) ? string.Empty : new string(path.Where(c => !char.IsControl(c) || c == ' ').ToArray()).Trim();
 
+        // [FIX] Zmieniono bool[] parentIsLast na List<bool> parentIsLast
         public static void BuildTreeString(
             string currentDir,
             string rootDir,
@@ -743,7 +418,7 @@ namespace SVN.Core
             StringBuilder sb,
             SvnStats stats,
             HashSet<string> expandedPaths,
-            bool[] parentIsLast,
+            List<bool> parentIsLast,
             bool showIgnored,
             HashSet<string> foldersWithRelevantContent)
         {
@@ -860,11 +535,14 @@ namespace SVN.Core
                     if (status == "!" || status == "D") stats.DeletedCount++;
                 }
 
-                int limit = Math.Min(indent - 1, parentIsLast.Length);
-                for (int j = 0; j < limit; j++)
-                    sb.Append(parentIsLast[j] ? "    " : "│   ");
+                // [FIX] Uproszczono rysowanie wcięć - List<bool> gwarantuje brak OutOfRange
+                for (int j = 0; j < indent - 1; j++)
+                {
+                    bool isLastParent = j < parentIsLast.Count && parentIsLast[j];
+                    sb.Append(isLastParent ? "    " : "│   ");
+                }
 
-                if (indent > 0 && indent <= parentIsLast.Length + 1)
+                if (indent > 0)
                     sb.Append(isLast ? "└── " : "├── ");
 
                 string expandIcon = isDirectory ? (expandedPaths.Contains(relPath) ? "[-] " : "[+] ") : "    ";
@@ -877,7 +555,13 @@ namespace SVN.Core
 
                 if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath) || foldersWithRelevantContent.Contains(relPath)))
                 {
-                    if (indent < parentIsLast.Length) parentIsLast[indent] = isLast;
+                    // [FIX] Bezpieczne rozszerzanie listy dla kolejnego poziomu zagłębienia
+                    while (parentIsLast.Count <= indent)
+                    {
+                        parentIsLast.Add(false);
+                    }
+                    parentIsLast[indent] = isLast;
+
                     BuildTreeString(entry, rootDir, indent + 1, statusDict, sb, stats, expandedPaths, parentIsLast, showIgnored, foldersWithRelevantContent);
                 }
             }
@@ -910,14 +594,16 @@ namespace SVN.Core
         }
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(
-    string workingDir,
-    bool includeIgnored = true)
+            string workingDir,
+            bool includeIgnored = true)
         {
             if (string.IsNullOrWhiteSpace(workingDir))
                 throw new ArgumentException("Working directory cannot be null or empty.", nameof(workingDir));
 
             string cleanWorkingDir = Path.GetFullPath(workingDir.Trim());
-            string output = await RunAsync("status --no-ignore", cleanWorkingDir);
+
+            // [FIX] Dodano ConfigureAwait(false)
+            string output = await RunAsync("status --no-ignore", cleanWorkingDir).ConfigureAwait(false);
 
             var statusDict = new Dictionary<string, (string status, string size)>(StringComparer.OrdinalIgnoreCase);
 
@@ -995,7 +681,8 @@ namespace SVN.Core
             }
             else
             {
-                string repoUrl = await GetRepoUrlAsync(workingDir);
+                // [FIX] Dodano ConfigureAwait(false)
+                string repoUrl = await GetRepoUrlAsync(workingDir, token).ConfigureAwait(false);
                 repoUrl = repoUrl.TrimEnd('/');
 
                 string projectRoot = repoUrl;
@@ -1019,7 +706,8 @@ namespace SVN.Core
                 targetUrl = $"{projectRoot}/{subFolder}";
             }
 
-            string output = await RunAsync(new List<string> { "ls", targetUrl }, workingDir, token: token);
+            // [FIX] Dodano ConfigureAwait(false)
+            string output = await RunAsync(new List<string> { "ls", targetUrl }, workingDir, token: token).ConfigureAwait(false);
 
             return output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                          .Select(s => s.TrimEnd('/'))
@@ -1092,6 +780,7 @@ namespace SVN.Core
 
             return path;
         }
+        #endregion
 
 #if UNITY_EDITOR
         public static void ResetStaticState()

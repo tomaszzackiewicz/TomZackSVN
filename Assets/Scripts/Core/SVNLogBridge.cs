@@ -370,5 +370,54 @@ namespace SVN.Core
                 SVNUI.Instance.OutputText.text = formattedMessage;
             });
         }
+
+        public static void TraceBar(string source, string message)
+        {
+            string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+            string line = $"<color=white>[{timestamp}][BAR:{source}] {message}</color>";
+
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (SVNUI.Instance == null || SVNUI.Instance.LogText == null)
+                    return;
+
+                _allLines.Enqueue(line);
+                _fullLogText += line + "\n";
+
+                if (_allLines.Count > MaxUILines)
+                {
+                    int excess = _allLines.Count - MaxUILines;
+                    for (int i = 0; i < excess; i++) _allLines.Dequeue();
+
+                    var sb = new StringBuilder(_allLines.Count * 128);
+                    foreach (var l in _allLines) sb.AppendLine(l);
+                    _fullLogText = sb.ToString();
+                }
+
+                SVNUI.Instance.LogText.text = _fullLogText;
+
+                if (SVNUI.Instance.LogScrollRect != null)
+                    SVNUI.Instance.LogScrollRect.verticalNormalizedPosition = 0f;
+            });
+        }
+
+        public static void ClearConsole()
+        {
+            _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+            _flushScheduled = false;
+
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                lock (_bufferLock) _buffer.Clear();
+
+                _allLines.Clear();
+                _fullLogText = string.Empty;
+
+                if (SVNUI.Instance != null && SVNUI.Instance.LogText != null)
+                {
+                    SVNUI.Instance.LogText.text = string.Empty;
+                }
+            });
+        }
     }
 }

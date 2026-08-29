@@ -120,6 +120,8 @@ namespace SVN.Core
         [SerializeField] private TMP_InputField updateRevisionInput;
         [SerializeField] private TextMeshProUGUI revisionDisplayArea;
         [SerializeField] private TMP_InputField revisionFilePathInput;
+        [Header("Revision References")]
+        [SerializeField] private Toggle snapshotUnversionedOnlyToggle;
 
         private Coroutine _notificationCoroutine;
 
@@ -217,6 +219,7 @@ namespace SVN.Core
         public TMP_InputField UpdateRevisionInput => updateRevisionInput;
         public TextMeshProUGUI RevisionDisplayArea => revisionDisplayArea;
         public TMP_InputField RevisionFilePathInput => revisionFilePathInput;
+        public Toggle SnapshotUnversionedOnlyToggle => snapshotUnversionedOnlyToggle;
 
         private void Awake()
         {

@@ -47,10 +47,7 @@ namespace SVN.Core
 
         public void ClearLog()
         {
-            if (svnUI?.LogText != null)
-            {
-                SVNLogBridge.UpdateUIField(svnUI.LogText, string.Empty, append: false);
-            }
+            SVNLogBridge.ClearConsole();
         }
 
         private async Task ShowLogAsync()

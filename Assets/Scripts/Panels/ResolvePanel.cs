@@ -10,8 +10,9 @@ public class ResolvePanel : MonoBehaviour
     private SVNResolve _resolveModule;
     private SVNExternal _externalModule;
 
-    private bool _isRefreshing;
+    private volatile bool _isRefreshing;
     private CancellationTokenSource _refreshCts;
+    private CancellationTokenSource _panelLifecycleCts;
 
     private void Awake() => ResolveReferences();
 
@@ -20,57 +21,71 @@ public class ResolvePanel : MonoBehaviour
         if (_svnManager == null || _resolveModule == null)
             ResolveReferences();
 
-        await WaitForWorkingDirIfNeeded();
+        _panelLifecycleCts?.Cancel();
+        _panelLifecycleCts?.Dispose();
+        _panelLifecycleCts = new CancellationTokenSource();
 
-        if (this != null && !string.IsNullOrEmpty(_svnManager?.WorkingDir))
-            TriggerSafeRefresh();
+        try
+        {
+            await WaitForWorkingDirIfNeeded(_panelLifecycleCts.Token);
+
+            if (this != null && !string.IsNullOrEmpty(_svnManager?.WorkingDir))
+                TriggerSafeRefresh(_panelLifecycleCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+
+        }
     }
 
     private void OnDisable()
     {
+        _panelLifecycleCts?.Cancel();
+        _panelLifecycleCts?.Dispose();
+        _panelLifecycleCts = null;
+
         _refreshCts?.Cancel();
         _refreshCts?.Dispose();
         _refreshCts = null;
     }
 
-    private async Task WaitForWorkingDirIfNeeded()
+    private async Task WaitForWorkingDirIfNeeded(CancellationToken token)
     {
         if (_svnManager == null) return;
 
-        _refreshCts = new CancellationTokenSource();
-        var token = _refreshCts.Token;
-
-        const float timeoutSeconds = 10f;
-        float elapsed = 0f;
+        const int maxWaitMs = 10000;
+        int waitedMs = 0;
 
         while (this != null
                && gameObject.activeInHierarchy
                && string.IsNullOrEmpty(_svnManager.WorkingDir)
                && _svnManager.IsProcessing
-               && elapsed < timeoutSeconds
-               && !token.IsCancellationRequested)
+               && waitedMs < maxWaitMs)
         {
-            await Task.Yield();
-            elapsed += Time.unscaledDeltaTime;
+            token.ThrowIfCancellationRequested();
+            await Task.Delay(100, token);
+            waitedMs += 100;
         }
     }
 
-    private async void TriggerSafeRefresh()
+    private async void TriggerSafeRefresh(CancellationToken token)
     {
         if (_isRefreshing || _resolveModule == null) return;
 
         _isRefreshing = true;
         try
         {
-            await _resolveModule.AutoRefreshConflictListAsync();
+            await _resolveModule.AutoRefreshConflictListAsync(token);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            Debug.LogWarning($"[ResolvePanel] Refresh failed: {ex.Message}");
+            if (this != null)
+                SVNLogBridge.LogLine($"<color=#FFAA00>[ResolvePanel] Refresh failed: {ex.Message}</color>");
         }
         finally
         {
-            _isRefreshing = false;
+            if (this != null) _isRefreshing = false;
         }
     }
 
@@ -87,7 +102,13 @@ public class ResolvePanel : MonoBehaviour
         if (_resolveModule == null) ResolveReferences();
         if (_resolveModule == null) return false;
 
-        return !_resolveModule.IsResolveBusy;
+        return !_resolveModule.IsResolveBusy && !_isRefreshing;
+    }
+
+    public void Button_RefreshConflicts()
+    {
+        if (CanExecute() && _panelLifecycleCts != null)
+            TriggerSafeRefresh(_panelLifecycleCts.Token);
     }
 
     public void Button_OpenInEditor()
@@ -149,5 +170,20 @@ public class ResolvePanel : MonoBehaviour
     public void Button_CancelResolve()
     {
         _resolveModule?.CancelResolve();
+    }
+
+    public void Button_ResolveAllTreeTheirsForce()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllTreeTheirsForce();
+    }
+
+    public void Button_ResolveAllTreeMineForce()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllTreeMineForce();
+    }
+
+    public void Button_ResolveAllTreeBaseForce()
+    {
+        if (CanExecute()) _resolveModule.ResolveAllTreeBaseForce();
     }
 }

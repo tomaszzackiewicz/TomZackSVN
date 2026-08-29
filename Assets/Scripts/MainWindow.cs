@@ -88,6 +88,27 @@ namespace SVN.Core
             }
         }
 
+
+        public void Button_ClearMainLog()
+        {
+            SVNLogBridge.ClearConsole();
+        }
+
+        public void Button_ClearAllLogs()
+        {
+            SVNLogBridge.ClearConsole();
+            terminal?.ClearLog();
+
+            if (svnUI?.ResolveLogConsole != null)
+                SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, "", "RESOLVE", false);
+
+            if (svnUI?.TerminalInputField != null)
+            {
+                svnUI.TerminalInputField.text = "";
+                svnUI.TerminalInputField.ActivateInputField();
+            }
+        }
+
         public void Button_Load() => svnManager.GetModule<SVNLoad>().LoadRepoPathAndRefresh();
         public void Button_Update() => svnManager.GetModule<SVNUpdate>().Update();
         public void Button_CancelUpdate() => svnManager.GetModule<SVNUpdate>().CancelUpdate();
@@ -108,5 +129,8 @@ namespace SVN.Core
         public void Button_GoUpRepoBrowser() => svnManager.GetModule<SVNRepoBrowser>().GoUp();
         public void Button_CollapsAll() => svnManager.GetModule<SVNRepoBrowser>().CollapseAllToRoot();
         public void Button_TestConnection() => svnManager.GetModule<SVNExternal>().TestConnection();
+        public void Button_TakeSnapshot() => svnManager.GetModule<SVNSnapshot>().ExecuteCreateSnapshot();
+        public void Button_RestoreSnapshot() => svnManager.GetModule<SVNSnapshot>().ExecuteRestoreSnapshot();
+        public void Button_DeleteSnapshot() => svnManager.GetModule<SVNSnapshot>().ExecuteDeleteSnapshot();
     }
 }

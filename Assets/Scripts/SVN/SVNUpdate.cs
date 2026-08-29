@@ -29,7 +29,6 @@ namespace SVN.Core
                 SVNLogBridge.LogErrorToOutput("[SVN] Working directory does not exist.");
                 return;
             }
-
             if (_runningTask != null && !_runningTask.IsCompleted)
             {
                 SVNLogBridge.LogToOutput("<color=orange>Update already running...</color>");
@@ -43,9 +42,9 @@ namespace SVN.Core
                 Duration = 0,
                 Repo = svnManager.RepositoryUrl
             };
-
             svnManager.WasUpdateCanceled = false;
             _sessionId = Guid.NewGuid();
+
             _runningTask = ExecuteUpdateCoreAsync(svnManager.WorkingDir, null, _sessionId);
         }
 
@@ -95,9 +94,29 @@ namespace SVN.Core
             var statusModule = svnManager.GetModule<SVNStatus>();
             statusModule?.CancelCurrentRefresh();
 
-            CancellationTokenSource localCts = null;
+            // Inicjalizujemy token na samym początku, żeby był dostępny w pętli oczekiwania
+            CancellationTokenSource localCts = new CancellationTokenSource();
+            CancellationToken token = localCts.Token;
+
+            // POPRAWKA 1: Czekamy krótko, aż moduł statusu faktycznie zwolni blokadę (ReadLock) w SvnRunner.
+            int waitCount = 0;
+            while (statusModule != null && statusModule.IsProcessing && waitCount < 50)
+            {
+                await Task.Delay(20, token);
+                waitCount++;
+            }
+
+            // POPRAWKA 2: Czyścimy stary napis "Scanning..." z drzewa plików. 
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                svnUI?.SvnTreeView?.ClearView();
+                if (svnUI?.TreeDisplay != null && svnUI.TreeDisplay.text.Contains("Scanning"))
+                {
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+                }
+            });
+
             SVNBar svnBar = null;
-            Task monitorTask = null;
             var stopwatch = Stopwatch.StartNew();
             var oldSnapshot = svnManager.CurrentSnapshot;
             string oldRevision = oldSnapshot?.Revision ?? "Unknown";
@@ -105,14 +124,14 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(targetPath) || !Directory.Exists(targetPath))
             {
                 SVNLogBridge.LogErrorToOutput("[SVN] Working directory does not exist.");
+                localCts.Dispose();
                 return;
             }
 
             try
             {
-                localCts = new CancellationTokenSource();
+                // Przypisujemy zainicjalizowany token do globalnego CTS modułu
                 _updateCTS = localCts;
-                CancellationToken token = localCts.Token;
 
                 svnManager.IsUpdateRunning = true;
                 svnManager.LastUpdateSucceeded = false;
@@ -139,9 +158,8 @@ namespace SVN.Core
                 }
 
                 svnBar = svnManager.GetModule<SVNBar>();
-                svnBar?.ShowUpdatingStatus(svnManager.CurrentProject?.projectName ?? Path.GetFileName(targetPath));
-
-                monitorTask = svnBar?.StartLightSizeMonitor(targetPath, token);
+                string projectName = svnManager.CurrentProject?.projectName ?? Path.GetFileName(targetPath);
+                svnBar?.BeginUpdate(projectName);
 
                 svnManager.OperationInfo = new SVNOperationInfo
                 {
@@ -260,11 +278,13 @@ namespace SVN.Core
 
                         string progressStr = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
 
+                        bool shouldLog = !token.IsCancellationRequested && session == _sessionId;
+                        string logMessage = $"<b>[SVN]</b> <color=blue>{displayLine}{progressStr}</color>";
+
                         UnityMainThreadDispatcher.Enqueue(() =>
                         {
-                            if (token.IsCancellationRequested) return;
-                            if (session != _sessionId) return;
-                            SVNLogBridge.LogToOutput($"<b>[SVN]</b> <color=blue>{displayLine}{progressStr}</color>");
+                            if (shouldLog)
+                                SVNLogBridge.LogToOutput(logMessage);
                         });
                     },
                     token
@@ -289,22 +309,34 @@ namespace SVN.Core
                 }
 
                 stopwatch.Stop();
-                svnManager.OperationInfo = new SVNOperationInfo { State = SVNOperationState.Success, Message = $"{commandLabel} completed successfully", Duration = stopwatch.Elapsed.TotalSeconds, Repo = svnManager.RepositoryUrl };
+                svnManager.OperationInfo = new SVNOperationInfo
+                {
+                    State = SVNOperationState.Success,
+                    Message = $"{commandLabel} completed successfully",
+                    Duration = stopwatch.Elapsed.TotalSeconds,
+                    Repo = svnManager.RepositoryUrl
+                };
                 svnManager.LastUpdateSucceeded = true;
                 SVNStatus.ClearLockCache();
                 svnManager.DiskChangesDetected = true;
 
                 var report = new StringBuilder();
                 report.AppendLine("\n<color=blue><b>=========================================</b></color>");
-                report.AppendLine(isRevisionTarget ? $"<color=blue><b>     UPDATE TO REVISION {targetRevision} REPORT    </b></color>" : "<color=blue><b>          SVN UPDATE REPORT              </b></color>");
+                report.AppendLine(isRevisionTarget
+                    ? $"<color=blue><b>     UPDATE TO REVISION {targetRevision} REPORT    </b></color>"
+                    : "<color=blue><b>          SVN UPDATE REPORT             </b></color>");
                 report.AppendLine("<color=blue><b>=========================================</b></color>");
-                report.AppendLine(oldRevision == newRevision || oldRevision == "Unknown" ? $"  Revision:   <b>{newRevision}</b> (No incoming changes)" : $"  Revision:   <b>{oldRevision}</b> -> <b>{newRevision}</b>");
+                report.AppendLine(oldRevision == newRevision || oldRevision == "Unknown"
+                    ? $"  Revision:   <b>{newRevision}</b> (No incoming changes)"
+                    : $"  Revision:   <b>{oldRevision}</b> -> <b>{newRevision}</b>");
                 report.AppendLine($"  Duration:   <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>\n");
 
                 bool hasChanges = uCount > 0 || aCount > 0 || dCount > 0 || cCount > 0 || gCount > 0 || rCount > 0;
                 if (!hasChanges)
                 {
-                    report.AppendLine(isRevisionTarget ? "  <color=green>Working copy was already at this revision.</color>" : "  <color=green>Working copy was already fully up-to-date.</color>");
+                    report.AppendLine(isRevisionTarget
+                        ? "  <color=green>Working copy was already at this revision.</color>"
+                        : "  <color=green>Working copy was already fully up-to-date.</color>");
                 }
                 else
                 {
@@ -331,17 +363,19 @@ namespace SVN.Core
 
                 if (!svnManager.WasUpdateCanceled && svnBar != null)
                 {
-                    var newSnapshot = await svnBar.BuildSnapshotAsync(svnManager.CurrentProject, svnManager.WorkingDir);
-                    string newAuthor = await GetAuthorForRevision(svnManager.WorkingDir, newRevision, token);
+                    var snap = svnManager.CurrentSnapshot ?? new SVNProjectInfoSnapshot();
+                    snap.Revision = newRevision;
 
-                    newSnapshot.Revision = newRevision;
+                    string newAuthor = await GetAuthorForRevision(svnManager.WorkingDir, newRevision, token);
                     if (!string.IsNullOrEmpty(newAuthor))
                     {
-                        newSnapshot.Author = newAuthor;
-                        newSnapshot.CurrentUser = newAuthor;
+                        snap.Author = newAuthor;
                     }
-                    svnManager.CurrentSnapshot = newSnapshot;
-                    await svnBar.ShowProjectInfo(svnManager.CurrentProject, svnManager.WorkingDir, forceOutdatedCheck: true, isRefreshing: false);
+
+                    snap.IsValid = true;
+                    svnManager.CurrentSnapshot = snap;
+
+                    await svnBar.EndUpdate(snap);
                 }
             }
             catch (OperationCanceledException)
@@ -349,9 +383,16 @@ namespace SVN.Core
                 stopwatch.Stop();
                 svnManager.LastUpdateSucceeded = false;
                 svnManager.CurrentSnapshot = oldSnapshot;
-                if (svnBar != null) await svnBar.ShowProjectInfo(svnManager.CurrentProject, svnManager.WorkingDir, forceOutdatedCheck: false, isRefreshing: false);
 
-                svnManager.OperationInfo = new SVNOperationInfo { State = SVNOperationState.Canceled, Message = "Update canceled by user", Duration = stopwatch.Elapsed.TotalSeconds, Repo = svnManager.RepositoryUrl };
+                svnBar?.EndUpdateFailed(oldSnapshot);
+
+                svnManager.OperationInfo = new SVNOperationInfo
+                {
+                    State = SVNOperationState.Canceled,
+                    Message = "Update canceled by user",
+                    Duration = stopwatch.Elapsed.TotalSeconds,
+                    Repo = svnManager.RepositoryUrl
+                };
 
                 var cancelReport = new StringBuilder();
                 cancelReport.AppendLine("\n<color=#FFAA00><b>=========================================</b></color>");
@@ -374,24 +415,28 @@ namespace SVN.Core
                             await SVNClean.CleanupAsync(targetPath, localCts.Token);
                     }
                     catch (OperationCanceledException) { }
-                    catch (Exception cleanupEx)
-                    {
-                        SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Cleanup after failure failed: {cleanupEx.Message}</color>");
-                    }
+                    catch { }
                 }
 
                 svnManager.LastUpdateSucceeded = false;
                 svnManager.CurrentSnapshot = oldSnapshot;
-                if (svnBar != null) await svnBar.ShowProjectInfo(svnManager.CurrentProject, svnManager.WorkingDir, forceOutdatedCheck: false, isRefreshing: false);
 
-                svnManager.OperationInfo = new SVNOperationInfo { State = SVNOperationState.Failed, Message = ex.Message, Duration = stopwatch.Elapsed.TotalSeconds, Repo = svnManager.RepositoryUrl };
+                svnBar?.EndUpdateFailed(oldSnapshot);
+
+                svnManager.OperationInfo = new SVNOperationInfo
+                {
+                    State = SVNOperationState.Failed,
+                    Message = ex.Message,
+                    Duration = stopwatch.Elapsed.TotalSeconds,
+                    Repo = svnManager.RepositoryUrl
+                };
 
                 var failureReport = new StringBuilder();
                 failureReport.AppendLine("\n<color=#B22222><b>=========================================</b></color>");
                 failureReport.AppendLine("<color=#B22222><b>            UPDATE FAILED                </b></color>");
                 failureReport.AppendLine("<color=#B22222><b>=========================================</b></color>");
                 failureReport.AppendLine($"  Execution crashed after <b>{stopwatch.Elapsed.TotalSeconds:F2}s</b>.");
-                failureReport.AppendLine($"  Error message: <color=#E6E6E6E6>{ex.Message}</color>");
+                failureReport.AppendLine($"  Error message: <color=#E6E6E6>{ex.Message}</color>");
                 failureReport.AppendLine("<color=#B22222><b>=========================================</b></color>");
                 SVNLogBridge.LogLine(failureReport.ToString(), false);
             }
@@ -399,17 +444,6 @@ namespace SVN.Core
             {
                 svnManager.IsUpdateRunning = false;
                 IsProcessing = false;
-
-                if (monitorTask != null && !monitorTask.IsCompleted)
-                {
-                    try
-                    {
-                        await monitorTask;
-                    }
-                    catch
-                    {
-                    }
-                }
 
                 if (_updateCTS == localCts)
                     _updateCTS = null;
@@ -466,25 +500,13 @@ namespace SVN.Core
 
             _sessionId = Guid.NewGuid();
 
-            svnManager.OperationInfo = new SVNOperationInfo { State = SVNOperationState.Canceled, Message = "Cancel requested...", Duration = 0, Repo = svnManager.RepositoryUrl };
-
-            var snapshot = svnManager.CurrentSnapshot;
-            string statusColor = "#FFAA00";
-            string projectName = snapshot?.ProjectName ?? (string.IsNullOrEmpty(svnManager.WorkingDir) ? "Unknown project" : Path.GetFileName(svnManager.WorkingDir.TrimEnd('/', '\\')));
-            string user = snapshot?.CurrentUser ?? svnManager.CurrentUserName ?? "Unknown";
-            string branch = snapshot?.Branch ?? "unknown";
-            string rev = snapshot?.Revision ?? "unknown";
-            string repo = Uri.TryCreate(svnManager.RepositoryUrl, UriKind.Absolute, out var uri) ? uri.Host : "Unknown repo";
-
-            string line = $"<size=150%><color={statusColor}>●</color></size> " +
-                $"<color=orange><b>{projectName}</b> ({snapshot?.WorkingCopySize ?? "?"})</color> | " +
-                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{user}</color> | " +
-                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{branch}</color> | " +
-                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{rev}</color> | " +
-                $"<color=#00E5FF>Status:</color> <color=#E6E6E6>Stopping update...</color> | " +
-                $"<color=#E6E6E6>Srv:{repo}</color>";
-
-            SVNLogBridge.UpdateUIField(svnUI.StatusInfoText, line, "INFO", append: false);
+            svnManager.OperationInfo = new SVNOperationInfo
+            {
+                State = SVNOperationState.Canceled,
+                Message = "Cancel requested...",
+                Duration = 0,
+                Repo = svnManager.RepositoryUrl
+            };
         }
 
         public string ParseRevisionFromInfo(string infoOutput)
@@ -544,7 +566,7 @@ namespace SVN.Core
                                 remoteFiles.Add(cleanPath);
                             }
 
-                            if (line.Length > 1 && (line[0] == 'C' || (line.Length > 1 && line[1] == 'C')))
+                            if (line.Length > 1 && (line[0] == 'C' || line[1] == 'C'))
                             {
                                 string rawPath = line.Length > 8 ? line.Substring(8).Trim() : line.Trim();
                                 string cleanPath = SvnRunner.NormalizeRepositoryPath(SvnRunner.CleanSvnPath(rawPath));

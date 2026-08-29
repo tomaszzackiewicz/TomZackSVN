@@ -364,5 +364,97 @@ namespace SVN.Core
                 ExitProcessing();
             }
         }
+
+        // =================================================================================
+        // NOWA METODA: ExtractFolderToAsync
+        // Eksportuje cały folder z podanej rewizji do wybranego folderu lokalnego.
+        // Działa nawet, gdy folder nie istnieje lokalnie (np. został usunięty lub jest konflikt).
+        // =================================================================================
+        public async Task ExtractFolderToAsync(string relativeFolderPath, string revision, string targetLocalPath)
+        {
+            if (string.IsNullOrWhiteSpace(relativeFolderPath) || string.IsNullOrWhiteSpace(targetLocalPath))
+                throw new ArgumentException("Folder path and target path cannot be empty.");
+
+            if (!TryEnterProcessing()) return;
+
+            try
+            {
+                string normalizedPath = SvnRunner.NormalizeRepositoryPath(relativeFolderPath);
+                string rev = revision.TrimStart('r', 'R');
+
+                LogToRevisionPanel($"<color=cyan>[SVN Revision]</color> Resolving URL for folder: {normalizedPath}...");
+
+                // 1. Próbujemy pobrać URL folderu z lokalnego katalogu roboczego
+                string folderUrl = await SvnRunner.RunAsync($"info --show-item url \"{normalizedPath}\"", svnManager.WorkingDir);
+
+                // 2. Sprawdzamy, czy wynik jest błędem (pusty lub zaczyna się od E/W)
+                bool isMissingOrError = string.IsNullOrWhiteSpace(folderUrl) ||
+                                        folderUrl.StartsWith("E", StringComparison.OrdinalIgnoreCase) ||
+                                        folderUrl.StartsWith("W", StringComparison.OrdinalIgnoreCase);
+
+                if (isMissingOrError)
+                {
+                    LogToRevisionPanel("<color=yellow>[SVN Revision]</color> Folder missing locally (e.g., deleted/obstruction). Constructing URL manually...");
+
+                    string rootUrl = await SvnRunner.RunAsync("info --show-item url", svnManager.WorkingDir);
+
+                    if (string.IsNullOrWhiteSpace(rootUrl) || rootUrl.StartsWith("E", StringComparison.OrdinalIgnoreCase))
+                        throw new Exception("Cannot determine repository URL. Is this a valid SVN working copy?");
+
+                    folderUrl = $"{rootUrl.TrimEnd('/')}/{normalizedPath.TrimStart('/')}";
+                }
+
+                LogToRevisionPanel($"<color=cyan>[SVN Revision]</color> Exporting r{rev} from: {folderUrl}");
+                LogToRevisionPanel($"<color=cyan>[SVN Revision]</color> To local path: {targetLocalPath}");
+
+                // 3. Wykonujemy eksport z flagą --force
+                string command = $"export -r {rev} \"{folderUrl}\" \"{targetLocalPath}\" --force";
+                string output = await SvnRunner.RunAsync(command, svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
+
+                LogToRevisionPanel("<color=green>[SVN Revision]</color> Folder successfully extracted.");
+                LogToRevisionPanel($"<color=green>Folder from r{rev} saved to: {targetLocalPath}</color>");
+            }
+            catch (Exception ex)
+            {
+                LogToRevisionPanel($"<color=#FFAA00>[Extract Folder Error] {ex.Message}</color>");
+            }
+            finally
+            {
+                ExitProcessing();
+            }
+        }
+
+        public async Task RevertPathAsync(string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                LogToRevisionPanel("<color=#FFAA00>[Revert Path] Path cannot be empty.</color>");
+                return;
+            }
+
+            if (!TryEnterProcessing()) return;
+
+            try
+            {
+                string cleanPath = relativePath.Replace('\\', '/').TrimStart('/');
+
+                LogToRevisionPanel($"<color=green>[Revert Path] Reverting {cleanPath} to BASE...</color>");
+
+                await SvnRunner.RunAsync($"revert \"{cleanPath}\"", svnManager.WorkingDir, true, CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                LogToRevisionPanel($"<color=green>[Revert Path] Successfully reverted: {cleanPath}</color>");
+
+                await svnManager.RefreshStatus().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogToRevisionPanel($"<color=#FFAA00>[Revert Path Error] {ex.Message}</color>");
+            }
+            finally
+            {
+                ExitProcessing();
+            }
+        }
     }
 }

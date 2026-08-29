@@ -172,18 +172,19 @@ namespace SVN.Core
 
         private void Update()
         {
+            var bar = GetModule<SVNBar>();
+            bar?.Tick();
+
             if (DiskChangesDetected)
             {
                 long currentTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
                 long elapsedTicks = currentTimestamp - Interlocked.Read(ref _lastDiskEventTimestamp);
-
                 double elapsedMs = (double)elapsedTicks / System.Diagnostics.Stopwatch.Frequency * 1000.0;
 
                 if (elapsedMs >= DiskDebounceMs)
                 {
                     DiskChangesDetected = false;
-
-                    if (!IsUpdateRunning && !string.IsNullOrEmpty(WorkingDir) && gameObject.activeInHierarchy)
+                    if (!IsUpdateRunning && !IsProcessing && !string.IsNullOrEmpty(WorkingDir) && gameObject.activeInHierarchy)
                     {
                         _ = RefreshStatus(force: false);
                     }
@@ -223,6 +224,7 @@ namespace SVN.Core
                 RegisterModule(new SVNRepoBrowser(svnUI, this));
                 RegisterModule(new SVNRevision(svnUI, this));
                 RegisterModule(new SVNRepoRepair(svnUI, this));
+                RegisterModule(new SVNSnapshot(svnUI, this));
 
                 SVNLogBridge.LogToOutput($"<color=green>[SVN] Successfully initialized {_modules.Count} modules manually.</color>");
             }
@@ -361,7 +363,6 @@ namespace SVN.Core
             {
                 CurrentProject = project;
 
-                // OPTYMALIZACJA: Usunięto podwójne czyszczenie ścieżki (ForceCleanPath)
                 WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
 
                 RepositoryUrl = project.repoUrl;
@@ -386,18 +387,15 @@ namespace SVN.Core
                     ProjectSettings.SaveProjects(projects);
                 }
 
+                var barModule = GetModule<SVNBar>();
+                barModule?.SetLoadingContent(project.projectName ?? "Project");
+
                 UnityMainThreadDispatcher.Enqueue(() =>
                 {
                     SyncUIToCurrentState();
                     PlayerPrefs.SetString("SVN_LastOpenedProjectPath", WorkingDir);
                     PlayerPrefs.SetString("SVN_LastOpenedProjectId", project.projectId);
                     PlayerPrefs.Save();
-
-                    SVNLogBridge.UpdateUIField(
-                        svnUI.StatusInfoText,
-                        $"<size=150%><color=#FFFF00>●</color></size> <color=orange><b>Loading project...</b></color>",
-                        "INFO",
-                        append: false);
 
                     var statusModule = GetModule<SVNStatus>();
                     statusModule?.ClearCurrentData();
@@ -546,33 +544,30 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(WorkingDir)) return;
             if (IsProcessing && !force) return;
+            if (IsUpdateRunning) return;
 
             GetModule<SVNStatus>()?.CancelCurrentRefresh();
 
             var newCts = new CancellationTokenSource();
             var oldCts = Interlocked.Exchange(ref _refreshStatusCts, newCts);
-
-            if (oldCts != null)
-            {
-                oldCts.Cancel();
-                _ = Task.Delay(1000).ContinueWith(_ => oldCts.Dispose());
-            }
+            if (oldCts != null) { oldCts.Cancel(); _ = Task.Delay(1000).ContinueWith(_ => oldCts.Dispose()); }
 
             CancellationToken token = _refreshStatusCts.Token;
 
-            await _managerLock.EnterWriteAsync(_lifetimeCts.Token);
+            // POPRAWKA: Usunięto blokadę _managerLock.EnterWriteAsync. 
+            // Odświeżanie statusu to operacja tylko do odczytu, blokada Write blokowała
+            // całą resztę aplikacji (np. logi, sprawdzanie locków) na czas skanowania dysku.
             try
             {
                 var statusModule = GetModule<SVNStatus>();
                 if (statusModule == null) return;
 
                 await statusModule.ExecuteRefreshWithAutoExpand(force: force);
-
                 await PostProcessStatus();
 
                 SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>");
 
-                if (Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
+                if (!IsUpdateRunning && Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
                 {
                     _ = Task.Run(async () =>
                     {
@@ -582,41 +577,36 @@ namespace SVN.Core
                             if (bar != null && CurrentSnapshot != null && !token.IsCancellationRequested)
                             {
                                 string newSize = await bar.GetFolderSizeAsync(WorkingDir);
-                                if (token.IsCancellationRequested) return;
 
-                                if (CurrentSnapshot != null)
+                                if (token.IsCancellationRequested || IsUpdateRunning) return;
+
+                                CurrentSnapshot.WorkingCopySize = newSize;
+
+                                UnityMainThreadDispatcher.Enqueue(() =>
                                 {
-                                    CurrentSnapshot.WorkingCopySize = newSize;
-                                    UnityMainThreadDispatcher.Enqueue(() =>
-                                    {
-                                        if (this == null || CurrentSnapshot == null) return;
-                                        bar.RenderSnapshot(CurrentSnapshot);
-                                    });
-                                }
+                                    if (this == null || CurrentSnapshot == null) return;
+                                    if (IsUpdateRunning) return;
+                                    bar.RenderSnapshot(CurrentSnapshot);
+                                });
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            SVNLogBridge.LogError($"[RefreshStatus] Background size update failed: {ex.Message}");
-                        }
-                        finally
-                        {
-                            Interlocked.Exchange(ref _isUpdatingSize, 0);
-                        }
+                        catch { }
+                        finally { Interlocked.Exchange(ref _isUpdatingSize, 0); }
                     }, token);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) { }
+            catch (Exception e) { SVNLogBridge.LogErrorToOutput($"[SVN] Refresh Error: {e.Message}"); }
+        }
+
+        public async Task UpdateStatus()
+        {
+            if (IsUpdateRunning) return;
+
+            var barModule = GetModule<SVNBar>();
+            if (barModule != null && CurrentProject != null)
             {
-                SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> RefreshStatus canceled.");
-            }
-            catch (Exception e)
-            {
-                SVNLogBridge.LogErrorToOutput($"[SVN] Refresh Error: {e.Message}");
-            }
-            finally
-            {
-                _managerLock.ExitWrite();
+                await barModule.ShowProjectInfo(CurrentProject, WorkingDir, isRefreshing: false);
             }
         }
 
@@ -702,6 +692,11 @@ namespace SVN.Core
             {
                 await _cachedPoller.CheckForRemoteCommitsAsync();
             }
+
+            if (!string.IsNullOrEmpty(WorkingDir))
+            {
+                await RefreshStatus(force: false);
+            }
         }
 
         public async Task<string> RunSvn(string args)
@@ -717,17 +712,6 @@ namespace SVN.Core
             }
 
             return output;
-        }
-
-        public async Task UpdateStatus()
-        {
-            if (IsUpdateRunning) return;
-
-            var barModule = GetModule<SVNBar>();
-            if (barModule != null && CurrentProject != null)
-            {
-                await barModule.ShowProjectInfo(CurrentProject, WorkingDir, isRefreshing: false);
-            }
         }
 
         public string ExtractPathFromStatusLine(string line, string statusChar)
@@ -948,7 +932,11 @@ namespace SVN.Core
                 {
                     try
                     {
-                        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
+                        // POPRAWKA: Usunięto "using var process = ".
+                        // Przy UseShellExecute = true proces oddzielony od aplikacji (np. VS Code)
+                        // nie powinien być zarządzany (Dispose'owany) przez blok using w C#, 
+                        // ponieważ powoduje to wycieki uchwytów w systemie Windows.
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
                         {
                             FileName = MergeToolPath,
                             Arguments = $"\"{absoluteTempPath}\"",
