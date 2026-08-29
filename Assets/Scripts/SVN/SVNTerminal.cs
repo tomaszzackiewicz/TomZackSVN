@@ -33,7 +33,7 @@ namespace SVN.Core
 
                 if (_consoleOutput == null)
                 {
-                    Debug.LogWarning("[SVNTerminal] Console output UI element is not assigned in SVNUI.");
+                    SVNLogBridge.LogWarning("[SVNTerminal] Console output UI element is not assigned in SVNUI.");
                 }
             }
         }

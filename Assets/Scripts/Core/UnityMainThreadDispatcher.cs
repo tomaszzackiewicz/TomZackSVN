@@ -26,7 +26,7 @@ namespace SVN.Core
             lock (ExecutionQueue)
             {
                 if (ExecutionQueue.Count > 100)
-                    Debug.LogWarning($"[Dispatcher] Queue backlog: {ExecutionQueue.Count}");
+                    SVNLogBridge.LogWarning($"[Dispatcher] Queue backlog: {ExecutionQueue.Count}");
 
                 int count = Mathf.Min(ExecutionQueue.Count, MAX_ACTIONS_PER_FRAME);
                 for (int i = 0; i < count; i++)

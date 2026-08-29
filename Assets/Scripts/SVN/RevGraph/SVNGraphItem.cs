@@ -287,7 +287,7 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
 
     private void ShowContextMenu()
     {
-        Debug.Log($"[ContextMenu] r{revisionNumber} | {rawAuthor} | {rawBranchName}");
+        SVNLogBridge.LogLine($"[ContextMenu] r{revisionNumber} | {rawAuthor} | {rawBranchName}");
     }
 
     private void OnEditMessageClicked()
@@ -453,7 +453,7 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
         yield return AddGroup('A', "Added", "#55FF55", fileGroups['A']);
         yield return AddGroup('M', "Modified", "#FFFF55", fileGroups['M']);
         yield return AddGroup('D', "Deleted", "#FF9900", fileGroups['D']);
-        yield return AddGroup('?', "Other", "#AAAAAA", fileGroups['?']);
+        yield return AddGroup('?', "Other", "yellow", fileGroups['?']);
 
         if (summaryText != null)
         {

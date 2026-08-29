@@ -419,5 +419,10 @@ namespace SVN.Core
                 }
             });
         }
+
+        public static void LogWarning(string message, bool append = true)
+        {
+            LogLine($"<color=#FFAA00><b>[WARN]</b> {message}</color>", append, "WARN");
+        }
     }
 }

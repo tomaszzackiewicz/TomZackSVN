@@ -222,7 +222,7 @@ namespace SVN.Core
         {
             if (details.IsBranchPoint)
             {
-                string parentColor = graphData.BranchColors.TryGetValue(details.ParentBranch, out var pc) ? pc : "#888888";
+                string parentColor = graphData.BranchColors.TryGetValue(details.ParentBranch, out var pc) ? pc : "yellow";
                 SharedSb.Clear();
                 SharedSb.Append("<color=").Append(parentColor).Append("><size=90%>+ from ").Append(details.ParentBranch);
                 if (details.CopyFromRev > 0)

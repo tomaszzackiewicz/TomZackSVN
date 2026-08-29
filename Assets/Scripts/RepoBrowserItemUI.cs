@@ -213,7 +213,7 @@ namespace SVN.Core
             else
             {
 
-                Debug.LogWarning($"[RepoBrowser] SVNHoverHandler component is missing on button: {btn.name}", btn);
+                SVNLogBridge.LogWarning($"[RepoBrowser] SVNHoverHandler component is missing on button: {btn.name}", btn);
             }
         }
     }

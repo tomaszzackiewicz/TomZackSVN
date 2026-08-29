@@ -527,7 +527,7 @@ namespace SVN.Core
 
             if (!folder.IsFolder)
             {
-                Debug.LogWarning($"[SVN Status] ToggleFolderVisibility: '{folder.Name}' is not a folder");
+                SVNLogBridge.LogWarning($"[SVN Status] ToggleFolderVisibility: '{folder.Name}' is not a folder");
                 return;
             }
 
@@ -543,7 +543,7 @@ namespace SVN.Core
 
             if (_flatTreeData == null || _flatTreeData.Count == 0)
             {
-                Debug.LogWarning("[SVN Status] ToggleFolderVisibility: _flatTreeData is empty");
+                SVNLogBridge.LogWarning("[SVN Status] ToggleFolderVisibility: _flatTreeData is empty");
                 return;
             }
 

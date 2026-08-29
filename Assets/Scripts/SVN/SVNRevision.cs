@@ -382,12 +382,10 @@ namespace SVN.Core
                 string normalizedPath = SvnRunner.NormalizeRepositoryPath(relativeFolderPath);
                 string rev = revision.TrimStart('r', 'R');
 
-                LogToRevisionPanel($"<color=cyan>[SVN Revision]</color> Resolving URL for folder: {normalizedPath}...");
+                LogToRevisionPanel($"<color=yellow>[SVN Revision]</color> Resolving URL for folder: {normalizedPath}...");
 
-                // 1. Próbujemy pobrać URL folderu z lokalnego katalogu roboczego
                 string folderUrl = await SvnRunner.RunAsync($"info --show-item url \"{normalizedPath}\"", svnManager.WorkingDir);
 
-                // 2. Sprawdzamy, czy wynik jest błędem (pusty lub zaczyna się od E/W)
                 bool isMissingOrError = string.IsNullOrWhiteSpace(folderUrl) ||
                                         folderUrl.StartsWith("E", StringComparison.OrdinalIgnoreCase) ||
                                         folderUrl.StartsWith("W", StringComparison.OrdinalIgnoreCase);
@@ -404,10 +402,9 @@ namespace SVN.Core
                     folderUrl = $"{rootUrl.TrimEnd('/')}/{normalizedPath.TrimStart('/')}";
                 }
 
-                LogToRevisionPanel($"<color=cyan>[SVN Revision]</color> Exporting r{rev} from: {folderUrl}");
-                LogToRevisionPanel($"<color=cyan>[SVN Revision]</color> To local path: {targetLocalPath}");
+                LogToRevisionPanel($"<color=yellow>[SVN Revision]</color> Exporting r{rev} from: {folderUrl}");
+                LogToRevisionPanel($"<color=yellow>[SVN Revision]</color> To local path: {targetLocalPath}");
 
-                // 3. Wykonujemy eksport z flagą --force
                 string command = $"export -r {rev} \"{folderUrl}\" \"{targetLocalPath}\" --force";
                 string output = await SvnRunner.RunAsync(command, svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
 

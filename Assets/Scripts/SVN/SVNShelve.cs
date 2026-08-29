@@ -283,7 +283,7 @@ namespace SVN.Core
                                     }
                                     catch (Exception ex)
                                     {
-                                        Debug.LogWarning($"[Stash] Fallback delete failed for {Path.GetFileName(path)}: {ex.Message}");
+                                        SVNLogBridge.LogWarning($"[Stash] Fallback delete failed for {Path.GetFileName(path)}: {ex.Message}");
                                         failedCount++;
                                     }
                                 }
@@ -544,7 +544,7 @@ namespace SVN.Core
                     var ui = emptyItem.GetComponent<ShelfItemUI>();
                     if (ui != null)
                     {
-                        ui.NameText.text = "<color=#888888>No shelves found.</color>";
+                        ui.NameText.text = "<color=yellow>No shelves found.</color>";
                         if (ui.DateText != null) ui.DateText.text = "";
                         if (ui.FilesLabel != null) ui.FilesLabel.text = "";
                         if (ui.SizeLabel != null) ui.SizeLabel.text = "";
@@ -554,7 +554,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    SVNLogBridge.LogLine("<color=#888888>No shelves found.</color>");
+                    SVNLogBridge.LogLine("<color=yellow>No shelves found.</color>");
                 }
             }
             else

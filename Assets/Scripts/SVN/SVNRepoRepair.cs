@@ -163,7 +163,7 @@ namespace SVN.Core
         {
             CancellationTokenSource cts;
             lock (_repairSync) { cts = _repairCTS; }
-            if (cts == null) { LogRepairConsole("<color=#888888>[Force Repair] No active repair operation.</color>\n"); return; }
+            if (cts == null) { LogRepairConsole("<color=yellow>[Force Repair] No active repair operation.</color>\n"); return; }
             try { if (!cts.IsCancellationRequested) { cts.Cancel(); LogRepairConsole("<color=yellow>[Force Repair] Cancellation requested...</color>\n"); } }
             catch (ObjectDisposedException) { }
         }

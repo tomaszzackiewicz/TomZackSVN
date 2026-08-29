@@ -39,7 +39,7 @@ namespace SVN.Core
 
             LogClean(cancelled
                 ? "<color=yellow>[SVN] Cancellation requested...</color>"
-                : "<color=#888888>[SVN] No active operation to cancel.</color>");
+                : "<color=yellow>[SVN] No active operation to cancel.</color>");
         }
 
         public void LightCleanup() => _ = StartAsync(LightCleanupAsync, false);
