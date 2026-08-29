@@ -55,7 +55,6 @@ public class SVNConflictItem : MonoBehaviour
         if (fileNameText != null)
             fileNameText.text = path;
 
-        // Ukryj i wyczyść wszystkie przyciski
         ClearAndHide(mineButton);
         ClearAndHide(theirsButton);
         ClearAndHide(resolvedButton);
@@ -116,8 +115,6 @@ public class SVNConflictItem : MonoBehaviour
             Show(treeTheirsButton);
             Show(treeBaseButton);
             Show(treeDeleteButton);
-
-            // Force – pokazujemy tylko jeśli przypisano w inspektorze
             Show(treeMineForceButton);
             Show(treeTheirsForceButton);
             Show(treeBaseForceButton);
@@ -146,7 +143,6 @@ public class SVNConflictItem : MonoBehaviour
                 catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
 
-            // Listenery Force
             if (treeMineForceButton != null)
             {
                 treeMineForceButton.onClick.AddListener(async () =>

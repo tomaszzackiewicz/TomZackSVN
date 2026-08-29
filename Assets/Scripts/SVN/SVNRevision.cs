@@ -365,11 +365,6 @@ namespace SVN.Core
             }
         }
 
-        // =================================================================================
-        // NOWA METODA: ExtractFolderToAsync
-        // Eksportuje cały folder z podanej rewizji do wybranego folderu lokalnego.
-        // Działa nawet, gdy folder nie istnieje lokalnie (np. został usunięty lub jest konflikt).
-        // =================================================================================
         public async Task ExtractFolderToAsync(string relativeFolderPath, string revision, string targetLocalPath)
         {
             if (string.IsNullOrWhiteSpace(relativeFolderPath) || string.IsNullOrWhiteSpace(targetLocalPath))

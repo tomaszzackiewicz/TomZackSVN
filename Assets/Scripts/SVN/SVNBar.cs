@@ -82,7 +82,6 @@ namespace SVN.Core
         {
             if (_state != BarState.Idle) return;
 
-            // Anuluj poprzednie zaciąganie snapshotu, jeśli użytkownik szybko zmienił projekt
             _snapshotCts?.Cancel();
             _snapshotCts?.Dispose();
             _snapshotCts = new CancellationTokenSource();
@@ -92,7 +91,6 @@ namespace SVN.Core
             {
                 var snapshot = await BuildSnapshotAsync(svnProject, path, localToken);
 
-                // Jeśli w międzyczasie przyszło żądanie nowego projektu, po prostu przerwij
                 if (localToken.IsCancellationRequested) return;
                 if (_state != BarState.Idle) return;
 
@@ -101,7 +99,7 @@ namespace SVN.Core
                 svnManager.CurrentSnapshot = snapshot;
                 SetContent(BuildNormalContent(snapshot, isRefreshing), "ShowProjectInfo");
             }
-            catch (OperationCanceledException) { } // Ignoruj błąd anulowania
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 Debug.LogError($"[SVNBar] ShowProjectInfo failed: {ex.Message}");
@@ -149,25 +147,20 @@ namespace SVN.Core
         {
             _monitorCts?.Cancel();
 
-            // 1. Zwalniamy stan NATYCHMIAST, aby odblokować inne procesy i pozwolić na bezpieczne budowanie snapshotu
             _state = BarState.Idle;
 
             bool renderedFresh = false;
             try
             {
-                // 2. Po udanej aktualizacji ZAWSZE pobieramy świeże dane. 
-                // Stary snapshot (fallbackSnapshot) ma przestarzały numer rewizji i status!
                 var freshSnapshot = await BuildSnapshotAsync(null, svnManager.WorkingDir);
 
                 if (freshSnapshot != null && freshSnapshot.IsValid)
                 {
-                    // Jeśli nowy snapshot nie ma nazwy (bo przekazaliśmy null jako projekt), weź ze starego
                     if (string.IsNullOrEmpty(freshSnapshot.ProjectName) && fallbackSnapshot != null)
                         freshSnapshot.ProjectName = fallbackSnapshot.ProjectName;
 
                     svnManager.CurrentSnapshot = freshSnapshot;
 
-                    // Wymuszenie odświeżenia UI w Unity (unika problemów z cache'em Rich Text)
                     _lastRenderedContent = "";
                     SetContent(BuildNormalContent(freshSnapshot, isRefreshing: false), "EndUpdate-Fresh");
                     renderedFresh = true;
@@ -178,7 +171,6 @@ namespace SVN.Core
                 Debug.LogWarning($"[SVNBar] Pobranie świeżych danych po update nie powiodło się (używam fallbacku): {ex.Message}");
             }
 
-            // 3. Fallback - używamy tylko wtedy, gdy np. padł SVN i nie mogliśmy pobrać svn info
             if (!renderedFresh && fallbackSnapshot != null)
             {
                 fallbackSnapshot.IsValid = true;
@@ -193,9 +185,8 @@ namespace SVN.Core
         public void EndUpdateFailed(SVNProjectInfoSnapshot oldSnapshot)
         {
             _monitorCts?.Cancel();
-            _state = BarState.Idle; // Zwalniamy stan natychmiast
+            _state = BarState.Idle;
 
-            // Przy nieudanej aktualizacji pliki się nie zmieniły, więc stary snapshot jest w 100% poprawny
             if (oldSnapshot != null)
             {
                 svnManager.CurrentSnapshot = oldSnapshot;
@@ -208,7 +199,6 @@ namespace SVN.Core
         {
             try
             {
-                // Czekamy 400ms na start, żeby update zdążył pobrać pierwsze pakiety
                 await Task.Delay(400, token);
 
                 while (!token.IsCancellationRequested && _state == BarState.Updating)
@@ -234,7 +224,6 @@ namespace SVN.Core
                     catch (OperationCanceledException) { throw; }
                     catch { }
 
-                    // Skanowanie co 5 sekund, aby nie walczyć z procesem svn.exe o dysk
                     try { await Task.Delay(5000, token); }
                     catch (OperationCanceledException) { break; }
                 }
@@ -354,7 +343,6 @@ namespace SVN.Core
                         }
                         catch { }
 
-                        // Sprawdzanie tokenu anulowania co 32 pliki
                         if ((++fileCount & 0x1F) == 0)
                             token.ThrowIfCancellationRequested();
                     }
@@ -369,7 +357,6 @@ namespace SVN.Core
 
         private string ExtractValue(string info, string key)
         {
-            // Zamiast powolnego Regex używamy szybkich operacji na stringach
             if (string.IsNullOrEmpty(info)) return "unknown";
 
             int keyIndex = info.IndexOf(key, StringComparison.OrdinalIgnoreCase);
@@ -381,7 +368,6 @@ namespace SVN.Core
             int valueEnd = info.IndexOf('\n', valueStart);
             if (valueEnd == -1) valueEnd = info.Length;
 
-            // POPRAWKA: Dodano .Trim(), aby usunąć "\r" i ukryte spacje, które psuły int.TryParse()
             return info.Substring(valueStart, valueEnd - valueStart).Trim();
         }
 
@@ -407,7 +393,6 @@ namespace SVN.Core
                 string projectName = svnProject != null && !string.IsNullOrEmpty(svnProject.projectName)
                     ? svnProject.projectName : Path.GetFileName(path);
 
-                // Przekazujemy token anulowania do zapytań SVN
                 var infoTask = SvnRunner.GetInfoAsync(path, token);
                 var remoteRevTask = SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", path, token: token);
 
@@ -424,7 +409,6 @@ namespace SVN.Core
                         cachedSize = entry.value;
                 }
 
-                // Przekazujemy token do skanowania rozmiaru
                 Task<string> sizeTask = cachedSize != null ? Task.FromResult(cachedSize) : GetFolderSizeAsync(path, token);
 
                 string rawInfo = await infoTask;
@@ -444,7 +428,6 @@ namespace SVN.Core
                 snapshot.Author = ExtractValue(rawInfo, "Last Changed Author:");
                 snapshot.Date = ExtractValue(rawInfo, "Last Changed Date:");
 
-                // POPRAWKA: Dodano .Trim() dla bezpiecznego parsowania liczb
                 if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
                     snapshot.RemoteRevision = remoteRevRaw.Trim();
 
@@ -452,7 +435,6 @@ namespace SVN.Core
                 snapshot.Url = ExtractValue(rawInfo, "URL:");
                 snapshot.RepoRoot = ExtractValue(rawInfo, "Repository Root:");
 
-                // POPRAWKA: Bezpieczniejsze sprawdzanie czy jest zaktualizowane
                 snapshot.IsOutdated = false;
                 if (int.TryParse(snapshot.Revision, out int localRev) && int.TryParse(snapshot.RemoteRevision, out int remoteRev))
                 {

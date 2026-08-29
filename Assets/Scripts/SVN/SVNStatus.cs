@@ -1130,7 +1130,6 @@ namespace SVN.Core
                 }
             }
 
-            // Propagacja zaznaczenia w górę drzewa
             for (int i = elements.Count - 1; i >= 0; i--)
             {
                 var el = elements[i];

@@ -18,7 +18,7 @@ namespace SVN.Core
 		private static readonly AsyncReaderWriterLock _svnLock = new();
 
 		public static event Action<bool> OnProcessingStateChanged;
-		public static event Action<string> OnOperationError;   // DODANE
+		public static event Action<string> OnOperationError;
 
 		private static int _activeOperationsCount = 0;
 		private static bool _processingState = false;
@@ -159,7 +159,6 @@ namespace SVN.Core
 			var stdoutQueue = new ConcurrentQueue<string>();
 			var stderrQueue = new ConcurrentQueue<string>();
 
-			// TaskCompletionSource dla zakończenia strumieni
 			var stdoutTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 			var stderrTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -173,7 +172,6 @@ namespace SVN.Core
 				}
 				else
 				{
-					// Koniec strumienia stdout
 					stdoutTcs.TrySetResult(true);
 				}
 			};
@@ -188,7 +186,6 @@ namespace SVN.Core
 				}
 				else
 				{
-					// Koniec strumienia stderr
 					stderrTcs.TrySetResult(true);
 				}
 			};
@@ -197,14 +194,11 @@ namespace SVN.Core
 			{
 				if (!process.Start()) throw new Exception("Failed to start SVN process.");
 
-				// Rozpocznij asynchroniczne czytanie
 				process.BeginOutputReadLine();
 				process.BeginErrorReadLine();
 
-				// Czekaj na zakończenie procesu
 				await WaitForExitAsync(process, token).ConfigureAwait(false);
 
-				// Czekaj na definitywne zamknięcie obu strumieni
 				await Task.WhenAll(stdoutTcs.Task, stderrTcs.Task).ConfigureAwait(false);
 
 				return (
@@ -274,7 +268,6 @@ namespace SVN.Core
 							string fullError = $"SVN Error (Code {exitCode}): {error}{diagnostic}";
 							SVNLogBridge.LogErrorToOutput(fullError);
 
-							// DODANE: Powiadomienie o błędzie (np. dla paska zadań)
 							OnOperationError?.Invoke(fullError);
 
 							throw new Exception(fullError);
@@ -424,7 +417,6 @@ namespace SVN.Core
 
 		public static string ForceCleanPath(string path) => string.IsNullOrEmpty(path) ? string.Empty : new string(path.Where(c => !char.IsControl(c) || c == ' ').ToArray()).Trim();
 
-		// [FIX] Zmieniono bool[] parentIsLast na List<bool> parentIsLast
 		public static void BuildTreeString(
 			string currentDir,
 			string rootDir,
@@ -550,7 +542,6 @@ namespace SVN.Core
 					if (status == "!" || status == "D") stats.DeletedCount++;
 				}
 
-				// [FIX] Uproszczono rysowanie wcięć - List<bool> gwarantuje brak OutOfRange
 				for (int j = 0; j < indent - 1; j++)
 				{
 					bool isLastParent = j < parentIsLast.Count && parentIsLast[j];
@@ -570,7 +561,6 @@ namespace SVN.Core
 
 				if (isDirectory && (expandedPaths.Contains(relPath) || string.IsNullOrEmpty(relPath) || foldersWithRelevantContent.Contains(relPath)))
 				{
-					// [FIX] Bezpieczne rozszerzanie listy dla kolejnego poziomu zagłębienia
 					while (parentIsLast.Count <= indent)
 					{
 						parentIsLast.Add(false);

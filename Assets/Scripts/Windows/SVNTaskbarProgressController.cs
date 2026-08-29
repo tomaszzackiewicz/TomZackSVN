@@ -21,18 +21,8 @@ public class SVNTaskbarProgressController : MonoBehaviour
         ResetTaskbar();
     }
 
-    //private IEnumerator Start()
-    //{
-    //    SVNLogBridge.LogLine("[Taskbar] Direct test: Indeterminate for 5 seconds...");
-    //    WindowsTaskbarProgress.SetState(WindowsTaskbarProgress.TaskbarState.Indeterminate);
-    //    yield return new WaitForSeconds(5f);
-    //    WindowsTaskbarProgress.Reset();
-    //    SVNLogBridge.LogLine("[Taskbar] Direct test finished.");
-    //}
-
     private void HandleProcessingState(bool isProcessing)
     {
-        // Przełączamy na główny wątek Unity
         UnityMainThreadDispatcher.Enqueue(() =>
         {
             if (isProcessing)

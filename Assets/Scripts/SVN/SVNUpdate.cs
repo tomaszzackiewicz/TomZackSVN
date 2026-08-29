@@ -94,11 +94,9 @@ namespace SVN.Core
             var statusModule = svnManager.GetModule<SVNStatus>();
             statusModule?.CancelCurrentRefresh();
 
-            // Inicjalizujemy token na samym początku, żeby był dostępny w pętli oczekiwania
             CancellationTokenSource localCts = new CancellationTokenSource();
             CancellationToken token = localCts.Token;
 
-            // POPRAWKA 1: Czekamy krótko, aż moduł statusu faktycznie zwolni blokadę (ReadLock) w SvnRunner.
             int waitCount = 0;
             while (statusModule != null && statusModule.IsProcessing && waitCount < 50)
             {
@@ -106,7 +104,6 @@ namespace SVN.Core
                 waitCount++;
             }
 
-            // POPRAWKA 2: Czyścimy stary napis "Scanning..." z drzewa plików. 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 svnUI?.SvnTreeView?.ClearView();
