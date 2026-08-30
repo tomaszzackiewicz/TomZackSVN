@@ -1,7 +1,6 @@
 using SVN.Core;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -27,6 +26,9 @@ public class MergePanel : MonoBehaviour
                 await Task.Yield();
             }
         }
+
+        // === FIX K2: panel mógł zostać zniszczony/wyłączony podczas czekania.
+        if (this == null || !gameObject.activeInHierarchy) return;
 
         if (!string.IsNullOrEmpty(_svnManager?.WorkingDir) && _mergeModule != null)
         {
@@ -100,6 +102,8 @@ public class MergePanel : MonoBehaviour
             _svnUI.MergeSourceInput.text = selectedName;
     }
 
+    // UWAGA (znane, nieszkodliwe): ustawienie .value triggeruje OnBranchSelected,
+    // które nadpisuje input tą samą wartością — pętla się uspokaja po jednym obiegu.
     private void OnManualSourceInput(string input)
     {
         if (_svnUI?.MergeBranchesDropdown == null || string.IsNullOrWhiteSpace(input)) return;
@@ -121,6 +125,8 @@ public class MergePanel : MonoBehaviour
         SafeFireAndForget(() => RefreshBranchDropdownAsync(true));
     }
 
+    // === FIX drobiazg: precyzyjne odsubskrybowanie — RemoveAllListeners na
+    // WSPÓŁDZIELONYCH inputach zdejmuje również listenery innych komponentów.
     private void UnsubscribeEvents()
     {
         if (_mergeModule != null)
@@ -130,25 +136,27 @@ public class MergePanel : MonoBehaviour
             _svnManager.OnProjectChanged -= OnProjectChanged;
 
         if (_svnUI?.MergeBranchesDropdown != null)
-            _svnUI.MergeBranchesDropdown.onValueChanged.RemoveAllListeners();
+            _svnUI.MergeBranchesDropdown.onValueChanged.RemoveListener(OnBranchSelected);
 
         if (_svnUI?.MergeSourceInput != null)
-            _svnUI.MergeSourceInput.onEndEdit.RemoveAllListeners();
+            _svnUI.MergeSourceInput.onEndEdit.RemoveListener(OnManualSourceInput);
     }
 
     #region UI Button Methods
 
-    public void Button_CancelMerge() => SafeFireAndForget(() => _mergeModule.CancelMerge());
+    // === FIX drobiazg: null-safe _mergeModule (błąd init modułu → czytelny log
+    // zamiast NRE łapanego generycznie).
+    public void Button_CancelMerge() { if (EnsureReady()) SafeFireAndForget(() => _mergeModule.CancelMerge()); }
     public void Button_RefreshBranchDropdown() => SafeFireAndForget(() => RefreshBranchDropdownAsync(true));
-    public void Button_Compare() => SafeFireAndForget(() => _mergeModule.CompareWithTrunk());
+    public void Button_Compare() { if (EnsureReady()) SafeFireAndForget(() => _mergeModule.CompareWithTrunk()); }
     public void Button_SyncWithTrunk() => SafeFireAndForget(AutoSyncAsync);
-    public void Button_RepairMergeHistory() => SafeFireAndForget(() => _mergeModule.RepairMergeHistory());
+    public void Button_RepairMergeHistory() { if (EnsureReady()) SafeFireAndForget(() => _mergeModule.RepairMergeHistory()); }
     public void Button_ForceMergeFromTrunk() => SafeFireAndForget(ForceMergeFromTrunkAsync);
     public void Button_DryRunMerge() => SafeFireAndForget(DryRunMergeAsync);
     public void Button_ConfirmMerge() => SafeFireAndForget(ConfirmMergeAsync);
-    public void Button_CancelLocalMerge() => SafeFireAndForget(() => _mergeModule.CancelLocalMerge());
-    public void Button_RevertToHead() => SafeFireAndForget(() => _mergeModule.RevertToHead());
-    public void Button_UndoMerge() => SafeFireAndForget(() => _mergeModule.UndoLastMerge());
+    public void Button_CancelLocalMerge() { if (EnsureReady()) SafeFireAndForget(() => _mergeModule.CancelLocalMerge()); }
+    public void Button_RevertToHead() { if (EnsureReady()) SafeFireAndForget(() => _mergeModule.RevertToHead()); }
+    public void Button_UndoMerge() { if (EnsureReady()) SafeFireAndForget(() => _mergeModule.UndoLastMerge()); }
     public void Button_CherryPickConfirm() => SafeFireAndForget(CherryPickAsync);
     public void Button_CherryPickDryRun() => SafeFireAndForget(CherryPickDryRunAsync);
 
@@ -167,18 +175,15 @@ public class MergePanel : MonoBehaviour
         }
     }
 
+    // === FIX K1: odczyt currentSelection przeniesiony DO dispatchowanego callbacku
+    // (przed ClearOptions). Wcześniej blok odczytu na starcie metody wykonywał się
+    // na THREAD POOLU przy wywołaniach z bloków finally (po ConfigureAwait(false)
+    // w DryRun/Confirm/ForceMerge/CherryPick) — race z ClearOptions/AddOptions
+    // na liście TMP_Dropdown.options + odczyt .text poza main thread.
     private async Task RefreshBranchDropdownAsync(bool force = true)
     {
         if (!EnsureReady()) return;
         if (_svnUI?.MergeBranchesDropdown == null) return;
-
-        string currentSelection = null;
-        if (_svnUI.MergeBranchesDropdown.options.Count > 0 &&
-            _svnUI.MergeBranchesDropdown.value >= 0 &&
-            _svnUI.MergeBranchesDropdown.value < _svnUI.MergeBranchesDropdown.options.Count)
-        {
-            currentSelection = _svnUI.MergeBranchesDropdown.options[_svnUI.MergeBranchesDropdown.value].text;
-        }
 
         try
         {
@@ -207,11 +212,19 @@ public class MergePanel : MonoBehaviour
                         return;
                     }
 
+                    // === FIX K1: odczyt aktualnego wyboru TUTAJ (main thread, przed ClearOptions).
+                    string currentSelection = null;
+                    if (_svnUI.MergeBranchesDropdown.options.Count > 0 &&
+                        _svnUI.MergeBranchesDropdown.value >= 0 &&
+                        _svnUI.MergeBranchesDropdown.value < _svnUI.MergeBranchesDropdown.options.Count)
+                    {
+                        currentSelection = _svnUI.MergeBranchesDropdown.options[_svnUI.MergeBranchesDropdown.value].text;
+                    }
+
                     _svnUI.MergeBranchesDropdown.ClearOptions();
                     _svnUI.MergeBranchesDropdown.AddOptions(options);
 
                     int indexToSelect = 0;
-
 
                     if (force && !string.IsNullOrEmpty(currentSelection))
                     {
@@ -244,12 +257,16 @@ public class MergePanel : MonoBehaviour
         }
     }
 
+    // === FIX Ś1-style: odczyt inputu NA MAIN THREAD przed pierwszym await —
+    // GetSafeSource/GetCherryPickRevision wołane są w metodach Task (start z
+    // SafeFireAndForget = main), ale jawnie sprowadzam odczyty na początek metod,
+    // żeby przyszłe edycje nie przeniosły ich za await.
     private async Task DryRunMergeAsync()
     {
         if (!EnsureReady()) return;
 
         HandleDryRunResult(new SVNMerge.MergeFileResult());
-        string source = GetSafeSource();
+        string source = GetSafeSource();       // main thread (przed pierwszym await)
         if (string.IsNullOrEmpty(source)) return;
 
         try
@@ -267,7 +284,7 @@ public class MergePanel : MonoBehaviour
         if (!EnsureReady()) return;
 
         HandleDryRunResult(new SVNMerge.MergeFileResult());
-        string source = GetSafeSource();
+        string source = GetSafeSource();       // main thread
         if (string.IsNullOrEmpty(source)) return;
 
         try
@@ -300,7 +317,7 @@ public class MergePanel : MonoBehaviour
 
         HandleDryRunResult(new SVNMerge.MergeFileResult());
 
-        string source = GetSafeSource();
+        string source = GetSafeSource();       // main thread
         if (string.IsNullOrWhiteSpace(source)) return;
 
         string currentUrl = await SvnRunner.GetRepoUrlAsync(_svnManager.WorkingDir).ConfigureAwait(false);
@@ -316,8 +333,8 @@ public class MergePanel : MonoBehaviour
     {
         if (!EnsureReady()) return;
 
-        string source = GetSafeSourceWithFallback();
-        string revision = GetCherryPickRevision();
+        string source = GetSafeSourceWithFallback();   // main thread
+        string revision = GetCherryPickRevision();     // main thread
 
         if (string.IsNullOrEmpty(source))
         {
@@ -347,8 +364,8 @@ public class MergePanel : MonoBehaviour
     {
         if (!EnsureReady()) return;
 
-        string source = GetSafeSourceWithFallback();
-        string revision = GetCherryPickRevision();
+        string source = GetSafeSourceWithFallback();   // main thread
+        string revision = GetCherryPickRevision();     // main thread
 
         if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(revision))
         {
@@ -369,6 +386,7 @@ public class MergePanel : MonoBehaviour
         }
     }
 
+    // UWAGA: czytają UI — wołać wyłącznie PRZED pierwszym await (main thread).
     private string GetCherryPickRevision() => _svnUI?.MergeCherryPickRevisionInput?.text?.Trim() ?? string.Empty;
 
     private string GetSafeSourceWithFallback()
@@ -387,74 +405,82 @@ public class MergePanel : MonoBehaviour
         return source;
     }
 
+    private string GetSafeSource() => _svnUI?.MergeSourceInput?.text?.Trim() ?? string.Empty;
+
     #endregion
 
     private void HandleDryRunResult(SVNMerge.MergeFileResult result)
     {
-        if (this == null) return;
-        if (_svnUI?.MergeFilesContainer == null || _svnUI.MergeFileItemPrefab == null) return;
-
-        for (int i = _svnUI.MergeFilesContainer.childCount - 1; i >= 0; i--)
+        UnityMainThreadDispatcher.Enqueue(() =>
         {
-            Transform child = _svnUI.MergeFilesContainer.GetChild(i);
-            if (child != null) Destroy(child.gameObject);
-        }
+            if (this == null) return;
+            if (_svnUI?.MergeFilesContainer == null || _svnUI.MergeFileItemPrefab == null) return;
 
-        if (result == null) return;
-
-        if (result.RealChanges > 0 || result.Conflicts > 0)
-        {
-            var headerObj = new GameObject("MergeSummaryHeader", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
-            headerObj.transform.SetParent(_svnUI.MergeFilesContainer, false);
-
-            var rectTransform = headerObj.GetComponent<RectTransform>();
-            rectTransform.anchorMin = new Vector2(0, 1);
-            rectTransform.anchorMax = new Vector2(1, 1);
-            rectTransform.pivot = new Vector2(0.5f, 1);
-            rectTransform.sizeDelta = new Vector2(0, 25);
-
-            var headerText = headerObj.GetComponent<TMPro.TextMeshProUGUI>();
-            headerText.richText = true;
-            headerText.fontSize = 13;
-            headerText.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
-
-            string summary = $"<b>Files to change: {result.RealChanges}</b>  |  " +
-                             $"<color=#55FF55>Added: {result.Added}</color>  |  " +
-                             $"<color=#FFFF55>Updated: {result.Updated}</color>  |  " +
-                             $"<color=#FF9900>Deleted: {result.Deleted}</color>";
-
-            if (result.Conflicts > 0)
-                summary += $"  |  <color=#FF0000><b>CONFLICTS: {result.Conflicts}</b></color>";
-
-            headerText.text = summary;
-        }
-
-        if (result.Files != null)
-        {
-            foreach (SVNMerge.MergeFileInfo file in result.Files)
-            {
-                if (file == null) continue;
-
-                MergeFileItem item = Instantiate(_svnUI.MergeFileItemPrefab, _svnUI.MergeFilesContainer);
-                item.Setup(file);
-            }
-        }
-    }
-
-    private void ClearMergeUI()
-    {
-        if (_svnUI?.MergeConsoleText != null)
-            SVNLogBridge.UpdateUIField(_svnUI.MergeConsoleText, "", "MERGE", append: false);
-
-        if (_svnUI?.MergeFilesContainer != null)
-        {
             for (int i = _svnUI.MergeFilesContainer.childCount - 1; i >= 0; i--)
             {
                 Transform child = _svnUI.MergeFilesContainer.GetChild(i);
                 if (child != null) Destroy(child.gameObject);
             }
-        }
+
+            if (result == null) return;
+
+            if (result.RealChanges > 0 || result.Conflicts > 0)
+            {
+                var headerObj = new GameObject("MergeSummaryHeader", typeof(RectTransform), typeof(TMPro.TextMeshProUGUI));
+                headerObj.transform.SetParent(_svnUI.MergeFilesContainer, false);
+
+                var rectTransform = headerObj.GetComponent<RectTransform>();
+                rectTransform.anchorMin = new Vector2(0, 1);
+                rectTransform.anchorMax = new Vector2(1, 1);
+                rectTransform.pivot = new Vector2(0.5f, 1);
+                rectTransform.sizeDelta = new Vector2(0, 25);
+
+                var headerText = headerObj.GetComponent<TMPro.TextMeshProUGUI>();
+                headerText.richText = true;
+                headerText.fontSize = 13;
+                headerText.textWrappingMode = TMPro.TextWrappingModes.NoWrap;
+
+                string summary = $"<b>Files to change: {result.RealChanges}</b>  |  " +
+                                 $"<color=#55FF55>Added: {result.Added}</color>  |  " +
+                                 $"<color=#FFFF55>Updated: {result.Updated}</color>  |  " +
+                                 $"<color=#FF9900>Deleted: {result.Deleted}</color>";
+
+                if (result.Conflicts > 0)
+                    summary += $"  |  <color=#FF0000><b>CONFLICTS: {result.Conflicts}</b></color>";
+
+                headerText.text = summary;
+            }
+
+            if (result.Files != null)
+            {
+                foreach (SVNMerge.MergeFileInfo file in result.Files)
+                {
+                    if (file == null) continue;
+
+                    MergeFileItem item = Instantiate(_svnUI.MergeFileItemPrefab, _svnUI.MergeFilesContainer);
+                    item.Setup(file);
+                }
+            }
+        });
     }
 
-    private string GetSafeSource() => _svnUI?.MergeSourceInput?.text?.Trim() ?? string.Empty;
+    private void ClearMergeUI()
+    {
+        UnityMainThreadDispatcher.Enqueue(() =>
+        {
+            if (this == null) return;
+
+            if (_svnUI?.MergeConsoleText != null)
+                SVNLogBridge.UpdateUIField(_svnUI.MergeConsoleText, "", "MERGE", append: false);
+
+            if (_svnUI?.MergeFilesContainer != null)
+            {
+                for (int i = _svnUI.MergeFilesContainer.childCount - 1; i >= 0; i--)
+                {
+                    Transform child = _svnUI.MergeFilesContainer.GetChild(i);
+                    if (child != null) Destroy(child.gameObject);
+                }
+            }
+        });
+    }
 }

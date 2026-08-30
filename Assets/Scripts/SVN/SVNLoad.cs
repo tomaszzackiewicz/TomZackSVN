@@ -16,49 +16,18 @@ namespace SVN.Core
 
         public SVNLoad(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
+        // === FIX Ś1: snapshot inputów na main thread (metoda publiczna — może
+        // być wołana z dowolnego kontekstu); dopiero potem async rdzeń.
         public void LoadRepoPathAndRefresh()
         {
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             if (Interlocked.CompareExchange(ref _isBusy, 1, 0) == 1)
             {
                 SVNLogBridge.LogLine("<color=orange>Another operation is running. Please wait.</color>");
                 return;
             }
 
-            var newCts = new CancellationTokenSource();
-            var oldCts = Interlocked.Exchange(ref _loadCts, newCts);
-
-            if (oldCts != null)
-            {
-                try { oldCts.Cancel(); } catch { }
-                try { oldCts.Dispose(); } catch { }
-            }
-
-            var token = newCts.Token;
-
-            _ = LoadRepoPathAndRefreshAsync(token).ContinueWith(t =>
-            {
-                Interlocked.Exchange(ref _isBusy, 0);
-
-                var currentCts = Interlocked.CompareExchange(ref _loadCts, null, newCts);
-                if (ReferenceEquals(currentCts, newCts))
-                {
-                    try { newCts.Dispose(); } catch { }
-                }
-
-                if (t.IsFaulted)
-                {
-                    var baseEx = t.Exception?.GetBaseException();
-                    if (baseEx is not OperationCanceledException)
-                    {
-                        UnityMainThreadDispatcher.Enqueue(() =>
-                            SVNLogBridge.LogError($"[SVNLoad] Operation failed: {baseEx?.Message ?? "Unknown"}"));
-                    }
-                }
-            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
-        }
-
-        private async Task LoadRepoPathAndRefreshAsync(CancellationToken token)
-        {
             string path = svnUI.LoadDestFolderInput != null
                 ? svnUI.LoadDestFolderInput.text.Trim()
                 : string.Empty;
@@ -75,15 +44,54 @@ namespace SVN.Core
             else
                 keyPath = SvnRunner.KeyPath ?? string.Empty;
 
+            // === FIX K1: delayed dispose starego CTS — natychmiastowy Cancel+Dispose
+            // potrafił rzucić ObjectDisposedException w biegnącym checkoucie (token
+            // zarejestrowany w SvnRunner), co wyglądało jak błąd operacji, nie cancel.
+            var newCts = new CancellationTokenSource();
+            var oldCts = Interlocked.Exchange(ref _loadCts, newCts);
+            if (oldCts != null)
+            {
+                try { oldCts.Cancel(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
+            }
+
+            var token = newCts.Token;
+
+            _ = LoadRepoPathAndRefreshAsync(path, manualUrl, keyPath, token).ContinueWith(t =>
+            {
+                Interlocked.Exchange(ref _isBusy, 0);
+
+                var currentCts = Interlocked.CompareExchange(ref _loadCts, null, newCts);
+                if (ReferenceEquals(currentCts, newCts))
+                {
+                    _ = Task.Delay(1000).ContinueWith(_ => { try { newCts.Dispose(); } catch { } });
+                }
+
+                if (t.IsFaulted)
+                {
+                    var baseEx = t.Exception?.GetBaseException();
+                    if (baseEx is not OperationCanceledException)
+                    {
+                        UnityMainThreadDispatcher.Enqueue(() =>
+                            SVNLogBridge.LogError($"[SVNLoad] Operation failed: {baseEx?.Message ?? "Unknown"}"));
+                    }
+                }
+            }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+        }
+
+        private async Task LoadRepoPathAndRefreshAsync(string path, string manualUrl, string keyPath, CancellationToken token)
+        {
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
             {
                 SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid destination path!");
                 return;
             }
 
-            if (!string.IsNullOrEmpty(manualUrl) && !Uri.TryCreate(manualUrl, UriKind.Absolute, out _))
+            // === FIX K2: walidacja scheme — Uri.TryCreate akceptował file://,
+            // ftp:// i dowolne śmieci; checkout startował i padał w połowie.
+            if (!string.IsNullOrEmpty(manualUrl) && !IsValidSvnUrl(manualUrl))
             {
-                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid repository URL!");
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid SVN URL. Expected svn://, svn+ssh://, http:// or https://.");
                 return;
             }
 
@@ -93,7 +101,9 @@ namespace SVN.Core
             {
                 token.ThrowIfCancellationRequested();
 
-                string normalizedPath = path.Replace("\\", "/");
+                // === FIX K3: normalizacja trailing slasha — Path.GetFileName("D:/Repo/")
+                // zwracał PUSTY string → projekt bez nazwy w liście projektów.
+                string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
 
                 UnityMainThreadDispatcher.Enqueue(() =>
                 {
@@ -151,7 +161,16 @@ namespace SVN.Core
                     privateKeyPath = keySnapshot
                 };
 
-                await svnManager.LoadProject(project).ConfigureAwait(false);
+                // === FIX Ś2: LoadProject (po fixie martwej kopii) zwraca Task<bool> —
+                // false = odmowa (brak .svn / martwa kopia). Wcześniej kod leciał
+                // dalej: ustawiał stan, register, SUCCESS i ZAMYKAŁ panel mimo to,
+                // że projekt się nie załadował.
+                bool loaded = await svnManager.LoadProject(project).ConfigureAwait(false);
+                if (!loaded)
+                {
+                    SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Project could not be loaded (working copy invalid).");
+                    return;
+                }
 
                 svnManager.WorkingDir = normalizedPath;
                 svnManager.CurrentKey = keyPath;
@@ -196,32 +215,18 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(path)) return;
 
+            // === S1: atomowe
+            ProjectSettings.AddOrUpdateProject(path, (p, created) =>
+            {
+                if (created)
+                    p.projectName = Path.GetFileName(path.Replace("\\", "/").TrimEnd('/'));
+
+                p.repoUrl = url;
+                p.privateKeyPath = key;
+                p.lastOpened = DateTime.UtcNow;
+            });
+
             string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
-            var projects = ProjectSettings.LoadProjects();
-
-            int index = projects.FindIndex(p =>
-                !string.IsNullOrEmpty(p.workingDir) &&
-                p.workingDir.Replace("\\", "/").TrimEnd('/') == normalizedPath);
-
-            if (index != -1)
-            {
-                projects[index].repoUrl = url ?? string.Empty;
-                projects[index].privateKeyPath = key ?? string.Empty;
-                projects[index].lastOpened = DateTime.UtcNow;
-            }
-            else
-            {
-                projects.Add(new SVNProject
-                {
-                    projectName = Path.GetFileName(normalizedPath),
-                    repoUrl = url ?? string.Empty,
-                    workingDir = normalizedPath,
-                    privateKeyPath = key ?? string.Empty,
-                    lastOpened = DateTime.UtcNow
-                });
-            }
-
-            ProjectSettings.SaveProjects(projects);
             PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
             PlayerPrefs.Save();
         }
@@ -230,14 +235,17 @@ namespace SVN.Core
         {
             if (svnManager == null) return;
 
-            if (svnUI.LoadRepoUrlInput != null)
-                svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl ?? string.Empty;
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (svnUI.LoadRepoUrlInput != null)
+                    svnUI.LoadRepoUrlInput.text = svnManager.RepositoryUrl ?? string.Empty;
 
-            if (svnUI.LoadDestFolderInput != null)
-                svnUI.LoadDestFolderInput.text = svnManager.WorkingDir ?? string.Empty;
+                if (svnUI.LoadDestFolderInput != null)
+                    svnUI.LoadDestFolderInput.text = svnManager.WorkingDir ?? string.Empty;
 
-            if (svnUI.LoadPrivateKeyInput != null)
-                svnUI.LoadPrivateKeyInput.text = svnManager.CurrentKey ?? string.Empty;
+                if (svnUI.LoadPrivateKeyInput != null)
+                    svnUI.LoadPrivateKeyInput.text = svnManager.CurrentKey ?? string.Empty;
+            });
         }
 
         public void ClearSceneReferences()
@@ -254,7 +262,8 @@ namespace SVN.Core
             if (cts != null)
             {
                 try { cts.Cancel(); } catch { }
-                try { cts.Dispose(); } catch { }
+                // === FIX Ś4: delayed dispose (spójnie z K1).
+                _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
             }
         }
     }

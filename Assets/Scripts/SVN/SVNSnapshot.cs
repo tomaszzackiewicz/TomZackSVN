@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,7 +14,7 @@ namespace SVN.Core
     {
         private const string SnapshotName = "CurrentSnapshot";
 
-        private readonly string _snapshotFolder;
+        private readonly string _rootFolder;
         private CancellationTokenSource _cts;
         private int _processingFlag;
         private int _disposed;
@@ -22,8 +23,11 @@ namespace SVN.Core
         public SVNSnapshot(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
-            _snapshotFolder = Path.Combine(Application.persistentDataPath, "SVN_Snapshots");
-            Directory.CreateDirectory(_snapshotFolder);
+            // === FIX K2: katalog GŁÓWNY — snapshoty trzymają się w podfolderach
+            // per-projekt (patrz GetProjectFolder), żeby restore projektu A nie
+            // mógł trafić na working copy projektu B.
+            _rootFolder = Path.Combine(SVNPrefs.PersistentDataPath, "SVN_Snapshots");
+            Directory.CreateDirectory(_rootFolder);
         }
 
         public void Dispose()
@@ -85,11 +89,49 @@ namespace SVN.Core
             }
         }
 
+        // === FIX K2: podfolder per-projekt. Kombinacja czytelnej nazwy projektu
+        // i krótkiego hasha pełnej ścieżki (ścieżki bywają zbyt długie na nazwę
+        // folderu, a same nazwy projektów mogą się powtarzać).
+        private string GetProjectFolder()
+        {
+            string wd = svnManager?.WorkingDir;
+            if (string.IsNullOrWhiteSpace(wd))
+                return _rootFolder; // fallback (przed załadowaniem projektu) — zachowanie legacy
+
+            string normalized = wd.Replace('\\', '/').Trim().TrimEnd('/');
+
+            // === FIX kompilacji: Convert.ToHexString wymaga .NET 5+ (Unity go nie ma)
+            // — klasyczny BitConverter.ToString + Replace("-", "").
+            string hash;
+            using (var md5 = MD5.Create())
+            {
+                byte[] hashBytes = md5.ComputeHash(Encoding.UTF8.GetBytes(normalized.ToUpperInvariant()));
+                hash = BitConverter.ToString(hashBytes).Replace("-", "").Substring(0, 10);
+            }
+
+            string projectName = Path.GetFileName(normalized);
+            char[] invalid = Path.GetInvalidFileNameChars();
+            var sb = new StringBuilder(projectName.Length);
+            foreach (char c in projectName)
+                sb.Append(invalid.Contains(c) ? '_' : c);
+            string safeName = sb.ToString();
+            if (string.IsNullOrWhiteSpace(safeName)) safeName = "Project";
+            if (safeName.Length > 40) safeName = safeName.Substring(0, 40);
+
+            return Path.Combine(_rootFolder, $"{safeName}_{hash}");
+        }
+
         public void ExecuteCreateSnapshot()
         {
+            // === FIX K3: odczyt toggle'a NA MAIN THREAD (tu jesteśmy — przycisk),
+            // PRZED fire-and-forget. Wcześniej czytano go przez PostUI (asynchroniczne
+            // Post!) i wartość była prawie zawsze fałszywa — tryb unversioned-only
+            // praktycznie nie działał.
+            bool unversionedOnly = svnUI?.SnapshotUnversionedOnlyToggle?.isOn ?? false;
+
             SafeFireAndForget(async () =>
             {
-                await CreateSnapshotAsync("Manual").ConfigureAwait(false);
+                await CreateSnapshotAsync("Manual", unversionedOnly).ConfigureAwait(false);
             });
         }
 
@@ -101,10 +143,19 @@ namespace SVN.Core
             });
         }
 
+        // === FIX Ś2: guard — delete w trakcie tworzenia/odtwarzania snapshotu
+        // mógł skasować pliki pod nogami operacji.
         public void ExecuteDeleteSnapshot()
         {
+            if (!TryEnterProcessing())
+            {
+                SVNLogBridge.LogLine("<color=#FFAA00>[Snapshot] Cannot delete — another snapshot operation is running.</color>");
+                return;
+            }
+
             try
             {
+                string folder = GetProjectFolder();
                 string patchPath = GetSnapshotFilePath();
                 string addedFilesPath = GetAddedFilesFolder();
                 string metaPath = GetMetadataPath();
@@ -113,15 +164,19 @@ namespace SVN.Core
                 if (Directory.Exists(addedFilesPath)) Directory.Delete(addedFilesPath, true);
                 if (File.Exists(metaPath)) File.Delete(metaPath);
 
-                SVNLogBridge.LogLine($"<color=yellow>[Snapshot] Snapshot deleted.\nPath: {_snapshotFolder}</color>");
+                SVNLogBridge.LogLine($"<color=yellow>[Snapshot] Snapshot deleted.\nPath: {folder}</color>");
             }
             catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=#FFAA00>[Snapshot] Delete failed:</color> {ex.Message}");
             }
+            finally
+            {
+                ExitProcessing();
+            }
         }
 
-        private async Task<bool> CreateSnapshotAsync(string reason = null)
+        private async Task<bool> CreateSnapshotAsync(string reason = null, bool unversionedOnly = false)
         {
             if (!TryEnterProcessing())
             {
@@ -144,36 +199,48 @@ namespace SVN.Core
                     return false;
                 }
 
-                string patchPath = GetSnapshotFilePath();
-                string addedFilesPath = GetAddedFilesFolder();
+                string projectFolder = GetProjectFolder();
+                Directory.CreateDirectory(projectFolder);
 
-                PostUI(() => SVNLogBridge.LogLine($"[Snapshot] Creating snapshot ({reason ?? "Manual"})...\nDestination: {_snapshotFolder}"));
+                string patchPath = Path.Combine(projectFolder, SnapshotName + ".patch");
+                string addedFilesPath = Path.Combine(projectFolder, SnapshotName + "_Files");
+
+                PostUI(() => SVNLogBridge.LogLine($"[Snapshot] Creating snapshot ({reason ?? "Manual"})...\nDestination: {projectFolder}"));
 
                 string statusOutput = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
 
                 if (string.IsNullOrWhiteSpace(statusOutput))
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"<color=yellow>[Snapshot] Working copy is clean. Creating empty snapshot.\nPath: {_snapshotFolder}</color>"));
+                    PostUI(() => SVNLogBridge.LogLine($"<color=yellow>[Snapshot] Working copy is clean. Creating empty snapshot.\nPath: {projectFolder}</color>"));
                 }
                 else
                 {
-                    int statusLineCount = statusOutput.Split('\n').Length;
+                    // === FIX: RemoveEmptyEntries (liczyło pustą końcówkę — +1).
+                    int statusLineCount = statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
                     PostUI(() => SVNLogBridge.LogLine($"[Snapshot] Detected {statusLineCount} changed/untracked items."));
                 }
 
                 List<string> unversionedFiles = ParseUnversionedFiles(statusOutput, root);
 
-                bool unversionedOnly = false;
-                PostUI(() => unversionedOnly = svnUI?.SnapshotUnversionedOnlyToggle?.isOn ?? false);
-
                 string diff = string.Empty;
                 bool hasTrackedChanges = false;
+                List<string> binaryModified = new List<string>();
 
                 if (!unversionedOnly)
                 {
                     PostUI(() => SVNLogBridge.LogLine("[Snapshot] Generating patch..."));
                     diff = await SvnRunner.RunAsync("diff", root, false, token).ConfigureAwait(false);
                     hasTrackedChanges = !string.IsNullOrWhiteSpace(diff);
+
+                    // === FIX K1: 'svn diff' NIE zawiera treści plików binarnych
+                    // ("Cannot display: file marked as binary") — bez tego snapshot
+                    // udawał kompletny backup, a sceny/prefaby/tekstury nie były
+                    // zapisywane i restore ich NIE przywracał. Teraz binaria idą
+                    // do _Files, a restore (CopyDirectory) zwraca je automatycznie.
+                    binaryModified = ParseBinaryModifiedFromDiff(diff, root);
+                    if (binaryModified.Count > 0)
+                        PostUI(() => SVNLogBridge.LogLine(
+                            $"<color=yellow>[Snapshot] {binaryModified.Count} binary file(s) detected (not patchable) — backing up directly.</color>"));
                 }
                 else
                 {
@@ -189,10 +256,16 @@ namespace SVN.Core
                 string normalizedDiff = hasTrackedChanges ? diff.Replace("\r\n", "\n") : string.Empty;
                 await File.WriteAllTextAsync(patchPath, normalizedDiff, new UTF8Encoding(false), token).ConfigureAwait(false);
 
-                if (hasUnversionedFiles)
+                // === FIX K1: preserve-set = unversioned + zmodyfikowane binaria.
+                var copySet = unversionedFiles
+                    .Concat(binaryModified)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (copySet.Count > 0)
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"[Snapshot] Backing up {unversionedFiles.Count} unversioned files..."));
-                    foreach (string sourcePath in unversionedFiles)
+                    PostUI(() => SVNLogBridge.LogLine($"[Snapshot] Backing up {copySet.Count} file(s)/folder(s)..."));
+                    foreach (string sourcePath in copySet)
                     {
                         token.ThrowIfCancellationRequested();
                         if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath)) continue;
@@ -213,7 +286,7 @@ namespace SVN.Core
 
                 WriteMetadata(reason, hasTrackedChanges, unversionedFiles.Count, unversionedOnly);
 
-                PostUI(() => SVNLogBridge.LogLine($"<color=#55FF55>[Snapshot] Successfully created ({reason ?? "Manual"})\nSaved to: {_snapshotFolder}</color>"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=#55FF55>[Snapshot] Successfully created ({reason ?? "Manual"})\nSaved to: {projectFolder}</color>"));
                 return true;
             }
             catch (OperationCanceledException)
@@ -223,7 +296,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                PostUI(() => SVNLogBridge.LogLine($"<color=#FF9900>[Snapshot] FAILED (Path: {_snapshotFolder}):\n{ex}</color>"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=#FF9900>[Snapshot] FAILED:\n{ex}</color>"));
                 return false;
             }
             finally
@@ -251,17 +324,28 @@ namespace SVN.Core
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
                 string root = svnManager?.WorkingDir;
-                string patchPath = GetSnapshotFilePath();
-                string addedFilesPath = GetAddedFilesFolder();
-                string metaPath = GetMetadataPath();
+                string projectFolder = GetProjectFolder();
+                string patchPath = Path.Combine(projectFolder, SnapshotName + ".patch");
+                string addedFilesPath = Path.Combine(projectFolder, SnapshotName + "_Files");
+                string metaPath = Path.Combine(projectFolder, SnapshotName + ".meta");
 
                 if (!File.Exists(patchPath))
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Snapshot] No snapshot found to restore.\nExpected at: {_snapshotFolder}</color>"));
+                    PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Snapshot] No snapshot found to restore.\nExpected at: {projectFolder}</color>"));
+                    return false;
+                }
+
+                // === FIX K2: snapshot w fallbackowym katalogu głównym (legacy /
+                // brak WorkingDir) — odmawiamy restore, bo nie możemy zweryfikować
+                // przynależności do projektu.
+                if (string.IsNullOrWhiteSpace(root) || projectFolder == _rootFolder)
+                {
+                    PostUI(() => SVNLogBridge.LogLine("<color=#FF9900>[Snapshot] Cannot verify project ownership — load a project first.</color>"));
                     return false;
                 }
 
                 bool isUnversionedOnly = false;
+                string snapshotWorkingDir = null;
                 if (File.Exists(metaPath))
                 {
                     try
@@ -271,14 +355,30 @@ namespace SVN.Core
                         {
                             if (l.StartsWith("UnversionedOnly="))
                                 isUnversionedOnly = l.Substring(16) == "1";
+                            else if (l.StartsWith("WorkingDir="))
+                                snapshotWorkingDir = l.Substring(11).Trim();
                         }
                     }
                     catch { }
                 }
 
+                // === FIX K2 (weryfikacja): snapshot z INNEGO projektu = hard stop.
+                if (!string.IsNullOrWhiteSpace(snapshotWorkingDir))
+                {
+                    string currentNorm = root.Replace('\\', '/').Trim().TrimEnd('/');
+                    string snapNorm = snapshotWorkingDir.Replace('\\', '/').Trim().TrimEnd('/');
+                    if (!string.Equals(currentNorm, snapNorm, StringComparison.OrdinalIgnoreCase))
+                    {
+                        PostUI(() => SVNLogBridge.LogLine(
+                            $"<color=#FF4444><b>[Snapshot] MISMATCH — this snapshot belongs to another project!</b></color>\n" +
+                            $"Snapshot: {snapshotWorkingDir}\nCurrent:  {root}"));
+                        return false;
+                    }
+                }
+
                 if (isUnversionedOnly)
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"<color=yellow>[Snapshot] Unversioned-only mode detected. Restoring files directly from:\n{_snapshotFolder}</color>"));
+                    PostUI(() => SVNLogBridge.LogLine($"<color=yellow>[Snapshot] Unversioned-only mode detected. Restoring files directly from:\n{projectFolder}</color>"));
 
                     if (Directory.Exists(addedFilesPath))
                     {
@@ -292,14 +392,29 @@ namespace SVN.Core
                 }
                 else
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"[Snapshot] Full snapshot detected (Source: {_snapshotFolder}). Pre-flight check: Verifying working copy..."));
-                    string currentStatus = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
+                    PostUI(() => SVNLogBridge.LogLine("[Snapshot] Full snapshot detected. Pre-flight check: Verifying working copy..."));
 
-                    if (!string.IsNullOrWhiteSpace(currentStatus))
+                    // === FIX Ś1: blokujemy TYLKO wersjonowane zmiany. Pełny status
+                    // blokował też na '?' (nieversioned — w Unity wszędzie) i 'X'
+                    // (externals — nieodwracalne), przez co restore był praktycznie
+                    // zawsze zablokowany. '--ignore-externals' + filtr kolumn.
+                    string currentStatus = await SvnRunner.RunAsync("status --ignore-externals", root, false, token).ConfigureAwait(false);
+                    bool hasVersionedChanges = false;
+
+                    foreach (string rawLine in (currentStatus ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (rawLine.Length < 1) continue;
+                        char col0 = rawLine[0];
+                        char col1 = rawLine.Length > 1 ? rawLine[1] : ' ';
+                        if (col0 == '?' || col0 == 'I' || col0 == 'X') continue;      // nieversioned/ignored/externals — nie przeszkadzają patchowi
+                        if (col0 != ' ' || col1 != ' ') { hasVersionedChanges = true; break; }
+                    }
+
+                    if (hasVersionedChanges)
                     {
                         PostUI(() => SVNLogBridge.LogLine(
                             "<color=#FF4444><b>[Snapshot] RESTORE BLOCKED</b></color>\n" +
-                            "Your working copy is not clean. Restoring now could corrupt your current files.\n\n" +
+                            "Your working copy has uncommitted VERSIONED changes. Restoring now could corrupt your current files.\n\n" +
                             "<b>What to do:</b>\n" +
                             "1. If you want to keep current changes -> Use <b>Shelve</b> first, then restore snapshot.\n" +
                             "2. If you want to discard current changes -> Use <b>Revert</b> first, then restore snapshot."));
@@ -323,7 +438,7 @@ namespace SVN.Core
                             ? safeOutput.Substring(0, 500) + "\n... (truncated)"
                             : safeOutput;
 
-                        PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Snapshot] SVN Patch failed. Details:\n{errorMsg}</color>"));
+                        PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Snapshot] SVN Patch failed (working copy may be partially patched — inspect status!). Details:\n{errorMsg}</color>"));
                         return false;
                     }
 
@@ -331,7 +446,9 @@ namespace SVN.Core
 
                     if (Directory.Exists(addedFilesPath))
                     {
-                        PostUI(() => SVNLogBridge.LogLine("[Snapshot] Restoring unversioned files..."));
+                        PostUI(() => SVNLogBridge.LogLine("[Snapshot] Restoring unversioned/binary files..."));
+                        // === FIX K1: binaria wracają tutaj (CopyDirectory nadpisuje
+                        // wersjonowane pliki zmodyfikowanymi kopiami ze snapshotu).
                         CopyDirectory(addedFilesPath, root);
                     }
                 }
@@ -344,7 +461,7 @@ namespace SVN.Core
 
                 await svnManager.RefreshStatus().ConfigureAwait(false);
 
-                PostUI(() => SVNLogBridge.LogLine($"<color=#55FF55>[Snapshot] Restore process completed successfully (from: {_snapshotFolder}).</color>"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=#55FF55>[Snapshot] Restore process completed successfully (from: {projectFolder}).</color>"));
                 return true;
             }
             catch (OperationCanceledException)
@@ -354,7 +471,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Snapshot] Restore failed (Source: {_snapshotFolder}): {ex.Message}</color>"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=#FFAA00>[Snapshot] Restore failed: {ex.Message}</color>"));
                 return false;
             }
             finally
@@ -368,7 +485,6 @@ namespace SVN.Core
         public SnapshotInfo GetCurrentSnapshotInfo()
         {
             string patchPath = GetSnapshotFilePath();
-            string metaPath = GetMetadataPath();
 
             if (!File.Exists(patchPath))
                 return null;
@@ -376,7 +492,7 @@ namespace SVN.Core
             var info = new SnapshotInfo
             {
                 Exists = true,
-                FolderPath = _snapshotFolder,
+                FolderPath = GetProjectFolder(),
                 Date = File.GetLastWriteTime(patchPath),
                 SizeBytes = new FileInfo(patchPath).Length
             };
@@ -386,9 +502,14 @@ namespace SVN.Core
             {
                 try
                 {
-                    info.UnversionedFileCount = Directory.GetFiles(filesFolder, "*", SearchOption.AllDirectories).Length;
-                    info.SizeBytes += Directory.GetFiles(filesFolder, "*", SearchOption.AllDirectories)
-                                               .Sum(f => new FileInfo(f).Length);
+                    // === FIX: jeden przebieg (dwa GetFiles AllDirectories = podwójny
+                    // pełny skan folderu).
+                    var files = Directory.GetFiles(filesFolder, "*", SearchOption.AllDirectories);
+                    info.UnversionedFileCount = files.Length;
+                    foreach (string f in files)
+                    {
+                        try { info.SizeBytes += new FileInfo(f).Length; } catch { }
+                    }
                 }
                 catch { }
             }
@@ -406,6 +527,7 @@ namespace SVN.Core
             }
             catch { }
 
+            string metaPath = GetMetadataPath();
             if (File.Exists(metaPath))
             {
                 try
@@ -447,6 +569,42 @@ namespace SVN.Core
             return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
+        // === FIX K1: te same reguły co w SVNShelve — ścieżka z "Index: ", treść
+        // "Cannot display: file marked as binary" → plik do backupu bezpośredniego.
+        private static List<string> ParseBinaryModifiedFromDiff(string diff, string root)
+        {
+            var result = new List<string>();
+            if (string.IsNullOrWhiteSpace(diff)) return result;
+
+            string pendingIndex = null;
+            foreach (string rawLine in diff.Split('\n'))
+            {
+                string line = rawLine.TrimEnd('\r');
+
+                if (line.StartsWith("Index: ", StringComparison.Ordinal))
+                {
+                    pendingIndex = line.Substring("Index: ".Length).Trim();
+                    continue;
+                }
+
+                if (pendingIndex != null &&
+                    line.IndexOf("Cannot display: file marked as binary", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    string fullPath = Path.GetFullPath(Path.Combine(root, pendingIndex.Replace('/', Path.DirectorySeparatorChar)));
+                    if (File.Exists(fullPath))
+                        result.Add(fullPath);
+                    pendingIndex = null;
+                    continue;
+                }
+
+                if (line.Length > 0 && (line[0] == '+' || line[0] == '-'))
+                    pendingIndex = null;
+            }
+
+            return result;
+        }
+
+        // === FIX K2: metadane zapisują WorkingDir — weryfikacja przy restorze.
         private void WriteMetadata(string reason, bool hasTracked, int unversionedCount, bool unversionedOnly = false)
         {
             try
@@ -455,6 +613,7 @@ namespace SVN.Core
                 var sb = new StringBuilder();
                 sb.AppendLine($"Reason={reason ?? "Manual"}");
                 sb.AppendLine($"Date={DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine($"WorkingDir={svnManager?.WorkingDir ?? ""}");
                 sb.AppendLine($"Tracked={(hasTracked ? 1 : 0)}");
                 sb.AppendLine($"Unversioned={unversionedCount}");
                 sb.AppendLine($"UnversionedOnly={(unversionedOnly ? 1 : 0)}");
@@ -463,9 +622,23 @@ namespace SVN.Core
             catch { }
         }
 
-        private string GetSnapshotFilePath() => Path.Combine(_snapshotFolder, SnapshotName + ".patch");
-        private string GetAddedFilesFolder() => Path.Combine(_snapshotFolder, SnapshotName + "_Files");
-        private string GetMetadataPath() => Path.Combine(_snapshotFolder, SnapshotName + ".meta");
+        private string GetSnapshotFilePath()
+        {
+            string folder = GetProjectFolder();
+            return Path.Combine(folder, SnapshotName + ".patch");
+        }
+
+        private string GetAddedFilesFolder()
+        {
+            string folder = GetProjectFolder();
+            return Path.Combine(folder, SnapshotName + "_Files");
+        }
+
+        private string GetMetadataPath()
+        {
+            string folder = GetProjectFolder();
+            return Path.Combine(folder, SnapshotName + ".meta");
+        }
 
         private static void CopyDirectory(string sourceDir, string destDir)
         {

@@ -17,7 +17,15 @@ namespace SVN.Core
             _log = log;
         }
 
-        public async Task<string> BackupAsync(string path, CancellationToken token = default)
+        // === FIX 9: metody faktycznie asynchroniczne (Task.Run) — wcześniej
+        // 'async' bez await (ostrzeżenie CS1998) i blokujące I/O na wątku
+        // wywołującym. Wywołania "await ..." po stronie callerów bez zmian.
+        public Task<string> BackupAsync(string path, CancellationToken token = default)
+        {
+            return Task.Run(() => BackupCore(path, token), token);
+        }
+
+        private string BackupCore(string path, CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
 
@@ -69,7 +77,12 @@ namespace SVN.Core
             }
         }
 
-        public async Task SafeDeleteAsync(string path, CancellationToken token = default)
+        public Task SafeDeleteAsync(string path, CancellationToken token = default)
+        {
+            return Task.Run(() => SafeDeleteCore(path, token), token);
+        }
+
+        private void SafeDeleteCore(string path, CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(path)) return;
 
@@ -136,7 +149,7 @@ namespace SVN.Core
                 foreach (char c in Path.GetInvalidFileNameChars())
                     projectName = projectName.Replace(c, '_');
 
-                string backupRoot = Path.Combine(Application.persistentDataPath, $"{projectName}_Backup");
+                string backupRoot = Path.Combine(SVNPrefs.PersistentDataPath, $"{projectName}_Backup");
 
                 if (!Directory.Exists(backupRoot))
                     Directory.CreateDirectory(backupRoot);
@@ -169,6 +182,8 @@ namespace SVN.Core
             }
         }
 
+        // === FIX 12: pętla antykolizyjna — dwa backupy tej samej ścieżki w tej
+        // samej sekundzie nadpisywały się (timestamp ma rozdzielczość 1s).
         private static string MakeUniquePath(string path)
         {
             if (!File.Exists(path) && !Directory.Exists(path))
@@ -179,7 +194,12 @@ namespace SVN.Core
             string ext = Path.GetExtension(path);
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
-            return Path.Combine(dir, $"{name}_{timestamp}{ext}");
+            string candidate = Path.Combine(dir, $"{name}_{timestamp}{ext}");
+            int counter = 1;
+            while (File.Exists(candidate) || Directory.Exists(candidate))
+                candidate = Path.Combine(dir, $"{name}_{timestamp}_{counter++}{ext}");
+
+            return candidate;
         }
 
         private static void CopyDirectory(string sourceDir, string destDir, CancellationToken token)
@@ -204,6 +224,9 @@ namespace SVN.Core
             }
         }
 
+        // === FIX 11: czyszczenie atrybutów także na katalogach — bez tego
+        // Directory.Delete(recursive) po cichu nie usuwał struktury read-only
+        // (spójnie z wersją PermanentDelete w SVNConflictCore).
         private static void PermanentDelete(string path)
         {
             try
@@ -215,6 +238,10 @@ namespace SVN.Core
                 }
                 else if (Directory.Exists(path))
                 {
+                    foreach (var file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    foreach (var dir in Directory.GetDirectories(path, "*", SearchOption.AllDirectories))
+                        File.SetAttributes(dir, FileAttributes.Normal);
                     Directory.Delete(path, true);
                 }
             }

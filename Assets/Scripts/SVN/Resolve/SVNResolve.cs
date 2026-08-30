@@ -124,10 +124,22 @@ namespace SVN.Core
         }
 
         public async Task<bool> ResolveSingleMine(string path) =>
-            await RunWithLockAsync(token => _resolver.ResolveSingleCoreAsync(path, "mine-full", token)).ConfigureAwait(false);
+    await RunWithLockAsync(async token =>
+    {
+        bool ok = await _resolver.ResolveSingleCoreAsync(path, "mine-full", token).ConfigureAwait(false);
+        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+        return ok;
+    }).ConfigureAwait(false);
 
         public async Task<bool> ResolveSingleTheirs(string path) =>
-            await RunWithLockAsync(token => _resolver.ResolveSingleCoreAsync(path, "theirs-full", token)).ConfigureAwait(false);
+            await RunWithLockAsync(async token =>
+            {
+                bool ok = await _resolver.ResolveSingleCoreAsync(path, "theirs-full", token).ConfigureAwait(false);
+                if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+                else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+                return ok;
+            }).ConfigureAwait(false);
 
         public async Task RefreshConflictUI() =>
             await RefreshConflictUIAsync(CancellationToken.None).ConfigureAwait(false);
@@ -184,19 +196,49 @@ namespace SVN.Core
         }
 
         public async Task<bool> MarkSingleResolved(string path) =>
-            await RunWithLockAsync(token => _resolver.MarkSingleResolvedAsync(path, token)).ConfigureAwait(false);
+    await RunWithLockAsync(async token =>
+    {
+        bool ok = await _resolver.MarkSingleResolvedAsync(path, token).ConfigureAwait(false);
+        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+        return ok;
+    }).ConfigureAwait(false);
 
         public async Task<bool> ResolveTreeMine(string path) =>
-            await RunWithLockAsync(token => _resolver.ResolveTreeStrategyAsync(path, "mine-full", token)).ConfigureAwait(false);
+    await RunWithLockAsync(async token =>
+    {
+        bool ok = await _resolver.ResolveTreeStrategyAsync(path, "mine-full", token).ConfigureAwait(false);
+        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+        return ok;
+    }).ConfigureAwait(false);
 
         public async Task<bool> ResolveTreeTheirs(string path) =>
-            await RunWithLockAsync(token => _resolver.ResolveTreeStrategyAsync(path, "theirs-full", token)).ConfigureAwait(false);
+            await RunWithLockAsync(async token =>
+            {
+                bool ok = await _resolver.ResolveTreeStrategyAsync(path, "theirs-full", token).ConfigureAwait(false);
+                if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+                else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+                return ok;
+            }).ConfigureAwait(false);
 
         public async Task<bool> ResolveTreeBase(string path) =>
-            await RunWithLockAsync(token => _resolver.ResolveTreeStrategyAsync(path, "base", token)).ConfigureAwait(false);
+            await RunWithLockAsync(async token =>
+            {
+                bool ok = await _resolver.ResolveTreeStrategyAsync(path, "base", token).ConfigureAwait(false);
+                if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+                else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+                return ok;
+            }).ConfigureAwait(false);
 
         public async Task<bool> ResolveTreeWorking(string path) =>
-            await RunWithLockAsync(token => _resolver.ResolveTreeStrategyAsync(path, "working", token)).ConfigureAwait(false);
+    await RunWithLockAsync(async token =>
+    {
+        bool ok = await _resolver.ResolveTreeStrategyAsync(path, "working", token).ConfigureAwait(false);
+        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+        return ok;
+    }).ConfigureAwait(false);
 
         public async Task<bool> DeleteObstruction(string path, bool refreshUi = true) =>
             await DeleteObstructionAsync(path, refreshUi).ConfigureAwait(false);
@@ -272,10 +314,14 @@ namespace SVN.Core
                         }
 
                         var parent = svnUI.ResolveConsoleContent.transform;
+
+                        // === FIX 17: DestroyImmediate (jesteśmy na main thread) — zwykłe
+                        // Destroy zostawiało stare itemy przez jedną klatkę i listy
+                        // na chwilę się nakładały/migotały.
                         for (int i = parent.childCount - 1; i >= 0; i--)
                         {
                             var child = parent.GetChild(i).gameObject;
-                            UnityEngine.Object.Destroy(child);
+                            UnityEngine.Object.DestroyImmediate(child);
                         }
 
                         foreach (var info in infos)
@@ -295,8 +341,11 @@ namespace SVN.Core
                     }
                 });
 
-                Task completed = await Task.WhenAny(tcs.Task, Task.Delay(2000, token)).ConfigureAwait(false);
-                if (completed != tcs.Task)
+                // === FIX 10: delay bez tokenu + check przed logiem — wcześniej
+                // anulowanie refreshu logowało fałszywy "UI Refresh timeout"
+                // (Task.Delay(token) natychmiast "wygrywał" WhenAny po cancel).
+                Task completed = await Task.WhenAny(tcs.Task, Task.Delay(2000)).ConfigureAwait(false);
+                if (completed != tcs.Task && !token.IsCancellationRequested)
                     LogBoth("<color=#FFAA00>UI Refresh timeout (main thread unresponsive).</color>");
             }
             catch (OperationCanceledException) { }
@@ -566,8 +615,16 @@ namespace SVN.Core
                 string fileName = Path.GetFileName(conflictedFullPath);
                 string mineFile = conflictedFullPath + ".mine";
 
-                var revFiles = Directory.GetFiles(dir, $"{fileName}.r*")
-                    .Where(f => !f.EndsWith(".mine"))
+                // === FIX 16: Directory.GetFiles z patternem puszczał znaki glob
+                // ([, *, ?) z nazwy pliku — plik "Assets [final].prefab" psuł
+                // wyszukiwanie .r*. Ręczny filtr jest odporny na dowolne nazwy.
+                var revFiles = Directory.GetFiles(dir ?? ".")
+                    .Where(f =>
+                    {
+                        string fn = Path.GetFileName(f);
+                        return fn.StartsWith(fileName + ".r", StringComparison.OrdinalIgnoreCase)
+                               && !fn.EndsWith(".mine", StringComparison.OrdinalIgnoreCase);
+                    })
                     .Select(f => new { Path = f, Rev = ExtractRevisionNumber(f) })
                     .Where(x => x.Rev.HasValue)
                     .OrderBy(x => x.Rev.Value)
@@ -622,16 +679,24 @@ namespace SVN.Core
 
                 try
                 {
-                    bool hasStart = false, hasSeparator = false, hasEnd = false;
+                    bool hasStart = false, hasSeparator = false;
                     using var stream = new StreamReader(fullPath);
                     string line;
                     while ((line = stream.ReadLine()) != null)
                     {
                         string trimmed = line.TrimStart();
-                        if (trimmed.StartsWith("<<<<<<<", StringComparison.Ordinal)) hasStart = true;
-                        else if (hasStart && trimmed.StartsWith("=======", StringComparison.Ordinal)) hasSeparator = true;
-                        else if (hasStart && hasSeparator && trimmed.StartsWith(">>>>>>>", StringComparison.Ordinal)) hasEnd = true;
-                        if (hasStart && hasSeparator && hasEnd) return true;
+                        if (trimmed.StartsWith("<<<<<<<", StringComparison.Ordinal))
+                        {
+                            // === FIX: reset separatora przy nowym bloku startowym —
+                            // sekwencja <<<<<<< ... ======= ... <<<<<<< ... >>>>>> bez
+                            // zamknięcia pierwszego bloku dawała fałszywy pozytyw.
+                            hasStart = true;
+                            hasSeparator = false;
+                        }
+                        else if (hasStart && trimmed.StartsWith("=======", StringComparison.Ordinal))
+                            hasSeparator = true;
+                        else if (hasStart && hasSeparator && trimmed.StartsWith(">>>>>>>", StringComparison.Ordinal))
+                            return true;
                     }
                     return false;
                 }

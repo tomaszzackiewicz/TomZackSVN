@@ -21,10 +21,13 @@ namespace SVN.Core
         private static List<string> _buffer = new();
         private static bool _flushScheduled;
         private static Timer _flushTimer;
+        private static readonly object _timerLock = new();
 
-        private static string _fullLogText = "";
-
-        private static Queue<string> _allLines = new Queue<string>();
+        // === FIX K1/Ś1: WŁASNOŚĆ MAIN THREAD ONLY (dokumentowane). Mutowane
+        // wyłącznie w kodzie wykonywanym przez UnityMainThreadDispatcher —
+        // Flush/FlushImmediate/TraceBar/ClearConsole (wszystkie w Enqueue).
+        private static readonly StringBuilder _fullLogBuilder = new StringBuilder(16 * 1024);
+        private static readonly Queue<string> _allLines = new Queue<string>(MaxUILines + 8);
 
         private static bool _globalHandlingEnabled = false;
 
@@ -55,7 +58,7 @@ namespace SVN.Core
         {
             if (type == LogType.Exception || type == LogType.Error)
             {
-                string msg = $"<color=#FF0000><b>[UNITY {type}]</b> {logString}</color>\n<color=#88CCFF>{stackTrace}</color>";
+                string msg = $"<color=#FF0000><b>[UNITY {type}]</b> {logString}</color>\n<color=88CCFF>{stackTrace}</color>";
                 LogLine(msg, true, type.ToString());
             }
         }
@@ -95,7 +98,14 @@ namespace SVN.Core
                 return;
             }
 
-            bool forceFlush = level == "ERROR" || level == "EXCEPTION" || level == "UNHANDLED_DOMAIN" || level == "UNobserved_TASK";
+            // === FIX drobiazg: porównanie OrdinalIgnoreCase — literówka
+            // "UNobserved_TASK" sprawiała, że unobserved task exceptions nigdy
+            // nie force-flushowały.
+            bool forceFlush = level.Equals("ERROR", StringComparison.OrdinalIgnoreCase) ||
+                              level.Equals("EXCEPTION", StringComparison.OrdinalIgnoreCase) ||
+                              level.Equals("UNHANDLED_DOMAIN", StringComparison.OrdinalIgnoreCase) ||
+                              level.Equals("UNOBSERVED_TASK", StringComparison.OrdinalIgnoreCase);
+
             int count;
             lock (_bufferLock)
             {
@@ -110,7 +120,7 @@ namespace SVN.Core
             {
                 FlushImmediate();
             }
-            else if (!_flushScheduled)
+            else
             {
                 ScheduleFlush();
             }
@@ -177,23 +187,31 @@ namespace SVN.Core
             });
         }
 
+        // === FIX K1: ScheduleFlush pod lockiem — dwa wątki jednocześnie mogły
+        // utworzyć DWA Timery (jeden zombie-strzelał flushami w pustkę).
         private static void ScheduleFlush()
         {
-            _flushScheduled = true;
+            lock (_timerLock)
+            {
+                if (_flushScheduled) return;   // === FIX: idempotentne (wcześniej
+                                               // ustawiało flagę NA ZEWNĄTRZ checka)
+                _flushScheduled = true;
 
-            if (_flushTimer == null)
-            {
-                _flushTimer = new Timer(_ =>
+                if (_flushTimer == null)
                 {
-                    UnityMainThreadDispatcher.Enqueue(Flush);
-                }, null, FlushDelayMs, Timeout.Infinite);
-            }
-            else
-            {
-                _flushTimer.Change(FlushDelayMs, Timeout.Infinite);
+                    _flushTimer = new Timer(_ =>
+                    {
+                        UnityMainThreadDispatcher.Enqueue(Flush);
+                    }, null, FlushDelayMs, Timeout.Infinite);
+                }
+                else
+                {
+                    _flushTimer.Change(FlushDelayMs, Timeout.Infinite);
+                }
             }
         }
 
+        // Wykonywane WYŁĄCZNIE na main thread (z dispatchera).
         private static void Flush()
         {
             List<string> linesToAdd;
@@ -210,24 +228,36 @@ namespace SVN.Core
             }
 
             AppendToLog(linesToAdd);
-            SetLogText(_fullLogText, scroll: true);
+            SetLogText(BuildCurrentText(), scroll: true);
         }
 
         public static void FlushImmediate(string singleMessage = null, bool clear = false)
         {
-            _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-            _flushScheduled = false;
+            lock (_timerLock)
+            {
+                _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                _flushScheduled = false;
+            }
+
+            string single = singleMessage;   // snapshot do closure
+            bool doClear = clear;
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
-                if (clear)
+                if (doClear)
                 {
-                    _allLines.Clear();
                     lock (_bufferLock) _buffer.Clear();
 
-                    _allLines.Enqueue(singleMessage);
-                    _fullLogText = singleMessage + "\n";
-                    SetLogText(_fullLogText, scroll: false);
+                    _allLines.Clear();
+                    _fullLogBuilder.Clear();
+
+                    if (!string.IsNullOrEmpty(single))
+                    {
+                        _allLines.Enqueue(single);
+                        _fullLogBuilder.AppendLine(single);
+                    }
+
+                    SetLogText(BuildCurrentText(), scroll: false);
                     return;
                 }
 
@@ -237,14 +267,15 @@ namespace SVN.Core
                     pending = new List<string>(_buffer);
                     _buffer.Clear();
                 }
-                if (!string.IsNullOrEmpty(singleMessage))
-                    pending.Add(singleMessage);
+                if (!string.IsNullOrEmpty(single))
+                    pending.Add(single);
 
                 AppendToLog(pending);
-                SetLogText(_fullLogText, scroll: true);
+                SetLogText(BuildCurrentText(), scroll: true);
             });
         }
 
+        // MAIN THREAD ONLY.
         private static void AppendToLog(List<string> linesToAdd)
         {
             if (linesToAdd == null || linesToAdd.Count == 0) return;
@@ -252,7 +283,7 @@ namespace SVN.Core
             foreach (var line in linesToAdd)
             {
                 _allLines.Enqueue(line);
-                _fullLogText += line + "\n";
+                _fullLogBuilder.AppendLine(line);
             }
 
             if (_allLines.Count > MaxUILines)
@@ -263,13 +294,17 @@ namespace SVN.Core
                     _allLines.Dequeue();
                 }
 
-                var sb = new StringBuilder(_allLines.Count * 128);
+                // === FIX Ś1: przebudowa TYLKO przy przycięciu (rzadko), nie co linię —
+                // wcześniej '_fullLogText += line' = O(n²) + pełny re-parse TMP
+                // przy każdym flushu (GC-thrash, zjadanie klatek przy zalewie logów).
+                _fullLogBuilder.Clear();
                 foreach (var l in _allLines)
-                    sb.AppendLine(l);
-
-                _fullLogText = sb.ToString();
+                    _fullLogBuilder.AppendLine(l);
             }
         }
+
+        // MAIN THREAD ONLY.
+        private static string BuildCurrentText() => _fullLogBuilder.ToString();
 
         private static void SetLogText(string text, bool scroll)
         {
@@ -338,8 +373,14 @@ namespace SVN.Core
         {
             DisableGlobalExceptionHandling();
             FlushImmediate();
-            _flushTimer?.Dispose();
-            _flushTimer = null;
+            SVNLogger.Shutdown();
+
+            lock (_timerLock)
+            {
+                _flushTimer?.Dispose();
+                _flushTimer = null;
+                _flushScheduled = false;
+            }
         }
 
         public static void LogToOutput(string message)
@@ -371,6 +412,8 @@ namespace SVN.Core
             });
         }
 
+        // === FIX drobiazg: TraceBar korzysta ze wspólnego AppendToLog (main)
+        // zamiast duplikować logikę przycinania.
         public static void TraceBar(string source, string message)
         {
             string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
@@ -378,40 +421,25 @@ namespace SVN.Core
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
-                if (SVNUI.Instance == null || SVNUI.Instance.LogText == null)
-                    return;
-
-                _allLines.Enqueue(line);
-                _fullLogText += line + "\n";
-
-                if (_allLines.Count > MaxUILines)
-                {
-                    int excess = _allLines.Count - MaxUILines;
-                    for (int i = 0; i < excess; i++) _allLines.Dequeue();
-
-                    var sb = new StringBuilder(_allLines.Count * 128);
-                    foreach (var l in _allLines) sb.AppendLine(l);
-                    _fullLogText = sb.ToString();
-                }
-
-                SVNUI.Instance.LogText.text = _fullLogText;
-
-                if (SVNUI.Instance.LogScrollRect != null)
-                    SVNUI.Instance.LogScrollRect.verticalNormalizedPosition = 0f;
+                AppendToLog(new List<string> { line });
+                SetLogText(BuildCurrentText(), scroll: true);
             });
         }
 
         public static void ClearConsole()
         {
-            _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-            _flushScheduled = false;
+            lock (_timerLock)
+            {
+                _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                _flushScheduled = false;
+            }
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 lock (_bufferLock) _buffer.Clear();
 
                 _allLines.Clear();
-                _fullLogText = string.Empty;
+                _fullLogBuilder.Clear();
 
                 if (SVNUI.Instance != null && SVNUI.Instance.LogText != null)
                 {

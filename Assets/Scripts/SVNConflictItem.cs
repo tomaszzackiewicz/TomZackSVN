@@ -1,7 +1,8 @@
+using SVN.Core;
+using System;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using SVN.Core;
 
 public class SVNConflictItem : MonoBehaviour
 {
@@ -29,6 +30,20 @@ public class SVNConflictItem : MonoBehaviour
     private string _path;
 
     public enum ConflictType { Text, Manual, Tree }
+
+    // === FIX 14: null-safe bindowanie dla WSZYSTKICH przycisków (wcześniej
+    // tylko force miały null-check — niepodpięty slot w Inspectorze = NRE
+    // przy kliknięciu).
+    private static void Bind(Button button, Func<System.Threading.Tasks.Task> action)
+    {
+        if (button == null) return;
+        button.onClick.RemoveAllListeners();
+        button.onClick.AddListener(async () =>
+        {
+            try { await action(); }
+            catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
+        });
+    }
 
     public void Setup(string path, ConflictType type, bool hasMarkers, string treeReason = null)
     {
@@ -73,41 +88,22 @@ public class SVNConflictItem : MonoBehaviour
             Show(theirsButton);
             Show(openButton);
 
-            mineButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleMine(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            theirsButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleTheirs(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            openButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().OpenSingle(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
+            Bind(mineButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleMine(_path));
+            Bind(theirsButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleTheirs(_path));
+            Bind(openButton, () => SVNManager.Instance.GetModule<SVNResolve>().OpenSingle(_path));
         }
         else if (type == ConflictType.Manual)
         {
             Show(openButton);
             Show(resolvedButton);
 
-            openButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().OpenSingle(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
+            Bind(openButton, () => SVNManager.Instance.GetModule<SVNResolve>().OpenSingle(_path));
 
-            resolvedButton.interactable = !hasMarkers;
-            resolvedButton.onClick.AddListener(async () =>
+            if (resolvedButton != null)
             {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().MarkSingleResolved(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
+                resolvedButton.interactable = !hasMarkers;
+                Bind(resolvedButton, () => SVNManager.Instance.GetModule<SVNResolve>().MarkSingleResolved(_path));
+            }
         }
         else if (type == ConflictType.Tree)
         {
@@ -119,56 +115,13 @@ public class SVNConflictItem : MonoBehaviour
             Show(treeTheirsForceButton);
             Show(treeBaseForceButton);
 
-            treeMineButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeMine(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            treeTheirsButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeTheirs(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            treeBaseButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeBase(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            treeDeleteButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().DeleteObstruction(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            if (treeMineForceButton != null)
-            {
-                treeMineForceButton.onClick.AddListener(async () =>
-                {
-                    try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeMineForce(_path); }
-                    catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-                });
-            }
-
-            if (treeTheirsForceButton != null)
-            {
-                treeTheirsForceButton.onClick.AddListener(async () =>
-                {
-                    try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeTheirsForce(_path); }
-                    catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-                });
-            }
-
-            if (treeBaseForceButton != null)
-            {
-                treeBaseForceButton.onClick.AddListener(async () =>
-                {
-                    try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeBaseForce(_path); }
-                    catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-                });
-            }
+            Bind(treeMineButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeMine(_path));
+            Bind(treeTheirsButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeTheirs(_path));
+            Bind(treeBaseButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeBase(_path));
+            Bind(treeDeleteButton, () => SVNManager.Instance.GetModule<SVNResolve>().DeleteObstruction(_path));
+            Bind(treeMineForceButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeMineForce(_path));
+            Bind(treeTheirsForceButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeTheirsForce(_path));
+            Bind(treeBaseForceButton, () => SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeBaseForce(_path));
         }
     }
 

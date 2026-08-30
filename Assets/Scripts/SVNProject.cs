@@ -25,7 +25,11 @@ namespace SVN.Core
         {
             get
             {
-                if (DateTime.TryParse(lastOpenedString, out DateTime dt))
+                if (DateTime.TryParse(
+                        lastOpenedString,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.RoundtripKind,
+                        out DateTime dt))
                 {
                     return dt;
                 }

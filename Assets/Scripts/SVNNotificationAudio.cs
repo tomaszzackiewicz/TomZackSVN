@@ -12,14 +12,26 @@ namespace SVN.Core
 
         private void Awake()
         {
-            if (Instance == null) Instance = this;
-            else Destroy(gameObject);
+            if (Instance != null && Instance != this)
+            {
+                Destroy(this);   // ← było Destroy(gameObject) — komponent na współdzielonym obiekcie
+                return;
+            }
+            Instance = this;
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance == this)
+                Instance = null;
         }
 
         public void PlayCommitSound()
         {
             if (audioSource != null)
             {
+                // === FIX K1: pole volume było martwe — suwak w Inspectorze nic nie robił.
+                audioSource.volume = volume;
                 audioSource.Play();
             }
         }

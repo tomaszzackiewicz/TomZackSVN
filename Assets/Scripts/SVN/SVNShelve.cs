@@ -21,7 +21,7 @@ namespace SVN.Core
         public SVNShelve(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
-            _shelfFolder = Path.Combine(Application.persistentDataPath, "SVN_Shelves");
+            _shelfFolder = Path.Combine(SVNPrefs.PersistentDataPath, "SVN_Shelves");
             Directory.CreateDirectory(_shelfFolder);
         }
 
@@ -104,6 +104,7 @@ namespace SVN.Core
             });
         }
 
+        // === FIX S2: usuwamy też folder _Files shelfa (wcześniej zostawał orphanem).
         public void ExecuteDeleteShelf(string shelfName)
         {
             SafeFireAndForget(async () =>
@@ -114,15 +115,24 @@ namespace SVN.Core
                 try
                 {
                     string filePath = GetShelfFilePath(shelfName);
+                    string filesFolder = GetAddedFilesFolder(shelfName);
+                    bool removedAny = false;
+
                     if (File.Exists(filePath))
                     {
                         File.Delete(filePath);
-                        PostUI(() => SVNLogBridge.LogLine($"<color=green>[Stash]</color> Deleted: {shelfName}"));
+                        removedAny = true;
                     }
-                    else
+
+                    if (Directory.Exists(filesFolder))
                     {
-                        PostUI(() => SVNLogBridge.LogLine($"<color=yellow>[Stash]</color> Shelf '{shelfName}' not found."));
+                        Directory.Delete(filesFolder, true);
+                        removedAny = true;
                     }
+
+                    PostUI(() => SVNLogBridge.LogLine(removedAny
+                        ? $"<color=green>[Stash]</color> Deleted: {shelfName}"
+                        : $"<color=yellow>[Stash]</color> Shelf '{shelfName}' not found."));
                 }
                 catch (Exception ex)
                 {
@@ -176,15 +186,34 @@ namespace SVN.Core
                     return true;
                 }
 
-                int statusLineCount = statusOutput.Split('\n').Length;
+                // === FIX (licznik): RemoveEmptyEntries — bez tego liczyło pustą końcówkę.
+                int statusLineCount = statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
                 PostUI(() => SVNLogBridge.LogLine($"[Stash] Detected {statusLineCount} changed/untracked items."));
 
-                List<string> unversionedFiles = ParseUnversionedFiles(statusOutput, root);
+                // === FIX K2: rozbity parsing statusu — osobno '?' (unversioned),
+                // osobno 'A' (scheduled adds; revert zdejmie scheduling i zostawi
+                // je jako '?' — musimy je zapisać i posprzątać sami).
+                var unversionedFiles = new List<string>();
+                var addedFiles = new List<string>();
+                var addedDirs = new List<string>();
+                ParseShelveSets(statusOutput, root, unversionedFiles, addedFiles, addedDirs);
 
                 PostUI(() => SVNLogBridge.LogLine("[Stash] Creating patch..."));
                 string diff = await SvnRunner.RunAsync("diff", root, false, token).ConfigureAwait(false);
                 bool hasTrackedChanges = !string.IsNullOrWhiteSpace(diff);
-                bool hasUnversionedFiles = unversionedFiles.Count > 0;
+
+                // === FIX K1 (krytyczny): 'svn diff' NIE zawiera treści plików
+                // binarnych ("Cannot display: file marked as binary"). Bez tego
+                // revert -R niszczył zmiany binarne (sceny/prefaby/tekstury)
+                // BEZPOWROTNIE — patch ich nie przywracał. Teraz binaria idą do
+                // folderu _Files shelfa, a Unshelve (CopyDirectory _Files → root)
+                // przywraca je automatycznie.
+                List<string> binaryModified = ParseBinaryModifiedFromDiff(diff, root);
+                if (binaryModified.Count > 0)
+                {
+                    PostUI(() => SVNLogBridge.LogLine(
+                        $"<color=yellow>[Stash] {binaryModified.Count} binary file(s) detected (not patchable) — copying directly to shelf.</color>"));
+                }
 
                 if (File.Exists(patchPath)) File.Delete(patchPath);
                 if (Directory.Exists(addedFilesPath)) Directory.Delete(addedFilesPath, true);
@@ -201,10 +230,17 @@ namespace SVN.Core
                     await File.WriteAllTextAsync(patchPath, string.Empty, token).ConfigureAwait(false);
                 }
 
-                if (hasUnversionedFiles)
+                // === FIX K1+K2: preserve-set = unversioned + scheduled-adds + binaria.
+                var copySet = unversionedFiles
+                    .Concat(addedFiles)
+                    .Concat(binaryModified)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (copySet.Count > 0)
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"[Stash] Saving {unversionedFiles.Count} unversioned files..."));
-                    foreach (string sourcePath in unversionedFiles)
+                    PostUI(() => SVNLogBridge.LogLine($"[Stash] Saving {copySet.Count} file(s)/folder(s) directly to shelf..."));
+                    foreach (string sourcePath in copySet)
                     {
                         token.ThrowIfCancellationRequested();
                         if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath)) continue;
@@ -224,12 +260,19 @@ namespace SVN.Core
                 }
 
                 PostUI(() => SVNLogBridge.LogLine("[Stash] Reverting tracked changes..."));
-                string revertOutput = await SvnRunner.RunAsync("revert -R .", root, true, token).ConfigureAwait(false);
-                PostUI(() => SVNLogBridge.LogLine($"[Stash] Revert completed."));
+                await SvnRunner.RunAsync("revert -R .", root, true, token).ConfigureAwait(false);
+                PostUI(() => SVNLogBridge.LogLine("[Stash] Revert completed."));
 
-                if (hasUnversionedFiles)
+                // === FIX K2: po revercie pliki 'A' stają się '?' na dysku — usuwamy
+                // je RAZEM z unversioned (zawartość bezpiecznie w _Files / w patchu).
+                var deleteFromDisk = unversionedFiles
+                    .Concat(addedFiles)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (deleteFromDisk.Count > 0)
                 {
-                    PostUI(() => SVNLogBridge.LogLine($"[Stash] Removing {unversionedFiles.Count} unversioned items from workspace..."));
+                    PostUI(() => SVNLogBridge.LogLine($"[Stash] Removing {deleteFromDisk.Count} item(s) from workspace..."));
 
                     var deleteTcs = new TaskCompletionSource<bool>();
 
@@ -240,7 +283,7 @@ namespace SVN.Core
                             string projectRoot = Directory.GetParent(Application.dataPath).FullName;
                             int failedCount = 0;
 
-                            foreach (string path in unversionedFiles)
+                            foreach (string path in deleteFromDisk)
                             {
                                 if (!File.Exists(path) && !Directory.Exists(path)) continue;
 
@@ -309,13 +352,27 @@ namespace SVN.Core
                     }
                 }
 
-                string finalStatus = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
+                // === FIX K2: sprzątanie pustych katalogów po plikach 'A'
+                // (inaczej '?'-katalogi psułyby finalny check czystości).
+                foreach (string dir in addedDirs.OrderByDescending(d => d.Length))
+                {
+                    try { if (Directory.Exists(dir)) Directory.Delete(dir, false); } catch { }
+                }
+
+                // === FIX S1: finalny check z --ignore-externals (linie 'X' są
+                // nieodwracalne przez revert — wcześniej przy projekcie z
+                // externals KAŻDY shelve z requireCleanWorkingCopy kończył się
+                // "porażką" po wykonaniu destrukcyjnej części).
+                string finalStatus = await SvnRunner.RunAsync("status --ignore-externals", root, false, token).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(finalStatus))
                 {
+                    int dirtyLines = finalStatus.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
                     if (requireCleanWorkingCopy)
                     {
-                        int dirtyLines = finalStatus.Split('\n').Length;
-                        PostUI(() => SVNLogBridge.LogLine($"<color=#FF9900>[Stash] Working copy is still dirty ({dirtyLines} items remaining).</color>"));
+                        // === FIX (komunikat): dane SĄ już zashelfowane i zrevertowane —
+                        // stary tekst sugerował totalną porażkę operacji.
+                        PostUI(() => SVNLogBridge.LogLine(
+                            $"<color=#FF9900>[Stash] Shelf saved, but {dirtyLines} item(s) still remain in working copy — check for leftovers (e.g. locked/ignored files).</color>"));
                         return false;
                     }
                     else
@@ -324,7 +381,7 @@ namespace SVN.Core
                     }
                 }
 
-                PostUI(() => SVNLogBridge.LogLine($"<color=#55FF55>[Stash] Successfully saved: {shelfName}</color>"));
+                PostUI(() => SVNLogBridge.LogLine($"<color=55FF55>[Stash] Successfully saved: {shelfName}</color>"));
                 CleanupOldPatchFiles();
 
                 await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
@@ -349,28 +406,81 @@ namespace SVN.Core
             }
         }
 
-        private List<string> ParseUnversionedFiles(string statusOutput, string rootPath)
+        // === FIX K2: jeden przebieg po statusie -> trzy zestawy ścieżek.
+        private static void ParseShelveSets(
+            string statusOutput,
+            string rootPath,
+            List<string> unversionedFiles,
+            List<string> addedFiles,
+            List<string> addedDirs)
         {
-            var result = new List<string>();
-            if (string.IsNullOrWhiteSpace(statusOutput)) return result;
+            if (string.IsNullOrWhiteSpace(statusOutput)) return;
 
             foreach (string rawLine in statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (string.IsNullOrWhiteSpace(rawLine)) continue;
                 string line = rawLine.TrimEnd();
+                if (line.Length < 8) continue;
 
-                if (line.Length < 8 || line[0] != '?') continue;
+                char status = line[0];
+                if (status != '?' && status != 'A') continue;
 
                 string relativePath = line.Substring(8).Trim();
                 if (string.IsNullOrWhiteSpace(relativePath)) continue;
 
                 string fullPath = Path.GetFullPath(Path.Combine(rootPath, relativePath));
-                if (!File.Exists(fullPath) && !Directory.Exists(fullPath)) continue;
 
-                result.Add(fullPath);
+                if (status == '?')
+                {
+                    if (!File.Exists(fullPath) && !Directory.Exists(fullPath)) continue;
+                    unversionedFiles.Add(fullPath);
+                }
+                else // 'A'
+                {
+                    if (Directory.Exists(fullPath))
+                        addedDirs.Add(fullPath);
+                    else if (File.Exists(fullPath))
+                        addedFiles.Add(fullPath);
+                    // nieistniejące 'A' (np. po częściowym revert) ignorujemy
+                }
+            }
+        }
+
+        // === FIX K1: wyciąga ścieżki plików binarnych z diffu. Format svn:
+        //   Index: Assets/path/file.png
+        //   ===================================================================
+        //   Cannot display: file marked as binary ...
+        private static List<string> ParseBinaryModifiedFromDiff(string diff, string root)
+        {
+            var result = new List<string>();
+            if (string.IsNullOrWhiteSpace(diff)) return result;
+
+            string pendingIndex = null;
+            foreach (string rawLine in diff.Split('\n'))
+            {
+                string line = rawLine.TrimEnd('\r');
+
+                if (line.StartsWith("Index: ", StringComparison.Ordinal))
+                {
+                    pendingIndex = line.Substring("Index: ".Length).Trim();
+                    continue;
+                }
+
+                if (pendingIndex != null &&
+                    line.IndexOf("Cannot display: file marked as binary", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    string fullPath = Path.GetFullPath(Path.Combine(root, pendingIndex.Replace('/', Path.DirectorySeparatorChar)));
+                    if (File.Exists(fullPath))
+                        result.Add(fullPath);
+                    pendingIndex = null;
+                    continue;
+                }
+
+                if (line.Length > 0 && (line[0] == '+' || line[0] == '-'))
+                    pendingIndex = null; // treść tekstowa → to nie binarium
             }
 
-            return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            return result;
         }
 
         public void ExecuteUnshelve(string selectedShelf)
@@ -407,6 +517,17 @@ namespace SVN.Core
                     return false;
                 }
 
+                // === FIX S3: ostrzeżenie przy brudnej kopii — patch na zmienionych
+                // plikach prawie na pewno da rejecty; user powinien wiedzieć DLACZEGO.
+                try
+                {
+                    string preStatus = await SvnRunner.RunAsync("status --ignore-externals", root, false, token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(preStatus))
+                        PostUI(() => SVNLogBridge.LogLine(
+                            "<color=yellow>[Stash] Warning: working copy has local changes — restore may produce conflicts/rejects.</color>"));
+                }
+                catch { }
+
                 PostUI(() => SVNLogBridge.LogLine($"[Stash] Restoring tracked changes from '{shelfName}'..."));
 
                 string output = await SvnRunner.RunAsync($"patch --ignore-whitespace \"{patchPath}\" \"{root}\"", root, true, token).ConfigureAwait(false);
@@ -425,7 +546,8 @@ namespace SVN.Core
 
                 if (Directory.Exists(addedFilesPath))
                 {
-                    PostUI(() => SVNLogBridge.LogLine("[Stash] Restoring unversioned files..."));
+                    PostUI(() => SVNLogBridge.LogLine("[Stash] Restoring unversioned/binary files..."));
+                    // === FIX K1: binaria wracają tutaj tym samym CopyDirectory.
                     CopyDirectory(addedFilesPath, root);
                 }
 
@@ -600,13 +722,25 @@ namespace SVN.Core
             try
             {
                 if (!Directory.Exists(_shelfFolder)) return;
+
                 foreach (var file in Directory.EnumerateFiles(_shelfFolder, "*.patch"))
                 {
                     try
                     {
                         var info = new FileInfo(file);
                         if (info.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-30))
-                            File.Delete(file);
+                            info.Delete();
+                    }
+                    catch { }
+                }
+
+                foreach (var dir in Directory.EnumerateDirectories(_shelfFolder, "*_Files"))
+                {
+                    try
+                    {
+                        var info = new DirectoryInfo(dir);
+                        if (info.LastWriteTimeUtc < DateTime.UtcNow.AddDays(-30))
+                            info.Delete(true);
                     }
                     catch { }
                 }

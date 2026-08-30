@@ -20,6 +20,10 @@ namespace SVN.Core
 
     public static class SvnRevisionRangeParser
     {
+        // === FIX K2: sanity-limit — literówka '1:999999999' iterowała miliard razy.
+        // 100k rewizji to i tak absurd dla cherry-pick/revert; nadmiar odrzucany z warningiem.
+        private const long MaxRangeSpan = 100_000;
+
         public static List<SvnRevisionItem> Parse(string input)
         {
             if (string.IsNullOrWhiteSpace(input))
@@ -30,8 +34,9 @@ namespace SVN.Core
                 .Select(t => t.Trim().TrimStart('r', 'R'))
                 .Where(t => !string.IsNullOrWhiteSpace(t));
 
-            var result = new List<SvnRevisionItem>();
-            var seen = new HashSet<long>();
+            // === FIX K1: dedupe do SortedSet — a NIE rozbijanie do wyniku.
+            // Ciągłe bieguny zostaną scalone w ZAKRESY na końcu.
+            var revisions = new SortedSet<long>();
 
             foreach (var token in tokens)
             {
@@ -45,24 +50,53 @@ namespace SVN.Core
                         if (start > end)
                             (start, end) = (end, start);
 
-                        for (long rev = start; rev <= end; rev++)
+                        // === FIX K3: rewizje >= 1.
+                        if (start < 1) start = 1;
+
+                        if (end - start > MaxRangeSpan)
                         {
-                            if (seen.Add(rev))
-                                result.Add(new SvnRevisionItem(rev, rev));
+                            SVNLogBridge.LogWarning(
+                                $"[RevisionParser] Range r{start}:r{end} exceeds limit ({MaxRangeSpan}) — token ignored.");
+                            continue;
                         }
+
+                        for (long rev = start; rev <= end; rev++)
+                            revisions.Add(rev);
                     }
                 }
-                else
+                else if (long.TryParse(token, out long rev))
                 {
-                    if (long.TryParse(token, out long rev) && seen.Add(rev))
-                        result.Add(new SvnRevisionItem(rev, rev));
+                    // === FIX K3.
+                    if (rev >= 1)
+                        revisions.Add(rev);
                 }
             }
 
-            return result
-                .OrderBy(x => x.Start)
-                .ThenBy(x => x.End)
-                .ToList();
+            // === FIX K1 (rdzeń): scal ciągłe bieguny w pojedyncze ZAKRESY.
+            // "140:150" → 1×(140,150); "150,148:150" → 1×(148,150);
+            // "150,151,152" → 1×(150,152); "10,20" → 2×single.
+            var result = new List<SvnRevisionItem>();
+            long? runStart = null;
+            long prev = 0;
+
+            foreach (var rev in revisions)
+            {
+                if (runStart == null)
+                {
+                    runStart = rev;
+                }
+                else if (rev != prev + 1)
+                {
+                    result.Add(new SvnRevisionItem(runStart.Value, prev));
+                    runStart = rev;
+                }
+                prev = rev;
+            }
+
+            if (runStart != null)
+                result.Add(new SvnRevisionItem(runStart.Value, prev));
+
+            return result;
         }
     }
 }

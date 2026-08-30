@@ -16,14 +16,12 @@ namespace SVN.Core
         private List<string> _cachedIgnoreRules = new List<string>();
         private readonly object _cacheLock = new object();
         private int _processingFlag;
-        private readonly SynchronizationContext _mainThreadContext;
         private static readonly Dictionary<string, Regex> _regexCache = new Dictionary<string, Regex>();
         private static readonly object _regexCacheLock = new object();
         private float _lastDeletePropertyClickTime = -10f;
 
         public SVNIgnore(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
-            _mainThreadContext = SynchronizationContext.Current;
         }
 
         private bool TryEnterProcessing()
@@ -39,12 +37,11 @@ namespace SVN.Core
             Interlocked.Exchange(ref _processingFlag, 0);
         }
 
+        // === FIX: UnityMainThreadDispatcher (spójnie z resztą modułów) — stary
+        // fallback 'action()' wykonywał UI off-thread przy braku contextu.
         private void PostUI(Action action)
         {
-            if (_mainThreadContext != null)
-                _mainThreadContext.Post(_ => action(), null);
-            else
-                action();
+            UnityMainThreadDispatcher.Enqueue(action);
         }
 
         private void SafeFireAndForget(Func<Task> operation)
@@ -71,7 +68,7 @@ namespace SVN.Core
         public void OpenIgnoredFilesInEditor() => SafeFireAndForget(() => OpenIgnoredFilesInEditorAsync());
         public void PushLocalRulesToSvn() => SafeFireAndForget(() => PushLocalRulesToSvnAsync());
         public void ReloadIgnoreRules() => SafeFireAndForget(() => ReloadIgnoreRulesAsync());
-        
+
         public void DeleteSvnGlobalIgnoreProperty()
         {
             float clickTime = Time.unscaledTime;
@@ -95,7 +92,7 @@ namespace SVN.Core
             }
 
             LoadIgnoreRulesFromFile(svnManager.WorkingDir);
-            await RefreshIgnoredPanelAsync();
+            await RefreshIgnoredPanelCoreAsync().ConfigureAwait(false);   // === FIX K1: rdzeń bez guardu
             TriggerStatusRefresh();
         }
 
@@ -158,6 +155,8 @@ namespace SVN.Core
             {
                 foreach (var line in output.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries))
                 {
+                    token.ThrowIfCancellationRequested();
+
                     if (line.Length >= 8 && line[0] == 'I')
                     {
                         string rawPath = line.Substring(8).Trim();
@@ -180,11 +179,22 @@ namespace SVN.Core
 
             if (activeRules.Count > 0 && Directory.Exists(workingDir))
             {
+                // === FIX K3: EnumerationOptions.IgnoreInaccessible — GetFileSystemEntries
+                // rzucał UnauthorizedAccessException na pierwszym niedostępnym katalogu
+                // i zabijał cały skan; plus check tokenu per entry.
+                var enumOptions = new EnumerationOptions
+                {
+                    IgnoreInaccessible = true,
+                    RecurseSubdirectories = true
+                };
+
                 string[] allEntries = await Task.Run(() =>
-                    Directory.GetFileSystemEntries(workingDir, "*", SearchOption.AllDirectories), token).ConfigureAwait(false);
+                    Directory.GetFileSystemEntries(workingDir, "*", enumOptions), token).ConfigureAwait(false);
 
                 foreach (var entry in allEntries)
                 {
+                    token.ThrowIfCancellationRequested();
+
                     string relPath = entry.Replace(workingDir, "").TrimStart('\\', '/').Replace('\\', '/');
                     if (relPath.Split('/').Any(seg => seg == ".svn") || ignoredDict.ContainsKey(relPath))
                         continue;
@@ -200,110 +210,117 @@ namespace SVN.Core
             return ignoredDict;
         }
 
+        // === FIX K1: PUBLICZNY wrapper — guard tylko tutaj.
         public async Task RefreshIgnoredPanelAsync(CancellationToken token = default)
         {
             if (!TryEnterProcessing()) return;
 
             try
             {
-                string root = svnManager?.WorkingDir;
-                if (string.IsNullOrWhiteSpace(root))
-                {
-                    PostUI(() => UpdateStatusInUI("Error: Working directory not set!"));
-                    return;
-                }
-
-                LoadIgnoreRulesFromFile(root);
-
-                string ignoreFilePath = Path.Combine(root, ".svnignore");
-                var sb = new StringBuilder(4096);
-
-                int fileRuleCount;
-                lock (_cacheLock)
-                {
-                    fileRuleCount = _cachedIgnoreRules.Count;
-                }
-
-                sb.AppendLine($"<color=#00FF99><b>Rules loaded from file: {fileRuleCount}</b></color>\n");
-
-                sb.AppendLine("<color=#444444><b>System Info:</b></color>");
-                sb.AppendLine($"<color=#555555>Working Dir:</color> <color=#FFFFFF>{root}</color>");
-                sb.AppendLine($"<color=#555555>Config File:</color> <color=#FFFFFF>{ignoreFilePath}</color>");
-
-                bool fileExists = File.Exists(ignoreFilePath);
-                string fileStatus = fileExists ? "<color=green>FOUND</color>" : "<color=#FFAA00>NOT FOUND</color>";
-                sb.AppendLine($"<color=#555555>File Status:</color> {fileStatus}");
-                sb.AppendLine("--------------------------------------------------\n");
-
-                if (!fileExists)
-                {
-                    sb.AppendLine("<color=#FFCC00><b>[!] ACTION REQUIRED</b></color>");
-                    sb.AppendLine("Please ensure <b>.svnignore</b> is located in the folder above to load local rules.");
-                    sb.AppendLine("--------------------------------------------------\n");
-                }
-
-                List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root, token).ConfigureAwait(false);
-
-                lock (_cacheLock)
-                {
-                    if (_cachedIgnoreRules != null)
-                    {
-                        foreach (var fileRule in _cachedIgnoreRules)
-                        {
-                            if (!activeRules.Contains(fileRule, StringComparer.OrdinalIgnoreCase))
-                                activeRules.Add(fileRule);
-                        }
-                    }
-                }
-
-                sb.AppendLine("<color=#FFA500><b>Active Ignore Rules:</b></color>");
-
-                if (activeRules.Count == 0)
-                {
-                    sb.AppendLine(" <color=#FFAA00>No rules loaded. Click 'Load New Rules' to read .svnignore, or add rules via SVN properties.</color>");
-                }
-                else
-                {
-                    foreach (var rule in activeRules)
-                    {
-                        bool isFromFile;
-                        lock (_cacheLock) { isFromFile = _cachedIgnoreRules.Contains(rule); }
-                        string color = isFromFile ? "#00FFFF" : "#00FF99";
-                        sb.AppendLine($"<color={color}> {(isFromFile ? "[FILE]" : "[SVN]")} {rule}</color>");
-                    }
-                }
-
-                sb.AppendLine("\n<color=yellow><i>Use 'Open in Editor' to generate and view the full list of ignored files on disk.</i></color>");
-
-                lock (_cacheLock)
-                {
-                    if (_cachedIgnoreRules.Count > 0)
-                    {
-                        sb.AppendLine();
-                        sb.AppendLine($"<color=#00FF99><b>Successfully loaded {_cachedIgnoreRules.Count} rules from:</b></color>");
-                        sb.AppendLine($"<color=#00FF99><b>{ignoreFilePath}</b></color>");
-                        sb.AppendLine("<color=yellow><i>These rules are now active for filtering commit list (local only).</i></color>");
-                    }
-                    else if (!fileExists)
-                    {
-                        sb.AppendLine();
-                        sb.AppendLine($"<color=#FFAA00><b>No rules loaded – .svnignore file missing at:</b></color>");
-                        sb.AppendLine($"<color=#FFAA00><b>{ignoreFilePath}</b></color>");
-                    }
-                }
-
-                string result = sb.ToString();
-
-                PostUI(() =>
-                {
-                    if (svnUI?.IgnoredText != null)
-                        SVNLogBridge.UpdateUIField(svnUI.IgnoredText, result, "IGNORED", append: false);
-                });
+                await RefreshIgnoredPanelCoreAsync(token).ConfigureAwait(false);
             }
             finally
             {
                 ExitProcessing();
             }
+        }
+
+        // === FIX K1: RDZEŃ bez guardu — wywoływalny z wnętrza innych operacji
+        // (Push/Delete trzymają flagę; wcześniej RefreshIgnoredPanelAsync wołany
+        // z ich wnętrza ZAWSZE wychodził na 'if (!TryEnterProcessing()) return;'
+        // i panel nigdy nie odświeżał się po push/delete reguł — po cichu).
+        private async Task RefreshIgnoredPanelCoreAsync(CancellationToken token = default)
+        {
+            string root = svnManager?.WorkingDir;
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                PostUI(() => UpdateStatusInUI("Error: Working directory not set!"));
+                return;
+            }
+
+            LoadIgnoreRulesFromFile(root);
+
+            string ignoreFilePath = Path.Combine(root, ".svnignore");
+            var sb = new StringBuilder(4096);
+
+            int fileRuleCount;
+            lock (_cacheLock)
+            {
+                fileRuleCount = _cachedIgnoreRules.Count;
+            }
+
+            sb.AppendLine($"<color=#00FF99><b>Rules loaded from file: {fileRuleCount}</b></color>\n");
+
+            sb.AppendLine("<color=#444444><b>System Info:</b></color>");
+            sb.AppendLine($"<color=#555555>Working Dir:</color> <color=#FFFFFF>{root}</color>");
+            sb.AppendLine($"<color=#555555>Config File:</color> <color=#FFFFFF>{ignoreFilePath}</color>");
+
+            bool fileExists = File.Exists(ignoreFilePath);
+            string fileStatus = fileExists ? "<color=green>FOUND</color>" : "<color=#FFAA00>NOT FOUND</color>";
+            sb.AppendLine($"<color=#555555>File Status:</color> {fileStatus}");
+            sb.AppendLine("--------------------------------------------------\n");
+
+            if (!fileExists)
+            {
+                sb.AppendLine("<color=#FFCC00><b>[!] ACTION REQUIRED</b></color>");
+                sb.AppendLine("Please ensure <b>.svnignore</b> is located in the folder above to load local rules.");
+                sb.AppendLine("--------------------------------------------------\n");
+            }
+
+            List<string> activeRules = await GetIgnoreRulesFromSvnAsync(root, token).ConfigureAwait(false);
+
+            lock (_cacheLock)
+            {
+                foreach (var fileRule in _cachedIgnoreRules)
+                {
+                    if (!activeRules.Contains(fileRule, StringComparer.OrdinalIgnoreCase))
+                        activeRules.Add(fileRule);
+                }
+            }
+
+            sb.AppendLine("<color=#FFA500><b>Active Ignore Rules:</b></color>");
+
+            if (activeRules.Count == 0)
+            {
+                sb.AppendLine(" <color=#FFAA00>No rules loaded. Click 'Load New Rules' to read .svnignore, or add rules via SVN properties.</color>");
+            }
+            else
+            {
+                foreach (var rule in activeRules)
+                {
+                    bool isFromFile;
+                    lock (_cacheLock) { isFromFile = _cachedIgnoreRules.Contains(rule); }
+                    string color = isFromFile ? "#00FFFF" : "#00FF99";
+                    sb.AppendLine($"<color={color}> {(isFromFile ? "[FILE]" : "[SVN]")} {rule}</color>");
+                }
+            }
+
+            sb.AppendLine("\n<color=yellow><i>Use 'Open in Editor' to generate and view the full list of ignored files on disk.</i></color>");
+
+            lock (_cacheLock)
+            {
+                if (_cachedIgnoreRules.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine($"<color=#00FF99><b>Successfully loaded {_cachedIgnoreRules.Count} rules from:</b></color>");
+                    sb.AppendLine($"<color=#00FF99><b>{ignoreFilePath}</b></color>");
+                    sb.AppendLine("<color=yellow><i>These rules are now active for filtering commit list (local only).</i></color>");
+                }
+                else if (!fileExists)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine($"<color=#FFAA00><b>No rules loaded – .svnignore file missing at:</b></color>");
+                    sb.AppendLine($"<color=#FFAA00><b>{ignoreFilePath}</b></color>");
+                }
+            }
+
+            string result = sb.ToString();
+
+            PostUI(() =>
+            {
+                if (svnUI?.IgnoredText != null)
+                    SVNLogBridge.UpdateUIField(svnUI.IgnoredText, result, "IGNORED", append: false);
+            });
         }
 
         private async Task OpenIgnoredFilesInEditorAsync(CancellationToken token = default)
@@ -335,13 +352,10 @@ namespace SVN.Core
 
                 lock (_cacheLock)
                 {
-                    if (_cachedIgnoreRules != null)
+                    foreach (var fileRule in _cachedIgnoreRules)
                     {
-                        foreach (var fileRule in _cachedIgnoreRules)
-                        {
-                            if (!activeRules.Contains(fileRule, StringComparer.OrdinalIgnoreCase))
-                                activeRules.Add(fileRule);
-                        }
+                        if (!activeRules.Contains(fileRule, StringComparer.OrdinalIgnoreCase))
+                            activeRules.Add(fileRule);
                     }
                 }
 
@@ -349,8 +363,15 @@ namespace SVN.Core
 
                 if (activeRules.Count > 0 && Directory.Exists(root))
                 {
+                    // === FIX K3: IgnoreInaccessible + check tokenu per entry.
+                    var enumOptions = new EnumerationOptions
+                    {
+                        IgnoreInaccessible = true,
+                        RecurseSubdirectories = true
+                    };
+
                     string[] allEntries = await Task.Run(() =>
-                        Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories), linkedToken).ConfigureAwait(false);
+                        Directory.GetFileSystemEntries(root, "*", enumOptions), linkedToken).ConfigureAwait(false);
 
                     foreach (var entry in allEntries)
                     {
@@ -469,41 +490,23 @@ namespace SVN.Core
             catch { }
         }
 
+        // === FIX K2: parsowanie przez --xml. Stary parser tekstowy brałczęść
+        // PRZED ' - ' z linii 'ścieżka - wartość' — czyli wczytywał ŚCIEŻKI
+        // folderów mających property jako "reguły" (ignorując przy okazji
+        // prawdziwe patterny), a wartości wielolinijkowe rozpadały się na śmieci.
         public async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir, CancellationToken token = default)
         {
             var rules = new List<string>();
+
             try
             {
-                string globalOutput = await SvnRunner.RunAsync("propget svn:global-ignores -R .", workingDir, false, token).ConfigureAwait(false);
-                string standardOutput = await SvnRunner.RunAsync("propget svn:ignore -R .", workingDir, false, token).ConfigureAwait(false);
+                string xmlOutput = await SvnRunner.RunAsync(
+                    "propget svn:global-ignores -R --xml .", workingDir, false, token).ConfigureAwait(false);
+                string xmlOutput2 = await SvnRunner.RunAsync(
+                    "propget svn:ignore -R --xml .", workingDir, false, token).ConfigureAwait(false);
 
-                string combinedOutput = (globalOutput ?? "") + "\n" + (standardOutput ?? "");
-
-                if (string.IsNullOrWhiteSpace(combinedOutput))
-                    return rules;
-
-                if (combinedOutput.TrimStart().StartsWith("svn:", StringComparison.OrdinalIgnoreCase) ||
-                    combinedOutput.TrimStart().StartsWith("propget:", StringComparison.OrdinalIgnoreCase))
-                {
-                    SVNLogBridge.LogToOutput("<color=#FFAA00>[SVN Ignore]</color> SVN returned an error while fetching ignore rules.");
-                    return rules;
-                }
-
-                foreach (var line in combinedOutput.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    string pattern = line;
-                    int separatorIndex = line.IndexOf(" - ");
-                    if (separatorIndex >= 0)
-                    {
-                        pattern = line.Substring(0, separatorIndex);
-                    }
-
-                    string trimmed = pattern.Trim();
-                    if (!string.IsNullOrEmpty(trimmed) && !trimmed.StartsWith("#") && !rules.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
-                    {
-                        rules.Add(trimmed);
-                    }
-                }
+                CollectRulesFromPropgetXml(xmlOutput, rules);
+                CollectRulesFromPropgetXml(xmlOutput2, rules);
             }
             catch (Exception e)
             {
@@ -513,6 +516,46 @@ namespace SVN.Core
             return rules;
         }
 
+        private static void CollectRulesFromPropgetXml(string xml, List<string> rules)
+        {
+            if (string.IsNullOrWhiteSpace(xml)) return;
+
+            try
+            {
+                using var sr = new StringReader(xml);
+                using var reader = System.Xml.XmlReader.Create(sr, new System.Xml.XmlReaderSettings
+                {
+                    DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                    IgnoreWhitespace = true
+                });
+
+                while (reader.Read())
+                {
+                    if (reader.NodeType == System.Xml.XmlNodeType.Element && reader.Name == "property")
+                    {
+                        string data = reader.ReadElementContentAsString();
+                        if (string.IsNullOrWhiteSpace(data)) continue;
+
+                        foreach (var rawLine in data.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries))
+                        {
+                            string trimmed = rawLine.Trim();
+                            if (!string.IsNullOrEmpty(trimmed) && !trimmed.StartsWith("#") &&
+                                !rules.Contains(trimmed, StringComparer.OrdinalIgnoreCase))
+                            {
+                                rules.Add(trimmed);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogToOutput($"<color=yellow>[SVN Ignore]</color> XML parse fallback skipped: {ex.Message}");
+            }
+        }
+
+        // === FIX: catch — błąd SvnRunner (throwOnError) propagował się jako
+        // "Unhandled" zamiast przyjaznego komunikatu; refresh przez RDZEŃ (K1).
         private async Task PushLocalRulesToSvnAsync()
         {
             if (!TryEnterProcessing()) return;
@@ -537,17 +580,22 @@ namespace SVN.Core
                 }
 
                 string rules = await File.ReadAllTextAsync(ignoreFilePath, token).ConfigureAwait(false);
-                bool success = await SetSvnGlobalIgnorePropertyAsync(root, rules, token).ConfigureAwait(false);
+                await SetSvnGlobalIgnorePropertyAsync(root, rules, token).ConfigureAwait(false);
 
-                if (success)
-                {
-                    PostUI(() => UpdateStatusInUI(
-                        "<color=#00FF99><b>SUCCESS:</b> Global ignores set. Commit the root folder.</color>\n" +
-                        "<color=#FFFF00>You can now remove the <b>.svnignore</b> file if you no longer need it.</color>"));
+                PostUI(() => UpdateStatusInUI(
+                    "<color=#00FF99><b>SUCCESS:</b> Global ignores set. Commit the root folder.</color>\n" +
+                    "<color=#FFFF00>You can now remove the <b>.svnignore</b> file if you no longer need it.</color>"));
 
-                    await RefreshIgnoredPanelAsync(token).ConfigureAwait(false);
-                    TriggerStatusRefresh();
-                }
+                await RefreshIgnoredPanelCoreAsync(token).ConfigureAwait(false);   // === FIX K1
+                TriggerStatusRefresh();
+            }
+            catch (OperationCanceledException)
+            {
+                PostUI(() => UpdateStatusInUI("<color=yellow>Push cancelled / timed out.</color>"));
+            }
+            catch (Exception ex)
+            {
+                PostUI(() => UpdateStatusInUI($"<color=#FFAA00>Error pushing rules:</color> {ex.Message}"));
             }
             finally
             {
@@ -579,7 +627,7 @@ namespace SVN.Core
                         "<color=#00FF99><b>SUCCESS:</b> svn:global-ignores deleted locally.\n" +
                         "<color=#FFFF00>Don't forget to COMMIT this change to propagate it to the team!</color>"));
 
-                    await RefreshIgnoredPanelAsync(token).ConfigureAwait(false);
+                    await RefreshIgnoredPanelCoreAsync(token).ConfigureAwait(false);   // === FIX K1
                     TriggerStatusRefresh();
                 }
                 else
@@ -587,32 +635,50 @@ namespace SVN.Core
                     PostUI(() => UpdateStatusInUI("<color=#FFAA00>Error:</color> Failed to delete property. It might not exist or SVN returned an error."));
                 }
             }
+            catch (OperationCanceledException)
+            {
+                PostUI(() => UpdateStatusInUI("<color=yellow>Delete cancelled / timed out.</color>"));
+            }
+            catch (Exception ex)
+            {
+                PostUI(() => UpdateStatusInUI($"<color=#FFAA00>Error deleting property:</color> {ex.Message}"));
+            }
             finally
             {
                 ExitProcessing();
             }
         }
 
-        public static async Task<bool> SetSvnGlobalIgnorePropertyAsync(string workingDir, string rulesRawText, CancellationToken token = default)
+        // === FIX: temp w katalogu systemowym (wcześniej 'temp_global_ignore.txt'
+        // lądował W WORKING COPY — widoczny jako '?' przy złym timingu skanu);
+        // powodzenie = brak wyjątku (RunAsync ma throwOnError — stary check
+        // '!result.StartsWith("ERROR")' był martwy i groził NRE przy null).
+        public static async Task SetSvnGlobalIgnorePropertyAsync(string workingDir, string rulesRawText, CancellationToken token = default)
         {
-            string tempFilePath = Path.Combine(workingDir, "temp_global_ignore.txt");
+            string tempFilePath = Path.Combine(Path.GetTempPath(), $"svn_global_ignore_{Guid.NewGuid():N}.txt");
             try
             {
                 await File.WriteAllTextAsync(tempFilePath, rulesRawText.Replace("\r\n", "\n"), token).ConfigureAwait(false);
-                string result = await SvnRunner.RunAsync($"propset svn:global-ignores -F \"{tempFilePath}\" .", workingDir, false, token).ConfigureAwait(false);
-                return !result.StartsWith("ERROR");
+                await SvnRunner.RunAsync($"propset svn:global-ignores -F \"{tempFilePath}\" .", workingDir, false, token).ConfigureAwait(false);
             }
             finally
             {
-                if (File.Exists(tempFilePath))
-                    File.Delete(tempFilePath);
+                try { if (File.Exists(tempFilePath)) File.Delete(tempFilePath); } catch { }
             }
         }
 
         private static async Task<bool> RunPropDelAsync(string propertyName, string workingDir, CancellationToken token = default)
         {
-            string result = await SvnRunner.RunAsync($"propdel {propertyName} .", workingDir, false, token).ConfigureAwait(false);
-            return string.IsNullOrWhiteSpace(result) || !result.TrimStart().StartsWith("svn:", StringComparison.OrdinalIgnoreCase);
+            try
+            {
+                await SvnRunner.RunAsync($"propdel {propertyName} .", workingDir, false, token).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogToOutput($"<color=#FFAA00>[SVN Ignore]</color> propdel failed: {ex.Message}");
+                return false;
+            }
         }
 
         public void LoadIgnoreRulesFromFile(string workingDir)

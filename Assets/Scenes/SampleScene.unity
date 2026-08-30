@@ -4862,6 +4862,7 @@ MonoBehaviour:
   panelHandler: {fileID: 72008806}
   mainUIPanel: {fileID: 1232145530}
   projectSelectionPanel: {fileID: 217212063}
+  autoSwitchRootCheckoutToTrunk: 0
 --- !u!114 &72008802
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5074,8 +5075,8 @@ MonoBehaviour:
   locksContainer: {fileID: 202043028}
   stealLocksConsole: {fileID: 617836218}
   lockCommentInput: {fileID: 1636450767}
-  NotificationPanel: {fileID: 1581400060}
-  NotificationText: {fileID: 76472617}
+  notificationPanel: {fileID: 1581400060}
+  notificationText: {fileID: 76472617}
   resolveTargetFileInput: {fileID: 1078187115}
   resolveConsoleContent: {fileID: 14857770}
   resolveLogConsole: {fileID: 1331780519}
@@ -50507,6 +50508,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RevGraphPanel
   branchFilterInput: {fileID: 1125037016}
+  maxRevisions: 2000
 --- !u!114 &1074149139
 MonoBehaviour:
   m_ObjectHideFlags: 0

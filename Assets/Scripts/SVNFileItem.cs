@@ -9,14 +9,24 @@ public class SVNFileItem : MonoBehaviour
     private long revision;
     private SVN.Core.SVNManager svnManager;
 
-    private float lastClickTime = 0f;
+    // === FIX K1: -10f zamiast 0 — Time.time≈0 na starcie + lastClickTime=0
+    // czyniło PIERWSZY klik (w pierwszych 0.3 s play) pełnym "double-clickiem"
+    // (akcja bez potwierdzenia). Wzorzec z SVNRevert/SVNMerge.
+    private float lastClickTime = -10f;
     private const float doubleClickThreshold = 0.3f;
 
     public void Setup(string statusTag, string path, string color, long rev, SVN.Core.SVNManager mgr)
     {
-        this.fullPath = path.Trim();
+        this.fullPath = path?.Trim() ?? "";
         this.revision = rev;
         this.svnManager = mgr;
+
+        // === FIX K2: guard jak w pozostałych itemach UI.
+        if (fileText == null)
+        {
+            Debug.LogError("[SVNFileItem] fileText is not assigned in Inspector!", this);
+            return;
+        }
 
         fileText.text = $"<color={color}><b>{statusTag}</b></color> {fullPath}";
     }
@@ -34,10 +44,17 @@ public class SVNFileItem : MonoBehaviour
         {
             if (svnManager != null)
             {
-                await svnManager.CatAndOpenFile(fullPath, revision);
+                try
+                {
+                    await svnManager.CatAndOpenFile(fullPath, revision);
+                }
+                catch (System.Exception ex)
+                {
+                    SVN.Core.SVNLogBridge.LogError($"[SVNFileItem] Open failed: {ex.Message}");
+                }
             }
 
-            lastClickTime = 0f;
+            lastClickTime = -10f;
         }
         else
         {

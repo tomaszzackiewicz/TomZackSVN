@@ -12,6 +12,11 @@ public class RevGraphPanel : MonoBehaviour
 {
     [SerializeField] private TMPro.TMP_InputField branchFilterInput;
 
+    // === FIX K2: limit rewizji — 'log --xml --verbose ^/' bez limitu na repo
+    // 50k+ rewizji = setki MB stringa (_cachedXmlOutput trzymane + drugi parse).
+    [SerializeField, Tooltip("Max revisions fetched for the graph (0 = unlimited — not recommended for huge repos).")]
+    private int maxRevisions = 2000;
+
     private SVNUI _svnUI;
     private SVNManager _svnManager;
     private SVNRevGraph _graphModule;
@@ -47,6 +52,9 @@ public class RevGraphPanel : MonoBehaviour
                 SVNLogBridge.LogLine("<color=yellow>[Graph]</color> Waiting for project initialization...");
                 while (_svnManager.IsProcessing && gameObject.activeInHierarchy) await Task.Yield();
             }
+
+            // === FIX Ś2: panel mógł zostać zniszczony/wyłączony podczas czekania.
+            if (this == null || !gameObject.activeInHierarchy) return;
 
             if (!CanLoadGraph())
             {
@@ -214,14 +222,26 @@ public class RevGraphPanel : MonoBehaviour
 
     private bool HasWorkingDirChanged() => _svnManager != null && _svnManager.WorkingDir != _lastWorkingDir;
 
+    // === FIX K1: delayed dispose — natychmiastowy Cancel+Dispose+null przy
+    // kolejnym LoadGraphAsync/Refresh rzucał ObjectDisposedException (nie-OCE!)
+    // w biegnącym 'svn log --xml --verbose ^/' (token zarejestrowany w SvnRunner)
+    // i w korutynie PopulateFiles (token.IsCancellationRequested na disposed CTS).
     private void CancelLoading()
     {
-        if (_loadCts != null) { _loadCts.Cancel(); _loadCts.Dispose(); _loadCts = null; }
+        var cts = _loadCts;
+        _loadCts = null;
+        if (cts != null)
+        {
+            try { cts.Cancel(); } catch (ObjectDisposedException) { }
+            _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
+        }
     }
 
     private async Task<List<SVNRevisionNode>> FetchLogStructureAsync(CancellationToken token = default)
     {
-        string xmlOutput = await SvnRunner.RunAsync("log --xml --verbose ^/", _svnManager.WorkingDir, token: token);
+        // === FIX K2: limit rewizji (-l) — domyślnie 2000, konfigurowalne w Inspectorze.
+        string limitArg = maxRevisions > 0 ? $" -l {maxRevisions}" : "";
+        string xmlOutput = await SvnRunner.RunAsync($"log --xml --verbose{limitArg} ^/", _svnManager.WorkingDir, token: token);
         if (string.IsNullOrEmpty(xmlOutput)) return new List<SVNRevisionNode>();
 
         _cachedXmlOutput = xmlOutput;
@@ -358,9 +378,19 @@ public class RevGraphPanel : MonoBehaviour
 
         while (!parseTask.IsCompleted) yield return null;
 
+        // === FIX Ś1: faulted parseTask — wcześniej IsCompleted==true przy wyjątku
+        // i dict pusty → cichy brak plików bez żadnej informacji.
+        if (parseTask.IsFaulted)
+        {
+            SVNLogBridge.LogErrorToOutput($"[Graph] Background file parse failed: {parseTask.Exception?.GetBaseException()?.Message}");
+            yield break;
+        }
+
         if (token.IsCancellationRequested) yield break;
 
-        var items = _graphModule.InstantiatedItems;
+        var items = _graphModule != null ? _graphModule.InstantiatedItems : null;
+        if (items == null) yield break;
+
         int processed = 0;
 
         foreach (var itemGo in items)

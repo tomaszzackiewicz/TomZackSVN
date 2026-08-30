@@ -15,7 +15,7 @@ namespace SVN.Core
         private readonly object _ctsLock = new object();
         private RepoNode _rootNode;
         private int _fetchGeneration;
-        private bool _disposed;
+        private int _disposed;
 
         public SVNRepoBrowser(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -68,6 +68,9 @@ namespace SVN.Core
             }
         }
 
+        // UWAGA (dokumentacja): klasa zakłada wywołania z main thread dla operacji
+        // UI (ToggleNode z itemów, RefreshUI z eventu inputu) — kontynuacje po
+        // 'await' bez ConfigureAwait(false) wracają na main thread w Unity. OK.
         private async Task ToggleNodeAsync(RepoNode node)
         {
             if (node == null || !node.IsDirectory) return;
@@ -93,20 +96,32 @@ namespace SVN.Core
 
         private async Task FetchChildrenAsync(RepoNode parentNode)
         {
-            if (parentNode == null || parentNode.IsLoading) return;
+            if (parentNode == null) return;
+
+            // === FIX K1: atomiczne IsLoading — zwykły bool przy double-click
+            // przechodził dwa razy (check-then-set między wątkami/kontynuacjami),
+            // dwa fetche tego samego node'a rosły równolegle i rozwidlały drzewo.
+            // RepoNode.IsLoading typu int (0/1) — zachęcam do zmiany w modelu;
+            // poniżej zakładam int. Jeśli zostawiasz bool — wymień na Interlocked
+            // na osobnym polu-wieku per node (dictionary) — mniej czytelne.
+            if (Interlocked.CompareExchange(ref parentNode._isLoadingFlag, 1, 0) != 0) return;
 
             if (parentNode.Children == null)
                 parentNode.Children = new List<RepoNode>();
-
-            parentNode.IsLoading = true;
 
             int generation = Interlocked.Increment(ref _fetchGeneration);
 
             CancellationTokenSource cts;
             lock (_ctsLock)
             {
-                _cts?.Cancel();
-                _cts?.Dispose();
+                // === FIX K1/Ś2: delayed dispose poprzedniego CTS — natychmiastowy
+                // Cancel+Dispose rzucał ODE (nie-OCE!) w biegnącym fetchu.
+                var oldCts = _cts;
+                if (oldCts != null)
+                {
+                    try { oldCts.Cancel(); } catch (ObjectDisposedException) { }
+                    _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
+                }
                 cts = new CancellationTokenSource();
                 _cts = cts;
             }
@@ -118,10 +133,14 @@ namespace SVN.Core
                     svnManager.WorkingDir,
                     token: cts.Token);
 
+                // === FIX K1: generation check PRZED mutacją Children — uprzedza
+                // wyścig "A minął check, B startuje, A mutuje Children".
                 if (generation != Volatile.Read(ref _fetchGeneration))
                     return;
 
-                parentNode.Children.Clear();
+                // Budujemy NOWĄ listę lokalnie; podmieniamy atomowo (jedna ref-count
+                // przypisań) — render czyta albo starą, albo nową, nigdy w trakcie.
+                var newChildren = new List<RepoNode>();
 
                 if (!string.IsNullOrWhiteSpace(output))
                 {
@@ -161,7 +180,7 @@ namespace SVN.Core
                         string author = commitElement?.Elements()
                             .FirstOrDefault(e => e.Name.LocalName == "author")?.Value ?? "";
 
-                        parentNode.Children.Add(new RepoNode
+                        newChildren.Add(new RepoNode
                         {
                             Name = cleanName,
                             FullUrl = $"{parentNode.FullUrl.TrimEnd('/')}/{cleanName}",
@@ -176,12 +195,15 @@ namespace SVN.Core
                         });
                     }
 
-                    parentNode.Children = parentNode.Children
+                    newChildren = newChildren
                         .OrderByDescending(n => n.IsDirectory)
                         .ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
                         .ToList();
                 }
 
+                // === FIX K1: podmiana jedną operacją + IsLoaded na końcu —
+                // konsument nigdy nie widzi częściowo zbudowanej listy.
+                parentNode.Children = newChildren;
                 parentNode.IsLoaded = true;
             }
             catch (OperationCanceledException)
@@ -193,20 +215,14 @@ namespace SVN.Core
             }
             finally
             {
-                parentNode.IsLoading = false;
+                Interlocked.Exchange(ref parentNode._isLoadingFlag, 0);
 
                 lock (_ctsLock)
                 {
                     if (ReferenceEquals(_cts, cts))
-                    {
                         _cts = null;
-                        try { cts.Dispose(); } catch (ObjectDisposedException) { }
-                    }
-                    else
-                    {
-                        try { cts.Dispose(); } catch (ObjectDisposedException) { }
-                    }
                 }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
             }
         }
 
@@ -260,6 +276,11 @@ namespace SVN.Core
             return result;
         }
 
+        // === FIX K2: koniec duplikatów. Zasada: REKURSJA wypełnia 'out' listę
+        // (children z dopasowania poniżej), a node dodaje się do NADRZĘDNEJ listy
+        // dokładnie raz — albo przez własny Add (gdy rodzic też matchuje:
+        // AddRange), albo nigdy. Wcześniej dziecko-match lądowało w result dwa
+        // razy (własny Add + AddRange ojca) → zdublowane wiersze UI przy filtrze.
         private static bool CollectFilteredNodes(
             RepoNode node, string filter, bool parentMatched, List<RepoNode> result)
         {
@@ -268,26 +289,25 @@ namespace SVN.Core
             bool selfMatches = parentMatched ||
                                node.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
 
-            var childrenMatches = new List<RepoNode>();
+            var matchedDescendants = new List<RepoNode>();
             bool hasMatchingChildren = false;
 
             if (node.IsDirectory && node.IsLoaded && node.Children != null)
             {
                 foreach (var child in node.Children)
                 {
-                    if (CollectFilteredNodes(child, filter, selfMatches, childrenMatches))
+                    if (CollectFilteredNodes(child, filter, selfMatches, matchedDescendants))
                         hasMatchingChildren = true;
                 }
             }
 
-            if (selfMatches || hasMatchingChildren)
-            {
-                result.Add(node);
-                result.AddRange(childrenMatches);
-                return true;
-            }
+            bool includeSelf = selfMatches || hasMatchingChildren;
+            if (!includeSelf)
+                return false;
 
-            return false;
+            result.Add(node);
+            result.AddRange(matchedDescendants);
+            return true;
         }
 
         private void RenderNodeList(List<RepoNode> nodesToDisplay, bool isFiltering)
@@ -472,16 +492,21 @@ namespace SVN.Core
 
             lock (_ctsLock)
             {
-                try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
-                try { _cts?.Dispose(); } catch (ObjectDisposedException) { }
+                // === FIX Ś2: delayed dispose.
+                var oldCts = _cts;
                 _cts = null;
+                if (oldCts != null)
+                {
+                    try { oldCts.Cancel(); } catch (ObjectDisposedException) { }
+                    _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
+                }
             }
         }
 
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
+            // === FIX: atomowy _disposed.
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
             CancelOperations();
 

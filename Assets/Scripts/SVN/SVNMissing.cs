@@ -108,8 +108,11 @@ namespace SVN.Core
 
                 if (localCts != null)
                 {
+                    // === FIX D1: pole zdejmowane pod CompareExchange (jak było — to
+                    // poprawnie odcina Cancel), a dispose ODRACZONY — token może być
+                    // jeszcze zarejestrowany w umierającym Task.Delay/SvnRunner.
                     Interlocked.CompareExchange(ref _cts, null, localCts);
-                    try { localCts.Dispose(); } catch { }
+                    _ = Task.Delay(1000).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
                 }
 
                 if (hasLock)
@@ -223,7 +226,25 @@ namespace SVN.Core
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
             Cancel();
-            try { _operationLock.Dispose(); } catch { }
+
+            var localCts = Interlocked.Exchange(ref _cts, null);
+            if (localCts != null)
+            {
+                // === FIX D2: delayed dispose CTS + opóźniony dispose semafora —
+                // operacja potrzebuje chwili od Cancel do dotarcia do finally,
+                // a Release na zlikwidowanym semaforze to ODE (ratowany catchem,
+                // ale po co).
+                _ = Task.Delay(1500).ContinueWith(_ =>
+                {
+                    try { localCts.Dispose(); } catch { }
+                    try { _operationLock.Dispose(); } catch { }
+                });
+            }
+            else
+            {
+                try { _operationLock.Dispose(); } catch { }
+            }
+
             GC.SuppressFinalize(this);
         }
     }

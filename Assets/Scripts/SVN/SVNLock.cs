@@ -19,16 +19,19 @@ namespace SVN.Core
         public void LockAllModified() => LockModifiedButton();
         public void RefreshStealPanel(LockPanel panel) => ShowAllLocksButton();
 
+        // === FIX K1: append PRZEKAZYWANY (wcześniej parametr martwy — każdy log
+        // nadpisywał panel, lista locków znikała pod kolejnym komunikatem)
+        // + wywołanie przez dispatcher (LogToLockPanel wołane też po
+        // ConfigureAwait(false), czyli z thread poolu).
         private void LogToLockPanel(string message, bool append = true)
         {
-            if (svnUI?.LockDisplayArea != null)
+            UnityMainThreadDispatcher.Enqueue(() =>
             {
-                SVNLogBridge.UpdateUIField(svnUI.LockDisplayArea, message);
-            }
-            else
-            {
-                SVNLogBridge.LogLine(message, append);
-            }
+                if (svnUI?.LockDisplayArea != null)
+                    SVNLogBridge.UpdateUIField(svnUI.LockDisplayArea, message, append: append);
+                else
+                    SVNLogBridge.LogLine(message, append);
+            });
         }
 
         private bool TryEnterProcessing()
@@ -44,25 +47,10 @@ namespace SVN.Core
             Interlocked.Exchange(ref _processingFlag, 0);
         }
 
-        public async void LockModifiedButton()
-        {
-            await LockModified();
-        }
-
-        public async void ShowAllLocksButton()
-        {
-            await ShowAllLocks();
-        }
-
-        public async void UnlockAllButton()
-        {
-            await UnlockAll();
-        }
-
-        public async void CleanupLocksButton()
-        {
-            await CleanupLocks();
-        }
+        public async void LockModifiedButton() => await LockModified();
+        public async void ShowAllLocksButton() => await ShowAllLocks();
+        public async void UnlockAllButton() => await UnlockAll();
+        public async void CleanupLocksButton() => await CleanupLocks();
 
         public async Task LockModified()
         {
@@ -172,8 +160,10 @@ namespace SVN.Core
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
                 var allLocks = await GetDetailedLocks(root).ConfigureAwait(false);
+                string currentUser = (svnManager.CurrentUserName ?? "").Trim();
                 var myLocksPaths = allLocks
-                    .Where(l => l.Owner.Trim().Equals(svnManager.CurrentUserName.Trim(), StringComparison.OrdinalIgnoreCase))
+                    .Where(l => !string.IsNullOrEmpty(l.Owner) &&
+                                l.Owner.Trim().Equals(currentUser, StringComparison.OrdinalIgnoreCase))
                     .Select(l => l.FullPath)
                     .ToList();
 
@@ -200,12 +190,19 @@ namespace SVN.Core
                     if (statusModule != null)
                         await statusModule.RefreshAfterAction().ConfigureAwait(false);
 
-                    ShowAllLocksButton();
+                    // === FIX K2: rdzeń bez guardu. Wcześniej 'ShowAllLocksButton()' wołane
+                    // Z WNĘTRZA try (flaga wciąż zajęta) → ShowAllLocks → TryEnterProcessing
+                    // → false → cichy return → panel locków NIGDY nie odświeżał się po unlocku.
+                    await ShowAllLocksCoreAsync().ConfigureAwait(false);
                 }
                 else
                 {
                     LogToLockPanel("You do not own any locked files.");
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                LogToLockPanel("<color=orange>[Unlock] Operation cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -221,43 +218,9 @@ namespace SVN.Core
         {
             if (!TryEnterProcessing()) return;
 
-            LogToLockPanel("<b><color=orange>Fetching Repository Status...</color></b>", append: false);
-
             try
             {
-                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-
-                var locks = await GetDetailedLocks(svnManager.WorkingDir).ConfigureAwait(false);
-                string summary = "<b>Active Repository Locks:</b>\n----------------------------------\n";
-
-                if (locks.Count == 0)
-                {
-                    summary += "<color=yellow>No active locks found on server.</color>\n";
-                }
-                else
-                {
-                    foreach (var lockItem in locks)
-                    {
-                        bool isMe = !string.IsNullOrEmpty(svnManager.CurrentUserName) &&
-                                    lockItem.Owner.Trim().Equals(svnManager.CurrentUserName.Trim(),
-                                        StringComparison.OrdinalIgnoreCase);
-
-                        string color = isMe ? "#00FF00" : "#FF4444";
-                        string prefix = isMe ? "[MINE]" : "[LOCKED]";
-
-                        summary += $"<color={color}><b>{prefix}</b></color> {lockItem.Path}\n";
-                        summary += $"   User: <color=yellow>{lockItem.Owner}</color>\n";
-                        if (!string.IsNullOrEmpty(lockItem.Comment))
-                            summary += $"   Comment: <i>\"{lockItem.Comment}\"</i>\n";
-                        summary += "----------------------------------\n";
-                    }
-                }
-
-                LogToLockPanel(summary, append: false);
-            }
-            catch (Exception ex)
-            {
-                LogToLockPanel($"Error: {ex.Message}", append: true);
+                await ShowAllLocksCoreAsync().ConfigureAwait(false);
             }
             finally
             {
@@ -265,11 +228,48 @@ namespace SVN.Core
             }
         }
 
+        // === FIX K2: rdzeń bez guardu — wywoływalny z wnętrza innych operacji.
+        private async Task ShowAllLocksCoreAsync()
+        {
+            LogToLockPanel("<b><color=orange>Fetching Repository Status...</color></b>", append: false);
+
+            await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
+            var locks = await GetDetailedLocks(svnManager.WorkingDir).ConfigureAwait(false);
+            string summary = "<b>Active Repository Locks:</b>\n----------------------------------\n";
+
+            if (locks.Count == 0)
+            {
+                summary += "<color=yellow>No active locks found on server.</color>\n";
+            }
+            else
+            {
+                string currentUser = (svnManager.CurrentUserName ?? "").Trim();
+                foreach (var lockItem in locks)
+                {
+                    bool isMe = !string.IsNullOrEmpty(currentUser) &&
+                                (lockItem.Owner ?? "").Trim().Equals(currentUser, StringComparison.OrdinalIgnoreCase);
+
+                    string color = isMe ? "#00FF00" : "#FF4444";
+                    string prefix = isMe ? "[MINE]" : "[LOCKED]";
+
+                    summary += $"<color={color}><b>{prefix}</b></color> {lockItem.Path}\n";
+                    summary += $"   User: <color=yellow>{lockItem.Owner}</color>\n";
+                    if (!string.IsNullOrEmpty(lockItem.Comment))
+                        summary += $"   Comment: <i>\"{lockItem.Comment}\"</i>\n";
+                    summary += "----------------------------------\n";
+                }
+            }
+
+            LogToLockPanel(summary, append: false);
+        }
+
         public async Task<List<SVNLockDetails>> GetDetailedLocks(string rootPath, CancellationToken token = default)
         {
             List<SVNLockDetails> locks = new List<SVNLockDetails>();
 
-            string xmlOutput = await SvnRunner.RunAsync("status --xml -u --no-ignore", rootPath, token: token).ConfigureAwait(false);
+            // --no-ignore zbędne przy pytaniu o locki (nit); zostawiono -u (remote).
+            string xmlOutput = await SvnRunner.RunAsync("status --xml -u", rootPath, token: token).ConfigureAwait(false);
 
             if (string.IsNullOrEmpty(xmlOutput)) return locks;
 
@@ -284,16 +284,34 @@ namespace SVN.Core
                 {
                     token.ThrowIfCancellationRequested();
 
-                    XmlNode entryNode = lockNode.ParentNode.ParentNode;
+                    XmlNode entryNode = lockNode.ParentNode?.ParentNode;
                     if (entryNode == null) continue;
 
-                    string svnPath = entryNode.Attributes["path"]?.Value ?? "";
+                    // === FIX K4: guard na brak/pusty atrybut path (pusta ścieżka
+                    // trafiały potem do targets-file → błąd svn).
+                    string svnPath = entryNode.Attributes?["path"]?.Value ?? "";
+                    if (string.IsNullOrWhiteSpace(svnPath)) continue;
+
                     string owner = lockNode.SelectSingleNode("owner")?.InnerText;
                     if (string.IsNullOrEmpty(owner)) continue;
 
                     string relativePath = svnPath;
-                    if (svnPath.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
-                        relativePath = svnPath.Substring(rootPath.Length);
+                    if (!string.IsNullOrWhiteSpace(rootPath))
+                    {
+                        string root = rootPath.Replace("\\", "/").TrimEnd('/');
+
+                        // === FIX K4: strip prefixu ze SEPARATOREM — gołe StartsWith
+                        // łapało 'D:/Repo' → 'D:/RepoOther/...' i zostawiało
+                        // 'Other/...' jako ścieżkę względną.
+                        if (string.Equals(svnPath.Replace("\\", "/"), root, StringComparison.OrdinalIgnoreCase))
+                        {
+                            relativePath = "";
+                        }
+                        else if (svnPath.Replace("\\", "/").StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            relativePath = svnPath.Replace("\\", "/").Substring(root.Length + 1);
+                        }
+                    }
 
                     locks.Add(new SVNLockDetails
                     {
@@ -317,18 +335,27 @@ namespace SVN.Core
             return locks;
         }
 
+        // === FIX K3: guard — wcześniej ToggleLockSingleItem (publiczne wejście
+        // z drzewa) biegł RÓWNOLEGLE do LockModified/UnlockAll (brak _processingFlag).
         public async Task ToggleLockSingleItem(SvnTreeElement element)
         {
             if (element == null) return;
+            if (!TryEnterProcessing()) return;
 
+            // === FIX Ś1-style: snapshot pól na main thread (tu jesteśmy — klik z UI).
             bool isLocked = element.LockedByMe;
+            string elementName = element.Name;
+            string elementFullPath = element.FullPath;
 
             string root = SvnRunner.ForceCleanPath(svnManager.WorkingDir);
-            string relative = SvnRunner.ForceCleanPath(element.FullPath);
+            string relative = SvnRunner.ForceCleanPath(elementFullPath);
             string fullPath = Path.Combine(root, relative);
             fullPath = SvnRunner.ForceCleanPath(fullPath);
 
-            string comment = GetAndClearLockComment();
+            // === FIX K3b: komentarz CZYTANY, ale czyszczony dopiero po SUKCESIE —
+            // wcześniej pole czyszczone było przed komendą i porażka (timeout/błąd)
+            // bezpowrotnie gubiła wpisany przez użytkownika komentarz.
+            string comment = ReadLockComment();
             string safeComment = SanitizeLockComment(comment);
 
             string cmd;
@@ -361,7 +388,7 @@ namespace SVN.Core
                         element.LockedByMe = false;
                         element.LockedByOther = false;
                     });
-                    LogToLockPanel($"<color=green>Unlocked:</color> {element.Name}");
+                    LogToLockPanel($"<color=green>Unlocked:</color> {elementName}");
                 }
                 else
                 {
@@ -370,8 +397,11 @@ namespace SVN.Core
                         element.LockedByMe = true;
                         element.LockedByOther = false;
                     });
-                    LogToLockPanel($"<color=green>Locked:</color> {element.Name}");
+                    LogToLockPanel($"<color=green>Locked:</color> {elementName}");
                 }
+
+                // === FIX K3b: czyszczenie pola komentarza dopiero po sukcesie.
+                PostToMainThread(() => ClearLockCommentInput());
 
                 _ = RefreshLockCacheAsync(true);
                 PostToMainThread(() => svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly());
@@ -386,6 +416,10 @@ namespace SVN.Core
                 LogToLockPanel($"<color=red>[SVN Lock Error]: {ex.Message}</color>");
                 PostToMainThread(() => svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly());
             }
+            finally
+            {
+                ExitProcessing();
+            }
         }
 
         private string NormalizePath(string path)
@@ -395,9 +429,11 @@ namespace SVN.Core
             string root = svnManager.WorkingDir?.Replace("\\", "/").TrimEnd('/') ?? "";
             path = path.Replace("\\", "/");
 
-            if (path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(root) &&
+                (path.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase) ||
+                 path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)))
             {
-                path = path.Substring(root.Length);
+                path = path.Substring(root.Length + 1);
             }
             return path.TrimStart('/');
         }
@@ -450,14 +486,15 @@ namespace SVN.Core
 
                 var locks = await GetDetailedLocks(root, token).ConfigureAwait(false);
 
-                svnManager.LockCache.Clear();
+                // === FIX K1: budowa LOKALNA + ReplaceAll (atomowa podmiana).
+                var newLocks = new Dictionary<string, SVNLockDetails>(StringComparer.OrdinalIgnoreCase);
                 foreach (var l in locks)
                 {
                     token.ThrowIfCancellationRequested();
                     string normalized = NormalizePath(l.FullPath);
-                    svnManager.LockCache.Locks[normalized] = l;
+                    newLocks[normalized] = l;
                 }
-                svnManager.LockCache.LastRefreshUtc = DateTime.UtcNow;
+                svnManager.LockCache.ReplaceAll(newLocks);
 
                 PostToMainThread(() => ApplyLocksToTree());
             }
@@ -493,7 +530,7 @@ namespace SVN.Core
                 string normalized = NormalizePath(e.FullPath);
                 if (svnManager.LockCache.Locks.TryGetValue(normalized, out var lockInfo))
                 {
-                    bool isMine = lockInfo.Owner.Trim().ToLower() == currentUser;
+                    bool isMine = (lockInfo.Owner ?? "").Trim().ToLower() == currentUser;
                     e.LockedByMe = isMine;
                     e.LockedByOther = !isMine;
                 }
@@ -503,13 +540,12 @@ namespace SVN.Core
                 status.RefreshVisibleUIOnly();
         }
 
-        private string GetAndClearLockComment()
+        // === FIX K3b: czytanie/czyszczenie rozdzielone (clear dopiero po sukcesie).
+        private string ReadLockComment() => svnUI?.LockCommentInput?.text ?? "";
+        private void ClearLockCommentInput()
         {
-            if (svnUI?.LockCommentInput == null) return "";
-
-            string comment = svnUI.LockCommentInput.text;
-            svnUI.LockCommentInput.text = "";
-            return comment;
+            if (svnUI?.LockCommentInput != null)
+                svnUI.LockCommentInput.text = "";
         }
 
         private static string SanitizeLockComment(string comment)

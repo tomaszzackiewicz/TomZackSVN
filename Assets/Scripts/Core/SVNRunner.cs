@@ -31,13 +31,19 @@ namespace SVN.Core
 
 		public static string SshOptions { get; set; } = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
 
-		public static string KeyPath
-		{
-			get => string.IsNullOrEmpty(_keyPath) ? (_keyPath = PlayerPrefs.GetString("SVN_SSHKeyPath", "")) : _keyPath;
-			set { _keyPath = value ?? ""; PlayerPrefs.SetString("SVN_SSHKeyPath", _keyPath); }
-		}
+        public static string KeyPath
+        {
+            get => string.IsNullOrEmpty(_keyPath)
+                ? (_keyPath = SVNPrefs.GetString("SVN_SSHKeyPath", ""))
+                : _keyPath;
+            set
+            {
+                _keyPath = value ?? "";
+                SVNPrefs.SetString("SVN_SSHKeyPath", _keyPath);
+            }
+        }
 
-		public static int ActiveOperationsCount
+        public static int ActiveOperationsCount
 		{
 			get { lock (_processingLock) { return _activeOperationsCount; } }
 		}
@@ -104,17 +110,26 @@ namespace SVN.Core
 
 		private static string EscapeSingleArgument(string arg) => (!arg.Contains(' ') && !arg.Contains('"')) ? arg : "\"" + arg.Replace("\"", "\\\"") + "\"";
 
+		// === FIX 1: Poprawione rozpoznawanie komend.
 		private static bool IsWriteCommand(IEnumerable<string> args)
 		{
 			if (args == null) return false;
-			foreach (var arg in args)
-			{
-				if (!string.IsNullOrWhiteSpace(arg) && WriteCommands.Contains(arg.ToLowerInvariant()))
-					return true;
-			}
-			return false;
+
+			string command = args.FirstOrDefault(a =>
+				!string.IsNullOrWhiteSpace(a) && !a.StartsWith("-"));
+
+			if (string.IsNullOrEmpty(command))
+				return false;
+
+			command = command.ToLowerInvariant();
+
+			if (WriteCommands.Contains(command)) return true;
+			if (ReadCommands.Contains(command)) return false;
+
+			return true; // fail-safe: nieznana -> write
 		}
 
+		// === FIX 5: Obsługa escaped cudzysłowu \".
 		private static List<string> SplitArguments(string command)
 		{
 			var args = new List<string>();
@@ -126,8 +141,23 @@ namespace SVN.Core
 			{
 				int ch = reader.Read();
 				if (ch == -1) break;
+
+				if (ch == '\\' && reader.Peek() == '"')
+				{
+					current.Append('"');
+					reader.Read(); // zjedz cudzysłów
+					continue;
+				}
+
 				if (ch == '"') inQuotes = !inQuotes;
-				else if (ch == ' ' && !inQuotes) { if (current.Length > 0) { args.Add(current.ToString()); current.Clear(); } }
+				else if (ch == ' ' && !inQuotes)
+				{
+					if (current.Length > 0)
+					{
+						args.Add(current.ToString());
+						current.Clear();
+					}
+				}
 				else current.Append((char)ch);
 			}
 			if (current.Length > 0) args.Add(current.ToString());
@@ -137,7 +167,7 @@ namespace SVN.Core
 		#region Core Execution Engines
 
 		private static async Task<(string output, string error, int exitCode)> ExecuteRawProcessAsync(
-	List<string> args, string workingDir, Action<string> stdoutCb, Action<string> stderrCb, CancellationToken token)
+			List<string> args, string workingDir, Action<string> stdoutCb, Action<string> stderrCb, CancellationToken token)
 		{
 			var psi = new ProcessStartInfo
 			{
@@ -249,16 +279,27 @@ namespace SVN.Core
 
 					if (exitCode != 0)
 					{
-						bool isLockError = error.Contains("locked") || error.Contains("cleanup");
+						// === FIX 2: Zawężone wykrywanie locka.
+						bool isLockError = error.Contains("E155004") || error.Contains("locked");
 
 						if (attempt == 0 && retryOnLock && isLockError)
 						{
-							SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
-							var cleanupArgs = new List<string> { "cleanup", "--non-interactive", "--trust-server-cert" };
+							if (write)
+							{
+								// === FIX 3: Cleanup tylko pod write-lockiem.
+								SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
+								var cleanupArgs = new List<string> { "cleanup", "--non-interactive", "--trust-server-cert" };
 
-							await ExecuteRawProcessAsync(cleanupArgs, workingDir, null, null, token).ConfigureAwait(false);
+								await ExecuteRawProcessAsync(cleanupArgs, workingDir, null, null, token).ConfigureAwait(false);
 
-							SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
+								SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
+							}
+							else
+							{
+								// Read + lock: krótkie czekanie i ponowienie bez cleanup.
+								SVNLogBridge.LogToOutput("[SvnRunner] Lock detected on read-only op. Waiting 500ms before retry...");
+								await Task.Delay(500, token).ConfigureAwait(false);
+							}
 							continue;
 						}
 
@@ -268,7 +309,9 @@ namespace SVN.Core
 							string fullError = $"SVN Error (Code {exitCode}): {error}{diagnostic}";
 							SVNLogBridge.LogErrorToOutput(fullError);
 
-							OnOperationError?.Invoke(fullError);
+							// === FIX 6: Ochrona handlera OnOperationError.
+							try { OnOperationError?.Invoke(fullError); }
+							catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] OnOperationError handler error: {ex.Message}"); }
 
 							throw new Exception(fullError);
 						}
@@ -380,7 +423,11 @@ namespace SVN.Core
 
 		public static async Task<string> GetInfoAsync(string workingDir, CancellationToken token = default)
 		{
-			string cleanWd = string.IsNullOrEmpty(workingDir) ? "" : Path.GetFullPath(workingDir.Trim());
+			// === FIX 4: Guard przed pustym katalogiem.
+			if (string.IsNullOrWhiteSpace(workingDir))
+				throw new ArgumentException("Working directory cannot be null or empty.", nameof(workingDir));
+
+			string cleanWd = Path.GetFullPath(workingDir.Trim());
 
 			lock (_infoCacheLock)
 			{
@@ -410,9 +457,49 @@ namespace SVN.Core
 
 		private static readonly HashSet<string> WriteCommands = new(StringComparer.OrdinalIgnoreCase)
 		{
-			"update", "commit", "lock", "unlock", "switch", "cleanup", "revert",
-			"merge", "copy", "delete", "mkdir", "propset", "propdel",
-			"shelf-save", "shelf-restore", "shelf-drop", "import", "export"
+			"update", "up",
+			"checkout", "co",
+			"commit", "ci",
+			"add",
+			"delete", "del", "remove", "rm",
+			"move", "mv", "rename", "ren",
+			"copy", "cp",
+			"mkdir",
+			"revert",
+			"lock", "unlock",
+			"switch", "sw",
+			"relocate",
+			"merge",
+			"resolve",
+			"propset", "ps",
+			"propdel", "pd",
+			"propedit", "pe",
+			"changelist", "cl",
+			"patch",
+			"cleanup",
+			"upgrade",
+			"import", "export",
+			"shelve", "unshelve",
+			"shelf-save", "shelf-restore", "shelf-drop",
+			"absorb"
+		};
+
+		private static readonly HashSet<string> ReadCommands = new(StringComparer.OrdinalIgnoreCase)
+		{
+			"status", "st", "stat",
+			"info", "auth",
+			"ls", "list",
+			"log",
+			"diff", "di",
+			"blame", "annotate", "praise",
+			"cat",
+			"propget", "pget", "pg",
+			"proplist", "plist", "pl",
+			"mergeinfo",
+			"youngest",
+			"help", "h",
+			"version",
+			"shelf-list", "shelf-diff", "shelf-log"
 		};
 
 		public static string ForceCleanPath(string path) => string.IsNullOrEmpty(path) ? string.Empty : new string(path.Where(c => !char.IsControl(c) || c == ' ').ToArray()).Trim();
@@ -782,6 +869,112 @@ namespace SVN.Core
 
 			return path;
 		}
+		#endregion
+
+		#region Binary-safe execution (raw byte streaming)
+
+		public static async Task<(int exitCode, string error)> RunToFileAsync(
+			string command, string workingDir, string destFilePath, CancellationToken token = default)
+		{
+			return await RunToFileAsync(SplitArguments(command), workingDir, destFilePath, token).ConfigureAwait(false);
+		}
+
+		public static async Task<(int exitCode, string error)> RunToFileAsync(
+			IEnumerable<string> args, string workingDir, string destFilePath, CancellationToken token = default)
+		{
+			if (string.IsNullOrWhiteSpace(destFilePath))
+				throw new ArgumentException("Destination file path cannot be null or empty.", nameof(destFilePath));
+
+			var argList = args.ToList();
+			string safeArgs = BuildSafeArguments(argList);
+			SVNLogBridge.LogToOutput($"[SVN QUEUE] Waiting (TOFILE): svn {safeArgs}");
+
+			bool write = IsWriteCommand(argList);
+			if (write) await _svnLock.EnterWriteAsync(token).ConfigureAwait(false);
+			else await _svnLock.EnterReadAsync(token).ConfigureAwait(false);
+
+			try
+			{
+				IncrementOperations();
+				SVNLogBridge.LogToOutput($"[SVN QUEUE] Acquired (TOFILE): svn {safeArgs}");
+
+				if (string.IsNullOrEmpty(workingDir)) throw new Exception("Working Directory is null!");
+
+				var finalArgs = new List<string>(argList);
+				if (!finalArgs.Contains("--non-interactive")) finalArgs.Add("--non-interactive");
+				if (!finalArgs.Contains("--trust-server-cert")) finalArgs.Add("--trust-server-cert");
+
+				var result = await ExecuteRawProcessToFileAsync(finalArgs, workingDir, destFilePath, token).ConfigureAwait(false);
+				SVNLogBridge.LogToOutput($"[SvnRunner] TOFILE completed (code {result.exitCode}).");
+				return result;
+			}
+			finally
+			{
+				try { if (write) _svnLock.ExitWrite(); else _svnLock.ExitRead(); }
+				catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SvnRunner] Lock release failed: {ex.Message}"); }
+				DecrementOperations();
+			}
+		}
+
+		private static async Task<(int exitCode, string error)> ExecuteRawProcessToFileAsync(
+			List<string> args, string workingDir, string destFilePath, CancellationToken token)
+		{
+			var psi = new ProcessStartInfo
+			{
+				FileName = "svn",
+				WorkingDirectory = Path.GetFullPath((workingDir ?? "").Trim()),
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				Arguments = BuildSafeArguments(args)
+				// NOTE: intentionally NO StandardOutputEncoding — stdout is consumed
+				// as a raw byte stream below (BaseStream), not as decoded text.
+			};
+			psi.EnvironmentVariables["SVN_SSH"] = BuildSshEnvironmentString(KeyPath);
+
+			using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+			SvnProcessTracker.Register(process);
+
+			var stderrTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+			var stderrSb = new StringBuilder();
+
+			process.ErrorDataReceived += (s, e) =>
+			{
+				if (e.Data != null) stderrSb.AppendLine(e.Data);
+				else stderrTcs.TrySetResult(true);
+			};
+
+			try
+			{
+				if (!process.Start()) throw new Exception("Failed to start SVN process.");
+
+				// IMPORTANT: do NOT call BeginOutputReadLine here — stdout is consumed
+				// as raw bytes below (the two are mutually exclusive on the same stream).
+				process.BeginErrorReadLine();
+
+				using (var fs = new FileStream(destFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+				{
+					await process.StandardOutput.BaseStream.CopyToAsync(fs, 81920, token).ConfigureAwait(false);
+					await fs.FlushAsync(token).ConfigureAwait(false);
+				}
+
+				await WaitForExitAsync(process, token).ConfigureAwait(false);
+				await stderrTcs.Task.ConfigureAwait(false);
+
+				return (process.ExitCode, stderrSb.ToString());
+			}
+			catch (OperationCanceledException)
+			{
+				SvnProcessTracker.Kill(process);
+				throw;
+			}
+			finally
+			{
+				try { SvnProcessTracker.Unregister(process); } catch { }
+			}
+		}
+
 		#endregion
 
 #if UNITY_EDITOR

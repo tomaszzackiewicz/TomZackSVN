@@ -27,9 +27,11 @@ namespace SVN.Core
             catch (ObjectDisposedException) { }
         }
 
+        // === FIX Ś2: odczyt inputu na main thread (wejście z przycisku).
         public async void ShowLog()
         {
-            try { await ShowLogAsync().ConfigureAwait(false); }
+            int count = ParseLogCount();
+            try { await ShowLogAsync(count).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=#FFAA00>Critical Log Error:</color> {ex.Message}");
@@ -38,7 +40,8 @@ namespace SVN.Core
 
         public async void ShowLogForPath(string relativePath)
         {
-            try { await ShowLogForPathAsync(relativePath).ConfigureAwait(false); }
+            int count = ParseLogCount();
+            try { await ShowLogForPathAsync(relativePath, count).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 SVNLogBridge.LogLine($"<color=#FFAA00>Critical Log Error:</color> {ex.Message}");
@@ -50,7 +53,7 @@ namespace SVN.Core
             SVNLogBridge.ClearConsole();
         }
 
-        private async Task ShowLogAsync()
+        private async Task ShowLogAsync(int count)
         {
             if (!await TryEnterProcessingAsync().ConfigureAwait(false)) return;
 
@@ -63,9 +66,11 @@ namespace SVN.Core
                     return;
                 }
 
-                int count = ParseLogCount();
-                ResetCts(TimeSpan.FromSeconds(60));
-                var token = Volatile.Read(ref _logCts)?.Token ?? CancellationToken.None;
+                // === FIX K1: token z LOKALNEJ referencji; Exchange + delayed dispose.
+                // Wcześniej 'Volatile.Read(_logCts)?.Token ?? None' — między odczytem
+                // referencji a pobraniem Token inny wątek (ExitProcessing) mógł
+                // zdisposować CTS → ObjectDisposedException POZA try/catch callerów.
+                var token = ResetCts(TimeSpan.FromSeconds(60));
 
                 SVNLogBridge.LogLine(
                     $"[{DateTime.Now:HH:mm:ss}] <color=#00FF99>Fetching last {count} log entries...</color>",
@@ -80,11 +85,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    string coloredOutput = ApplyColoring(StripBanner(output));
-                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
-                    SVNLogBridge.LogLine(coloredOutput);
-                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
-                    await ScrollToBottomOnMainThreadAsync().ConfigureAwait(false);
+                    await RenderLogOutputAsync(output).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -101,7 +102,7 @@ namespace SVN.Core
             }
         }
 
-        private async Task ShowLogForPathAsync(string relativePath)
+        private async Task ShowLogForPathAsync(string relativePath, int count)
         {
             if (!await TryEnterProcessingAsync().ConfigureAwait(false)) return;
 
@@ -132,16 +133,18 @@ namespace SVN.Core
                     targetPath = SvnRunner.ForceCleanPath(Path.Combine(root, relativePath));
                 }
 
-                int count = ParseLogCount();
-                ResetCts(TimeSpan.FromSeconds(60));
-                var token = Volatile.Read(ref _logCts)?.Token ?? CancellationToken.None;
+                // === FIX K1: jw. — token z lokalnej referencji.
+                var token = ResetCts(TimeSpan.FromSeconds(60));
 
                 SVNLogBridge.LogLine($"<color=#00FF99>Fetching history for: {targetPath}</color>", append: false);
 
                 if (!isServerUrl)
                 {
+                    // === FIX Ś1: status na ścieżce WZGLĘDNEJ — wystarcza do checku '?',
+                    // a output svn nie rozjeżdża się z Expectacją (na absolutnej
+                    // svn zwraca ścieżki absolutne i check 'StartsWith("?")' był kruchy).
                     string statusCheck = await SvnRunner.RunAsync(
-                        $"status \"{EscapeSvnArg(targetPath)}\"", root, token: token).ConfigureAwait(false);
+                        $"status \"{EscapeSvnArg(relativePath)}\"", root, token: token).ConfigureAwait(false);
 
                     if (!string.IsNullOrEmpty(statusCheck) &&
                         statusCheck.TrimStart().StartsWith("?", StringComparison.Ordinal))
@@ -161,11 +164,7 @@ namespace SVN.Core
                 }
                 else
                 {
-                    string coloredOutput = ApplyColoring(StripBanner(output));
-                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
-                    SVNLogBridge.LogLine(coloredOutput);
-                    SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
-                    await ScrollToBottomOnMainThreadAsync().ConfigureAwait(false);
+                    await RenderLogOutputAsync(output).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -182,14 +181,31 @@ namespace SVN.Core
             }
         }
 
-        private void ResetCts(TimeSpan timeout)
+        // === FIX Ś-drobne: wspólny rendering (dedylikacja duplikatu z dwóch metod).
+        private async Task RenderLogOutputAsync(string output)
         {
-            var oldCts = Interlocked.Exchange(ref _logCts, new CancellationTokenSource(timeout));
+            string coloredOutput = ApplyColoring(StripBanner(output));
+            SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
+            SVNLogBridge.LogLine(coloredOutput);
+            SVNLogBridge.LogLine("<color=#444444>------------------------------------------</color>");
+            await ScrollToBottomOnMainThreadAsync().ConfigureAwait(false);
+        }
+
+        // === FIX K1: Exchange + delayed dispose; ZWRACA token (wywołujący trzyma
+        // lokalną referencję — pole może być podmienione przez następną operację,
+        // ale TEN token pozostaje ważny do końca bieżącej).
+        private CancellationToken ResetCts(TimeSpan timeout)
+        {
+            var newCts = new CancellationTokenSource(timeout);
+            var oldCts = Interlocked.Exchange(ref _logCts, newCts);
+
             if (oldCts != null)
             {
                 try { oldCts.Cancel(); } catch { }
-                try { oldCts.Dispose(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
             }
+
+            return newCts.Token;
         }
 
         private static string EscapeSvnArg(string arg)
@@ -204,6 +220,7 @@ namespace SVN.Core
             return SvnRunner.RunAsync($"log -l {lastN}", workingDir, token: token);
         }
 
+        // UWAGA: czyta UI — wywoływać na main thread (wejścia publiczne to robią).
         private int ParseLogCount()
         {
             int count = 10;
@@ -285,14 +302,13 @@ namespace SVN.Core
             return true;
         }
 
+        // === FIX K1: ExitProcessing NIE rusza _logCts (własność operacji, nie
+        // guardu). Wcześniej dispose+null w locie — źródło race z Cancel() i
+        // tokenami trzymanymi przez callerów.
         private void ExitProcessing()
         {
             IsProcessing = false;
             Interlocked.Exchange(ref _processingFlag, 0);
-
-            try { _logCts?.Dispose(); }
-            catch (ObjectDisposedException) { }
-            Volatile.Write(ref _logCts, null);
 
             try { _processingLock.Release(); }
             catch (SemaphoreFullException) { }
@@ -308,7 +324,7 @@ namespace SVN.Core
             var cts = Interlocked.Exchange(ref _logCts, null);
             if (cts != null)
             {
-                try { cts.Dispose(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
             }
 
             try { _processingLock.Dispose(); } catch { }

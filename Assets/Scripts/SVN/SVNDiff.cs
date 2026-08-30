@@ -10,17 +10,32 @@ using SFB;
 
 namespace SVN.Core
 {
-    public class SVNDiff : SVNBase
+    // === FIX: IDisposable — manager dysponuje tylko moduły IDisposable;
+    // _operationCts przeciekał przy zamknięciu aplikacji.
+    public class SVNDiff : SVNBase, IDisposable
     {
         private int _processingFlag;
         private readonly SynchronizationContext _mainThreadContext;
         private static readonly Regex DiffSectionRegex = new Regex(@"@@ -(\d+),?\d* \+(\d+),?\d* @@", RegexOptions.Compiled);
 
         private CancellationTokenSource _operationCts;
+        private int _disposed;
 
         public SVNDiff(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+            var localCts = Interlocked.Exchange(ref _operationCts, null);
+            if (localCts != null)
+            {
+                try { localCts.Cancel(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
+            }
         }
 
         private void LogBoth(string msg)
@@ -33,22 +48,17 @@ namespace SVN.Core
 
         private void PostLog(string msg)
         {
-            if (_mainThreadContext != null)
-                _mainThreadContext.Post(_ => LogBoth(msg), null);
-            else
-                LogBoth(msg);
+            UnityMainThreadDispatcher.Enqueue(() => LogBoth(msg));
         }
 
         private void PostUI(Action action)
         {
-            if (_mainThreadContext != null)
-                _mainThreadContext.Post(_ => action(), null);
-            else
-                action();
+            UnityMainThreadDispatcher.Enqueue(action);
         }
 
         private bool TryEnterProcessing()
         {
+            if (Volatile.Read(ref _disposed) == 1) return false;
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1) return false;
             IsProcessing = true;
             return true;
@@ -72,22 +82,29 @@ namespace SVN.Core
             catch (Exception ex) { PostLog($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
         }
 
+        // === FIX K2: delayed dispose starego CTS (natychmiastowy Cancel+Dispose
+        // rzucał ObjectDisposedException w umierającym diffie → łapany jako
+        // "Exception" → fałszywy fallback tekstowy zamiast toola).
         private CancellationToken RefreshToken()
         {
-            try
+            var newCts = new CancellationTokenSource();
+            var oldCts = Interlocked.Exchange(ref _operationCts, newCts);
+            if (oldCts != null)
             {
-                _operationCts?.Cancel();
-                _operationCts?.Dispose();
+                try { oldCts.Cancel(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
             }
-            catch { }
-            _operationCts = new CancellationTokenSource();
-            return _operationCts.Token;
+            return newCts.Token;
         }
 
         public void CancelOperation()
         {
-            try { _operationCts?.Cancel(); }
-            catch { }
+            try
+            {
+                var cts = Volatile.Read(ref _operationCts);
+                cts?.Cancel();
+            }
+            catch (ObjectDisposedException) { }
         }
 
         private bool TryGetRelativePath(string root, string input, out string safeRelative)
@@ -121,12 +138,14 @@ namespace SVN.Core
             }
         }
 
+        // Button_BrowseDiffFilePath — wywoływane z UI (main thread) — bez zmian,
+        // tylko fallback LogBoth przez dispatcher dla pewności.
         public void Button_BrowseDiffFilePath()
         {
             string root = svnManager?.WorkingDir;
             if (string.IsNullOrEmpty(root))
             {
-                LogBoth("<color=#FFAA00>Error:</color> Working Directory is not set!");
+                PostLog("<color=#FFAA00>Error:</color> Working Directory is not set!");
                 return;
             }
 
@@ -144,24 +163,29 @@ namespace SVN.Core
             else if (selectedPath.Equals(normalizedRoot, StringComparison.OrdinalIgnoreCase))
                 selectedPath = "";
             else
-                LogBoth("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!");
+                PostLog("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!");
 
-            if (svnUI?.DiffTargetFileInput != null)
+            PostUI(() =>
             {
-                svnUI.DiffTargetFileInput.text = selectedPath;
-                LogBoth($"<color=green>Diff:</color> Selected file: {selectedPath}");
-            }
+                if (svnUI?.DiffTargetFileInput != null)
+                {
+                    svnUI.DiffTargetFileInput.text = selectedPath;
+                    LogBoth($"<color=green>Diff:</color> Selected file: {selectedPath}");
+                }
+            });
         }
 
+        // === FIX Ś1: odczyt pola UI na main thread (tu jesteśmy — przycisk),
+        // snapshot przekazany do async rdzenia.
         public void ExecuteDiff()
         {
+            string relativePath = svnUI?.DiffTargetFileInput?.text?.Trim();
             SafeFireAndForget(async () =>
             {
                 if (!TryEnterProcessing()) return;
 
                 try
                 {
-                    string relativePath = svnUI?.DiffTargetFileInput?.text?.Trim();
                     if (string.IsNullOrEmpty(relativePath))
                     {
                         PostLog("<color=yellow>Please select or enter a file path first.</color>");
@@ -191,13 +215,15 @@ namespace SVN.Core
         public void OpenExternalDiff(SvnTreeElement element)
         {
             if (element == null) return;
-            SafeFireAndForget(() => ShowDiff(element.FullPath));
+            string pathSnapshot = element.FullPath;
+            SafeFireAndForget(() => ShowDiff(pathSnapshot));
         }
 
         public void ExecuteDiffForElement(SvnTreeElement element)
         {
             if (element == null) return;
-            SafeFireAndForget(() => ShowPreviewInUnity(element.FullPath));
+            string pathSnapshot = element.FullPath;
+            SafeFireAndForget(() => ShowPreviewInUnity(pathSnapshot));
         }
 
         private async Task ShowDiffInternal(string relativePath, bool openExternal, CancellationToken token)
@@ -267,17 +293,21 @@ namespace SVN.Core
                         try
                         {
                             string fileName = Path.GetFileName(safePath);
-                            string tempBasePath = Path.Combine(Application.temporaryCachePath, $"svn_base_{Guid.NewGuid():N}_{fileName}");
+                            string tempBasePath = Path.Combine(SVNPrefs.TemporaryCachePath, $"svn_base_{Guid.NewGuid():N}_{fileName}");
 
-                            string baseContent = await SvnRunner.RunAsync(
+                            // === FIX K1: BASE przez strumień BAJTÓW (RunToFileAsync).
+                            // Stara wersja: 'svn cat' → string → WriteAllText — kodowanie
+                            // dekodowane/re-enkodowane i końce linii przepisane →
+                            // TortoiseMerge pokazywał fałszywe różnice KAŻDEJ linii
+                            // pliku CRLF (i korumpowałby binaria, gdyby tu trafiły).
+                            var (catExit, catError) = await SvnRunner.RunToFileAsync(
                                 $"cat \"{EscapeSvnArg(safePath)}\"",
                                 svnManager.WorkingDir,
-                                false,
+                                tempBasePath,
                                 token).ConfigureAwait(false);
 
-                            if (!string.IsNullOrEmpty(baseContent))
+                            if (catExit == 0 && new FileInfo(tempBasePath).Length > 0)
                             {
-                                await File.WriteAllTextAsync(tempBasePath, baseContent, token).ConfigureAwait(false);
                                 string workingCopyPath = Path.GetFullPath(fullPath);
 
                                 string processArgs;
@@ -310,7 +340,26 @@ namespace SVN.Core
                             }
                             else
                             {
-                                PostLog("<color=yellow>Notice:</color> Newly added file (no BASE). Falling back to text preview.");
+                                // cat != 0 (np. plik nowy — brak BASE) lub pusty
+                                if (catExit != 0)
+                                    PostLog("<color=yellow>Notice:</color> Newly added file (no BASE). Falling back to text preview.");
+                                // pusty BASE = plik początkowo pusty — tool pokaże vs. pustego; lecimy z tool-em
+                                else
+                                {
+                                    PostUI(() =>
+                                    {
+                                        using var process = Process.Start(new ProcessStartInfo
+                                        {
+                                            FileName = diffToolPath,
+                                            Arguments = diffToolPath.IndexOf("TortoiseMerge", StringComparison.OrdinalIgnoreCase) >= 0
+                                                ? $"/base:\"{tempBasePath}\" /mine:\"{Path.GetFullPath(fullPath)}\""
+                                                : $"\"{tempBasePath}\" \"{Path.GetFullPath(fullPath)}\"",
+                                            UseShellExecute = true
+                                        });
+                                    });
+                                    CleanupOldDiffFiles();
+                                    return;
+                                }
                             }
                         }
                         catch (Exception ex)
@@ -348,9 +397,11 @@ namespace SVN.Core
                 if (openExternal)
                 {
                     string uniqueId = Guid.NewGuid().ToString("N").Substring(0, 8);
-                    string tempDiffPath = Path.Combine(Application.temporaryCachePath, $"svn_diff_preview_{uniqueId}.diff");
+                    string tempDiffPath = Path.Combine(SVNPrefs.TemporaryCachePath, $"svn_diff_preview_{uniqueId}.diff");
                     string enrichedContent = FormatDiffForExternalEditor(diffContent);
                     await File.WriteAllTextAsync(tempDiffPath, enrichedContent, token).ConfigureAwait(false);
+
+                    CleanupOldDiffFiles();   // === FIX: sprzątanie też po ścieżce .diff-preview
 
                     PostUI(() =>
                     {
@@ -376,7 +427,7 @@ namespace SVN.Core
         {
             try
             {
-                string cache = Application.temporaryCachePath;
+                string cache = SVNPrefs.TemporaryCachePath;
                 if (!Directory.Exists(cache)) return;
 
                 string[] patterns = { "svn_diff_preview*.diff", "svn_base_*" };
@@ -398,13 +449,14 @@ namespace SVN.Core
             catch { }
         }
 
+        // === FIX: PlayerPrefs przez SVNPrefs (metoda wołana po awaitach → pula).
         private string GetDiffToolPath()
         {
             string path = svnManager?.DiffToolPath;
             if (string.IsNullOrWhiteSpace(path))
                 path = svnUI?.SettingsDiffToolPathInput?.text;
             if (string.IsNullOrWhiteSpace(path))
-                path = PlayerPrefs.GetString(SVNManager.KEY_DIFF_TOOL, "");
+                path = SVNPrefs.GetString(SVNManager.KEY_DIFF_TOOL, "");
 
             return path?.Trim().Trim('"');
         }
@@ -430,6 +482,9 @@ namespace SVN.Core
 
             int boxWidth = 72; string hLine = new string('═', boxWidth);
             string PadCenter(string text, int width) { if (text.Length >= width) return text.Substring(0, width); int leftPad = (width - text.Length) / 2; return text.PadLeft(leftPad + text.Length).PadRight(width); }
+
+            // === FIX kompilacji: string.IsNullOrEmpty to metoda STATYCZNA —
+            // wywołanie przez klasę, nie na instancji (było: text.IsNullOrEmpty()).
             string Truncate(string text, int maxLen) { if (string.IsNullOrEmpty(text)) return ""; if (text.Length <= maxLen) return text; return text.Substring(0, maxLen - 3) + "..."; }
 
             sb.AppendLine($"╔{hLine}╗");

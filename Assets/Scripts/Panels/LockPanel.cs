@@ -13,6 +13,8 @@ public class LockPanel : MonoBehaviour
     [SerializeField] private Transform locksContainer;
     [SerializeField] private TMP_Text stealLockConsole;
 
+    // UWAGA: dostęp wyłącznie z main thread (wszystkie kontynuacje wracają na main —
+    // brak ConfigureAwait(false) w tej klasie jest zamierzony i poprawny).
     private bool isProcessing = false;
     private SVNUI svnUI;
     private SVNManager svnManager;
@@ -36,6 +38,10 @@ public class LockPanel : MonoBehaviour
                 await Task.Yield();
             }
         }
+
+        // === FIX K2: panel mógł zostać zniszczony/wyłączony podczas czekania —
+        // bez tego gardu kontynuacja Instantiate'owała na martwym obiekcie.
+        if (this == null || !gameObject.activeInHierarchy) return;
 
         if (!string.IsNullOrEmpty(svnManager?.WorkingDir))
         {
@@ -66,7 +72,15 @@ public class LockPanel : MonoBehaviour
         {
             await svnManager.CancelBackgroundTasksAsync();
 
-            var allLocks = await svnManager.GetModule<SVNLock>().GetDetailedLocks(svnManager.WorkingDir);
+            // === FIX drobiazg: null-safe moduł (błąd inicjalizacji = NRE wcześniej).
+            var lockModule = svnManager.GetModule<SVNLock>();
+            if (lockModule == null)
+            {
+                LogToPanel("<color=#FFAA00>[Error]</color> SVNLock module unavailable.");
+                return;
+            }
+
+            var allLocks = await lockModule.GetDetailedLocks(svnManager.WorkingDir);
             LogToPanel($"<color=white>[Info]</color> Found {allLocks.Count} total locks on server.");
 
             string currentUserName = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();
@@ -101,6 +115,7 @@ public class LockPanel : MonoBehaviour
     private void Populate(List<SVNLockDetails> locks)
     {
         if (!Application.isPlaying) return;
+        if (lockEntryPrefab == null || locksContainer == null) return;
 
         foreach (var lockItem in locks)
         {
@@ -123,6 +138,10 @@ public class LockPanel : MonoBehaviour
         }
     }
 
+    // === FIX K1: refresh PO zwolnieniu flagi. Wcześniej Button_RefreshLocks()
+    // wołane było Z WNĘTRZA try z podniesioną flagą → RefreshAndShowAsync
+    // zwracał się natychmiast na 'if (isProcessing) return;' → po steal/break
+    // lista NIGDY się nie odświeżała (zeszły lock wisiał do ręcznego Refresh).
     private async void ExecuteSteal(SVNLockDetails lockDetails)
     {
         if (isProcessing || lockDetails == null || !Application.isPlaying) return;
@@ -132,7 +151,9 @@ public class LockPanel : MonoBehaviour
         {
             await svnManager.CancelBackgroundTasksAsync();
 
-            string cmd = $"lock --force -m \"Administrative takeover by {svnManager.CurrentUserName}\" \"{lockDetails.FullPath}\"";
+            // === FIX drobiazg: escape cudzysłowów w username (komenda -m "...").
+            string safeUser = (svnManager.CurrentUserName ?? "Unknown").Replace("\"", "'");
+            string cmd = $"lock --force -m \"Administrative takeover by {safeUser}\" \"{lockDetails.FullPath}\"";
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
 
             LogToPanel($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
@@ -140,8 +161,6 @@ public class LockPanel : MonoBehaviour
             SVNStatus.ClearLockCache();
             var statusModule = svnManager.GetModule<SVNStatus>();
             if (statusModule != null) await statusModule.RefreshAfterAction();
-
-            Button_RefreshLocks();
         }
         catch (Exception ex)
         {
@@ -151,8 +170,13 @@ public class LockPanel : MonoBehaviour
         {
             isProcessing = false;
         }
+
+        // Po zwolnieniu flagi — refresh realnie się wykona.
+        if (this != null && gameObject.activeInHierarchy)
+            Button_RefreshLocks();
     }
 
+    // === FIX K1: jw.
     private async void ExecuteBreak(SVNLockDetails lockDetails)
     {
         if (isProcessing || lockDetails == null || !Application.isPlaying) return;
@@ -170,8 +194,6 @@ public class LockPanel : MonoBehaviour
             SVNStatus.ClearLockCache();
             var statusModule = svnManager.GetModule<SVNStatus>();
             if (statusModule != null) await statusModule.RefreshAfterAction();
-
-            Button_RefreshLocks();
         }
         catch (Exception ex)
         {
@@ -181,6 +203,9 @@ public class LockPanel : MonoBehaviour
         {
             isProcessing = false;
         }
+
+        if (this != null && gameObject.activeInHierarchy)
+            Button_RefreshLocks();
     }
 
     private void ClearContainer()

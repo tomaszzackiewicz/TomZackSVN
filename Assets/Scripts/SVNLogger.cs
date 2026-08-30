@@ -7,30 +7,72 @@ namespace SVN.Core
     public static class SVNLogger
     {
         private static string logFilePath;
-        private static bool initialized = false;
+        private static volatile bool initialized = false;
         private static readonly object FileLock = new object();
+
+        // === FIX K2: limit rozmiaru — rotacja przy starcie sesji (zachowujemy
+        // poprzednią jako .1). Bez tego AppendAllText per linia rosło w dziesiątki
+        // MB na długich sesjach z checkoutami.
+        private const long MaxLogSizeBytes = 8 * 1024 * 1024; // 8 MB
 
         public static void Initialize()
         {
-            if (initialized) return;
-
-            string folderPath = Application.persistentDataPath;
-            logFilePath = Path.Combine(folderPath, "svn_session.log");
-
-            try
+            // === FIX K1: całość pod lockiem + double-check. Wcześniej check-then-act
+            // z puli wątków: dwóch producentów naraz → podwójny truncate (wzajemne
+            // cięcie nagłówka/logów) oraz wariant z odczytem initialized==true
+            // PRZED ustawieniem logFilePath (brak bariery) → AppendAllText(null)
+            // połknięte przez catch = logi znikają bezgłośnie.
+            lock (FileLock)
             {
-                File.WriteAllText(logFilePath, $"<color=green>=== SVN SESSION LOG START: {DateTime.Now} ===</color>\n");
-                File.AppendAllText(logFilePath, $"<color=green>OS: {SystemInfo.operatingSystem}</color>\n");
-                File.AppendAllText(logFilePath, $"<color=green>Path: {Application.dataPath}</color>\n\n");
+                if (initialized) return;
 
-                Application.logMessageReceived += HandleUnityLog;
-                initialized = true;
+                try
+                {
+                    string folderPath = SVNPrefs.PersistentDataPath;
+                    logFilePath = Path.Combine(folderPath, "svn_session.log");
 
-                SVNLogBridge.LogToOutput("<color=green>[SVN] Logger initialized successfully.</color>");
+                    // === FIX K2: rotacja — poprzednia sesja zostaje jako .1.
+                    try
+                    {
+                        if (File.Exists(logFilePath))
+                        {
+                            string prev = logFilePath + ".1";
+                            if (File.Exists(prev)) File.Delete(prev);
+                            File.Move(logFilePath, prev);
+                        }
+                    }
+                    catch { }
+
+                    // === FIX drobiazg: czysty tekst do PLIKU (rich-text to UI).
+                    File.WriteAllText(logFilePath, $"=== SVN SESSION LOG START: {DateTime.Now} ===\n");
+                    File.AppendAllText(logFilePath, $"OS: {SystemInfo.operatingSystem}\n");
+                    File.AppendAllText(logFilePath, $"Path: {Application.dataPath}\n\n");
+
+                    // Subskrypcja ZANIM initialized=true — handler działa na kompletnym stanie.
+                    Application.logMessageReceived += HandleUnityLog;
+                    initialized = true;
+
+                    SVNLogBridge.LogToOutput("<color=green>[SVN] Logger initialized successfully.</color>");
+                }
+                catch (Exception e)
+                {
+                    // Inicjalizacja padła — NIE ustawiamy initialized (LogToFile
+                    // będzie grzecznie pomijać zamiast rzucać na null path).
+                    Debug.LogWarning($"[SVNLogger] Init failed: {e.Message}");
+                }
             }
-            catch (Exception e)
+        }
+
+        // === FIX K3: odsubskrybowanie — SVNLogBridge.Shutdown woła to; bez tego
+        // przy wyłączonym Domain Reload każdy Play dokładał kolejny handler
+        // i każda linia Debug.Log lądowała w pliku N×.
+        public static void Shutdown()
+        {
+            lock (FileLock)
             {
-                SVNLogBridge.LogErrorToOutput($"<color=#8B0000>[SVN] Critical Logger Error:</color> <color=#8B0000>{e.Message}</color>");
+                if (!initialized) return;
+                initialized = false;
+                try { Application.logMessageReceived -= HandleUnityLog; } catch { }
             }
         }
 
@@ -45,30 +87,35 @@ namespace SVN.Core
                 logEntry += $"ST: {stackTrace}\n";
             }
 
-            try
-            {
-                lock (FileLock)
-                {
-                    File.AppendAllText(logFilePath, logEntry);
-                }
-            }
-            catch { }
+            AppendLine(logEntry);
         }
 
         public static void OpenLogFolder()
         {
-            Application.OpenURL("file://" + Application.persistentDataPath);
+            Application.OpenURL("file://" + SVNPrefs.PersistentDataPath);
         }
 
         public static void LogToFile(string message, string tag)
         {
-            if (!initialized) Initialize();
+            // === FIX K1: guard — po porażce inicjalizacji (initialized == false
+            // mimo próby) pomijamy cicho, zamiast AppendAllText(null path).
+            if (!initialized)
+            {
+                Initialize();
+                if (!initialized) return;
+            }
 
             string logEntry = $"[{DateTime.Now:HH:mm:ss}] [{tag}] {message}\n";
+            AppendLine(logEntry);
+        }
+
+        private static void AppendLine(string logEntry)
+        {
             try
             {
                 lock (FileLock)
                 {
+                    if (string.IsNullOrEmpty(logFilePath)) return;   // === FIX K1: defensive
                     File.AppendAllText(logFilePath, logEntry);
                 }
             }

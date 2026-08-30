@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -33,7 +34,7 @@ namespace SVN.Core
         }
 
         public async Task<(bool success, string path, string error)> ResolveSingleCoreSilentAsync(
-            string rawPath, string strategy, CancellationToken token)
+    string rawPath, string strategy, CancellationToken token)
         {
             if (!SVNPathUtilities.TryGetRelativePath(_svnManager.WorkingDir, rawPath, out string path))
                 return (false, rawPath, "Invalid path");
@@ -97,6 +98,22 @@ namespace SVN.Core
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { }
+            }
+            else if (data != null)
+            {
+                // === FIX 13: przywrócenie stanu sprzed "Resolving" — wcześniej nieudany
+                // resolve zostawiał wpis w stanie Resolving na zawsze (GetConflictsAsync
+                // podtrzymuje cached.State, więc śmieć się utrwalał).
+                _cache.AddOrUpdate(new SVNConflictData
+                {
+                    Path = path,
+                    Type = data.Type,
+                    State = data.State,
+                    TreeConflictReason = data.TreeConflictReason,
+                    TreeConflictAction = data.TreeConflictAction,
+                    TreeConflictVictim = data.TreeConflictVictim,
+                    TreeConflictNodeKind = data.TreeConflictNodeKind
+                });
             }
 
             return (resolved, path, errorMsg);
@@ -258,9 +275,16 @@ namespace SVN.Core
                 return false;
 
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-            var allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
-            if (SVNPathUtilities.HasUnresolvedParentConflict(path, allConflicts))
-                _logBoth($"<color=#FFAA00>Warning:</color> Parent directory also has a conflict. Resolve children first, then the parent.");
+
+            // === FIX 2: pre-check (ostrzeżenie o rodzicu) chroniony.
+            try
+            {
+                var allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
+                if (SVNPathUtilities.HasUnresolvedParentConflict(path, allConflicts))
+                    _logBoth($"<color=#FFAA00>Warning:</color> Parent directory also has a conflict. Resolve children first, then the parent.");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { _logBoth($"<color=#FFAA00>Conflict pre-check failed:</color> {ex.Message}"); }
 
             string fullPath = Path.Combine(_svnManager.WorkingDir, path);
             bool fileExists = File.Exists(fullPath) || Directory.Exists(fullPath);
@@ -299,6 +323,7 @@ namespace SVN.Core
                     {
                         await SvnRunner.RunAsync($"resolve --accept working \"{path}\"", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
                     }
+                    catch (OperationCanceledException) { throw; }
                     catch { }
                     return false;
                 }
@@ -320,23 +345,35 @@ namespace SVN.Core
                 catch (Exception workingEx) { _logBoth($"<color=#FFAA00>resolve working failed:</color> {workingEx.Message}"); }
             }
 
-            await SvnRunner.RunAsync("cleanup", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
-            var remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
-            string normalizedPath = SVNPathUtilities.NormalizePath(path);
-            bool stillExists = remaining.Any(c => SVNPathUtilities.NormalizePath(c.Path).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
+            // === FIX 2: bezpieczny cleanup.
+            try { await SvnRunner.RunAsync("cleanup", _svnManager.WorkingDir, true, token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { throw; }
+            catch { }
+
+            // === FIX 2 + FIX 6: weryfikacja chroniona; RefreshStatus usunięty (wrapper odświeża).
+            bool stillExists;
+            try
+            {
+                var remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
+                string normalizedPath = SVNPathUtilities.NormalizePath(path);
+                stillExists = remaining.Any(c => SVNPathUtilities.NormalizePath(c.Path).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logBoth($"<color=#FFAA00>Post-resolve verification failed:</color> {ex.Message}");
+                return false;
+            }
 
             if (stillExists)
             {
                 _logBoth($"<color=#FF4444>Tree conflict still exists:</color> {path}");
                 return false;
             }
-            else
-            {
-                _cache.Remove(normalizedPath);
-                await _svnManager.RefreshStatus().ConfigureAwait(false);
-                _logBoth($"<color=green>Tree conflict resolved:</color> {path}");
-                return true;
-            }
+
+            _cache.Remove(SVNPathUtilities.NormalizePath(path));
+            _logBoth($"<color=green>Tree conflict resolved:</color> {path}");
+            return true;
         }
 
         public async Task<(bool success, string path)> DeleteObstructionCoreSilentAsync(string rawPath, CancellationToken token)
@@ -395,7 +432,15 @@ namespace SVN.Core
             catch (OperationCanceledException) { throw; }
             catch { }
 
-            var remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
+            // === FIX 2: weryfikacja chroniona.
+            List<SVNConflictData> remaining;
+            try { remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return (false, path); // nie możemy potwierdzić sukcesu — konserwatywnie porażka
+            }
+
             string normalizedPath = SVNPathUtilities.NormalizePath(path);
             bool stillExists = remaining.Any(c => SVNPathUtilities.NormalizePath(c.Path).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
 

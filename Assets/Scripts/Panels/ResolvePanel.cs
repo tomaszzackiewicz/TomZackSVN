@@ -11,7 +11,6 @@ public class ResolvePanel : MonoBehaviour
     private SVNExternal _externalModule;
 
     private volatile bool _isRefreshing;
-    private CancellationTokenSource _refreshCts;
     private CancellationTokenSource _panelLifecycleCts;
 
     private void Awake() => ResolveReferences();
@@ -21,9 +20,17 @@ public class ResolvePanel : MonoBehaviour
         if (_svnManager == null || _resolveModule == null)
             ResolveReferences();
 
-        _panelLifecycleCts?.Cancel();
-        _panelLifecycleCts?.Dispose();
+        // === FIX K1: delayed dispose poprzedniego CTS — natychmiastowy
+        // Cancel+Dispose przy szybkim disable→enable rzucał ODE (nie-OCE!)
+        // w wiszącym Task.Delay(100, token) i leciał poza catch(OCE) jako
+        // nieobsłużony wyjątek async void.
+        var oldCts = _panelLifecycleCts;
         _panelLifecycleCts = new CancellationTokenSource();
+        if (oldCts != null)
+        {
+            try { oldCts.Cancel(); } catch (ObjectDisposedException) { }
+            _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
+        }
 
         try
         {
@@ -32,21 +39,19 @@ public class ResolvePanel : MonoBehaviour
             if (this != null && !string.IsNullOrEmpty(_svnManager?.WorkingDir))
                 TriggerSafeRefresh(_panelLifecycleCts.Token);
         }
-        catch (OperationCanceledException)
-        {
-
-        }
+        catch (OperationCanceledException) { }
     }
 
     private void OnDisable()
     {
-        _panelLifecycleCts?.Cancel();
-        _panelLifecycleCts?.Dispose();
+        // === FIX K1: jw. — cancel + delayed dispose.
+        var cts = _panelLifecycleCts;
         _panelLifecycleCts = null;
-
-        _refreshCts?.Cancel();
-        _refreshCts?.Dispose();
-        _refreshCts = null;
+        if (cts != null)
+        {
+            try { cts.Cancel(); } catch (ObjectDisposedException) { }
+            _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
+        }
     }
 
     private async Task WaitForWorkingDirIfNeeded(CancellationToken token)
@@ -111,40 +116,13 @@ public class ResolvePanel : MonoBehaviour
             TriggerSafeRefresh(_panelLifecycleCts.Token);
     }
 
-    public void Button_OpenInEditor()
-    {
-        if (CanExecute()) _resolveModule.OpenInEditor();
-    }
-
-    public void Button_MarkAsResolved()
-    {
-        if (CanExecute()) _resolveModule.MarkAsResolved();
-    }
-
-    public void Button_ResolveTheirs()
-    {
-        if (CanExecute()) _resolveModule.ResolveTheirs();
-    }
-
-    public void Button_ResolveMine()
-    {
-        if (CanExecute()) _resolveModule.ResolveMine();
-    }
-
-    public void Button_DeleteAllObstructions()
-    {
-        if (CanExecute()) _resolveModule.DeleteAllObstructions();
-    }
-
-    public void Button_ResolveAllTheirs()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllTheirs();
-    }
-
-    public void Button_ResolveAllMine()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllMine();
-    }
+    public void Button_OpenInEditor() { if (CanExecute()) _resolveModule.OpenInEditor(); }
+    public void Button_MarkAsResolved() { if (CanExecute()) _resolveModule.MarkAsResolved(); }
+    public void Button_ResolveTheirs() { if (CanExecute()) _resolveModule.ResolveTheirs(); }
+    public void Button_ResolveMine() { if (CanExecute()) _resolveModule.ResolveMine(); }
+    public void Button_DeleteAllObstructions() { if (CanExecute()) _resolveModule.DeleteAllObstructions(); }
+    public void Button_ResolveAllTheirs() { if (CanExecute()) _resolveModule.ResolveAllTheirs(); }
+    public void Button_ResolveAllMine() { if (CanExecute()) _resolveModule.ResolveAllMine(); }
 
     public void Button_ResolveFilePath()
     {
@@ -152,38 +130,11 @@ public class ResolvePanel : MonoBehaviour
         _externalModule?.BrowseResolveFilePath();
     }
 
-    public void Button_ResolveAllTreeMine()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllTreeMine();
-    }
-
-    public void Button_ResolveAllTreeTheirs()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllTreeTheirs();
-    }
-
-    public void Button_ResolveAllTreeBase()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllTreeBase();
-    }
-
-    public void Button_CancelResolve()
-    {
-        _resolveModule?.CancelResolve();
-    }
-
-    public void Button_ResolveAllTreeTheirsForce()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllTreeTheirsForce();
-    }
-
-    public void Button_ResolveAllTreeMineForce()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllTreeMineForce();
-    }
-
-    public void Button_ResolveAllTreeBaseForce()
-    {
-        if (CanExecute()) _resolveModule.ResolveAllTreeBaseForce();
-    }
+    public void Button_ResolveAllTreeMine() { if (CanExecute()) _resolveModule.ResolveAllTreeMine(); }
+    public void Button_ResolveAllTreeTheirs() { if (CanExecute()) _resolveModule.ResolveAllTreeTheirs(); }
+    public void Button_ResolveAllTreeBase() { if (CanExecute()) _resolveModule.ResolveAllTreeBase(); }
+    public void Button_CancelResolve() { _resolveModule?.CancelResolve(); }
+    public void Button_ResolveAllTreeTheirsForce() { if (CanExecute()) _resolveModule.ResolveAllTreeTheirsForce(); }
+    public void Button_ResolveAllTreeMineForce() { if (CanExecute()) _resolveModule.ResolveAllTreeMineForce(); }
+    public void Button_ResolveAllTreeBaseForce() { if (CanExecute()) _resolveModule.ResolveAllTreeBaseForce(); }
 }

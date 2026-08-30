@@ -15,17 +15,19 @@ public static class WindowsTaskbarProgress
         Paused = 0x8
     }
 
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+
     [ComImport, Guid("ea1afb91-9e28-4b86-90e9-9e9f8a5eefaf"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface ITaskbarList3
     {
+        // UWAGA: kolejność vtable krytyczna (ITaskbarList → ITaskbarList2 → ITaskbarList3);
+        // metody poniżej SetProgressState istnieją, ale nieużywane — pominięte legalnie.
         [PreserveSig] void HrInit();
         [PreserveSig] void AddTab(IntPtr hwnd);
         [PreserveSig] void DeleteTab(IntPtr hwnd);
         [PreserveSig] void ActivateTab(IntPtr hwnd);
         [PreserveSig] void SetActiveAlt(IntPtr hwnd);
-
         [PreserveSig] void MarkFullscreenWindow(IntPtr hwnd, [MarshalAs(UnmanagedType.Bool)] bool fFullscreen);
-
         [PreserveSig] void SetProgressValue(IntPtr hwnd, ulong ullCompleted, ulong ullTotal);
         [PreserveSig] void SetProgressState(IntPtr hwnd, TaskbarState tbpFlags);
     }
@@ -43,19 +45,20 @@ public static class WindowsTaskbarProgress
 
         try
         {
+            // UWAGA (zachowanie): w EDYTORZE zwraca okno Unity Editora — progres
+            // pojawi się na ikonie edytora, nie Game View. W playerze: okno gry.
             _mainWindowHandle = Process.GetCurrentProcess().MainWindowHandle;
             if (_mainWindowHandle == IntPtr.Zero)
-            {
                 return false;
-            }
 
             _taskbarList = (ITaskbarList3)new CTaskbarList();
             _taskbarList.HrInit();
             return true;
         }
-        catch (Exception ex)
+        catch
         {
             _taskbarList = null;
+            _mainWindowHandle = IntPtr.Zero;
             return false;
         }
     }
@@ -68,9 +71,7 @@ public static class WindowsTaskbarProgress
         {
             _taskbarList.SetProgressState(_mainWindowHandle, state);
         }
-        catch (Exception ex)
-        {
-        }
+        catch { }
     }
 
     public static void SetProgress(int current, int total)
@@ -82,31 +83,12 @@ public static class WindowsTaskbarProgress
             if (total <= 0) return;
             _taskbarList.SetProgressValue(_mainWindowHandle, (ulong)current, (ulong)total);
         }
-        catch (Exception ex)
-        {
-        }
+        catch { }
     }
 
     public static void Reset()
     {
         SetState(TaskbarState.NoProgress);
-    }
-
-    public static void Flash(uint count = 3, uint timeout = 0, uint flags = 0x00000003)
-    {
-        IntPtr hwnd = Process.GetCurrentProcess().MainWindowHandle;
-        if (hwnd == IntPtr.Zero) return;
-
-        FLASHWINFO fw = new FLASHWINFO
-        {
-            cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO)),
-            hwnd = hwnd,
-            dwFlags = flags,
-            uCount = count,
-            dwTimeout = timeout
-        };
-
-        FlashWindowEx(ref fw);
     }
 
     [DllImport("user32.dll")]
@@ -122,9 +104,46 @@ public static class WindowsTaskbarProgress
         public uint dwTimeout;
     }
 
+    public static void Flash(uint count = 3, uint timeout = 0, uint flags = 0x00000003)
+    {
+        // === FIX K1: pełny guard + try/catch — wcześniej DllNotFoundException/
+        // InvalidOperationException potrafiły uciec nieprzechwycone.
+        try
+        {
+            IntPtr hwnd = Process.GetCurrentProcess().MainWindowHandle;
+            if (hwnd == IntPtr.Zero) return;
+
+            FLASHWINFO fw = new FLASHWINFO
+            {
+                cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO)),
+                hwnd = hwnd,
+                dwFlags = flags,
+                uCount = count,
+                dwTimeout = timeout
+            };
+
+            FlashWindowEx(ref fw);
+        }
+        catch { }
+    }
+
     public static void Release()
     {
+        // === FIX: najpierw zgas stan paska, potem zwolnij referencje
+        // (wcześniej Error potrafił zostać na pasku do końca sesji).
+        try { SetState(TaskbarState.NoProgress); } catch { }
+
         _taskbarList = null;
         _mainWindowHandle = IntPtr.Zero;
     }
+
+#else
+    // === FIX K2: no-op na macOS/Linux — cała funkcjonalność wyłącznie Windows.
+
+    public static void SetState(TaskbarState state) { }
+    public static void SetProgress(int current, int total) { }
+    public static void Reset() { }
+    public static void Flash(uint count = 3, uint timeout = 0, uint flags = 0x00000003) { }
+    public static void Release() { }
+#endif
 }

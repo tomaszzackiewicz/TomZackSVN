@@ -11,6 +11,8 @@ namespace SVN.Core
 {
     public class SVNBlame : SVNBase, IDisposable
     {
+        private const int BlameTimeoutSeconds = 60;
+
         private CancellationTokenSource _cts;
         private int _processingFlag;
         private int _disposed;
@@ -28,7 +30,7 @@ namespace SVN.Core
             if (cts != null)
             {
                 try { cts.Cancel(); } catch { }
-                try { cts.Dispose(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
             }
         }
 
@@ -82,102 +84,101 @@ namespace SVN.Core
                 SVNLogBridge.UpdateUIField(svnUI.BlameConsoleText, msg, "BLAME", true);
         }
 
+        // === FIX K2: snapshot pola UI NA MAIN THREAD (wejście z przycisku),
+        // przekazany do rdzenia. Wcześniej odczyt TMP mógł nastąpić z puli wątków.
         public void ExecuteBlame()
         {
-            SafeFireAndForget(async () =>
+            string relativePath = svnUI?.BlameTargetFileInput?.text?.Trim();
+            SafeFireAndForget(() => RunBlameAsync(relativePath, forceMainConsole: false));
+        }
+
+        // === FIX K1+Ś4: wszystkie wejścia przechodzą przez jeden rdzeń z pełnym
+        // guard→try natychmiast→catch OCE→finally. ShowBlameInExternalEditor
+        // zachowuje sygnaturę (możliwi callerzy), semantyka = ShowBlame.
+        public async Task ShowBlame(string relativePath, CancellationToken token = default)
+        {
+            using var externalCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            externalCts.CancelAfter(TimeSpan.FromSeconds(BlameTimeoutSeconds));
+            await RunBlameCoreAsync(relativePath, externalCts.Token, forceMainConsole: false,
+                acquireGuard: false).ConfigureAwait(false);
+        }
+
+        public async Task ShowBlameInExternalEditor(string relativePath)
+        {
+            await RunBlameAsync(relativePath, forceMainConsole: false).ConfigureAwait(false);
+        }
+
+        public async Task ShowBlameInMainConsole(string relativePath)
+        {
+            await RunBlameAsync(relativePath, forceMainConsole: true).ConfigureAwait(false);
+        }
+
+        // === FIX K1: jedyny punkt zajmowania guardu; try NATYCHMIAST po nim —
+        // zero pracy (walidacji, odczytów UI, awaitów) między guardem a try.
+        private async Task RunBlameAsync(string relativePath, bool forceMainConsole)
+        {
+            if (!TryEnterProcessing()) return;
+
+            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(BlameTimeoutSeconds));
+            Interlocked.Exchange(ref _cts, cts);
+            try
+            {
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+                await ShowBlameInternal(relativePath, cts.Token, forceMainConsole).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                PostLog("<color=orange>Blame cancelled or timed out.</color>");
+            }
+            catch (Exception ex)
+            {
+                PostLog($"<color=#FFAA00>Blame failed:</color> {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.CompareExchange(ref _cts, null, cts);
+                _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });   // === FIX Ś5
+                ExitProcessing();
+            }
+        }
+
+        // === FIX K1: rdzeń bez własnego guardu (guard należy do wywołującego);
+        // walidacja ścieżki + wszystkie wczesne returny bez ryzyka wycieku flagi.
+        private async Task RunBlameCoreAsync(string relativePath, CancellationToken token, bool forceMainConsole, bool acquireGuard)
+        {
+            if (acquireGuard)
             {
                 if (!TryEnterProcessing()) return;
+            }
 
-                string relativePath = svnUI?.BlameTargetFileInput?.text?.Trim();
+            try
+            {
                 if (string.IsNullOrEmpty(relativePath))
                 {
                     PostLog("<color=yellow>Please select a file path first.</color>");
-                    ExitProcessing();
                     return;
                 }
 
                 if (!IsValidPath(relativePath))
                 {
                     PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
-                    ExitProcessing();
                     return;
                 }
 
-                var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                Interlocked.Exchange(ref _cts, cts);
-                try
-                {
-                    await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                    await ShowBlameInternal(relativePath, cts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    PostLog("<color=orange>Blame cancelled or timed out.</color>");
-                }
-                finally
-                {
-                    Interlocked.CompareExchange(ref _cts, null, cts);
-                    try { cts.Dispose(); } catch { }
-                    ExitProcessing();
-                }
-            });
-        }
-
-        public async Task ShowBlame(string relativePath, CancellationToken token = default)
-        {
-            if (!IsValidPath(relativePath))
-            {
-                PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
-                return;
-            }
-            await ShowBlameInternal(relativePath, token).ConfigureAwait(false);
-        }
-
-        public async Task ShowBlameInExternalEditor(string relativePath)
-        {
-            if (!TryEnterProcessing()) return;
-            if (!IsValidPath(relativePath))
-            {
-                PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
-                ExitProcessing();
-                return;
-            }
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            Interlocked.Exchange(ref _cts, cts);
-            try
-            {
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                await ShowBlameInternal(relativePath, cts.Token).ConfigureAwait(false);
+                await ShowBlameInternal(relativePath, token, forceMainConsole).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                PostLog("<color=orange>Blame cancelled or timed out.</color>");
+            }
+            catch (Exception ex)
+            {
+                PostLog($"<color=#FFAA00>Blame failed:</color> {ex.Message}");
             }
             finally
             {
-                Interlocked.CompareExchange(ref _cts, null, cts);
-                try { cts.Dispose(); } catch { }
-                ExitProcessing();
-            }
-        }
-
-        public async Task ShowBlameInMainConsole(string relativePath)
-        {
-            if (!TryEnterProcessing()) return;
-            if (!IsValidPath(relativePath))
-            {
-                PostLog("<color=#FFAA00>Invalid path. Path cannot contain '..' or control characters.</color>");
-                ExitProcessing();
-                return;
-            }
-            var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            Interlocked.Exchange(ref _cts, cts);
-            try
-            {
-                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                await ShowBlameInternal(relativePath, cts.Token, forceMainConsole: true).ConfigureAwait(false);
-            }
-            finally
-            {
-                Interlocked.CompareExchange(ref _cts, null, cts);
-                try { cts.Dispose(); } catch { }
-                ExitProcessing();
+                if (acquireGuard) ExitProcessing();
             }
         }
 
@@ -200,17 +201,25 @@ namespace SVN.Core
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(relativePath))
+            string fullPath = "";
+            try
             {
-                PostLog("<color=yellow>No file selected.</color>");
+                fullPath = !isServerPath
+                    ? Path.GetFullPath(Path.Combine(svnManager.WorkingDir ?? "", relativePath))
+                    : "";
+            }
+            catch (Exception ex)
+            {
+                // === FIX: GetFullPath na ścieżce z inputu mógł rzucić (illegal chars)
+                // i przedostać się do catch(OperationCanceled) — brak, czyli caller
+                // dostawał surowy wyjątek.
+                PostUI(() => DisplayBlameMessage($"<color=#FF4444>Invalid path:</color> {ex.Message}"));
                 return;
             }
 
-            string fullPath = !isServerPath ? Path.GetFullPath(Path.Combine(svnManager.WorkingDir ?? "", relativePath)) : "";
-
             PostLog($"Fetching Annotations for: <color=green>{relativePath}</color>...");
 
-            string commandArgs = "";
+            string commandArgs;
             string workDir = svnManager.WorkingDir;
 
             if (isServerPath)
@@ -244,6 +253,7 @@ namespace SVN.Core
             {
                 raw = await SvnRunner.RunAsync(commandArgs, workDir, false, token).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 PostUI(() => DisplayBlameMessage($"<color=#FF4444>SVN Error:</color> {ex.Message}"));
@@ -256,6 +266,8 @@ namespace SVN.Core
                 return;
             }
 
+            // Ś2: te checki są martwe przy throwOnError=true (RunAsync rzuci), ale
+            // zostają jako tani hardening gdyby kiedyś ktoś przestawił flagę.
             if (raw.TrimStart().StartsWith("svn: E") || raw.TrimStart().StartsWith("svn: W"))
             {
                 PostUI(() => DisplayBlameMessage($"<color=#FF4444>SVN Error:</color> {raw.Trim()}"));
@@ -274,6 +286,8 @@ namespace SVN.Core
             int totalLines = 0;
 
             richReport.AppendLine($"<size=120%><b>BLAME: {Path.GetFileName(relativePath)}</b></size>");
+            if (forceMainConsole)
+                richReport.AppendLine("<color=#666666>(forced to main console)</color>");
             richReport.AppendLine("<color=#444444> LINE | REV   | AUTHOR       | CONTENT</color>");
             richReport.AppendLine("--------------------------------------------------");
 
@@ -341,32 +355,26 @@ namespace SVN.Core
             string blameToolPath = GetBlameToolPath();
             bool fileExists = !string.IsNullOrEmpty(blameToolPath) && File.Exists(blameToolPath);
 
-            PostUI(() =>
+            // === FIX Ś1: diag-log krótszy i NIE sklejany w nieskończoność do głównego
+            // logu (LogText.text += przy każdym blame rozpychało konsolę bez limitu).
+            if (fileExists)
             {
-                string diagOutput = $"\n[DIAG] Blame Tool Path: '{blameToolPath}' | Exists: {fileExists}";
+                string targetPathForBlame = fullPath;
+                string processArguments = "";
 
-                if (fileExists)
+                if (isServerPath)
                 {
-                    string targetPathForBlame = fullPath;
-                    string processArguments = "";
+                    if (relativePath.Contains("://")) targetPathForBlame = relativePath;
+                    else targetPathForBlame = svnManager.RepositoryUrl?.TrimEnd('/') + relativePath;
+                }
 
-                    if (isServerPath)
-                    {
-                        if (relativePath.Contains("://")) targetPathForBlame = relativePath;
-                        else targetPathForBlame = svnManager.RepositoryUrl?.TrimEnd('/') + relativePath;
-                    }
+                if (blameToolPath.IndexOf("TortoiseProc", StringComparison.OrdinalIgnoreCase) >= 0)
+                    processArguments = $"/command:blame /path:\"{targetPathForBlame}\"";
+                else
+                    processArguments = $"\"{targetPathForBlame}\"";
 
-                    if (blameToolPath.IndexOf("TortoiseProc", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        processArguments = $"/command:blame /path:\"{targetPathForBlame}\"";
-                        diagOutput += $"\n[DIAG] Detected TortoiseProc. Using arguments: {processArguments}";
-                    }
-                    else
-                    {
-                        processArguments = $"\"{targetPathForBlame}\"";
-                        diagOutput += $"\n[DIAG] Trying to launch with arguments: {processArguments}";
-                    }
-
+                PostUI(() =>
+                {
                     try
                     {
                         using var process = Process.Start(new ProcessStartInfo
@@ -375,31 +383,14 @@ namespace SVN.Core
                             Arguments = processArguments,
                             UseShellExecute = true
                         });
-                        diagOutput += "\n<color=green>[DIAG] SUCCESS! Process.Start launched without error.</color>";
+                        LogBoth($"<color=green>[Blame] Opened in external tool:</color> {Path.GetFileName(relativePath)}");
                     }
                     catch (Exception ex)
                     {
-                        diagOutput += $"\n<color=red>[DIAG] LAUNCH ERROR! Type: {ex.GetType().Name}, Message: {ex.Message}</color>";
+                        LogBoth($"<color=#FFAA00>[Blame] Failed to launch tool ({ex.GetType().Name}):</color> {ex.Message}");
                     }
-                }
-                else if (!string.IsNullOrEmpty(blameToolPath))
-                {
-                    diagOutput += $"\n<color=red>[DIAG] Path is set, but the file DOES NOT EXIST on disk: {blameToolPath}</color>";
-                }
-                else
-                {
-                    diagOutput += "\n<color=yellow>[DIAG] Path is EMPTY. Moving to STEP 4.</color>";
-                }
+                });
 
-                if (svnUI?.LogText != null)
-                {
-                    svnUI.LogText.text += diagOutput;
-                    Canvas.ForceUpdateCanvases();
-                }
-            });
-
-            if (fileExists)
-            {
                 return;
             }
 
@@ -407,12 +398,12 @@ namespace SVN.Core
 
             if (!string.IsNullOrEmpty(textEditorPath) && File.Exists(textEditorPath))
             {
-                string cacheFolder = Path.Combine(Application.temporaryCachePath, "SVN_Cache");
+                string cacheFolder = Path.Combine(SVNPrefs.TemporaryCachePath, "SVN_Cache");
                 Directory.CreateDirectory(cacheFolder);
 
                 string fileName = $"Blame_{Path.GetFileNameWithoutExtension(relativePath)}.txt";
                 string tempPath = Path.Combine(cacheFolder, fileName);
-                await File.WriteAllTextAsync(tempPath, plainReport.ToString()).ConfigureAwait(false);
+                await File.WriteAllTextAsync(tempPath, plainReport.ToString(), token).ConfigureAwait(false);
 
                 CleanupOldBlameFiles();
                 string absoluteTempPath = Path.GetFullPath(tempPath);
@@ -442,11 +433,12 @@ namespace SVN.Core
             return arg.Replace("\"", "\\\"");
         }
 
+        // === FIX: PlayerPrefs przez SVNPrefs (wołane po awaitach → pula).
         private string GetBlameToolPath()
         {
             string path = svnManager?.BlameToolPath;
             if (string.IsNullOrWhiteSpace(path))
-                path = PlayerPrefs.GetString(SVNManager.KEY_BLAME_TOOL, "");
+                path = SVNPrefs.GetString(SVNManager.KEY_BLAME_TOOL, "");
 
             if (!string.IsNullOrWhiteSpace(path))
             {
@@ -458,7 +450,7 @@ namespace SVN.Core
 
         private string GetTextEditorPath()
         {
-            string path = PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
+            string path = SVNPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
 
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -517,7 +509,7 @@ namespace SVN.Core
         {
             try
             {
-                string cache = Path.Combine(Application.temporaryCachePath, "SVN_Cache");
+                string cache = Path.Combine(SVNPrefs.TemporaryCachePath, "SVN_Cache");
                 if (!Directory.Exists(cache)) return;
 
                 foreach (var file in Directory.EnumerateFiles(cache, "Blame_*.txt"))

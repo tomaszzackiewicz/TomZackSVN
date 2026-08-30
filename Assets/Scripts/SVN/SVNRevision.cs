@@ -81,29 +81,39 @@ namespace SVN.Core
                 return;
             }
 
-            bool hasModifications = await updateModule.HasLocalModificationsAsync(svnManager.WorkingDir).ConfigureAwait(false);
-            if (hasModifications)
+            float now = Time.time;
+
+            // === S5: szczegółowy dirty-state zamiast płaskiej blokady —
+            // unversioned NIE blokują (svn update -r ich nie dotyka), tylko informują.
+            var dirty = await svnManager.GetWorkingCopyDirtyStateAsync(svnManager.WorkingDir).ConfigureAwait(false);
+
+            if (dirty.IsBlockingDirty)
             {
+                string conflicts = dirty.ConflictedCount > 0 ? $", conflicts: {dirty.ConflictedCount}" : "";
                 LogToRevisionPanel(
-                    "<color=#FFAA00>Cannot update to a specific revision while you have uncommitted local changes. " +
-                    "Please commit or revert them first.</color>");
+                    $"<color=#FFAA00>Cannot update to a specific revision: you have uncommitted versioned changes{conflicts}.\n" +
+                    "Commit or revert them first.</color>");
                 return;
             }
 
-            float timeSinceLastClick = Time.time - _lastUpdateToRevClickTime;
+            if (dirty.UnversionedCount > 0)
+            {
+                LogToRevisionPanel(
+                    $"<color=yellow>Note: {dirty.UnversionedCount} unversioned file(s) detected — they will be left untouched by this update.</color>");
+            }
+
+            float timeSinceLastClick = now - _lastUpdateToRevClickTime;
 
             if (timeSinceLastClick < DoubleClickThreshold && _pendingRevision == rev)
             {
                 _pendingRevision = null;
-
                 LogToRevisionPanel($"<color=green>Executing update to revision {rev}...</color>", append: false);
                 updateModule.UpdateToRevision(rev);
             }
             else
             {
-                _lastUpdateToRevClickTime = Time.time;
+                _lastUpdateToRevClickTime = now;
                 _pendingRevision = rev;
-
                 LogToRevisionPanel(
                     $"<color=#FFAA00><b>ATTENTION:</b> Click <b>ONE MORE TIME</b> within 5 seconds to confirm update to revision {rev}.\n" +
                     "This will overwrite local files!</color>", append: false);
@@ -148,6 +158,7 @@ namespace SVN.Core
                 ? $"revision {cleanRevs[0]}"
                 : $"revisions: {string.Join(", ", cleanRevs)}";
 
+            // Time.time przed pierwszym await — OK (main thread, wywołanie z przycisku).
             float timeSinceLastClick = Time.time - _lastRevertClickTime;
 
             if (timeSinceLastClick < DoubleClickThreshold && _pendingRevertInput == inputText)
@@ -176,20 +187,17 @@ namespace SVN.Core
                     return;
                 }
 
+                // === FIX S1: zakres [A..B] jako JEDEN argument '-r B:(A-1)' zamiast
+                // (B-A+1) × '-c -N'. Odwrócenie zmian wprowadzonych w [A..B] to
+                // merge -r B:(A-1); stary zapis rozsadzał linię komend przy dużych
+                // zakresach (limit ~32k znaków → Process.Start padał).
                 var revArgs = new StringBuilder();
                 foreach (var item in revisionItems)
                 {
                     if (item.IsRange)
-                    {
-                        for (long rev = item.Start; rev <= item.End; rev++)
-                        {
-                            revArgs.Append($"-c -{rev} ");
-                        }
-                    }
+                        revArgs.Append($"-r {item.End}:{item.Start - 1} ");
                     else
-                    {
                         revArgs.Append($"-c -{item.Start} ");
-                    }
                 }
 
                 LogToRevisionPanel($"[REVERT COMMITS] Undoing changes from {revListString}...", append: false);
@@ -209,11 +217,16 @@ namespace SVN.Core
 
                 string output = await SvnRunner.RunAsync(args, workingDir, true, CancellationToken.None).ConfigureAwait(false);
 
+                // === FIX: wykrywanie konfliktów bez 'IndexOf("C ")' — dopasowywało
+                // dowolny tekst zawierający "C " (np. nazwy plików) i zjadało
+                // komunikat sukcesu.
+                bool hasConflicts = output.IndexOf("conflict", StringComparison.OrdinalIgnoreCase) >= 0;
+
                 if (string.IsNullOrWhiteSpace(output) || output.Contains("No changes") || output.Contains("Already merged"))
                 {
                     LogToRevisionPanel($"<color=yellow>[Revert] {revListString} has no effect on current working copy.</color>");
                 }
-                else if (output.Contains("conflict") || output.IndexOf("C ") >= 0)
+                else if (hasConflicts)
                 {
                     LogToRevisionPanel("<color=yellow>[REVERT CONFLICTS] Reverting caused conflicts! Please use the Resolve panel to fix them before committing.</color>");
                 }
@@ -239,9 +252,12 @@ namespace SVN.Core
             }
         }
 
-        public async void ExportRevisionButton() => await ExportRevisionFromInputAsync();
+        // === FIX S4: metoda nie ma żadnego await — guard TryEnterProcessing był
+        // zwalniany natychmiast (chronił nic) i generował CS1998. Delegowanie do
+        // SVNExternal (moduł ma własny guard); przycisk wywołuje synchronicznie.
+        public void ExportRevisionButton() => ExportRevisionFromInput();
 
-        private async Task ExportRevisionFromInputAsync()
+        private void ExportRevisionFromInput()
         {
             if (svnUI?.UpdateRevisionInput == null)
             {
@@ -262,33 +278,23 @@ namespace SVN.Core
                 return;
             }
 
-            if (!TryEnterProcessing()) return;
+            var externalModule = svnManager.GetModule<SVNExternal>();
 
-            try
+            if (externalModule != null)
             {
                 LogToRevisionPanel($"<color=green>[Export] Initiating export for revision r{rev}...</color>");
-
-                var externalModule = svnManager.GetModule<SVNExternal>();
-
-                if (externalModule != null)
-                {
-                    externalModule.ExportRevision(rev);
-                }
-                else
-                {
-                    LogToRevisionPanel("<color=red>[Export Error] SVNExternal module was not found in SVNManager!</color>");
-                }
+                externalModule.ExportRevision(rev);
             }
-            catch (Exception ex)
+            else
             {
-                LogToRevisionPanel($"<color=#FFAA00>[Export Error] {ex.Message}</color>");
-            }
-            finally
-            {
-                ExitProcessing();
+                LogToRevisionPanel("<color=red>[Export Error] SVNExternal module was not found in SVNManager!</color>");
             }
         }
 
+        // === FIX K1 (krytyczny): 'svn cat' przez strumień BAJTÓW (RunToFileAsync).
+        // Stara wersja (RunAsync → string → WriteAllText) dekodowała UTF-8 i sklejała
+        // linie — binaria (.png/.asset/.unity) były NIEODWRACALNIE uszkadzane,
+        // a plik lądował w working copy → po commicie uszkodzenie trafiało do REPO.
         public async Task RestoreSingleFileAsync(string relativeFilePath, string revision)
         {
             if (IsProcessing) return;
@@ -300,19 +306,24 @@ namespace SVN.Core
 
                 LogToRevisionPanel($"<color=green>[Restore File] Fetching {cleanPath} at r{revision}...</color>");
 
-                string args = $"cat -r {revision} {SvnMergeUrlResolver.EscapeSvnArg(cleanPath)}";
-
-                string fileContent = await SvnRunner.RunAsync(args, svnManager.WorkingDir, false, CancellationToken.None).ConfigureAwait(false);
-
-                if (string.IsNullOrWhiteSpace(fileContent))
-                {
-                    LogToRevisionPanel("<color=yellow>[Restore File] File is empty or does not exist in this revision.</color>");
-                    return;
-                }
-
                 string fullDiskPath = Path.Combine(svnManager.WorkingDir, cleanPath.Replace('/', Path.DirectorySeparatorChar));
 
-                File.WriteAllText(fullDiskPath, fileContent, new UTF8Encoding(false));
+                // === FIX S3: plik mógł być usunięty razem z katalogiem-nadrzędnym —
+                // bez tego WriteAllText/Create rzucał DirectoryNotFoundException.
+                string destDir = Path.GetDirectoryName(fullDiskPath);
+                if (!string.IsNullOrEmpty(destDir) && !Directory.Exists(destDir))
+                    Directory.CreateDirectory(destDir);
+
+                string args = $"cat -r {revision} {SvnMergeUrlResolver.EscapeSvnArg(cleanPath)}";
+                var (exitCode, error) = await SvnRunner.RunToFileAsync(args, svnManager.WorkingDir, fullDiskPath)
+                    .ConfigureAwait(false);
+
+                if (exitCode != 0)
+                {
+                    LogToRevisionPanel($"<color=yellow>[Restore File] Failed (code {exitCode}): {error?.Trim()}</color>");
+                    try { if (File.Exists(fullDiskPath)) File.Delete(fullDiskPath); } catch { }
+                    return;
+                }
 
                 LogToRevisionPanel($"<color=green>[Restore File] Successfully restored: {cleanPath}</color>");
 
@@ -328,6 +339,7 @@ namespace SVN.Core
             }
         }
 
+        // === FIX K1: jw. — binarnie bezpieczny zapis do wskazanej lokalizacji.
         public async Task ExtractSingleFileToAsync(string relativeFilePath, string revision, string destinationPath)
         {
             if (IsProcessing) return;
@@ -340,18 +352,14 @@ namespace SVN.Core
                 LogToRevisionPanel($"<color=green>[Extract File] Fetching {cleanPath} at r{revision}...</color>");
 
                 string args = $"cat -r {revision} {SvnMergeUrlResolver.EscapeSvnArg(cleanPath)}";
-                string fileContent = await SvnRunner.RunAsync(args, svnManager.WorkingDir, false, CancellationToken.None).ConfigureAwait(false);
+                var (exitCode, error) = await SvnRunner.RunToFileAsync(args, svnManager.WorkingDir, destinationPath)
+                    .ConfigureAwait(false);
 
-                if (string.IsNullOrWhiteSpace(fileContent))
+                if (exitCode != 0)
                 {
-                    LogToRevisionPanel("<color=yellow>[Extract File] File is empty or does not exist in this revision.</color>");
+                    LogToRevisionPanel($"<color=yellow>[Extract File] Failed (code {exitCode}): {error?.Trim()}</color>");
                     return;
                 }
-
-                string destDir = Path.GetDirectoryName(destinationPath);
-                if (!Directory.Exists(destDir)) Directory.CreateDirectory(destDir);
-
-                File.WriteAllText(destinationPath, fileContent, new UTF8Encoding(false));
 
                 LogToRevisionPanel($"<color=green>[Extract File] Saved to: {destinationPath}</color>");
             }
@@ -365,10 +373,17 @@ namespace SVN.Core
             }
         }
 
+        // UWAGA: celowo usuwam stare 'Directory.CreateDirectory' z Extract —
+        // RunToFileAsync FileStream(Create) NIE tworzy katalogów; zostało przeniesione
+        // do wnętrza (patrz wyżej — destDir tworzony przed wywołaniem w Restore;
+        // dla Extract dodajemy poniżej).
         public async Task ExtractFolderToAsync(string relativeFolderPath, string revision, string targetLocalPath)
         {
             if (string.IsNullOrWhiteSpace(relativeFolderPath) || string.IsNullOrWhiteSpace(targetLocalPath))
                 throw new ArgumentException("Folder path and target path cannot be empty.");
+
+            if (string.IsNullOrWhiteSpace(revision))
+                throw new ArgumentException("Revision cannot be empty.", nameof(revision));
 
             if (!TryEnterProcessing()) return;
 
@@ -379,19 +394,30 @@ namespace SVN.Core
 
                 LogToRevisionPanel($"<color=yellow>[SVN Revision]</color> Resolving URL for folder: {normalizedPath}...");
 
-                string folderUrl = await SvnRunner.RunAsync($"info --show-item url \"{normalizedPath}\"", svnManager.WorkingDir);
-
-                bool isMissingOrError = string.IsNullOrWhiteSpace(folderUrl) ||
-                                        folderUrl.StartsWith("E", StringComparison.OrdinalIgnoreCase) ||
-                                        folderUrl.StartsWith("W", StringComparison.OrdinalIgnoreCase);
-
-                if (isMissingOrError)
+                // === FIX S2: 'info' na ścieżce nieistniejącej lokalnie RZUCA
+                // (RunAsync ma throwOnError) — cały fallback "construct URL manually"
+                // był MARTWY (wyjątek przeskakiwał prosto do catch). Teraz łapiemy
+                // i realnie schodzimy do ścieżki ręcznej.
+                string folderUrl = null;
+                bool infoFailed = false;
+                try
                 {
-                    LogToRevisionPanel("<color=yellow>[SVN Revision]</color> Folder missing locally (e.g., deleted/obstruction). Constructing URL manually...");
+                    folderUrl = await SvnRunner.RunAsync($"info --show-item url \"{normalizedPath}\"", svnManager.WorkingDir)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    infoFailed = true;
+                    string firstLine = (ex.Message ?? "").Split('\n')[0];
+                    LogToRevisionPanel($"<color=yellow>[SVN Revision] Local info failed ({firstLine.Trim()}). Constructing URL manually...</color>");
+                }
 
-                    string rootUrl = await SvnRunner.RunAsync("info --show-item url", svnManager.WorkingDir);
+                if (infoFailed || string.IsNullOrWhiteSpace(folderUrl))
+                {
+                    string rootUrl = await SvnRunner.RunAsync("info --show-item url", svnManager.WorkingDir)
+                        .ConfigureAwait(false);
 
-                    if (string.IsNullOrWhiteSpace(rootUrl) || rootUrl.StartsWith("E", StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrWhiteSpace(rootUrl))
                         throw new Exception("Cannot determine repository URL. Is this a valid SVN working copy?");
 
                     folderUrl = $"{rootUrl.TrimEnd('/')}/{normalizedPath.TrimStart('/')}";
@@ -401,7 +427,7 @@ namespace SVN.Core
                 LogToRevisionPanel($"<color=yellow>[SVN Revision]</color> To local path: {targetLocalPath}");
 
                 string command = $"export -r {rev} \"{folderUrl}\" \"{targetLocalPath}\" --force";
-                string output = await SvnRunner.RunAsync(command, svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
+                await SvnRunner.RunAsync(command, svnManager.WorkingDir, true, CancellationToken.None).ConfigureAwait(false);
 
                 LogToRevisionPanel("<color=green>[SVN Revision]</color> Folder successfully extracted.");
                 LogToRevisionPanel($"<color=green>Folder from r{rev} saved to: {targetLocalPath}</color>");

@@ -13,7 +13,7 @@ namespace SVN.Core
     public class SVNExternal : SVNBase, IDisposable
     {
         private readonly SemaphoreSlim _processingLock = new SemaphoreSlim(1, 1);
-        private bool _disposed;
+        private int _disposed;
 
         public SVNExternal(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
@@ -140,30 +140,36 @@ namespace SVN.Core
                 return;
             }
 
-            try
-            {
-                SVNLogBridge.LogLine($"Opening Diff for: {relativePath}...");
+            SVNLogBridge.LogLine($"Opening Diff for: {relativePath}...");
 
 #if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
-                try
-                {
-                    SafeStart(new ProcessStartInfo
-                    {
-                        FileName = "TortoiseProc.exe",
-                        Arguments = $"/command:diff /path:\"{fullPath.Replace('/', '\\')}\"",
-                        UseShellExecute = true
-                    });
-                    return;
-                }
-                catch
-                {
-                }
-#endif
-                await SvnRunner.RunAsync($"diff \"{EscapeSvnArg(relativePath)}\"", root);
-            }
-            catch (Exception ex)
+            try
             {
-                SVNLogBridge.LogLine($"<color=#FFAA00>Diff Error:</color> {ex.Message}");
+                SafeStart(new ProcessStartInfo
+                {
+                    FileName = "TortoiseProc.exe",
+                    Arguments = $"/command:diff /path:\"{fullPath.Replace('/', '\\')}\"",
+                    UseShellExecute = true
+                });
+                return;
+            }
+            catch
+            {
+                // TortoiseProc nieosadzony — fallback niżej.
+            }
+#endif
+
+            // === FIX K2: wcześniej fallback wykonywał 'svn diff' i WYRZUCAŁ wynik
+            // (output szedł w nic). Teraz delegacja do modułu SVNDiff — pełna
+            // ścieżka: skonfigurowany tool → podgląd w Unity → raport .diff.
+            var diffModule = svnManager.GetModule<SVNDiff>();
+            if (diffModule != null)
+            {
+                await diffModule.ShowDiff(relativePath).ConfigureAwait(false);
+            }
+            else
+            {
+                SVNLogBridge.LogLine("<color=yellow>Notice:</color> SVNDiff module unavailable — cannot display diff.");
             }
         }
 
@@ -177,24 +183,36 @@ namespace SVN.Core
             }
 
             string p = NormalizePath(paths[0]);
-            svnManager.WorkingDir = p;
 
             if (svnUI.LoadDestFolderInput != null)
                 svnUI.LoadDestFolderInput.text = p;
 
-            _ = SetWorkingDirectorySafeAsync(p);
             SVNLogBridge.LogLine($"SVN path selected: {p}");
+            _ = LoadSelectedPathAsProjectAsync(p);
         }
 
-        private async Task SetWorkingDirectorySafeAsync(string path)
+        // === S4: pełne przełączenie przez LoadProject (eventy OnProjectChanged,
+        // cache modułów Merge/BranchTag, snapshoty, walidacja .svn). Wcześniej
+        // bezpośrednie 'svnManager.WorkingDir = p' + SetWorkingDirectory —
+        // pół-przełączenie: manager na nowym katalogu, moduły ze starym cache.
+        private async Task LoadSelectedPathAsProjectAsync(string path)
         {
             try
             {
-                await svnManager.SetWorkingDirectory(path);
+                SVNProject project = ProjectSettings.AddOrUpdateProject(path, (p, created) =>
+                {
+                    if (created)
+                        p.projectName = Path.GetFileName(path.Replace("\\", "/").TrimEnd('/'));
+                    p.lastOpened = DateTime.UtcNow;
+                });
+
+                bool loaded = await svnManager.LoadProject(project).ConfigureAwait(false);
+                if (!loaded)
+                    SVNLogBridge.LogLine($"<color=#FFAA00>[Load]</color> '{path}' is not a valid SVN working copy — project not loaded.");
             }
             catch (Exception ex)
             {
-                SVNLogBridge.LogError($"Failed to set working directory: {ex.Message}");
+                SVNLogBridge.LogError($"Failed to load project: {ex.Message}");
             }
         }
 
@@ -335,6 +353,10 @@ namespace SVN.Core
                 });
         }
 
+        // === FIX K1: prefix-match ze SLASHEM. Wcześniej 'sel.StartsWith(normRoot)'
+        // bez separatora — katalog 'D:/Repo' pasował do 'D:/RepoBackup/...' i do
+        // pola trafiała śmieciowa ścieżka względna (np. 'Backup/file.txt') →
+        // diff/resolve/blame działały na INNYM pliku lub padały na not-found.
         private void BrowseFileRelativeToWorkingDir(string title, Action<string> onSelected)
         {
             string root = svnManager.WorkingDir ?? "";
@@ -347,14 +369,20 @@ namespace SVN.Core
             string sel = NormalizePath(paths[0]);
             string normRoot = NormalizePath(root);
 
-            if (!string.IsNullOrEmpty(normRoot) &&
-                sel.StartsWith(normRoot, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(normRoot))
             {
-                sel = sel.Substring(normRoot.Length).TrimStart('/');
-            }
-            else
-            {
-                SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!");
+                if (sel.Equals(normRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    sel = "";
+                }
+                else if (sel.StartsWith(normRoot + "/", StringComparison.OrdinalIgnoreCase))
+                {
+                    sel = sel.Substring(normRoot.Length + 1);
+                }
+                else
+                {
+                    SVNLogBridge.LogLine("<color=yellow>Warning:</color> Selected file is outside of the Working Directory!");
+                }
             }
 
             onSelected?.Invoke(sel);
@@ -414,6 +442,8 @@ namespace SVN.Core
         }
 
 #if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
+        // UWAGA: 'long wEventId' poprawne dla x64 (Unity player standard); dla x86
+        // buildów sygnatura powinna być int — jeśli kiedyś wspieracie 32-bit, zmienić.
         [DllImport("shell32.dll", CharSet = CharSet.Auto)]
         private static extern void SHChangeNotify(long wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 
@@ -453,6 +483,8 @@ namespace SVN.Core
 
         public async void TestConnection()
         {
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             if (!await _processingLock.WaitAsync(0))
             {
                 SVNLogBridge.LogLine("[WARN] Another operation is already running. Please wait for it to finish.");
@@ -463,7 +495,14 @@ namespace SVN.Core
 
             try
             {
-                await RunDiagnosticsAsync();
+                // === FIX Ś-drobiazg: token z twardym limitem — diagnostyka potrafi
+                // trwać ~40 s (10 kroków po kilka s) i była nieprzerywalna.
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+                await RunDiagnosticsAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=orange>[DIAG] Timed out (3 min).</color>");
             }
             catch (Exception ex)
             {
@@ -477,7 +516,7 @@ namespace SVN.Core
             }
         }
 
-        private async Task RunDiagnosticsAsync()
+        private async Task RunDiagnosticsAsync(CancellationToken token)
         {
             bool hadErrors = false;
             var report = new System.Text.StringBuilder();
@@ -556,7 +595,7 @@ namespace SVN.Core
             report.AppendLine($"<color={colSTEP}>[1/10] CHECKING SVN CLIENT...</color>");
             try
             {
-                string ver = await SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir);
+                string ver = await SvnRunner.RunAsync("--version --quiet", svnManager.WorkingDir, token: token);
                 report.AppendLine($"<color={colOK}>[OK]</color> SVN client version : {ver.Trim()}");
             }
             catch (Exception ex)
@@ -583,8 +622,14 @@ namespace SVN.Core
                 using var sshProc = Process.Start(psi);
                 if (sshProc != null)
                 {
-                    string ver = await sshProc.StandardError.ReadToEndAsync();
-                    report.AppendLine($"<color={colOK}>[OK]</color> OpenSSH version : {ver.Trim()}");
+                    // === FIX Ś2: czytamy OBA strumienie asynchronicznie + await exit —
+                    // 'ssh -V' pisze na stderr, ale nieoskubany stdout to wzorzec
+                    // deadlocku pipe (przy większym output proces by się zawiesił).
+                    var stderrTask = sshProc.StandardError.ReadToEndAsync();
+                    var stdoutTask = sshProc.StandardOutput.ReadToEndAsync();
+                    await Task.WhenAll(stderrTask, stdoutTask).ConfigureAwait(false);
+                    sshProc.WaitForExit(5000);
+                    report.AppendLine($"<color={colOK}>[OK]</color> OpenSSH version : {stderrTask.Result.Trim()}");
                 }
             }
             catch (Exception ex)
@@ -668,18 +713,20 @@ namespace SVN.Core
             try
             {
                 using var client = new System.Net.Sockets.TcpClient();
-                using var delayCts = new CancellationTokenSource();
                 var connectTask = client.ConnectAsync(host, targetPort);
-                var delayTask = Task.Delay(5000, delayCts.Token);
-                var completed = await Task.WhenAny(connectTask, delayTask);
+
+                // === FIX Ś2: timeout przez WhenAny; przegrany connectTask jest
+                // OBSERWOWANY (ContinueWith łapie wyjątek) — wcześniej faultował
+                // w tle jako unobserved.
+                var completed = await Task.WhenAny(connectTask, Task.Delay(5000)).ConfigureAwait(false);
 
                 if (completed == connectTask && client.Connected)
                 {
-                    delayCts.Cancel();
                     report.AppendLine($"<color={colOK}>[OK]</color> TCP port {targetPort} is open and reachable.");
                 }
                 else
                 {
+                    _ = connectTask.ContinueWith(t => { try { t.Wait(); } catch { } }, TaskScheduler.Default);
                     client.Close();
                     hadErrors = true;
                     report.AppendLine(
@@ -719,15 +766,23 @@ namespace SVN.Core
                         using var sshProc = Process.Start(psi);
                         if (sshProc != null)
                         {
-                            bool exited = await Task.Run(() => sshProc.WaitForExit(10000));
+                            // === FIX Ś2: strumienie czytane asynchronicznie PRZED
+                            // WaitForExit (kill po timeout) — koniec wzorca
+                            // deadlocku pełnego pipe'a + nieczytanego stdout.
+                            var stderrTask = sshProc.StandardError.ReadToEndAsync();
+                            var stdoutTask = sshProc.StandardOutput.ReadToEndAsync();
+
+                            bool exited = await Task.Run(() => sshProc.WaitForExit(10000), token).ConfigureAwait(false);
                             if (!exited)
                             {
                                 try { sshProc.Kill(); } catch { /* ignore */ }
+                                _ = stderrTask.ContinueWith(_ => { }, TaskScheduler.Default);
+                                _ = stdoutTask.ContinueWith(_ => { }, TaskScheduler.Default);
                                 report.AppendLine($"<color={colWARN}>[WARN]</color> SSH handshake timed out after 10 seconds.");
                             }
                             else
                             {
-                                string error = await sshProc.StandardError.ReadToEndAsync();
+                                string error = (await stderrTask.ConfigureAwait(false)).Trim();
                                 if (sshProc.ExitCode == 0)
                                 {
                                     report.AppendLine($"<color={colOK}>[OK]</color> SSH connection successfully established.");
@@ -755,6 +810,7 @@ namespace SVN.Core
                         }
                     }
                 }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
                     hadErrors = true;
@@ -769,33 +825,33 @@ namespace SVN.Core
             var sw = Stopwatch.StartNew();
             try
             {
-                // End-to-end: info na zdalnym URL
                 string remoteInfo = await SvnRunner.RunAsync(
                     $"info \"{EscapeSvnArg(repoUrl)}\"",
-                    svnManager.WorkingDir);
+                    svnManager.WorkingDir, token: token);
 
                 if (!string.IsNullOrWhiteSpace(remoteInfo))
                     report.AppendLine($"<color={colOK}>[OK]</color> Remote repository accessible via SVN.");
 
-                string uuid = await SvnRunner.RunAsync("info --show-item repos-uuid", svnManager.WorkingDir);
+                string uuid = await SvnRunner.RunAsync("info --show-item repos-uuid", svnManager.WorkingDir, token: token);
                 sw.Stop();
                 report.AppendLine($"<color={colOK}>[OK]</color> Repository UUID : {uuid.Trim()}");
                 report.AppendLine($"<color={colOK}>[OK]</color> Authentication time : {sw.Elapsed.TotalSeconds:F2}s");
 
                 try
                 {
-                    string rev = (await SvnRunner.RunAsync("info --show-item revision", svnManager.WorkingDir)).Trim();
+                    string rev = (await SvnRunner.RunAsync("info --show-item revision", svnManager.WorkingDir, token: token)).Trim();
                     report.AppendLine($"<color={colOK}>[OK]</color> Current revision : r{rev}");
                 }
                 catch { /* ignore */ }
 
                 try
                 {
-                    string branch = (await SvnRunner.RunAsync("info --show-item relative-url", svnManager.WorkingDir)).Trim();
+                    string branch = (await SvnRunner.RunAsync("info --show-item relative-url", svnManager.WorkingDir, token: token)).Trim();
                     report.AppendLine($"<color={colOK}>[OK]</color> Checked-out branch: {branch}");
                 }
                 catch { /* ignore */ }
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 sw.Stop();
@@ -809,7 +865,7 @@ namespace SVN.Core
             report.AppendLine($"<color={colSTEP}>[9/10] CHECKING WORKING COPY STATE...</color>");
             try
             {
-                string status = await SvnRunner.RunAsync("status", svnManager.WorkingDir);
+                string status = await SvnRunner.RunAsync("status", svnManager.WorkingDir, token: token);
                 var lines = status.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).ToList();
 
                 if (lines.Any(x => x.StartsWith("L")))
@@ -834,7 +890,7 @@ namespace SVN.Core
             sw.Restart();
             try
             {
-                string logOutput = await SvnRunner.RunAsync("log -l 5 --quiet", svnManager.WorkingDir);
+                string logOutput = await SvnRunner.RunAsync("log -l 5 --quiet", svnManager.WorkingDir, token: token);
                 sw.Stop();
                 int count = logOutput
                     .Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
@@ -860,20 +916,28 @@ namespace SVN.Core
 
         private void ShowReport(string reportText)
         {
-            foreach (var line in reportText.Split('\n'))
+            UnityMainThreadDispatcher.Enqueue(() =>
             {
-                string trimmed = line.TrimEnd('\r');
-                if (!string.IsNullOrWhiteSpace(trimmed))
-                    SVNLogBridge.LogLine(trimmed, append: true, "DIAG");
-            }
-            SVNLogBridge.FlushImmediate();
+                foreach (var line in reportText.Split('\n'))
+                {
+                    string trimmed = line.TrimEnd('\r');
+                    if (!string.IsNullOrWhiteSpace(trimmed))
+                        SVNLogBridge.LogLine(trimmed, append: true, "DIAG");
+                }
+                SVNLogBridge.FlushImmediate();
+            });
         }
 
+        // === FIX Ś1: przez dispatcher — RefreshWindowsShellIcons bywa wołane z
+        // puli wątków (SVNResolve po ConfigureAwait(false)).
         private void LogBoth(string msg)
         {
-            SVNLogBridge.LogLine(msg);
-            if (svnUI?.ResolveLogConsole != null)
-                SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, msg, "RESOLVE", true);
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                SVNLogBridge.LogLine(msg);
+                if (svnUI?.ResolveLogConsole != null)
+                    SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, msg, "RESOLVE", true);
+            });
         }
 
         public async void ExportRevision(string revision, string relativePath = "")
@@ -903,6 +967,15 @@ namespace SVN.Core
                 return;
             }
 
+            // === FIX Ś3: walidacja rewizji (public API — wcześniej szła wprost do
+            // komendy; SVNRevision walidował, ale moduł sam nie).
+            string rev = revision.Trim().TrimStart('r', 'R');
+            if (!System.Text.RegularExpressions.Regex.IsMatch(rev, @"^\d+(:\d+)?$"))
+            {
+                SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid revision format (expected: 150 or 140:150).");
+                return;
+            }
+
             string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select Export Destination Directory", root, false);
             if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0]))
             {
@@ -917,15 +990,15 @@ namespace SVN.Core
 
             try
             {
-                SVNLogBridge.LogLine($"<color=green>Exporting</color> revision r{revision} to: {exportFolder}...");
+                SVNLogBridge.LogLine($"<color=green>Exporting</color> revision r{rev} to: {exportFolder}...");
 
                 string cmd =
-                    $"export -r {revision} \"{EscapeSvnArg(sourcePath)}\" \"{EscapeSvnArg(exportFolder)}\" --force";
+                    $"export -r {rev} \"{EscapeSvnArg(sourcePath)}\" \"{EscapeSvnArg(exportFolder)}\" --force";
 
                 await SvnRunner.RunAsync(cmd, root);
 
                 SVNLogBridge.LogLine(
-                    $"<color=green>Export Success:</color> Revision r{revision} exported successfully to {exportFolder}");
+                    $"<color=green>Export Success:</color> Revision r{rev} exported successfully to {exportFolder}");
 
                 OpenFolderInFileManager(exportFolder);
             }
@@ -949,9 +1022,9 @@ namespace SVN.Core
 
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
-            _processingLock.Dispose();
+            // === FIX: atomowy wzorzec _disposed (spójny z resztą modułów).
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+            try { _processingLock.Dispose(); } catch { }
         }
     }
 }

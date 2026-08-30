@@ -19,7 +19,7 @@ namespace SVN.Core
         private CancellationTokenSource _cts;
         private readonly object _ctsLock = new object();
         private int _isBusy; // 0 = free, 1 = busy
-        private bool _disposed;
+        private int _disposed;
 
         private TMP_InputField _terminalInputField;
         private TMP_Text _consoleOutput;
@@ -77,106 +77,110 @@ namespace SVN.Core
 
         private async Task ExecuteTerminalCommandAsync()
         {
+            // === FIX K1: całość pracy między zajęciem _isBusy a zwolnieniem MUSI
+            // być w try/finally. Wcześniej ~60 linii preprocessingu (w tym
+            // TryParseCheckoutArgs → Path.GetFullPath na tekście od użytkownika)
+            // stało PRZED try — wyjątek tam (np. illegal chars w ścieżce checkoutu)
+            // zostawiał _isBusy == 1 NA ZAWSZE → terminal martwy do restartu.
+            // Teraz: acquire → try natychmiast → finally zwalnia bezwarunkowo.
             if (Interlocked.CompareExchange(ref _isBusy, 1, 0) == 1)
                 return;
 
-            if (_terminalInputField == null)
-            {
-                Interlocked.Exchange(ref _isBusy, 0);
-                return;
-            }
-
-            string rawInput = _terminalInputField.text?.Trim();
-            if (string.IsNullOrWhiteSpace(rawInput))
-            {
-                Interlocked.Exchange(ref _isBusy, 0);
-                return;
-            }
-
-            if (rawInput.Equals("cls", StringComparison.OrdinalIgnoreCase) ||
-                rawInput.Equals("clear", StringComparison.OrdinalIgnoreCase))
-            {
-                ClearLog();
-                _terminalInputField.text = "";
-                _terminalInputField.ActivateInputField();
-                Interlocked.Exchange(ref _isBusy, 0);
-                return;
-            }
-
-            if (commandHistory.Count == 0 ||
-                !string.Equals(commandHistory[^1], rawInput, StringComparison.Ordinal))
-            {
-                if (commandHistory.Count >= MaxHistory)
-                    commandHistory.RemoveAt(0);
-                commandHistory.Add(rawInput);
-            }
-            historyIndex = -1;
-
-            string cmd = rawInput;
-            if (cmd.StartsWith("svn ", StringComparison.OrdinalIgnoreCase))
-                cmd = cmd[4..].Trim();
-
-            if (string.IsNullOrWhiteSpace(cmd))
-            {
-                TerminalWriteLineSafe("<color=#FFCC00>Usage: svn <command></color>");
-                Interlocked.Exchange(ref _isBusy, 0);
-                return;
-            }
-
-            string originalCmd = cmd;
-
-            if (!TryExtractKeyPath(ref cmd, out string keyPath))
-            {
-                Interlocked.Exchange(ref _isBusy, 0);
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(keyPath))
-            {
-                SvnRunner.KeyPath = keyPath;
-                TerminalWriteLineSafe($"<color=#00E5FF>[SSH] Using key: {keyPath}</color>");
-            }
-
-            cmd = AddIfMissing(cmd, "--non-interactive");
-            cmd = AddIfMissing(cmd, "--trust-server-cert");
-
-            _terminalInputField.text = "";
-            TerminalWriteLineSafe($"<color=#FFFF00>> svn {cmd}</color>");
-
-            IsProcessing = true;
-
-            CancellationTokenSource cts;
-            lock (_ctsLock)
-            {
-                try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
-                try { _cts?.Dispose(); } catch (ObjectDisposedException) { }
-
-                cts = new CancellationTokenSource();
-                _cts = cts;
-            }
-
-            CancellationToken token = cts.Token;
-
-            string workDir = svnManager.WorkingDir;
-            if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
-            {
-                TerminalWriteLineSafe("<color=#FFAA00>No valid working directory. Command aborted.</color>");
-                CleanupAfterCommand(cts);
-                return;
-            }
-
-            string checkoutUrl = null;
-            string checkoutLocalPath = null;
-            string firstWord = GetFirstWord(originalCmd);
-
-            if (firstWord.Equals("checkout", StringComparison.OrdinalIgnoreCase) ||
-                firstWord.Equals("co", StringComparison.OrdinalIgnoreCase))
-            {
-                TryParseCheckoutArgs(originalCmd, out checkoutUrl, out checkoutLocalPath);
-            }
+            CancellationTokenSource cts = null;
 
             try
             {
+                if (_terminalInputField == null) return;
+
+                string rawInput = _terminalInputField.text?.Trim();
+                if (string.IsNullOrWhiteSpace(rawInput)) return;
+
+                if (rawInput.Equals("cls", StringComparison.OrdinalIgnoreCase) ||
+                    rawInput.Equals("clear", StringComparison.OrdinalIgnoreCase))
+                {
+                    ClearLog();
+                    _terminalInputField.text = "";
+                    _terminalInputField.ActivateInputField();
+                    return;
+                }
+
+                if (commandHistory.Count == 0 ||
+                    !string.Equals(commandHistory[^1], rawInput, StringComparison.Ordinal))
+                {
+                    if (commandHistory.Count >= MaxHistory)
+                        commandHistory.RemoveAt(0);
+                    commandHistory.Add(rawInput);
+                }
+                historyIndex = -1;
+
+                string cmd = rawInput;
+                if (cmd.StartsWith("svn ", StringComparison.OrdinalIgnoreCase))
+                    cmd = cmd[4..].Trim();
+
+                if (string.IsNullOrWhiteSpace(cmd))
+                {
+                    TerminalWriteLineSafe("<color=#FFCC00>Usage: svn <command></color>");
+                    return;
+                }
+
+                string originalCmd = cmd;
+
+                if (!TryExtractKeyPath(ref cmd, out string keyPath))
+                    return;
+
+                if (!string.IsNullOrWhiteSpace(keyPath))
+                {
+                    SvnRunner.KeyPath = keyPath;
+                    TerminalWriteLineSafe($"<color=#00E5FF>[SSH] Using key: {keyPath}</color>");
+                }
+
+                cmd = AddIfMissing(cmd, "--non-interactive");
+                cmd = AddIfMissing(cmd, "--trust-server-cert");
+
+                _terminalInputField.text = "";
+                TerminalWriteLineSafe($"<color=#FFFF00>> svn {cmd}</color>");
+
+                IsProcessing = true;
+
+                lock (_ctsLock)
+                {
+                    // === FIX Ś2: delayed dispose poprzedniego CTS (spójny wzorzec z
+                    // resztą aplikacji). W praktyce _cts powinno być tu już null
+                    // (_isBusy serializuje komendy), ale obrona zostaje.
+                    var oldCts = _cts;
+                    if (oldCts != null)
+                    {
+                        try { oldCts.Cancel(); } catch (ObjectDisposedException) { }
+                        _cts = null;
+                        _ = Task.Delay(1000).ContinueWith(_ =>
+                        {
+                            try { oldCts.Dispose(); } catch { }
+                        });
+                    }
+
+                    cts = new CancellationTokenSource();
+                    _cts = cts;
+                }
+
+                CancellationToken token = cts.Token;
+
+                string workDir = svnManager.WorkingDir;
+                if (string.IsNullOrWhiteSpace(workDir) || !Directory.Exists(workDir))
+                {
+                    TerminalWriteLineSafe("<color=#FFAA00>No valid working directory. Command aborted.</color>");
+                    return;
+                }
+
+                string checkoutUrl = null;
+                string checkoutLocalPath = null;
+                string firstWord = GetFirstWord(originalCmd);
+
+                if (firstWord.Equals("checkout", StringComparison.OrdinalIgnoreCase) ||
+                    firstWord.Equals("co", StringComparison.OrdinalIgnoreCase))
+                {
+                    TryParseCheckoutArgs(originalCmd, out checkoutUrl, out checkoutLocalPath);
+                }
+
                 await svnManager.CancelBackgroundTasksAsync();
 
                 int exitCode = await SvnRunner.RunStreamedAsync(
@@ -224,6 +228,8 @@ namespace SVN.Core
             }
             finally
             {
+                // === FIX K1: bezwarunkowe zwolnienie — niezależnie od tego, KTÓRĄ
+                // ścieżką wyszliśmy (także wyjątkiem z preprocessingu).
                 CleanupAfterCommand(cts);
             }
         }
@@ -235,14 +241,19 @@ namespace SVN.Core
 
             lock (_ctsLock)
             {
-                if (ReferenceEquals(_cts, cts))
+                if (cts != null && ReferenceEquals(_cts, cts))
                 {
                     _cts = null;
-                    try { cts.Dispose(); } catch (ObjectDisposedException) { }
                 }
-                else
+                // === FIX Ś2: dispose odroczony — token może być jeszcze zarejestrowany
+                // w umierającym procesie svn (Cancel z zewnątrz ratuje ObjectDisposedException,
+                // ale nie musimy nawet na niego liczyć).
+                if (cts != null)
                 {
-                    try { cts.Dispose(); } catch (ObjectDisposedException) { }
+                    _ = Task.Delay(1000).ContinueWith(_ =>
+                    {
+                        try { cts.Dispose(); } catch { }
+                    });
                 }
             }
 
@@ -297,10 +308,24 @@ namespace SVN.Core
             if (urlIdx + 1 < tokens.Count)
             {
                 localPath = tokens[urlIdx + 1];
-                if (!Path.IsPathRooted(localPath))
+
+                // === FIX K1 (źródło): Path.GetFullPath na tekście użytkownika RZUCA
+                // przy nielegalnych znakach ścieżki — wcześniej wyjątek uciekał przed
+                // try/finally i blokował terminal na stałe. Teraz: porażka normalizacji
+                // = ścieżka nieznana (checkout się wykona, ale bez auto-rejestracji
+                // projektu — użytkownik doda go ręcznie).
+                try
                 {
-                    string baseDir = svnManager.WorkingDir ?? "";
-                    localPath = Path.GetFullPath(Path.Combine(baseDir, localPath));
+                    if (!Path.IsPathRooted(localPath))
+                    {
+                        string baseDir = svnManager.WorkingDir ?? "";
+                        localPath = Path.GetFullPath(Path.Combine(baseDir, localPath));
+                    }
+                }
+                catch
+                {
+                    // nie udało się znormalizować — zostawiamy surową wartość;
+                    // check .svn poniżej najpewniej i tak jej nie znajdzie
                 }
             }
         }
@@ -340,37 +365,20 @@ namespace SVN.Core
 
         private void RegisterProjectInSettings(string path, string url, string keyPath)
         {
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            // === S1: atomowe
+            ProjectSettings.AddOrUpdateProject(path, (p, created) =>
+            {
+                if (created)
+                    p.projectName = GetRepoNameFromUrl(url);
+
+                p.repoUrl = url;
+                p.privateKeyPath = keyPath;
+                p.lastOpened = DateTime.UtcNow;
+            });
+
             string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
-            var projects = ProjectSettings.LoadProjects();
-
-            int idx = projects.FindIndex(p =>
-                !string.IsNullOrEmpty(p.workingDir) &&
-                string.Equals(
-                    p.workingDir.Replace("\\", "/").TrimEnd('/'),
-                    normalizedPath,
-                    StringComparison.OrdinalIgnoreCase));
-
-            string projectName = GetRepoNameFromUrl(url);
-
-            if (idx >= 0)
-            {
-                projects[idx].repoUrl = url;
-                projects[idx].lastOpened = DateTime.Now;
-                projects[idx].privateKeyPath = keyPath;
-            }
-            else
-            {
-                projects.Add(new SVNProject
-                {
-                    projectName = projectName,
-                    repoUrl = url,
-                    workingDir = normalizedPath,
-                    privateKeyPath = keyPath,
-                    lastOpened = DateTime.Now
-                });
-            }
-
-            ProjectSettings.SaveProjects(projects);
             PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
             PlayerPrefs.Save();
         }
@@ -575,7 +583,21 @@ namespace SVN.Core
                 !_terminalInputField.isFocused)
                 return;
 
-            if (Input.GetKeyDown(KeyCode.UpArrow))
+            // === FIX Ś1: Input.GetKeyDown wymaga Legacy Input Managera — przy
+            // projekcie na nowym Input System rzuca InvalidOperationException
+            // CO KLATKĘ (jeśli metoda wołana z Update). Guard + cichy fallback.
+            bool up, down;
+            try
+            {
+                up = Input.GetKeyDown(KeyCode.UpArrow);
+                down = Input.GetKeyDown(KeyCode.DownArrow);
+            }
+            catch (InvalidOperationException)
+            {
+                return; // nowy Input System bez legacy — historia przez strzałki wyłączona
+            }
+
+            if (up)
             {
                 if (historyIndex == -1)
                     historyIndex = commandHistory.Count - 1;
@@ -584,7 +606,7 @@ namespace SVN.Core
 
                 UpdateHistoryField();
             }
-            else if (Input.GetKeyDown(KeyCode.DownArrow))
+            else if (down)
             {
                 if (historyIndex == -1) return;
 
@@ -624,14 +646,24 @@ namespace SVN.Core
 
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
+            // === FIX: atomowy wzorzec _disposed (spójny z resztą modułów).
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
             Cancel();
+            CancellationTokenSource localCts;
             lock (_ctsLock)
             {
-                try { _cts?.Dispose(); } catch (ObjectDisposedException) { }
+                localCts = _cts;
                 _cts = null;
+            }
+
+            if (localCts != null)
+            {
+                try { localCts.Cancel(); } catch (ObjectDisposedException) { }
+                _ = Task.Delay(1000).ContinueWith(_ =>
+                {
+                    try { localCts.Dispose(); } catch { }
+                });
             }
         }
     }

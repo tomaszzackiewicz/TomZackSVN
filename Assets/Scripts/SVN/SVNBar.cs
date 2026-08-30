@@ -74,11 +74,23 @@ namespace SVN.Core
             SetContent(content, "SetLoadingContent");
         }
 
+        public void ShowNoWorkingCopy(string projectName = null)
+        {
+            string name = string.IsNullOrWhiteSpace(projectName)
+                ? ""
+                : $"<color=#888888><b>{projectName}</b></color> | ";
+            string content =
+                $"<size=150%><color=black>●</color></size> " +
+                $"{name}<color=#888888>No working copy</color>";
+
+            SetContent(content, "ShowNoWorkingCopy");
+        }
+
         public async Task ShowProjectInfo(
-            SVNProject svnProject,
-            string path,
-            bool forceOutdatedCheck = false,
-            bool isRefreshing = false)
+    SVNProject svnProject,
+    string path,
+    bool forceOutdatedCheck = false,
+    bool isRefreshing = false)
         {
             if (_state != BarState.Idle) return;
 
@@ -94,7 +106,11 @@ namespace SVN.Core
                 if (localToken.IsCancellationRequested) return;
                 if (_state != BarState.Idle) return;
 
-                if (snapshot == null || !snapshot.IsValid) return;
+                if (snapshot == null || !snapshot.IsValid)
+                {
+                    ShowNoWorkingCopy(svnProject?.projectName ?? Path.GetFileName(path));
+                    return;
+                }
 
                 svnManager.CurrentSnapshot = snapshot;
                 SetContent(BuildNormalContent(snapshot, isRefreshing), "ShowProjectInfo");
@@ -103,6 +119,7 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 Debug.LogError($"[SVNBar] ShowProjectInfo failed: {ex.Message}");
+                ShowNoWorkingCopy(svnProject?.projectName ?? Path.GetFileName(path));
             }
         }
 

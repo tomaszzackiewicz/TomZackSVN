@@ -51,6 +51,9 @@ namespace SVN.Core
             return true;
         }
 
+        // === FIX D2: porażka cleanupu z dowolnego powodu = czytelny komunikat
+        // "cleanup blocked" (wcześniej: ogólne "[Revert All] Failed: svn: E155004..."
+        // — użytkownik nie wiedział, że to pre-check zablokował, nie revert, padł).
         private async Task<bool> CleanupWorkingCopyAsync(string root, CancellationToken token)
         {
             LogToConsole("<b>[Cleanup]</b> Checking working copy locks...");
@@ -66,6 +69,15 @@ namespace SVN.Core
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !token.IsCancellationRequested)
             {
                 LogToConsole("<color=#FF4444>[Cleanup]</color> Timed out (30s). Aborting operation for safety.");
+                return false;
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // cancel użytkownika — standardowa ścieżka "Cancelled"
+            }
+            catch (Exception ex)
+            {
+                LogToConsole($"<color=#FF4444>[Cleanup]</color> Failed: {ex.Message}\nOperation aborted for safety (nothing was reverted).");
                 return false;
             }
         }
@@ -98,11 +110,15 @@ namespace SVN.Core
             }
         }
 
+        // === FIX D1: delayed dispose — pole zdejmowane pod CompareExchange (jak było,
+        // poprawnie odcina Cancel), a fizyczny dispose po sekundzie: token bywa jeszcze
+        // zarejestrowany w umierającym RefreshStatus/SvnRunner i natychmiastowy
+        // dispose dawał tam ODE (nie-OCE!) → fałszywy "[Revert] Failed: safe handle...".
         private void ClearOperationToken(CancellationTokenSource localCts)
         {
             if (localCts == null) return;
             Interlocked.CompareExchange(ref _revertCts, null, localCts);
-            try { localCts.Dispose(); } catch { }
+            _ = Task.Delay(1000).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
         }
 
         public async void RevertAll()
@@ -184,9 +200,13 @@ namespace SVN.Core
                 return;
             }
 
+            // Snapshot pól na main thread (tu jesteśmy — klik z drzewa UI).
+            string elementName = element.Name;
+            string elementFullPath = element.FullPath;
+
             float clickTime = Time.unscaledTime;
             if (!ConfirmAction(clickTime, ref _lastRevertSingleClickTime,
-                $"<color=#FFAA00><b>[Revert]</b></color> Revert <b>{element.Name}</b>?\n" +
+                $"<color=#FFAA00><b>[Revert]</b></color> Revert <b>{elementName}</b>?\n" +
                 "Press the button again within <b>5 seconds</b> to confirm."))
                 return;
 
@@ -220,7 +240,7 @@ namespace SVN.Core
                 bool cleanupOk = await CleanupWorkingCopyAsync(root, token).ConfigureAwait(false);
                 if (!cleanupOk) return;
 
-                if (!TryGetRelativePath(root, element.FullPath, out string safePath))
+                if (!TryGetRelativePath(root, elementFullPath, out string safePath))
                 {
                     LogToConsole("<color=#FF4444>Invalid path or path outside working copy.</color>");
                     return;
@@ -235,7 +255,7 @@ namespace SVN.Core
                 await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
 
                 var durationMs = (long)(DateTime.UtcNow - opStart).TotalMilliseconds;
-                LogToConsole($"<color=green><b>[Revert]</b> Reverted: {element.Name} durationMs={durationMs}</color>");
+                LogToConsole($"<color=green><b>[Revert]</b> Reverted: {elementName} durationMs={durationMs}</color>");
             }
             catch (OperationCanceledException)
             {
@@ -279,7 +299,15 @@ namespace SVN.Core
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
             CancelRevert();
-            try { _operationLock.Dispose(); } catch { }
+
+            // === FIX D3: grace period na dojście operacji do finally (Release/
+            // RefreshStatus) po Cancel — dopiero potem dispose semafora
+            // (wzorzec z SVNMissing).
+            _ = Task.Delay(1500).ContinueWith(_ =>
+            {
+                try { _operationLock.Dispose(); } catch { }
+            });
+
             GC.SuppressFinalize(this);
         }
     }

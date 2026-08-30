@@ -144,15 +144,32 @@ namespace SVN.Core
         {
             try
             {
-                string cacheFolder = Path.Combine(Application.temporaryCachePath, "SVN_Exports");
+                // === FIX drobiazg: guard przed niezaładowanym projektem (SvnRunner
+                // rzuciłby "Working Directory is null" z głębi).
+                string workingDir = SVNManager.Instance?.WorkingDir;
+                if (string.IsNullOrWhiteSpace(workingDir))
+                {
+                    SVNLogBridge.LogError("[RepoBrowser] No working directory — load a project first.");
+                    return;
+                }
+
+                string cacheFolder = Path.Combine(SVNPrefs.TemporaryCachePath, "SVN_Exports");
                 if (!Directory.Exists(cacheFolder)) Directory.CreateDirectory(cacheFolder);
 
-                string tempPath = Path.Combine(cacheFolder, _node.Name);
+                // === FIX K2: unikalna nazwa docelowa — '{_node.Name}' kolidowało
+                // dla elementów o tej samej nazwie z różnych gałęzi/katalogów
+                // (/branches/A/Assets i /branches/B/Assets → jedno miejsce, drugi
+                // eksport CICHO nadpisywał pierwszy przez --force).
+                string safeName = _node.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                    ? Guid.NewGuid().ToString("N").Substring(0, 8)
+                    : _node.Name;
+                string tempPath = Path.Combine(cacheFolder, $"{safeName}_{DateTime.Now:HHmmss}_{Guid.NewGuid().ToString("N").Substring(0, 4)}");
+
                 string command = $"export \"{_node.FullUrl}\" \"{tempPath}\" --force";
 
                 SVNLogBridge.LogLine($"<color=yellow>[RepoBrowser]</color> Exporting {_node.Name}...");
 
-                await SvnRunner.RunAsync(command, SVNManager.Instance.WorkingDir);
+                await SvnRunner.RunAsync(command, workingDir);
 
                 if (Directory.Exists(tempPath) || File.Exists(tempPath))
                 {
@@ -163,11 +180,40 @@ namespace SVN.Core
                 {
                     SVNLogBridge.LogError("Failed to export item.");
                 }
+
+                // === FIX drobiazg: sprzątanie starych eksportów (spójnie z Diff/
+                // Blame/Cache — 24 h), folder inaczej rósł w nieskończoność.
+                CleanupOldExports(cacheFolder);
             }
             catch (Exception ex)
             {
                 SVNLogBridge.LogError($"Export failed: {ex.Message}");
             }
+        }
+
+        private static void CleanupOldExports(string cacheFolder)
+        {
+            try
+            {
+                if (!Directory.Exists(cacheFolder)) return;
+                foreach (var entry in Directory.GetFileSystemEntries(cacheFolder))
+                {
+                    try
+                    {
+                        DateTime writeTime = Directory.Exists(entry)
+                            ? Directory.GetLastWriteTimeUtc(entry)
+                            : File.GetLastWriteTimeUtc(entry);
+
+                        if (writeTime < DateTime.UtcNow.AddHours(-24))
+                        {
+                            if (Directory.Exists(entry)) Directory.Delete(entry, true);
+                            else File.Delete(entry);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
 
         public void UpdateArrowVisual(bool isExpanded)
@@ -212,8 +258,10 @@ namespace SVN.Core
             }
             else
             {
-
-                SVNLogBridge.LogWarning($"[RepoBrowser] SVNHoverHandler component is missing on button: {btn.name}", btn);
+                // === FIX K1: SVNLogBridge.LogWarning(msg, bool append) — drugi
+                // parametr to nie kontekst-Object (to sygnatura Debug.LogWarning);
+                // przekazanie 'btn' = CS1503. Kontekst tylko przez Debug.
+                Debug.LogWarning($"[RepoBrowser] SVNHoverHandler component is missing on button: {btn.name}", btn);
             }
         }
     }

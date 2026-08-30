@@ -14,19 +14,27 @@ public class HelpPanel : MonoBehaviour
 
     private string fullRichText;
     private string fullPlainText;
+    private string[] _richLines;    // === FIX: parsowanie RAZ (per keystroke tylko filtrowanie)
+    private string[] _plainLines;
 
     private void Start()
     {
-        if (helpText == null || searchInput == null)
+        if (helpText == null)
         {
-            Debug.LogError("HelpPanel: Przypisz helpText i searchInput w inspektorze.", this);
-            return;
+            Debug.LogError("HelpPanel: Przypisz helpText w inspektorze.", this);
+            return;   // bez helpText klasa nie ma sensu
         }
 
         fullRichText = helpText.text;
         fullPlainText = StripRichTextTags(fullRichText);
 
-        searchInput.onValueChanged.AddListener(OnSearchChanged);
+        // === FIX K2: normalizacja \r\n przy podziale — linie bez wiszących '\r'.
+        _richLines = fullRichText.Replace("\r\n", "\n").Split('\n');
+        _plainLines = fullPlainText.Replace("\r\n", "\n").Split('\n');
+
+        // === FIX K3: brak searchInput = brak filtrowania, ale panel działa (pokazuje help).
+        if (searchInput != null)
+            searchInput.onValueChanged.AddListener(OnSearchChanged);
     }
 
     private void OnDestroy()
@@ -37,7 +45,7 @@ public class HelpPanel : MonoBehaviour
 
     private void OnSearchChanged(string query)
     {
-        if (helpText == null) return;
+        if (helpText == null || _plainLines == null) return;
 
         if (string.IsNullOrWhiteSpace(query))
         {
@@ -46,21 +54,19 @@ public class HelpPanel : MonoBehaviour
             return;
         }
 
-        string[] richLines = fullRichText.Split(new[] { '\n' }, StringSplitOptions.None);
-        string[] plainLines = fullPlainText.Split(new[] { '\n' }, StringSplitOptions.None);
-
         var resultLines = new List<string>();
-
         string escapedQuery = Regex.Escape(query);
 
-        for (int i = 0; i < plainLines.Length; i++)
+        for (int i = 0; i < _plainLines.Length; i++)
         {
-            if (i >= richLines.Length) break;
+            if (i >= _richLines.Length) break;
 
-            if (plainLines[i].IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+            if (_plainLines[i].IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                string highlightedLine = HighlightText(richLines[i], escapedQuery);
-                resultLines.Add(highlightedLine);
+                // UWAGA (K1, znane ograniczenie): trafienie przecinające tagi
+                // (np. "Commit Selected" przy "Commit <b>Selected</b>") pokaże linię
+                // bez podświetlenia — HighlightText działa na rich, tag przerywa match.
+                resultLines.Add(HighlightText(_richLines[i], escapedQuery));
             }
         }
 

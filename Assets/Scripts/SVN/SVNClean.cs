@@ -7,7 +7,6 @@ namespace SVN.Core
 {
     public class SVNClean : SVNBase, IDisposable
     {
-        private SVNStatus _cachedStatusModule;
         private readonly object _ctsSync = new();
         private CancellationTokenSource _cts;
         private CancellationTokenSource _confirmationCts;
@@ -18,12 +17,17 @@ namespace SVN.Core
             UnityMainThreadDispatcher.EnsureExists();
         }
 
+        // === FIX K2: pole UI wyłącznie przez dispatcher — LogClean wołany jest z
+        // thread poolu (operacje po ConfigureAwait(false), catch w RunAsync).
         private void LogClean(string msg, bool append = true)
         {
-            if (svnUI?.CleanText != null)
-                SVNLogBridge.UpdateUIField(svnUI.CleanText, msg, "CLEAN", append);
-            else
-                SVNLogBridge.LogLine(msg, append);
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (svnUI?.CleanText != null)
+                    SVNLogBridge.UpdateUIField(svnUI.CleanText, msg, "CLEAN", append);
+                else
+                    SVNLogBridge.LogLine(msg, append);
+            });
         }
 
         private void ClearLog() => LogClean(string.Empty, false);
@@ -49,6 +53,12 @@ namespace SVN.Core
         public void HardReset() => _ = StartAsync(HardResetAsync, true);
         public void RepairStructure() => _ = StartAsync(RepairStructureAsync, true);
 
+        // === FIX K1: przebudowane. Wcześniej '_ = RunAsync(...)' (fire-and-forget)
+        // + teardown w finally StartAsync → finally wykonywał się natychmiast po
+        // pierwszym await OPERACJI: nullował _cts (Cancel martwy), zdjmował
+        // IsProcessing (kolejne operacje startowały równolegle) i DISPO NOWAŁ CTS,
+        // którego token używała trwająca operacja (ODE w środku SvnRunner).
+        // Teraz: StartAsync czeka na RunAsync; cleanup należy WYŁĄCZNIE do RunAsync.
         private async Task StartAsync(Func<CancellationToken, Task> op, bool confirm)
         {
             if (op == null || _isDisposed) return;
@@ -86,7 +96,7 @@ namespace SVN.Core
                 finally
                 {
                     lock (_ctsSync) { if (_confirmationCts == confCts) _confirmationCts = null; }
-                    try { confCts.Dispose(); } catch { }
+                    _ = Task.Delay(1000).ContinueWith(_ => { try { confCts.Dispose(); } catch { } });
                 }
 
                 if (!confirmed)
@@ -115,42 +125,24 @@ namespace SVN.Core
                 return;
             }
 
-            CancellationTokenSource opCts = null;
-            try
+            CancellationTokenSource opCts;
+            lock (_ctsSync)
             {
-                lock (_ctsSync)
+                if (_isDisposed || _cts != null)
                 {
-                    if (_isDisposed || _cts != null)
-                    {
-                        End();
-                        LogClean("<color=#FFAA00>Operation initialization error.</color>");
-                        return;
-                    }
-
-                    opCts = _cts = new CancellationTokenSource();
+                    // Obrona: niezmiennik "_cts != null ⟹ IsProcessing" naruszony.
+                    End();
+                    LogClean("<color=#FFAA00>Operation initialization error.</color>");
+                    return;
                 }
 
-                PostUIStart();
-                _ = RunAsync(op, opCts);
+                opCts = _cts = new CancellationTokenSource();
             }
-            finally
-            {
-                bool shouldCleanup = false;
-                lock (_ctsSync)
-                {
-                    if (opCts != null && ReferenceEquals(_cts, opCts))
-                    {
-                        _cts = null;
-                        shouldCleanup = true;
-                    }
-                }
 
-                if (shouldCleanup)
-                {
-                    try { End(); } catch { }
-                    try { opCts.Dispose(); } catch { }
-                }
-            }
+            PostUIStart();
+
+            // Własność opCts przechodzi na RunAsync — on (i tylko on) sprząta.
+            await RunAsync(op, opCts).ConfigureAwait(false);
         }
 
         private async Task RunAsync(Func<CancellationToken, Task> op, CancellationTokenSource cts)
@@ -176,13 +168,16 @@ namespace SVN.Core
             }
             finally
             {
-                try { End(); } catch (Exception ex) { SVNLogBridge.LogException(ex); }
-
+                // === FIX K1 (kolejność): _cts = null PRZED End() — dzięki temu
+                // niezmiennik "_cts != null ⟹ IsProcessing" trwa przez cały cykl
+                // i obronna ścieżka w StartAsync prawie nigdy nie odpala.
                 lock (_ctsSync) { if (_cts == cts) _cts = null; }
 
-                try { cts.Dispose(); } catch { }
+                try { End(); } catch (Exception ex) { SVNLogBridge.LogException(ex); }
 
-                PostUIFinish();
+                // Dispose BEZPIECZNY: _cts zdjęte pod lockiem (Cancel go nie dostanie),
+                // operacja zakończona (token nieużywany), refresh niżej własnym tokenem.
+                try { cts.Dispose(); } catch { }
 
                 if (!_isDisposed)
                     await RefreshStatusSafeAsync().ConfigureAwait(false);
@@ -195,10 +190,19 @@ namespace SVN.Core
             _isDisposed = true;
 
             CancellationTokenSource opCts, confCts;
-            lock (_ctsSync) { opCts = _cts; confCts = _confirmationCts; }
+            lock (_ctsSync) { opCts = _cts; confCts = _confirmationCts; _cts = null; _confirmationCts = null; }
 
-            if (opCts != null) try { opCts.Cancel(); } catch { }
-            if (confCts != null) try { confCts.Cancel(); } catch { }
+            // === FIX: delayed dispose (wcześniej cancel-only — CTS-y przeciekały).
+            if (opCts != null)
+            {
+                try { opCts.Cancel(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { opCts.Dispose(); } catch { } });
+            }
+            if (confCts != null)
+            {
+                try { confCts.Cancel(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { confCts.Dispose(); } catch { } });
+            }
         }
 
         public async Task LightCleanupAsync(CancellationToken t)
@@ -381,7 +385,14 @@ namespace SVN.Core
                     bool result = UnityEditor.EditorUtility.DisplayDialog(title, msg, "Yes", "No");
                     tcs.TrySetResult(result);
 #else
-                    tcs.TrySetResult(true);
+                    // === FIX K3: w buildzie Player brak dialogu modalnego — stary
+                    // fallback auto-klikał "TAK", czyli HARD RESET ("ALL LOCAL
+                    // CHANGES... PERMANENTLY DELETED!") wykonywał się BEZ pytania.
+                    // Safe default = odmowa (użytkownik może użyć operacji
+                    // niedestrukcyjnych albo uruchomić w edytorze).
+                    SVNLogBridge.LogErrorToOutput(
+                        "[SVN Clean] Confirmation dialog is editor-only — destructive operation denied in player build.");
+                    tcs.TrySetResult(false);
 #endif
                 }
                 catch (Exception ex)
@@ -408,14 +419,6 @@ namespace SVN.Core
                         "CLEAN",
                         append: false);
                 }
-            }
-            catch { }
-        });
-
-        private void PostUIFinish() => UnityMainThreadDispatcher.Enqueue(() =>
-        {
-            try
-            {
             }
             catch { }
         });

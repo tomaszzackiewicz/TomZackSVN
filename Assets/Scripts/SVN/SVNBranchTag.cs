@@ -21,6 +21,11 @@ namespace SVN.Core
         private readonly SemaphoreSlim _operationLock = new(1, 1);
         private int _disposed;
 
+        private static readonly HashSet<string> PlaceholderTexts = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Loading...", "Not ready", "No branches", "No tags", "Error", "None"
+        };
+
         public SVNBranchTag(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             manager.OnProjectChanged += OnProjectChangedHandler;
@@ -35,13 +40,14 @@ namespace SVN.Core
             var refreshCts = Interlocked.Exchange(ref _refreshCts, null);
             if (refreshCts != null)
             {
-                try { refreshCts.Cancel(); refreshCts.Dispose(); } catch { }
+                try { refreshCts.Cancel(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { refreshCts.Dispose(); } catch { } });
             }
 
             if (svnManager != null)
                 svnManager.OnProjectChanged -= OnProjectChangedHandler;
 
-            try { _operationLock.Dispose(); } catch { }
+            _ = Task.Delay(1500).ContinueWith(_ => { try { _operationLock.Dispose(); } catch { } });
             GC.SuppressFinalize(this);
         }
 
@@ -59,10 +65,19 @@ namespace SVN.Core
 
         private async Task RunWithOperationLockAsync(Func<CancellationToken, Task> action)
         {
-            bool hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
-            if (!hasLock) return;
+            if (Volatile.Read(ref _disposed) == 1) return;
 
-            CancellationTokenSource localCts = new();
+            bool hasLock;
+            try { hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false); }
+            catch (ObjectDisposedException) { return; }
+
+            if (!hasLock)
+            {
+                LogInfo("<color=orange>Another branch/tag operation is already in progress.</color>");
+                return;
+            }
+
+            var localCts = new CancellationTokenSource();
             Volatile.Write(ref _operationCts, localCts);
             try
             {
@@ -79,13 +94,14 @@ namespace SVN.Core
             finally
             {
                 Interlocked.CompareExchange(ref _operationCts, null, localCts);
-                try { localCts.Dispose(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
                 try { _operationLock.Release(); } catch { }
             }
         }
 
         private void OnProjectChangedHandler(SVNProject project)
         {
+            if (Volatile.Read(ref _disposed) == 1) return;
             _cachedRepoRoot = null;
             _ = RefreshOnProjectLoadedAsync();
         }
@@ -95,6 +111,7 @@ namespace SVN.Core
             try
             {
                 await Task.Delay(100).ConfigureAwait(false);
+                if (Volatile.Read(ref _disposed) == 1) return;
                 await RefreshUnifiedList().ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -103,16 +120,12 @@ namespace SVN.Core
             }
         }
 
+        // UWAGA: wywoływane z puli wątków — UI czytane tylko w snapshotach przez callerów.
         private async Task<string[]> GetRepoListAsync(string url, CancellationToken token = default)
         {
             try
             {
-                string currentKey = SvnRunner.KeyPath;
-                string sshArgs = "-o BatchMode=yes -o StrictHostKeyChecking=no";
-                if (!string.IsNullOrEmpty(currentKey))
-                    sshArgs = $"-i \"{currentKey}\" {sshArgs}";
-
-                string command = $"--config-option config:tunnels:ssh=\"ssh {sshArgs}\" list \"{url}\" --non-interactive";
+                string command = $"list \"{url}\" --non-interactive";
                 string output = await SvnRunner.RunAsync(command, svnManager.WorkingDir, false, token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(output)) return Array.Empty<string>();
 
@@ -141,8 +154,6 @@ namespace SVN.Core
             try
             {
                 _cachedRepoRoot = svnManager.GetRepoRoot()?.Trim().TrimEnd('/');
-
-                LogWarning($"[DEBUG REPO ROOT] GetRepoRoot zwrocil: '{_cachedRepoRoot}'");
             }
             catch (Exception ex)
             {
@@ -153,6 +164,7 @@ namespace SVN.Core
 
         public async Task RefreshIfEmpty()
         {
+            if (Volatile.Read(ref _disposed) == 1) return;
             if (!IsReady() || svnUI?.BranchesDropdown == null) return;
             var options = svnUI.BranchesDropdown.options;
             if (options.Count == 0 || options.All(o => IsPlaceholder(o.text)))
@@ -173,25 +185,55 @@ namespace SVN.Core
 
         private async Task CreateBranchFromTrunkCore(CancellationToken token)
         {
+            // Snapshot UI na starcie (main thread — entry z RunWithOperationLockAsync z puli,
+            // ale kontynuacja pierwszego awaitu wraca na pulę; UI czytamy przez Enqueue lub zakładamy main z buttona).
+            // Bezpiecznie: czytamy przez dispatcher.
+            string name = null, subFolder = null, sourceRelativePath = null, revision = null;
+
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                name = svnUI?.BranchNameInput?.text?.Trim();
+                subFolder = (svnUI?.TypeSelector?.value == 0) ? "branches" : "tags";
+                sourceRelativePath = svnUI?.BranchSourcePathInput?.text?.Trim();
+                revision = svnUI.RevisionInput?.text?.Trim();
+            });
+
+            // Enqueue jest async — czekamy chwilę na snapshot.
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                LogErrorLocal("[Error] Branch/Tag name cannot be empty.");
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(sourceRelativePath))
+                sourceRelativePath = "trunk";
+
             await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-            if (!ValidateCreateInputs(out string name, out string subFolder)) return;
 
             string repoRoot = EnsureRepoRoot();
             if (string.IsNullOrWhiteSpace(repoRoot)) return;
 
-            string sourceRelativePath = svnUI?.BranchSourcePathInput?.text?.Trim();
-            if (string.IsNullOrWhiteSpace(sourceRelativePath))
-                sourceRelativePath = "trunk";
-
-            string revision = svnUI.RevisionInput?.text?.Trim();
             bool hasRevision = !string.IsNullOrEmpty(revision) && long.TryParse(revision, out _);
 
-            string sourceUrl = $"{repoRoot}/{SanitizeSvnPath(sourceRelativePath)}";
-            string targetUrl = $"{repoRoot}/{subFolder}/{SanitizeSvnName(name)}";
+            string sanitizedSource, sanitizedName;
+            try
+            {
+                sanitizedSource = SanitizeSvnPath(sourceRelativePath);
+                sanitizedName = SanitizeSvnName(name);
+            }
+            catch (ArgumentException)
+            {
+                LogErrorLocal("[Error] Name contains no valid characters.");
+                return;
+            }
+
+            string sourceUrl = $"{repoRoot}/{sanitizedSource}";
+            string targetUrl = $"{repoRoot}/{subFolder}/{sanitizedName}";
 
             string cmd = hasRevision
-                ? $"copy \"{sourceUrl}@{revision}\" \"{targetUrl}\" -m \"Created {subFolder}/{SanitizeSvnName(name)} from {sourceRelativePath}@{revision}\" --parents"
-                : $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"Created {subFolder}/{SanitizeSvnName(name)} from {sourceRelativePath}\" --parents";
+                ? $"copy \"{sourceUrl}@{revision}\" \"{targetUrl}\" -m \"Created {subFolder}/{sanitizedName} from {sourceRelativePath}@{revision}\" --parents"
+                : $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"Created {subFolder}/{sanitizedName} from {sourceRelativePath}\" --parents";
 
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir, false, token).ConfigureAwait(false);
             LogSuccess(hasRevision
@@ -202,45 +244,74 @@ namespace SVN.Core
 
         private async Task CreateBranchFromSelectedCore(CancellationToken token)
         {
-            await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-            if (!ValidateCreateInputs(out string newName, out string subFolder)) return;
+            string newName = null, revision = null;
+            TMP_Dropdown sourceDropdown = null;
+            string selected = null;
 
-            TMP_Dropdown sourceDropdown = subFolder == "branches" ? svnUI?.BranchesDropdown : svnUI?.TagsDropdown;
-            if (sourceDropdown == null || sourceDropdown.options.Count == 0)
-            { LogErrorLocal($"[Error] No {subFolder} available."); return; }
-            if (sourceDropdown.value < 0 || sourceDropdown.value >= sourceDropdown.options.Count)
-            { LogErrorLocal($"[Error] Invalid {subFolder} selection."); return; }
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                newName = svnUI?.BranchNameInput?.text?.Trim();
+                revision = svnUI.RevisionInput?.text?.Trim();
 
-            string selected = sourceDropdown.options[sourceDropdown.value].text;
+                string subFolder = (svnUI?.TypeSelector?.value == 0) ? "branches" : "tags";
+                sourceDropdown = subFolder == "branches" ? svnUI?.BranchesDropdown : svnUI?.TagsDropdown;
+
+                if (sourceDropdown != null && sourceDropdown.options.Count > 0 &&
+                    sourceDropdown.value >= 0 && sourceDropdown.value < sourceDropdown.options.Count)
+                {
+                    selected = sourceDropdown.options[sourceDropdown.value].text;
+                }
+            });
+
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            string subFolderFinal = (svnUI?.TypeSelector?.value == 0) ? "branches" : "tags";
+
+            if (string.IsNullOrWhiteSpace(newName))
+            {
+                LogErrorLocal("[Error] Branch/Tag name cannot be empty.");
+                return;
+            }
+
+            if (sourceDropdown == null || string.IsNullOrEmpty(selected))
+            { LogErrorLocal($"[Error] No {subFolderFinal} available."); return; }
+
             if (IsPlaceholder(selected) || string.IsNullOrEmpty(selected))
-            { LogErrorLocal($"[Error] Invalid source {subFolder}."); return; }
+            { LogErrorLocal($"[Error] Invalid source {subFolderFinal}."); return; }
+
+            await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
             string repoRoot = EnsureRepoRoot();
             if (string.IsNullOrWhiteSpace(repoRoot)) return;
 
-            string suggestedPath = selected.Equals("trunk", StringComparison.OrdinalIgnoreCase)
-                ? "trunk"
-                : $"{subFolder}/{SanitizeSvnName(selected)}";
-
-            if (svnUI?.BranchSourcePathInput != null)
+            string sanitizedName;
+            try { sanitizedName = SanitizeSvnName(newName); }
+            catch (ArgumentException)
             {
-                svnUI.BranchSourcePathInput.SetTextWithoutNotify(suggestedPath);
+                LogErrorLocal("[Error] Name contains no valid characters.");
+                return;
             }
 
-            string sourceRelativePath = svnUI?.BranchSourcePathInput?.text?.Trim();
-            if (string.IsNullOrWhiteSpace(sourceRelativePath))
-                sourceRelativePath = suggestedPath;
+            string suggestedPath = selected.Equals("trunk", StringComparison.OrdinalIgnoreCase)
+                ? "trunk"
+                : $"{subFolderFinal}/{SanitizeSvnName(selected)}";
 
-            string revision = svnUI.RevisionInput?.text?.Trim();
+            PostToMainThread(() =>
+            {
+                if (svnUI?.BranchSourcePathInput != null)
+                    svnUI.BranchSourcePathInput.SetTextWithoutNotify(suggestedPath);
+            });
+
+            string sourceRelativePath = suggestedPath;
             bool hasRevision = !string.IsNullOrEmpty(revision) && long.TryParse(revision, out _);
 
             string sourceUrl = $"{repoRoot}/{SanitizeSvnPath(sourceRelativePath)}";
             if (hasRevision) sourceUrl = $"{sourceUrl}@{revision}";
 
-            string targetUrl = $"{repoRoot}/{subFolder}/{SanitizeSvnName(newName)}";
+            string targetUrl = $"{repoRoot}/{subFolderFinal}/{sanitizedName}";
             string message = hasRevision
-                ? $"Created {subFolder}/{newName} from {sourceRelativePath}@{revision}"
-                : $"Created {subFolder}/{newName} from {sourceRelativePath}";
+                ? $"Created {subFolderFinal}/{newName} from {sourceRelativePath}@{revision}"
+                : $"Created {subFolderFinal}/{newName} from {sourceRelativePath}";
 
             string cmd = $"copy \"{sourceUrl}\" \"{targetUrl}\" -m \"{message}\" --parents";
             await SvnRunner.RunAsync(cmd, svnManager.WorkingDir, false, token).ConfigureAwait(false);
@@ -252,23 +323,27 @@ namespace SVN.Core
 
         public async Task RefreshUnifiedList()
         {
+            if (Volatile.Read(ref _disposed) == 1) return;
             if (svnUI?.BranchesDropdown == null && svnUI?.TagsDropdown == null) return;
 
             if (!IsReady())
             {
                 PostToMainThread(() =>
                 {
-                    UpdateDropdown(svnUI.BranchesDropdown, Array.Empty<string>(), "Loading...", true);
-                    UpdateDropdown(svnUI.TagsDropdown, Array.Empty<string>(), "Loading...", false);
+                    UpdateDropdown(svnUI?.BranchesDropdown, Array.Empty<string>(), "Loading...", true);
+                    UpdateDropdown(svnUI?.TagsDropdown, Array.Empty<string>(), "Loading...", false);
                 });
                 return;
             }
 
-            var oldCts = Interlocked.Exchange(ref _refreshCts, new CancellationTokenSource());
-            oldCts?.Cancel();
-            try { oldCts?.Dispose(); } catch { }
-
-            var token = _refreshCts.Token;
+            var newCts = new CancellationTokenSource();
+            var oldCts = Interlocked.Exchange(ref _refreshCts, newCts);
+            if (oldCts != null)
+            {
+                oldCts.Cancel();
+                _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
+            }
+            CancellationToken token = newCts.Token;
 
             try
             {
@@ -277,8 +352,8 @@ namespace SVN.Core
                 {
                     PostToMainThread(() =>
                     {
-                        UpdateDropdown(svnUI.BranchesDropdown, Array.Empty<string>(), "Not ready", true);
-                        UpdateDropdown(svnUI.TagsDropdown, Array.Empty<string>(), "Not ready", false);
+                        UpdateDropdown(svnUI?.BranchesDropdown, Array.Empty<string>(), "Not ready", true);
+                        UpdateDropdown(svnUI?.TagsDropdown, Array.Empty<string>(), "Not ready", false);
                     });
                     return;
                 }
@@ -304,14 +379,20 @@ namespace SVN.Core
                 }
                 catch { }
 
+                string[] branchesResult = branchesTask.Result;
+                string[] tagsResult = tagsTask.Result;
+                string currentUrlSnapshot = currentUrl;
+                string currentBranchSnapshot = actualCurrentBranch;
+                string repoRootSnapshot = repoRoot;
+
                 PostToMainThread(() =>
                 {
-                    UpdateDropdown(svnUI.BranchesDropdown, branchesTask.Result, "No branches", true, actualCurrentBranch);
-                    UpdateDropdown(svnUI.TagsDropdown, tagsTask.Result, "No tags", false, actualCurrentBranch);
+                    UpdateDropdown(svnUI?.BranchesDropdown, branchesResult, "No branches", true, currentBranchSnapshot);
+                    UpdateDropdown(svnUI?.TagsDropdown, tagsResult, "No tags", false, currentBranchSnapshot);
 
                     if (svnUI?.BranchSourcePathInput != null)
                     {
-                        string currentRelativePath = GetRelativePathFromUrl(currentUrl, repoRoot);
+                        string currentRelativePath = GetRelativePathFromUrl(currentUrlSnapshot, repoRootSnapshot);
                         svnUI.BranchSourcePathInput.SetTextWithoutNotify(currentRelativePath);
                     }
                 });
@@ -328,8 +409,8 @@ namespace SVN.Core
 
                 PostToMainThread(() =>
                 {
-                    UpdateDropdown(svnUI.BranchesDropdown, Array.Empty<string>(), "Error", true);
-                    UpdateDropdown(svnUI.TagsDropdown, Array.Empty<string>(), "Error", false);
+                    UpdateDropdown(svnUI?.BranchesDropdown, Array.Empty<string>(), "Error", true);
+                    UpdateDropdown(svnUI?.TagsDropdown, Array.Empty<string>(), "Error", false);
                 });
             }
         }
@@ -338,15 +419,27 @@ namespace SVN.Core
 
         private async Task DiffWithCurrentCore(bool isTag, CancellationToken token)
         {
+            string selected = null;
+            TMP_Dropdown dropdown = null;
+
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                dropdown = isTag ? svnUI?.TagsDropdown : svnUI?.BranchesDropdown;
+                if (dropdown != null && dropdown.options.Count > 0 &&
+                    dropdown.value >= 0 && dropdown.value < dropdown.options.Count)
+                {
+                    selected = dropdown.options[dropdown.value].text;
+                }
+            });
+
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            if (dropdown == null || string.IsNullOrEmpty(selected)) { LogErrorLocal("[Diff] No items available."); return; }
+            if (IsPlaceholder(selected)) { LogErrorLocal("[Diff] Please select a valid branch/tag."); return; }
+
             if (!IsReady()) { LogWarning("[Diff] SVN not ready."); return; }
 
             await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-            TMP_Dropdown dropdown = isTag ? svnUI?.TagsDropdown : svnUI?.BranchesDropdown;
-            if (dropdown == null || dropdown.options.Count == 0) { LogErrorLocal("[Diff] No items available."); return; }
-            if (dropdown.value < 0 || dropdown.value >= dropdown.options.Count) { LogErrorLocal("[Diff] Invalid selection."); return; }
-
-            string selected = dropdown.options[dropdown.value].text;
-            if (string.IsNullOrEmpty(selected) || IsPlaceholder(selected)) { LogErrorLocal("[Diff] Please select a valid branch/tag."); return; }
 
             string subFolder = isTag ? "tags" : "branches";
             string repoRoot = EnsureRepoRoot();
@@ -364,7 +457,6 @@ namespace SVN.Core
 
             string args = $"diff --summarize \"{currentUrl}\" \"{selectedUrl}\"";
             string output = await SvnRunner.RunAsync(args, svnManager.WorkingDir, false, token).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(output) && output.TrimStart().StartsWith("svn: E")) { LogErrorLocal($"[Diff Error] {output}"); return; }
             if (string.IsNullOrWhiteSpace(output)) { LogSuccess("[Diff] No differences found."); return; }
 
             var sb = new StringBuilder(4096);
@@ -375,7 +467,7 @@ namespace SVN.Core
             sb.AppendLine(new string('-', 60));
 
             int added = 0, modified = 0, deleted = 0;
-            foreach (string line in (output ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (line.Length < 2) continue;
                 char status = line[0];
@@ -389,8 +481,8 @@ namespace SVN.Core
             sb.AppendLine($"Added: {added} | Modified: {modified} | Deleted: {deleted}");
             sb.AppendLine($"Total: {added + modified + deleted}");
 
-            string fileName = $"Diff_{currentName}_vs_{selected}_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
-            string tempFilePath = Path.Combine(Application.temporaryCachePath, fileName);
+            string fileName = $"Diff_{GetSafeFileName(currentName)}_vs_{GetSafeFileName(selected)}_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+            string tempFilePath = Path.Combine(SVNPrefs.TemporaryCachePath, fileName);
 
             await File.WriteAllTextAsync(tempFilePath, sb.ToString(), token).ConfigureAwait(false);
 
@@ -405,16 +497,28 @@ namespace SVN.Core
 
         private async Task ShowDetailsForSelectedCore(CancellationToken token)
         {
+            string subFolder = null, selected = null;
+            TMP_Dropdown dropdown = null;
+
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                subFolder = (svnUI?.TypeSelector?.value == 0) ? "branches" : "tags";
+                dropdown = subFolder == "branches" ? svnUI?.BranchesDropdown : svnUI?.TagsDropdown;
+                if (dropdown != null && dropdown.options.Count > 0 &&
+                    dropdown.value >= 0 && dropdown.value < dropdown.options.Count)
+                {
+                    selected = dropdown.options[dropdown.value].text;
+                }
+            });
+
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            if (dropdown == null || string.IsNullOrEmpty(selected)) { LogErrorLocal("[Details] No items available."); return; }
+            if (IsPlaceholder(selected)) { LogErrorLocal("[Details] Please select a valid branch/tag."); return; }
+
             if (!IsReady()) { LogWarning("[Details] SVN not ready."); return; }
 
             await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-            string subFolder = (svnUI?.TypeSelector?.value == 0) ? "branches" : "tags";
-            TMP_Dropdown dropdown = subFolder == "branches" ? svnUI?.BranchesDropdown : svnUI?.TagsDropdown;
-            if (dropdown == null || dropdown.options.Count == 0) { LogErrorLocal("[Details] No items available."); return; }
-            if (dropdown.value < 0 || dropdown.value >= dropdown.options.Count) { LogErrorLocal("[Details] Invalid selection."); return; }
-
-            string selected = dropdown.options[dropdown.value].text;
-            if (string.IsNullOrEmpty(selected) || IsPlaceholder(selected)) { LogErrorLocal("[Details] Please select a valid branch/tag."); return; }
 
             string repoRoot = EnsureRepoRoot();
             if (string.IsNullOrWhiteSpace(repoRoot)) return;
@@ -460,7 +564,8 @@ namespace SVN.Core
             LogInfo($"Created in : {creationRev}");
             LogInfo($"Created by : {firstAuthor}");
 
-            if (DateTime.TryParseExact(firstDate, "yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out DateTime parsed))
+            if (DateTime.TryParse(firstDate, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out DateTime parsed))
                 LogInfo($"Created on : {parsed.ToLocalTime():yyyy-MM-dd HH:mm:ss} (local)");
             else LogInfo($"Created on : {firstDate}");
 
@@ -473,26 +578,44 @@ namespace SVN.Core
             }
         }
 
-        public async Task SwitchToSelectedBranch() => await RunWithOperationLockAsync(token => SwitchToSelectedBranchCore(token));
-        public async Task SwitchToSelectedTag() => await RunWithOperationLockAsync(token => SwitchToSelectedTagCore(token));
+        public async Task SwitchToSelectedBranch() => await RunWithOperationLockAsync(SwitchToSelectedBranchCore);
+        public async Task SwitchToSelectedTag() => await RunWithOperationLockAsync(SwitchToSelectedTagCore);
 
         private async Task SwitchToSelectedBranchCore(CancellationToken token)
         {
             if (!IsReady()) { LogWarning("[Switch] SVN not ready."); return; }
-            if (svnUI?.BranchesDropdown == null || svnUI.BranchesDropdown.options.Count == 0) return;
-            if (svnUI.BranchesDropdown.value < 0 || svnUI.BranchesDropdown.value >= svnUI.BranchesDropdown.options.Count) return;
-            string selected = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text;
-            if (IsPlaceholder(selected)) return;
+
+            string selected = null;
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (svnUI?.BranchesDropdown != null && svnUI.BranchesDropdown.options.Count > 0 &&
+                    svnUI.BranchesDropdown.value >= 0 && svnUI.BranchesDropdown.value < svnUI.BranchesDropdown.options.Count)
+                {
+                    selected = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text;
+                }
+            });
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            if (string.IsNullOrEmpty(selected) || IsPlaceholder(selected)) return;
             await ExecuteUnifiedSwitch(selected, "branches", token).ConfigureAwait(false);
         }
 
         private async Task SwitchToSelectedTagCore(CancellationToken token)
         {
             if (!IsReady()) { LogWarning("[Switch] SVN not ready."); return; }
-            if (svnUI?.TagsDropdown == null || svnUI.TagsDropdown.options.Count == 0) return;
-            if (svnUI.TagsDropdown.value < 0 || svnUI.TagsDropdown.value >= svnUI.TagsDropdown.options.Count) return;
-            string selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
-            if (IsPlaceholder(selected)) return;
+
+            string selected = null;
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (svnUI?.TagsDropdown != null && svnUI.TagsDropdown.options.Count > 0 &&
+                    svnUI.TagsDropdown.value >= 0 && svnUI.TagsDropdown.value < svnUI.TagsDropdown.options.Count)
+                {
+                    selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
+                }
+            });
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            if (string.IsNullOrEmpty(selected) || IsPlaceholder(selected)) return;
             await ExecuteUnifiedSwitch(selected, "tags", token).ConfigureAwait(false);
         }
 
@@ -502,11 +625,20 @@ namespace SVN.Core
         private async Task DeleteSelectedBranchCore(CancellationToken token)
         {
             if (!IsReady()) { LogWarning("[Delete] SVN not ready."); return; }
-            if (svnUI?.BranchesDropdown == null || svnUI.BranchesDropdown.options.Count == 0) { LogErrorLocal("Delete aborted."); return; }
-            if (svnUI.BranchesDropdown.value < 0 || svnUI.BranchesDropdown.value >= svnUI.BranchesDropdown.options.Count) { LogErrorLocal("Delete aborted."); return; }
 
-            string selectedBranch = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text?.Trim();
-            if (string.IsNullOrEmpty(selectedBranch) || IsProtectedBranch(selectedBranch)) { LogErrorLocal("SECURITY BLOCK: 'trunk' is protected."); return; }
+            string selectedBranch = null;
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (svnUI?.BranchesDropdown != null && svnUI.BranchesDropdown.options.Count > 0 &&
+                    svnUI.BranchesDropdown.value >= 0 && svnUI.BranchesDropdown.value < svnUI.BranchesDropdown.options.Count)
+                {
+                    selectedBranch = svnUI.BranchesDropdown.options[svnUI.BranchesDropdown.value].text?.Trim();
+                }
+            });
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            if (string.IsNullOrEmpty(selectedBranch)) { LogErrorLocal("Delete aborted."); return; }
+            if (IsProtectedBranch(selectedBranch)) { LogErrorLocal("SECURITY BLOCK: 'trunk' is protected."); return; }
             if (!ConfirmDelete(ref _lastDeleteBranchClickTime, selectedBranch)) return;
             await ExecuteRemoteDeleteTask(selectedBranch, "branches", token).ConfigureAwait(false);
         }
@@ -514,11 +646,20 @@ namespace SVN.Core
         private async Task DeleteSelectedTagCore(CancellationToken token)
         {
             if (!IsReady()) { LogWarning("[Delete] SVN not ready."); return; }
-            if (svnUI?.TagsDropdown == null || svnUI.TagsDropdown.options.Count == 0) return;
-            if (svnUI.TagsDropdown.value < 0 || svnUI.TagsDropdown.value >= svnUI.TagsDropdown.options.Count) { LogErrorLocal("Delete aborted."); return; }
-            string selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
-            if (IsPlaceholder(selected)) return;
-            if (string.IsNullOrEmpty(selected) || IsProtectedBranch(selected))
+
+            string selected = null;
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                if (svnUI?.TagsDropdown != null && svnUI.TagsDropdown.options.Count > 0 &&
+                    svnUI.TagsDropdown.value >= 0 && svnUI.TagsDropdown.value < svnUI.TagsDropdown.options.Count)
+                {
+                    selected = svnUI.TagsDropdown.options[svnUI.TagsDropdown.value].text;
+                }
+            });
+            await Task.Delay(50, token).ConfigureAwait(false);
+
+            if (string.IsNullOrEmpty(selected) || IsPlaceholder(selected)) return;
+            if (IsProtectedBranch(selected))
             {
                 LogErrorLocal("SECURITY BLOCK: 'trunk' is protected.");
                 return;
@@ -527,9 +668,23 @@ namespace SVN.Core
             await ExecuteRemoteDeleteTask(selected, "tags", token).ConfigureAwait(false);
         }
 
+        // ===================================================================
+        //  SMART SWITCH — niezawodny dla KAŻDEGO brancha:
+        //  1) Próba normalna (ancestry-preserving) — standard dla svn copy branchy.
+        //  2) Gdy E195012: diagnoza + AUTO-RETRY z --ignore-ancestry + WARNING
+        //     o konsekwencjach merge. Użytkownik nie musi znać toggle.
+        // ===================================================================
         private async Task ExecuteUnifiedSwitch(string targetName, string subFolder, CancellationToken token)
         {
+            bool userRequestedIgnoreAncestry = false;
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                userRequestedIgnoreAncestry = svnUI?.IgnoreAncestryToggle != null && svnUI.IgnoreAncestryToggle.isOn;
+            });
+            await Task.Delay(20, token).ConfigureAwait(false);
+
             await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
             string workingDir = svnManager?.WorkingDir;
             if (string.IsNullOrWhiteSpace(workingDir)) { LogErrorLocal("[Switch] Working directory is empty."); return; }
             if (!SVNAssetLocator.IsWorkingCopy(workingDir)) { LogErrorLocal("[Switch] Not a valid SVN working copy."); return; }
@@ -549,13 +704,17 @@ namespace SVN.Core
 
             string targetUrl = BuildSvnUrl(repoRoot, subFolder, cleanTarget);
 
-            LogWarning($"[Switch Debug] RawName: '{targetName}' | CleanName: '{cleanTarget}' | SubFolder: '{subFolder}' | FinalURL: '{targetUrl}'");
+            LogInfo($"[Switch] Name: '{targetName}' | SubFolder: {subFolder} | FinalURL: '{targetUrl}'");
 
             if (NormalizeUrl(currentUrl) == NormalizeUrl(targetUrl)) { LogWarning($"[Switch] You are already on '{targetName}'."); return; }
 
             LogInfo($"[Switch] Current URL: {currentUrl}");
             LogInfo($"[Switch] Target URL:  {targetUrl}");
 
+            // Snapshot unversioned PRZED switchem (ochrona plików użytkownika — fix K1).
+            HashSet<string> preSwitchUnversioned = await SnapshotUnversionedAsync(workingDir, token).ConfigureAwait(false);
+
+            // Auto-shelve zmian wersjonowanych.
             SvnStats stats = await GetStatsAsync(workingDir, token).ConfigureAwait(false);
             bool hasLocalChanges = stats.ModifiedCount > 0 || stats.AddedCount > 0 || stats.DeletedCount > 0 || stats.NewFilesCount > 0;
 
@@ -582,14 +741,59 @@ namespace SVN.Core
 
             LogInfo($"[Switch] Switching to '{targetName}'...");
 
-            bool ignoreAncestry = svnUI?.IgnoreAncestryToggle != null && svnUI.IgnoreAncestryToggle.isOn;
+            try
+            {
+                await SwitchAsync(workingDir, targetUrl, userRequestedIgnoreAncestry, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                string msg = ex.Message ?? "";
 
-            string switchResult = await SwitchAsync(workingDir, targetUrl, ignoreAncestry, token).ConfigureAwait(false);
-            if (switchResult?.Contains("svn: E", StringComparison.OrdinalIgnoreCase) == true)
-                throw new Exception(switchResult);
+                // E195012 → SMART RETRY z --ignore-ancestry.
+                if (msg.Contains("E195012") && !userRequestedIgnoreAncestry)
+                {
+                    string diagMsg = $"[Switch] Ancestry mismatch (E195012) — analyzing branch '{cleanTarget}'...";
+                    LogWarning(diagMsg);
+                    SVNLogBridge.LogWarning(diagMsg);
 
-            await CleanupOrphanedFilesAsync(workingDir, token).ConfigureAwait(false);
+                    string ancestryInfo = await DiagnoseAncestryAsync(targetUrl, workingDir, token).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(ancestryInfo))
+                        SVNLogBridge.LogWarning($"[Switch] Ancestry: {ancestryInfo}");
 
+                    string retryMsg = "[Switch] Retrying with --ignore-ancestry (safe for switch; merge-tracking limited)...";
+                    LogWarning(retryMsg);
+                    SVNLogBridge.LogWarning(retryMsg);
+
+                    try
+                    {
+                        await SwitchAsync(workingDir, targetUrl, true, token).ConfigureAwait(false);
+
+                        string warnMsg = "[Switch] Switched with --ignore-ancestry. WARNING: future merges between " +
+                                         $"'{cleanTarget}' and trunk may not auto-detect common revisions — " +
+                                         "consider recreating this branch via 'svn copy' for full merge support.";
+                        LogWarning($"<color=#FFAA00>{warnMsg}</color>");
+                        SVNLogBridge.LogWarning(warnMsg);
+                    }
+                    catch (Exception retryEx)
+                    {
+                        LogErrorLocal($"[Switch] FAILED even with --ignore-ancestry: {retryEx.Message}");
+                        ReportSwitchFailureWithShelfInfo(shelfName, retryEx.Message);
+                        await SafeCleanupAfterFailedSwitch(workingDir, token).ConfigureAwait(false);
+                        return;
+                    }
+                }
+                else
+                {
+                    LogErrorLocal($"[Switch] FAILED: {msg}");
+                    ReportSwitchFailureWithShelfInfo(shelfName, msg);
+                    await SafeCleanupAfterFailedSwitch(workingDir, token).ConfigureAwait(false);
+                    return;
+                }
+            }
+
+            await CleanupOrphanedFilesAsync(workingDir, token, preSwitchUnversioned).ConfigureAwait(false);
+
+            SVNStatus.ClearLockCache();
             LogSuccess($"[Switch] Successfully switched to '{targetName}'.");
 
             if (!string.IsNullOrWhiteSpace(shelfName))
@@ -602,6 +806,58 @@ namespace SVN.Core
             if (bar != null) await bar.ShowProjectInfo(null, workingDir).ConfigureAwait(false);
             await svnManager.RefreshStatus().ConfigureAwait(false);
             await RefreshUnifiedList().ConfigureAwait(false);
+        }
+
+        private async Task<string> DiagnoseAncestryAsync(string branchUrl, string workingDir, CancellationToken token)
+        {
+            try
+            {
+                string xml = await SvnRunner.RunAsync(
+                    $"log \"{branchUrl}\" --stop-on-copy --limit 1 --verbose --xml",
+                    workingDir, false, token).ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(xml)) return null;
+
+                var doc = System.Xml.Linq.XDocument.Parse(xml);
+                var entry = doc.Descendants("logentry").FirstOrDefault();
+                if (entry == null) return "no log entries found (empty branch?)";
+
+                var pathEl = entry.Descendants("path").FirstOrDefault();
+                string action = pathEl?.Attribute("action")?.Value ?? "?";
+                string copyFrom = pathEl?.Attribute("copyfrom-path")?.Value;
+                string copyRev = pathEl?.Attribute("copyfrom-rev")?.Value;
+
+                if (!string.IsNullOrEmpty(copyFrom))
+                    return $"created via {action} from '{copyFrom}' @ r{copyRev} — branch HAS ancestry, but current working-copy line may have been recreated (check trunk for D+A entries).";
+
+                return $"created via {action} WITHOUT copyfrom — manual creation (svn mkdir + add), not svn copy. No ancestry link.";
+            }
+            catch
+            {
+                return "ancestry analysis unavailable (log query failed).";
+            }
+        }
+
+        private void ReportSwitchFailureWithShelfInfo(string shelfName, string errorMessage)
+        {
+            if (!string.IsNullOrWhiteSpace(shelfName))
+            {
+                string safeMsg = $"[Switch] Your local changes are SAFE in shelf: {shelfName}";
+                LogWarning($"<color=#FFFF00><b>{safeMsg}</b></color>");
+                SVNLogBridge.LogWarning(safeMsg);
+                SVNLogBridge.LogWarning("[Switch] Restore them from the Shelves panel (unshelve) and try switching again.");
+            }
+            if (!string.IsNullOrEmpty(errorMessage) && errorMessage.Contains("E195012"))
+            {
+                SVNLogBridge.LogWarning("[Switch] E195012: branch has no common ancestry with working copy. " +
+                                        "For production branches, always create via: svn copy ^/trunk ^/branches/<name>");
+            }
+        }
+
+        private async Task SafeCleanupAfterFailedSwitch(string workingDir, CancellationToken token)
+        {
+            try { await SvnRunner.RunAsync("cleanup", workingDir, true, token).ConfigureAwait(false); } catch { }
+            try { await svnManager.RefreshStatus().ConfigureAwait(false); } catch { }
         }
 
         private async Task ExecuteRemoteDeleteTask(string targetName, string subFolder, CancellationToken token)
@@ -618,6 +874,105 @@ namespace SVN.Core
             await DeleteRemotePathAsync(svnManager.WorkingDir, targetUrl, msg, token).ConfigureAwait(false);
             LogSuccess($"Deleted: {targetName}");
             await RefreshUnifiedList().ConfigureAwait(false);
+        }
+
+        private static async Task<HashSet<string>> SnapshotUnversionedAsync(string workingDir, CancellationToken token)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                string status = await SvnRunner.RunAsync("status", workingDir, false, token).ConfigureAwait(false);
+                foreach (string line in (status ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (line.Length < 8 || line[0] != '?') continue;
+                    string rel = NormalizeRelativeForCompare(line.Substring(8).Trim());
+                    if (!string.IsNullOrWhiteSpace(rel)) set.Add(rel);
+                }
+                return set;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string NormalizeRelativeForCompare(string rel) =>
+            string.IsNullOrWhiteSpace(rel) ? "" : rel.Replace('\\', '/').Trim().TrimEnd('/');
+
+        private async Task CleanupOrphanedFilesAsync(string workingDir, CancellationToken token, HashSet<string> preSwitchUnversioned)
+        {
+            try
+            {
+                if (preSwitchUnversioned == null)
+                {
+                    LogInfo("[Switch] Unversioned snapshot unavailable – orphan cleanup skipped (safety).");
+                    return;
+                }
+
+                string statusOutput = await SvnRunner.RunAsync("status", workingDir, false, token).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(statusOutput)) return;
+
+                string workingRoot = Path.GetFullPath(workingDir)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+                var orphans = new List<string>();
+                foreach (string rawLine in statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (string.IsNullOrWhiteSpace(rawLine)) continue;
+                    string line = rawLine.TrimEnd();
+                    if (line.Length < 8 || line[0] != '?') continue;
+
+                    string relativePath = line.Substring(8).Trim();
+                    if (string.IsNullOrWhiteSpace(relativePath)) continue;
+
+                    if (preSwitchUnversioned.Contains(NormalizeRelativeForCompare(relativePath)))
+                        continue;
+
+                    string fullPath = Path.GetFullPath(Path.Combine(workingRoot, relativePath));
+
+                    if (!fullPath.StartsWith(workingRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    {
+                        LogWarning($"[Switch] Skipping suspicious path outside working copy: {relativePath}");
+                        continue;
+                    }
+
+                    orphans.Add(fullPath);
+                }
+
+                if (orphans.Count == 0) return;
+
+                LogInfo($"[Switch] Cleaning up {orphans.Count} orphaned item(s) left from previous branch...");
+                int removed = 0;
+
+                foreach (string path in orphans.OrderByDescending(p => p.Length))
+                {
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (File.Exists(path))
+                        {
+                            File.Delete(path);
+                            removed++;
+                            string metaPath = path + ".meta";
+                            if (File.Exists(metaPath)) File.Delete(metaPath);
+                        }
+                        else if (Directory.Exists(path))
+                        {
+                            Directory.Delete(path, true);
+                            removed++;
+                            string metaPath = path + ".meta";
+                            if (File.Exists(metaPath)) File.Delete(metaPath);
+                        }
+                    }
+                    catch (Exception ex) { LogWarning($"[Switch] Could not remove '{path}': {ex.Message}"); }
+                }
+
+                if (removed > 0)
+                    LogSuccess($"[Switch] Removed {removed} orphaned item(s). Working copy is clean.");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { LogWarning($"[Switch] Cleanup warning: {ex.Message}"); }
         }
 
         private static string BuildSvnUrl(string repoRoot, string subFolder, string name)
@@ -673,17 +1028,15 @@ namespace SVN.Core
         }
 
         private static bool IsProtectedBranch(string name) => string.Equals(name?.Trim(), "trunk", StringComparison.OrdinalIgnoreCase);
-        private static bool IsPlaceholder(string text) => text?.Contains("Loading") == true || text?.Contains("No ") == true || text?.Contains("None") == true;
 
+        private static bool IsPlaceholder(string text) =>
+            PlaceholderTexts.Contains((text ?? "").Trim());
+
+        // === FIX Ś1: odczyt currentSelection PRZENIESIONY do środka dispatchowanego
+        // callbacku — wcześniej czytany z thread poolu (race z ClearOptions/AddOptions).
         private static void UpdateDropdown(TMP_Dropdown dropdown, string[] items, string emptyMsg, bool includeTrunk, string currentBranchName = null)
         {
             if (dropdown == null) return;
-
-            string currentSelection = null;
-            if (dropdown.options.Count > 0 && dropdown.value >= 0 && dropdown.value < dropdown.options.Count)
-            {
-                currentSelection = dropdown.options[dropdown.value].text;
-            }
 
             dropdown.ClearOptions();
             var options = new List<string>(capacity: (items?.Length ?? 0) + 2);
@@ -702,6 +1055,14 @@ namespace SVN.Core
             if (options.Count == 0) options.Add(emptyMsg);
 
             dropdown.AddOptions(options);
+
+            // Odczyt aktualnego wyboru — TUTAJ (main thread, po AddOptions).
+            string currentSelection = null;
+            if (dropdown.options.Count > 0 && dropdown.value >= 0 && dropdown.value < dropdown.options.Count)
+            {
+                string current = dropdown.options[dropdown.value].text;
+                if (!IsPlaceholder(current)) currentSelection = current;
+            }
 
             string targetSelection = currentSelection ?? currentBranchName;
             int indexToSelect = 0;
@@ -727,7 +1088,7 @@ namespace SVN.Core
             if (!string.IsNullOrWhiteSpace(repoRoot))
             {
                 string cleanRoot = repoRoot.Trim().TrimEnd('/');
-                if (cleanUrl.StartsWith(cleanRoot, StringComparison.OrdinalIgnoreCase))
+                if (cleanUrl.StartsWith(cleanRoot + "/", StringComparison.OrdinalIgnoreCase))
                 {
                     string relative = cleanUrl.Substring(cleanRoot.Length).TrimStart('/');
                     string[] parts = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -781,6 +1142,8 @@ namespace SVN.Core
             catch { return "unnamed"; }
         }
 
+        private static string GetSafeFileName(string name) => GetSafeShelfName(name);
+
         private bool ConfirmDelete(ref DateTime lastClickTime, string name)
         {
             DateTime now = DateTime.UtcNow;
@@ -794,19 +1157,6 @@ namespace SVN.Core
             return false;
         }
 
-        private bool ValidateCreateInputs(out string name, out string subFolder)
-        {
-            name = svnUI?.BranchNameInput?.text?.Trim();
-            subFolder = (svnUI?.TypeSelector?.value == 0) ? "branches" : "tags";
-
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                LogErrorLocal("[Error] Branch/Tag name cannot be empty.");
-                return false;
-            }
-            return true;
-        }
-
         public static async Task<SvnStats> GetStatsAsync(string workingDir, CancellationToken token = default)
         {
             string output = await SvnRunner.RunAsync("status", workingDir, false, token).ConfigureAwait(false);
@@ -815,15 +1165,16 @@ namespace SVN.Core
             {
                 string line = rawLine.TrimEnd();
                 if (line.Length == 0) continue;
-                switch (line[0])
-                {
-                    case 'M': stats.ModifiedCount++; break;
-                    case 'A': stats.AddedCount++; break;
-                    case 'D': stats.DeletedCount++; break;
-                    case 'C': stats.ConflictsCount++; break;
-                    case '?': stats.NewFilesCount++; break;
-                    case 'I': stats.IgnoredCount++; break;
-                }
+
+                char col0 = line[0];
+                char col1 = line.Length > 1 ? line[1] : ' ';
+
+                if (col0 == 'M' || col1 == 'M') stats.ModifiedCount++;
+                if (col0 == 'A') stats.AddedCount++;
+                if (col0 == 'D' || col1 == 'D') stats.DeletedCount++;
+                if (col0 == 'C' || col1 == 'C') stats.ConflictsCount++;
+                if (col0 == '?') stats.NewFilesCount++;
+                if (col0 == 'I') stats.IgnoredCount++;
             }
             return stats;
         }
@@ -850,62 +1201,6 @@ namespace SVN.Core
         {
             string args = $"rm \"{remoteUrl}\" -m \"{message}\"";
             return await SvnRunner.RunAsync(args, workingDir, false, token).ConfigureAwait(false);
-        }
-
-        private async Task CleanupOrphanedFilesAsync(string workingDir, CancellationToken token)
-        {
-            try
-            {
-                string statusOutput = await SvnRunner.RunAsync("status", workingDir, false, token).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(statusOutput)) return;
-
-                var orphans = new List<string>();
-                foreach (string rawLine in statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    if (string.IsNullOrWhiteSpace(rawLine)) continue;
-                    string line = rawLine.TrimEnd();
-                    if (line.Length < 8 || line[0] != '?') continue;
-
-                    string relativePath = line.Substring(8).Trim();
-                    if (string.IsNullOrWhiteSpace(relativePath)) continue;
-
-                    string fullPath = Path.GetFullPath(Path.Combine(workingDir, relativePath));
-                    orphans.Add(fullPath);
-                }
-
-                if (orphans.Count == 0) return;
-
-                LogInfo($"[Switch] Cleaning up {orphans.Count} orphaned item(s) left from previous branch...");
-                int removed = 0;
-
-                foreach (string path in orphans.OrderByDescending(p => p.Length))
-                {
-                    token.ThrowIfCancellationRequested();
-                    try
-                    {
-                        if (File.Exists(path))
-                        {
-                            File.Delete(path);
-                            removed++;
-                            string metaPath = path + ".meta";
-                            if (File.Exists(metaPath)) File.Delete(metaPath);
-                        }
-                        else if (Directory.Exists(path))
-                        {
-                            Directory.Delete(path, true);
-                            removed++;
-                            string metaPath = path + ".meta";
-                            if (File.Exists(metaPath)) File.Delete(metaPath);
-                        }
-                    }
-                    catch (Exception ex) { LogWarning($"[Switch] Could not remove '{path}': {ex.Message}"); }
-                }
-
-                if (removed > 0)
-                    LogSuccess($"[Switch] Removed {removed} orphaned item(s). Working copy is clean.");
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { LogWarning($"[Switch] Cleanup warning: {ex.Message}"); }
         }
 
         protected override TMP_Text GetConsole() => svnUI?.BranchTagConsoleText;

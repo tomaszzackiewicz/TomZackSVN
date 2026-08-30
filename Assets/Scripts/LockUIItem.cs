@@ -72,6 +72,10 @@ public class LockUIItem : MonoBehaviour
             breakButton.onClick.RemoveAllListeners();
             breakButton.onClick.AddListener(OnBreakClick);
 
+            // === FIX K2: _originalBreakColor inicjalizowany ZAWSZE gdy breakButton
+            // istnieje — wcześniej przy Setup z isMe=true (przycisk ukrywany) pole
+            // zostawało default(0,0,0,0) i recykling itemu na isMe=false ustawiał
+            // przezroczysty normalColor.
             var colors = breakButton.colors;
             _originalBreakColor = colors.normalColor;
             _originalBreakColor.a = 1f;
@@ -84,8 +88,14 @@ public class LockUIItem : MonoBehaviour
         _originalStealColor.a = 1f;
         stealColors.normalColor = _originalStealColor;
         stealButton.colors = stealColors;
+
+        // === FIX K1: Update domyślnie wyłączone — włącza się tylko na czas
+        // aktywnego potwierdzenia. Przy 50 lockach: 0-2 Update/frame zamiast 50.
+        enabled = false;
     }
 
+    // === FIX K1: całe ciało Update wykonywane tylko gdy component enabled
+    // (ustawiane w OnStealClick/OnBreakClick; reset wyłącza gdy oba stany nieaktywne).
     private void Update()
     {
         if (_awaitingStealConfirmation)
@@ -108,6 +118,7 @@ public class LockUIItem : MonoBehaviour
             _awaitingStealConfirmation = true;
             _stealTimer = ConfirmationTimeout;
             ResetBreakState();
+            enabled = true;   // === FIX K1
 
             if (stealButtonText != null) stealButtonText.text = "SURE?";
             var colors = stealButton.colors;
@@ -131,6 +142,7 @@ public class LockUIItem : MonoBehaviour
             _awaitingBreakConfirmation = true;
             _breakTimer = ConfirmationTimeout;
             ResetStealState();
+            enabled = true;   // === FIX K1
 
             if (breakButtonText != null) breakButtonText.text = "SURE?";
             var colors = breakButton.colors;
@@ -158,6 +170,10 @@ public class LockUIItem : MonoBehaviour
             colors.normalColor = _originalStealColor;
             stealButton.colors = colors;
         }
+
+        // === FIX K1: gdy oba stany nieaktywne — wyłącz Update (timery niepotrzebne).
+        if (!_awaitingBreakConfirmation)
+            enabled = false;
     }
 
     private void ResetBreakState()
@@ -171,6 +187,10 @@ public class LockUIItem : MonoBehaviour
             colors.normalColor = _originalBreakColor;
             breakButton.colors = colors;
         }
+
+        // === FIX K1: jw.
+        if (!_awaitingStealConfirmation)
+            enabled = false;
     }
 
     private void LogToPanel(string msg)
