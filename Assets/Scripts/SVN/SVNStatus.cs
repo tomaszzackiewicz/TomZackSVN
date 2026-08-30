@@ -112,6 +112,19 @@ namespace SVN.Core
                     char itemStatus = line[0];
                     char propStatus = line[1];
 
+                    // === FIX TREE-CONFLICT: svn status pokazuje tree-conflicts jako
+                    // 'C' w kolumnie 6 (nie 0). Format: "!      C Models" — parser
+                    // widział '!' (missing) i gubił 'C' (conflict) → STATS 0 konfliktów
+                    // → Resolve panel pusty → Commit All pada na E155015.
+                    char treeConflictStatus = line.Length > 6 ? line[6] : ' ';
+
+                    // Jeżeli tree-conflict: nadpisz status na 'C' (priorytet)
+                    if (treeConflictStatus == 'C')
+                    {
+                        itemStatus = 'C';
+                        propStatus = ' ';
+                    }
+
                     char activeChar = itemStatus != ' '
                         ? char.ToUpperInvariant(itemStatus)
                         : char.ToUpperInvariant(propStatus);
@@ -146,7 +159,6 @@ namespace SVN.Core
                         .Replace('/', Path.DirectorySeparatorChar);
 
                     bool isDir = false;
-                    bool isFile = false;
                     bool existsOnDisk = false;
                     bool isDeletedOrMissing = (activeChar == 'D' || activeChar == '!');
                     string sizeLabel = fileLabel;
@@ -162,7 +174,6 @@ namespace SVN.Core
                         }
                         else if (File.Exists(fullPathNative))
                         {
-                            isFile = true;
                             existsOnDisk = true;
                             try { bytes = new FileInfo(fullPathNative).Length; }
                             catch { bytes = 0; }
@@ -175,6 +186,14 @@ namespace SVN.Core
                             : cleanPath;
                         bool hasExtension = nameOnly.LastIndexOf('.') > 0;
                         sizeLabel = hasExtension ? fileLabel : directoryLabel;
+
+                        // === FIX TREE-CONFLICT: tree-conflicted dirs mogą istnieć na dysku
+                        if (activeChar == 'C' && Directory.Exists(fullPathNative))
+                        {
+                            isDir = true;
+                            existsOnDisk = true;
+                            sizeLabel = directoryLabel;
+                        }
                     }
 
                     dict[cleanPath] = new SvnChangeInfo
@@ -245,7 +264,7 @@ namespace SVN.Core
                             }
                         }
                         catch (OperationCanceledException) { throw; }
-                        catch {}
+                        catch { }
 
                         int countedDirs = 0;
                         try
@@ -962,6 +981,11 @@ namespace SVN.Core
                 {
                     stats.FolderCount++;
                     if (s == "?") stats.NewFilesCount++;
+
+                    // === FIX TREE-CONFLICT: konflikt na FOLDERZE też liczony —
+                    // wcześniej tylko pliki były liczone, tree-conflicts na katalogach
+                    // ginęły → STATS pokazywał Conf: 0 mimo aktywnych konfliktów.
+                    if (s == "C") stats.ConflictsCount++;
                     continue;
                 }
 

@@ -17,6 +17,10 @@ namespace SVN.Core
         private List<SVNStatusElement> _items = new();
         private int _processingFlag;
 
+        // === Liczniki plików na żywo (dla CommitCurrentFileText)
+        private int _commitFilesProcessed;
+        private int _commitFilesTotal;
+
         private const double BytesConversionFactor = 1024.0;
         private const int CleanupTimeoutSeconds = 30;
         private const int RefreshStatusTimeoutMs = 5000;
@@ -32,12 +36,15 @@ namespace SVN.Core
             UnityMainThreadDispatcher.EnsureExists();
         }
 
-        #region Processing Guard (atomic)
+        #region Processing Guard
 
         private bool TryEnterProcessing()
         {
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
+            {
+                LogToConsole("<color=orange>Another commit operation is already running.</color>");
                 return false;
+            }
 
             IsProcessing = true;
             return true;
@@ -178,7 +185,62 @@ namespace SVN.Core
         {
             if (Interlocked.CompareExchange(ref _commitCTS, null, localCts) == localCts)
             {
-                try { localCts.Dispose(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
+            }
+        }
+
+        #endregion
+
+        #region Conflict Pre-Resolve (E155015 fix)
+
+        /// <summary>
+        /// === FIX E155015: auto-resolve tree-conflicts przed commit.
+        /// Po merge/revert-marge SVN zostawia tree-conflicts (postpone) które
+        /// blokują commit ("remains in conflict"). Ta metoda wykrywa i rozwiązuje
+        /// je automatycznie (accept working — użytkownik podjął decyzję przez
+        /// merge/revert, working copy jest źródłem prawdy).
+        /// </summary>
+        private async Task<int> AutoResolveConflictsAsync(string root, CancellationToken token)
+        {
+            try
+            {
+                string statusOutput = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(statusOutput)) return 0;
+
+                var conflictedPaths = statusOutput
+                    .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Where(l => l.Length > 8 && (l[0] == 'C' || (l.Length > 1 && l[1] == 'C')))
+                    .Select(l => l.Substring(8).Trim())
+                    .Where(p => !string.IsNullOrWhiteSpace(p))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (conflictedPaths.Count == 0) return 0;
+
+                LogToConsole($"<color=yellow>Found {conflictedPaths.Count} unresolved conflict(s) — auto-resolving (accept working)...</color>");
+
+                int resolved = 0;
+                foreach (var cpath in conflictedPaths)
+                {
+                    try
+                    {
+                        // --accept working = zachowaj stan lokalny (użytkownik już zdecydował)
+                        await SvnRunner.RunAsync($"resolve --accept working \"{cpath}\"", root, true, token).ConfigureAwait(false);
+                        resolved++;
+                        LogToConsole($"<color=green>Resolved:</color> {cpath}");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogToConsole($"<color=#FFAA00>Failed to resolve {cpath}: {ex.Message}</color>");
+                    }
+                }
+
+                return resolved;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return 0; // non-fatal — commit sam zgłosi jeśli konflikt blokuje
             }
         }
 
@@ -188,8 +250,10 @@ namespace SVN.Core
 
         public async void ShowWhatWillBeCommitted()
         {
+            if (!TryEnterProcessing()) return;
             try { await ShowWhatWillBeCommittedAsync(); }
             catch (Exception ex) { SVNLogBridge.LogError($"[Commit] ShowWhatWillBeCommitted failed: {ex.Message}"); }
+            finally { ExitProcessing(); }
         }
 
         private async Task ShowWhatWillBeCommittedAsync()
@@ -198,7 +262,7 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(root)) return;
 
             var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root);
-            var commitables = statusDict.Where(x => DisplayStatuses.Contains(x.Value.status)).ToList();
+            var commitables = statusDict.Where(x => DisplayStatuses.Contains(x.Value.status ?? "")).ToList();
 
             var sb = new StringBuilder(commitables.Count * 48 + 64);
             sb.AppendLine("<b>Current working copy changes:</b>");
@@ -238,8 +302,8 @@ namespace SVN.Core
             bool expandUnversioned = true;
             var statusDict = await SVNStatus.GetChangesDictionaryAsync(root, expandUnversioned);
 
-            _items = statusDict
-                .Where(x => DisplayStatuses.Contains(x.Value.Status))
+            var items = statusDict
+                .Where(x => DisplayStatuses.Contains(x.Value.Status ?? ""))
                 .Select(x => new SVNStatusElement
                 {
                     FullPath = x.Key?.Replace('\\', '/'),
@@ -249,13 +313,13 @@ namespace SVN.Core
                 .Where(x => !string.IsNullOrWhiteSpace(x.FullPath))
                 .ToList();
 
-            var localItems = _items;
+            _items = items;
 
             long totalSize = await Task.Run(() =>
             {
                 long size = 0;
 
-                foreach (var item in localItems)
+                foreach (var item in items)
                 {
                     if (item.Status == "!" || item.Status == "D")
                         continue;
@@ -283,7 +347,7 @@ namespace SVN.Core
                 return size;
             });
 
-            RenderCommitList(_items, totalSize);
+            RenderCommitList(items, totalSize);
         }
 
         public void RenderCommitList(List<SVNStatusElement> items, long totalSize)
@@ -401,10 +465,13 @@ namespace SVN.Core
             var statusModule = svnManager.GetModule<SVNStatus>();
             statusModule?.ClearCurrentData();
 
-            if (svnUI.TreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-            if (svnUI.CommitTreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+            PostToMainThread(() =>
+            {
+                if (svnUI.TreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+                if (svnUI.CommitTreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+            });
 
             if (statusModule != null)
                 await statusModule.ExecuteRefreshWithAutoExpand();
@@ -481,12 +548,10 @@ namespace SVN.Core
 
                     LogToConsole("<b>Initiating Commit All...</b>");
 
-                    // 1/4 Cleanup
                     bool cleanupOk = await CleanupWorkingCopy(root, token, "<b>[1/4]</b> Cleaning up working copy...");
                     if (!cleanupOk) return;
                     UpdateProgress(0.20f);
 
-                    // 2/4 Missing files (!) → D
                     LogToConsole("<b>[2/4]</b> Scheduling missing files for deletion...");
                     var statusDict = await SvnRunner.GetFullStatusDictionaryAsync(root);
                     var missingRelPaths = statusDict
@@ -500,7 +565,6 @@ namespace SVN.Core
                     await ScheduleMissingForDeletion(root, missingRelPaths, token);
                     UpdateProgress(0.40f);
 
-                    // 3/4 Unversioned files (?) → A
                     LogToConsole("<b>[3/4]</b> Checking for new/unversioned files...");
 
                     var currentStatus = await SvnRunner.GetFullStatusDictionaryAsync(root);
@@ -519,7 +583,7 @@ namespace SVN.Core
                         try
                         {
                             await Task.Run(() => File.WriteAllLines(addTargetsFile, unversionedPaths, new UTF8Encoding(false)), token);
-                            await SvnRunner.RunAsync($"add --targets \"{addTargetsFile}\"", root, false, token);
+                            await SvnRunner.RunAsync($"add --parents --targets \"{addTargetsFile}\"", root, true, token);
                             LogToConsole("<color=green>Indexing complete.</color>");
                         }
                         finally
@@ -532,10 +596,21 @@ namespace SVN.Core
                         LogToConsole("<color=green>No new files to add.</color>");
                     }
 
+                    // === FIX E155015: auto-resolve tree-conflicts PRZED commit.
+                    // Po merge/revert SVN zostawia tree-conflicts (postpone) które
+                    // blokują commit ("remains in conflict"). Resolve z accept working.
+                    int conflictsResolved = await AutoResolveConflictsAsync(root, token).ConfigureAwait(false);
+                    if (conflictsResolved > 0)
+                    {
+                        LogToConsole($"<color=green>Resolved {conflictsResolved} conflict(s). Proceeding with commit...</color>");
+                    }
+
                     UpdateProgress(0.65f);
 
-                    // 4/4 Commit
                     LogToConsole("<b>[4/4]</b> Sending to server...");
+                    Interlocked.Exchange(ref _commitFilesProcessed, 0);
+                    Interlocked.Exchange(ref _commitFilesTotal, 0);
+
                     string command = $"commit -F \"{msgFile}\" --non-interactive .";
 
                     try
@@ -546,8 +621,8 @@ namespace SVN.Core
                         SVNStatus.ClearLockCache();
                         svnManager.DiskChangesDetected = true;
 
-                        var statusModule = svnManager.GetModule<SVNStatus>();
-                        statusModule?.ClearCurrentData();
+                        var statusModuleAfter = svnManager.GetModule<SVNStatus>();
+                        statusModuleAfter?.ClearCurrentData();
 
                         PostToMainThread(() =>
                         {
@@ -562,7 +637,16 @@ namespace SVN.Core
                     }
                     catch (Exception ex)
                     {
-                        LogToConsole($"<color=#FFAA00>Error:</color> {ex.Message}");
+                        // === FIX E155015: czytelny komunikat gdy konflikt nadal blokuje
+                        if (ex.Message.Contains("E155015"))
+                        {
+                            LogToConsole("<color=#FFAA00><b>[BLOCKED]</b> Commit failed — unresolved conflict(s) remain.</color>");
+                            LogToConsole("<color=#FFAA00>Use the Resolve panel or Terminal (svn resolve) to fix them, then retry.</color>");
+                        }
+                        else
+                        {
+                            LogToConsole($"<color=#FFAA00>Error:</color> {ex.Message}");
+                        }
                     }
                 }
                 finally
@@ -604,7 +688,8 @@ namespace SVN.Core
                     {
                         if (elementDict.TryGetValue(currentParent, out var parentEl))
                         {
-                            if (parentEl.Status == "?" || parentEl.Status == "!")
+                            // === FIX E200009: 'A'-rodzice też muszą być w targets
+                            if (parentEl.Status == "?" || parentEl.Status == "!" || parentEl.Status == "A")
                             {
                                 result.Add(currentParent);
                             }
@@ -657,7 +742,7 @@ namespace SVN.Core
                     return;
                 }
 
-                selectedItems = selectedItems.Where(e => PreProcessStatuses.Contains(e.Status)).ToList();
+                selectedItems = selectedItems.Where(e => PreProcessStatuses.Contains(e.Status ?? "")).ToList();
                 if (selectedItems.Count == 0)
                 {
                     LogToConsole("<color=yellow>No valid files to commit.</color>");
@@ -686,7 +771,7 @@ namespace SVN.Core
 
                     var missingRelPaths = selectedItems
                         .Where(e => e.Status == "!")
-                        .Select(e => MakeRelative(root, e.FullPath))
+                        .Select(e => Path.IsPathRooted(e.FullPath) ? MakeRelative(root, e.FullPath) : e.FullPath)
                         .Where(p => !string.IsNullOrWhiteSpace(p))
                         .ToList();
 
@@ -750,57 +835,31 @@ namespace SVN.Core
                         return;
                     }
 
-                    LogToConsole($"<color=#4FC3F7>Final target set: {actualTargets.Count}</color>");
-                    if (missingOnDisk.Count > 0)
-                        LogToConsole($"<color=#FFAA00>Skipped missing on disk: {missingOnDisk.Count}</color>");
+                    var fileTargets = actualTargets.Where(t => !Directory.Exists(Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar)))).ToList();
+                    var dirTargets = actualTargets.Except(fileTargets).ToList();
+
+                    LogToConsole($"<color=#4FC3F7>Commit targets: {fileTargets.Count} file(s)" +
+                        (dirTargets.Count > 0 ? $" + {dirTargets.Count} folder(s) [structure]" : "") + $"</color>");
 
                     PostToMainThread(() =>
                     {
                         if (svnUI?.CommitCurrentFileText != null)
-                            svnUI.CommitCurrentFileText.text = $"Queued: {actualTargets.Count} item(s)";
+                            svnUI.CommitCurrentFileText.text = $"Queued: {fileTargets.Count} file(s)";
                     });
-
-                    var injectedParents = actualTargets
-                        .Where(t => !selectedRelPathsSet.Contains(t, StringComparer.OrdinalIgnoreCase))
-                        .ToList();
-
-                    if (injectedParents.Count > 0)
-                    {
-                        try
-                        {
-                            foreach (var dir in injectedParents)
-                            {
-                                string args = $"mkdir \"{dir.Replace("\"", "\\\"")}\"";
-                                var psi = new ProcessStartInfo
-                                {
-                                    FileName = "svn",
-                                    Arguments = args,
-                                    WorkingDirectory = root,
-                                    UseShellExecute = false,
-                                    CreateNoWindow = true,
-                                    RedirectStandardOutput = true,
-                                    RedirectStandardError = true
-                                };
-
-                                using (var p = Process.Start(psi))
-                                {
-                                    p.StandardOutput.ReadToEnd();
-                                    p.StandardError.ReadToEnd();
-                                    p.WaitForExit(15000);
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            LogToConsole($"<color=#FFAA00>[Warning] Failed to create parent directories: {ex.Message}</color>");
-                        }
-                    }
 
                     string addTargetsFile = Path.Combine(Path.GetTempPath(), $"svn_commit_add_{Guid.NewGuid():N}.txt");
                     try
                     {
                         var toAdd = actualTargets
-                            .Where(t => !injectedParents.Contains(t, StringComparer.OrdinalIgnoreCase))
+                            .Where(t =>
+                            {
+                                var match = selectedItems.FirstOrDefault(e =>
+                                {
+                                    string rel = Path.IsPathRooted(e.FullPath) ? MakeRelative(root, e.FullPath) : e.FullPath;
+                                    return string.Equals(NormalizeRelativeTarget(rel), t, StringComparison.OrdinalIgnoreCase);
+                                });
+                                return match != null && match.Status == "?";
+                            })
                             .Where(t =>
                             {
                                 string fullNative = Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar));
@@ -812,7 +871,7 @@ namespace SVN.Core
                             await Task.Run(() => File.WriteAllLines(addTargetsFile, toAdd, new UTF8Encoding(false)), token);
                             await SvnRunner.RunAsync(
                                 $"add --parents --force --targets \"{addTargetsFile}\"",
-                                root, false, token);
+                                root, true, token);
                         }
                     }
                     finally
@@ -820,11 +879,16 @@ namespace SVN.Core
                         TryDeleteFile(addTargetsFile);
                     }
 
+                    // === FIX E155015: auto-resolve przed commit też w Selected
+                    int conflictsResolved = await AutoResolveConflictsAsync(root, token).ConfigureAwait(false);
+                    if (conflictsResolved > 0)
+                        LogToConsole($"<color=green>Resolved {conflictsResolved} conflict(s).</color>");
+
                     UpdateProgress(0.75f);
 
                     try
                     {
-                        await CommitTargetsLiveAsync(root, actualTargets, msgFile, token);
+                        await CommitTargetsLiveAsync(root, actualTargets, msgFile, token, fileTargets.Count);
                         UpdateProgress(1.0f);
 
                         SVNStatus.ClearLockCache();
@@ -844,7 +908,14 @@ namespace SVN.Core
                     }
                     catch (Exception ex)
                     {
-                        LogToConsole($"<color=#FFAA00>Error:</color> {ex.Message}");
+                        if (ex.Message.Contains("E155015"))
+                        {
+                            LogToConsole("<color=#FFAA00><b>[BLOCKED]</b> Commit failed — unresolved conflict(s) remain.</color>");
+                        }
+                        else
+                        {
+                            LogToConsole($"<color=#FFAA00>Error:</color> {ex.Message}");
+                        }
                     }
                 }
                 finally
@@ -914,7 +985,7 @@ namespace SVN.Core
 
             try
             {
-                await SvnRunner.RunAsync($"delete --force --targets \"{targetsFile}\"", root, false, token);
+                await SvnRunner.RunAsync($"delete --force --targets \"{targetsFile}\"", root, true, token);
             }
             finally
             {
@@ -926,7 +997,7 @@ namespace SVN.Core
 
         #region Commit Process
 
-        private async Task<string> CommitTargetsLiveAsync(string root, IEnumerable<string> targets, string msgFilePath, CancellationToken token)
+        private async Task<string> CommitTargetsLiveAsync(string root, IEnumerable<string> targets, string msgFilePath, CancellationToken token, int fileCount = 0)
         {
             var list = targets.Select(FormatPathForSvn)
                               .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -939,9 +1010,12 @@ namespace SVN.Core
                 return string.Empty;
             }
 
+            Interlocked.Exchange(ref _commitFilesProcessed, 0);
+            Interlocked.Exchange(ref _commitFilesTotal, fileCount);
+
             LogToConsole($"<b>[4/4]</b> Sending {list.Count} target(s) to server...");
 
-            string first = list[0];
+            string first = list.FirstOrDefault(t => !Directory.Exists(Path.Combine(root, t.Replace('/', Path.DirectorySeparatorChar)))) ?? list[0];
             PostToMainThread(() =>
             {
                 if (svnUI?.CommitCurrentFileText != null)
@@ -953,7 +1027,7 @@ namespace SVN.Core
 
             try
             {
-                string command = $"commit --targets \"{targetsFile}\" -F \"{msgFilePath}\" --non-interactive";
+                string command = $"commit --depth empty --targets \"{targetsFile}\" -F \"{msgFilePath}\" --non-interactive";
                 return await RunCommitProcessAsync(command, root, token);
             }
             finally
@@ -1022,6 +1096,10 @@ namespace SVN.Core
                     if (spaceIndex < 0) continue;
 
                     string filePath = line[(spaceIndex + 1)..].Trim();
+
+                    while (filePath.StartsWith(" ") && filePath.Length > 0)
+                        filePath = filePath[1..];
+
                     if (filePath.StartsWith("("))
                     {
                         int closeParen = filePath.IndexOf(')');
@@ -1031,12 +1109,32 @@ namespace SVN.Core
 
                     if (string.IsNullOrWhiteSpace(filePath)) continue;
 
+                    string action = line.Substring(0, spaceIndex).Trim();
+                    string actionSymbol = action switch
+                    {
+                        "Sending" => "↑",
+                        "Adding" => "+",
+                        "Deleting" => "−",
+                        "Replacing" => "↻",
+                        _ => "•"
+                    };
+
+                    int current = Interlocked.Increment(ref _commitFilesProcessed);
+
                     string capturedPath = filePath;
+                    string capturedSymbol = actionSymbol;
+                    int capturedCount = current;
+                    int capturedTotal = Volatile.Read(ref _commitFilesTotal);
+
                     PostToMainThread(() =>
                     {
                         if (svnUI?.CommitCurrentFileText != null)
                         {
-                            svnUI.CommitCurrentFileText.text = capturedPath;
+                            string progressPart = capturedTotal > 0
+                                ? $"[{capturedCount}/{capturedTotal}] "
+                                : $"[{capturedCount}] ";
+
+                            svnUI.CommitCurrentFileText.text = $"{capturedSymbol} {progressPart}{capturedPath}";
                             Canvas.ForceUpdateCanvases();
                         }
                     });
@@ -1058,7 +1156,11 @@ namespace SVN.Core
 
                 if (line.StartsWith("Committed revision", StringComparison.OrdinalIgnoreCase))
                 {
+                    int totalProcessed = Interlocked.CompareExchange(ref _commitFilesProcessed, 0, 0);
                     LogToConsole($"<color=green><b>[SUCCESS] {line}</b></color>");
+                    if (totalProcessed > 0)
+                        LogToConsole($"<color=green>Files committed: <b>{totalProcessed}</b></color>");
+
                     PostToMainThread(() =>
                     {
                         if (svnUI?.CommitCurrentFileText != null)
@@ -1145,6 +1247,11 @@ namespace SVN.Core
                 var refreshTask = svnManager.RefreshStatus();
                 var timeoutTask = Task.Delay(RefreshStatusTimeoutMs);
                 await Task.WhenAny(refreshTask, timeoutTask);
+
+                if (refreshTask.IsFaulted)
+                {
+                    SVNLogBridge.LogError($"[Commit] Background refresh failed: {refreshTask.Exception?.GetBaseException().Message}");
+                }
             }
             catch (Exception ex)
             {
