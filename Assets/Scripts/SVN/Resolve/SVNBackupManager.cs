@@ -96,8 +96,11 @@ namespace SVN.Core
                 string backupRoot = GetBackupRoot();
                 if (string.IsNullOrEmpty(backupRoot))
                 {
-                    _log("<color=#FFAA00>[Backup]</color> Failed to create backup folder – deleting permanently.");
-                    PermanentDelete(path);
+                    // === FIX P0: backup fail → STOP (nie kasuj!)
+                    // Wcześniej: PermanentDelete = utrata danych bez backupu.
+                    _log("<color=#FF4444>[Backup] Failed to create backup folder — deletion ABORTED (file preserved).</color>");
+                    _log($"<color=#FF4444>  Path preserved: {path}</color>");
+                    _log("<color=#FFAA00>  Resolve manually (check disk space / permissions).</color>");
                     return;
                 }
 
@@ -132,9 +135,11 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                _log($"<color=#FFAA00>[Backup] Failed to move file – deleting permanently.</color>");
-                _log($"<color=#FFAA00>  Reason: {ex.Message}</color>");
-                PermanentDelete(path);
+                // === FIX P0: backup fail → STOP (nie kasuj!)
+                _log("<color=#FF4444><b>[Backup] Failed to move file — deletion ABORTED (file preserved).</b></color>");
+                _log($"<color=#FF4444>  Path preserved: {path}</color>");
+                _log($"<color=#FF4444>  Reason: {ex.Message}</color>");
+                _log("<color=#FFAA00>  Resolve manually (file is still on disk).</color>");
             }
         }
 

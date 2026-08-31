@@ -23,7 +23,10 @@ namespace SVN.Core
 
         public SVNUpdate(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        // === FIX drobiazg: pre-check working copy (E155007 z głębi svn → czytelny błąd).
+        // ===================================================================
+        //  Entry points
+        // ===================================================================
+
         public void Update()
         {
             if (Volatile.Read(ref _disposed) == 1) return;
@@ -103,6 +106,10 @@ namespace SVN.Core
             _runningTask = ExecuteUpdateCoreAsync(svnManager.WorkingDir, revision, _sessionId);
         }
 
+        // ===================================================================
+        //  Core update logic
+        // ===================================================================
+
         private async Task ExecuteUpdateCoreAsync(string targetPath, string targetRevision, Guid session)
         {
             if (session != _sessionId) return;
@@ -110,13 +117,10 @@ namespace SVN.Core
             var statusModule = svnManager.GetModule<SVNStatus>();
             statusModule?.CancelCurrentRefresh();
 
-            CancellationTokenSource localCts = new CancellationTokenSource();
+            var localCts = new CancellationTokenSource();
             CancellationToken token = localCts.Token;
 
-            // === FIX K2: CTS + flagi PRZED pętlą czekania — wcześniej ustawiane
-            // w środku try PO awaitach: CancelUpdate w oknie pre-update (do 1 s)
-            // był NO-OPem (_updateCTS == null), a focus-refresh managera mógł
-            // startować równolegle (IsUpdateRunning false).
+            // === FIX K2: CTS + flagi PRZED pętlą czekania (Cancel działa od 1. ms).
             _updateCTS = localCts;
             svnManager.IsUpdateRunning = true;
             svnManager.LastUpdateSucceeded = false;
@@ -127,15 +131,13 @@ namespace SVN.Core
             var oldSnapshot = svnManager.CurrentSnapshot;
             string oldRevision = oldSnapshot?.Revision ?? "Unknown";
 
-            // === FIX K3: czy komenda svn realnie się zakończyła (cancel PO niej
-            // to nie "incomplete working copy", tylko przerwany post-processing).
+            // === FIX K3: czy komenda svn realnie zakończyła (cancel po niej ≠ porażka).
             bool svnCommandCompleted = false;
 
             try
             {
                 if (session != _sessionId) throw new OperationCanceledException(token);
 
-                // Pętla czekania NA STANACH (token już anulowalny z zewnątrz).
                 int waitCount = 0;
                 while (statusModule != null && statusModule.IsProcessing && waitCount < 50)
                 {
@@ -200,6 +202,8 @@ namespace SVN.Core
                 await SVNClean.CleanupAsync(targetPath, token);
                 SVNLogBridge.LogToOutput("<b>[SVN]</b> Cleanup completed.");
 
+                // === Progress estimation: 'svn status -u' liczy pliki z '*' (out-of-date).
+                // To ESTYMACJA — SVN może realnie przetworzyć więcej (np. property changes).
                 try
                 {
                     string statusOutput = await SvnRunner.RunAsync("status -u", targetPath, token: token);
@@ -207,13 +211,11 @@ namespace SVN.Core
 
                     if (!string.IsNullOrWhiteSpace(statusOutput))
                     {
-                        using (var reader = new StringReader(statusOutput))
+                        using var reader = new StringReader(statusOutput);
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
                         {
-                            string line;
-                            while ((line = reader.ReadLine()) != null)
-                            {
-                                if (line.Length > 8 && line[8] == '*') totalUpdates++;
-                            }
+                            if (line.Length > 8 && line[8] == '*') totalUpdates++;
                         }
                     }
                 }
@@ -240,11 +242,23 @@ namespace SVN.Core
                         if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@")) return;
 
                         string cleanLine = trimmed.Replace("[SVN ERROR]", "").Trim();
-                        if (cleanLine.Length > 0 && cleanLine.All(c => c == '@' || c == '*') ||
-                            cleanLine.StartsWith("*****") || cleanLine.StartsWith("@@@@@")) return;
+                        if (cleanLine.Length > 0 && cleanLine.All(c => c == '@' || c == '*')) return;
 
                         if (token.IsCancellationRequested) return;
                         if (session != _sessionId) return;
+
+                        // === FIX (progress counter): NIE liczymy linii narrative jako
+                        // "plik przetworzony". Wcześniej processed++ następował PRZED
+                        // filtrami Updating/At revision/Checked out → (18/16) mismatch:
+                        // source-of-truth mismatch (estymacja z 'status -u' vs realny
+                        // output SVN). Teraz liczone są TYLKO linie reprezentujące
+                        // plik (status U/A/D/G/C/R lub unknown-file).
+                        if (trimmed.StartsWith("Updating", StringComparison.Ordinal)) return;
+                        if (trimmed.StartsWith("At revision", StringComparison.Ordinal)) return;
+                        if (trimmed.StartsWith("Checked out revision", StringComparison.Ordinal)) return;
+                        if (trimmed.StartsWith("Transmitting", StringComparison.Ordinal)) return;
+                        if (trimmed.StartsWith("Fetching", StringComparison.Ordinal)) return;
+                        if (trimmed.StartsWith("External", StringComparison.Ordinal)) return;
 
                         processed++;
 
@@ -253,15 +267,7 @@ namespace SVN.Core
                         char propStatus = trimmed.Length > 1 ? trimmed[1] : ' ';
                         char activeStatus = contentStatus != ' ' ? contentStatus : propStatus;
 
-                        if (trimmed.StartsWith("Updating '.'"))
-                        {
-                            displayLine = "Scanning repository...";
-                        }
-                        else if (trimmed.StartsWith("At revision") || trimmed.StartsWith("Checked out revision"))
-                        {
-                            return;
-                        }
-                        else if (trimmed.Length > 2 && "UAGDCR ".Contains(activeStatus))
+                        if (trimmed.Length > 2 && "UAGDCR".Contains(activeStatus) && trimmed[1] == ' ')
                         {
                             char status = activeStatus;
                             string path = SvnRunner.NormalizeRepositoryPath(trimmed.Substring(2).TrimStart());
@@ -276,17 +282,16 @@ namespace SVN.Core
                                 case 'R': rCount++; break;
                             }
 
-                            string prefix;
-                            switch (status)
+                            string prefix = status switch
                             {
-                                case 'U': prefix = "= Updated"; break;
-                                case 'A': prefix = "+ Added"; break;
-                                case 'D': prefix = "- Deleted"; break;
-                                case 'C': prefix = "x Conflict"; break;
-                                case 'G': prefix = "~ Merged"; break;
-                                case 'R': prefix = "~ Replaced"; break;
-                                default: prefix = $"  {status}"; break;
-                            }
+                                'U' => "= Updated",
+                                'A' => "+ Added",
+                                'D' => "- Deleted",
+                                'C' => "x Conflict",
+                                'G' => "~ Merged",
+                                'R' => "~ Replaced",
+                                _ => $"  {status}"
+                            };
 
                             displayLine = $"{prefix}: {path}";
                         }
@@ -295,7 +300,22 @@ namespace SVN.Core
                             displayLine = trimmed;
                         }
 
-                        string progressStr = totalUpdates > 0 ? $" ({processed}/{totalUpdates})" : "";
+                        // === Progress: cap na 100% gdy SVN zrobił więcej niż estymowano.
+                        // totalUpdates to ESTYMACJA — realny output SVN może być większy.
+                        // Zamiast pokazywać (18/16), pokazujemy (16/16) + licznik.
+                        string progressStr;
+                        if (totalUpdates > 0)
+                        {
+                            int shown = Math.Min(processed, totalUpdates);
+                            if (processed > totalUpdates)
+                                progressStr = $" ({totalUpdates}/{totalUpdates}, +{processed - totalUpdates} extra)";
+                            else
+                                progressStr = $" ({shown}/{totalUpdates})";
+                        }
+                        else
+                        {
+                            progressStr = "";
+                        }
 
                         bool shouldLog = !token.IsCancellationRequested && session == _sessionId;
                         string logMessage = $"<b>[SVN]</b> <color=blue>{displayLine}{progressStr}</color>";
@@ -310,8 +330,6 @@ namespace SVN.Core
                 );
 
                 token.ThrowIfCancellationRequested();
-                // === FIX K3: komenda svn DOBIEGŁA — od tego momentu cancel nie
-                // dezawaluje faktu sukcesu (patrz catch OCE).
                 svnCommandCompleted = true;
 
                 if (session != _sessionId || result == "Canceled")
@@ -343,11 +361,8 @@ namespace SVN.Core
                 SVNStatus.ClearLockCache();
                 svnManager.DiskChangesDetected = true;
 
-                // === FIX K1: kroki POST-SUKCESU we wewnętrznym try — wyjątek
-                // (np. NRE na brakującym module Resolve, błąd refresh) NIE może
-                // zamienić udanego update w "UPDATE FAILED". Wcześniej całość
-                // siedziała w głównym try i GetModule<SVNResolve>() bez ?. potrafiło
-                // zreportować porażkę PO udanej komendzie svn.
+                // === FIX K1: post-sukces w wewnętrznym try — porażka refreshu
+                // NIE zamienia udanego update w "UPDATE FAILED".
                 try
                 {
                     var report = new StringBuilder();
@@ -382,7 +397,6 @@ namespace SVN.Core
                             report.AppendLine("\n  <color=#FFAA00><b>CRITICAL WARNING: CONFLICTS DETECTED</b></color>");
                             report.AppendLine($"    Conflicts: <b><color=#FFAA00>{cCount}</color></b>");
                             report.AppendLine("    Please resolve conflicts in working copy before compiling.");
-                            // === FIX K1: null-safe (brak modułu ≠失败 update).
                             await svnManager.GetModule<SVNResolve>()?.RefreshConflictUI();
                         }
                     }
@@ -411,11 +425,10 @@ namespace SVN.Core
                 }
                 catch (OperationCanceledException)
                 {
-                    throw; // cancel w post-processingu → standardowa ścieżka (K3 złagodzi komunikat)
+                    throw;
                 }
                 catch (Exception postEx)
                 {
-                    // Sukces svn pozostaje sukcesem; post-processing tylko warning.
                     SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Update completed, but post-processing failed: {postEx.Message}</color>");
                 }
             }
@@ -436,8 +449,6 @@ namespace SVN.Core
 
                 if (svnCommandCompleted)
                 {
-                    // === FIX K3: svn DOBIEGŁ — nie cofamy snapshotu, nie straszimy
-                    // "incomplete"; tylko notka o prwanym post-processingu.
                     SVNStatus.ClearLockCache();
                     svnManager.DiskChangesDetected = true;
 
@@ -480,7 +491,6 @@ namespace SVN.Core
                     catch { }
                 }
 
-                // Sukces svn ≠ porażka svn: raport FAILED tylko gdy komenda padła.
                 svnManager.LastUpdateSucceeded = svnCommandCompleted;
 
                 svnManager.OperationInfo = new SVNOperationInfo
@@ -508,49 +518,17 @@ namespace SVN.Core
                 if (ReferenceEquals(Volatile.Read(ref _updateCTS), localCts))
                     _updateCTS = null;
 
-                // === FIX K4: delayed dispose (wzorzec projektu) — token rejestrowany
-                // w SvnRunner/Cleanup może jeszcze żyć chwilę po finally.
                 _ = Task.Delay(1000).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
                 _runningTask = null;
             }
         }
 
-        private async Task<string> GetAuthorForRevision(string targetPath, string revision, CancellationToken token)
-        {
-            if (string.IsNullOrWhiteSpace(targetPath) || string.IsNullOrWhiteSpace(revision) || revision == "Unknown")
-                return string.Empty;
-
-            try
-            {
-                token.ThrowIfCancellationRequested();
-                string logOutput = await SvnRunner.RunAsync($"log -r {revision} -l 1", targetPath, token: token);
-                token.ThrowIfCancellationRequested();
-
-                if (string.IsNullOrWhiteSpace(logOutput)) return string.Empty;
-
-                using (var reader = new StringReader(logOutput))
-                {
-                    reader.ReadLine();
-                    string revisionLine = reader.ReadLine();
-
-                    if (string.IsNullOrWhiteSpace(revisionLine)) return string.Empty;
-
-                    string[] parts = revisionLine.Split('|');
-                    if (parts.Length >= 2)
-                        return parts[1].Trim();
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Could not determine revision author: {ex.Message}</color>");
-            }
-            return string.Empty;
-        }
+        // ===================================================================
+        //  Cancel
+        // ===================================================================
 
         public void CancelUpdate()
         {
-            // === FIX K4: Volatile.Read (spójność wzorca).
             var cts = Volatile.Read(ref _updateCTS);
             if (cts == null || !svnManager.IsUpdateRunning) return;
 
@@ -573,6 +551,41 @@ namespace SVN.Core
             };
         }
 
+        // ===================================================================
+        //  Utilities
+        // ===================================================================
+
+        private async Task<string> GetAuthorForRevision(string targetPath, string revision, CancellationToken token)
+        {
+            if (string.IsNullOrWhiteSpace(targetPath) || string.IsNullOrWhiteSpace(revision) || revision == "Unknown")
+                return string.Empty;
+
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                string logOutput = await SvnRunner.RunAsync($"log -r {revision} -l 1", targetPath, token: token);
+                token.ThrowIfCancellationRequested();
+
+                if (string.IsNullOrWhiteSpace(logOutput)) return string.Empty;
+
+                using var reader = new StringReader(logOutput);
+                reader.ReadLine();
+                string revisionLine = reader.ReadLine();
+
+                if (string.IsNullOrWhiteSpace(revisionLine)) return string.Empty;
+
+                string[] parts = revisionLine.Split('|');
+                if (parts.Length >= 2)
+                    return parts[1].Trim();
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Could not determine revision author: {ex.Message}</color>");
+            }
+            return string.Empty;
+        }
+
         public string ParseRevisionFromInfo(string infoOutput)
         {
             if (string.IsNullOrWhiteSpace(infoOutput)) return "Unknown";
@@ -580,6 +593,10 @@ namespace SVN.Core
             var match = RevisionRegex.Match(infoOutput);
             return match.Success ? match.Groups[1].Value : "Unknown";
         }
+
+        // ===================================================================
+        //  Remote modifications check
+        // ===================================================================
 
         public async void CheckRemoteModificationsButton() => await ShowRemoteUpdatesInline();
 
@@ -596,88 +613,84 @@ namespace SVN.Core
                 return;
             }
 
-            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60)))
-            {
-                CancellationToken token = cts.Token;
-                IsProcessing = true;
-                var remoteFiles = new List<string>();
-                var conflictFiles = new List<string>();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            CancellationToken token = cts.Token;
+            IsProcessing = true;
+            var remoteFiles = new List<string>();
+            var conflictFiles = new List<string>();
 
-                try
+            try
+            {
+                SVNLogBridge.LogLine("<i>Checking remote changes...</i>");
+                string output = await SvnRunner.RunAsync("status -u", root, token: token);
+                token.ThrowIfCancellationRequested();
+
+                if (string.IsNullOrWhiteSpace(output))
                 {
-                    SVNLogBridge.LogLine("<i>Checking remote changes...</i>");
-                    string output = await SvnRunner.RunAsync("status -u", root, token: token);
+                    SVNLogBridge.LogLine("<color=green>No remote changes found.</color>");
+                    return;
+                }
+
+                int remoteChangesCount = 0;
+                using var reader = new StringReader(output);
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
                     token.ThrowIfCancellationRequested();
 
-                    if (string.IsNullOrWhiteSpace(output))
+                    if (line.Length > 8 && line[8] == '*')
                     {
-                        SVNLogBridge.LogLine("<color=green>No remote changes found.</color>");
-                        return;
+                        remoteChangesCount++;
+                        string pathPart = line.Substring(9).TrimStart();
+                        pathPart = RevisionPrefixRegex.Replace(pathPart, "");
+                        string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart.TrimEnd());
+                        remoteFiles.Add(cleanPath);
                     }
 
-                    int remoteChangesCount = 0;
-                    using (var reader = new StringReader(output))
+                    if (line.Length > 1 && (line[0] == 'C' || line[1] == 'C'))
                     {
-                        string line;
-                        while ((line = reader.ReadLine()) != null)
-                        {
-                            token.ThrowIfCancellationRequested();
-
-                            if (line.Length > 8 && line[8] == '*')
-                            {
-                                remoteChangesCount++;
-                                string pathPart = line.Substring(9).TrimStart();
-                                pathPart = RevisionPrefixRegex.Replace(pathPart, "");
-                                string cleanPath = SvnRunner.NormalizeRepositoryPath(pathPart.TrimEnd());
-                                remoteFiles.Add(cleanPath);
-                            }
-
-                            if (line.Length > 1 && (line[0] == 'C' || line[1] == 'C'))
-                            {
-                                string rawPath = line.Length > 8 ? line.Substring(8).Trim() : line.Trim();
-                                string cleanPath = SvnRunner.NormalizeRepositoryPath(SvnRunner.CleanSvnPath(rawPath));
-                                if (!conflictFiles.Contains(cleanPath))
-                                    conflictFiles.Add(cleanPath);
-                            }
-                        }
-                    }
-
-                    if (conflictFiles.Count > 0)
-                    {
-                        SVNLogBridge.LogLine($"<color=#FF4444><b>WARNING: {conflictFiles.Count} local conflict(s) detected!</b></color>");
-                        SVNLogBridge.LogLine("<color=#FF4444>Resolve before updating or merge will fail.</color>");
-                        foreach (var c in conflictFiles.Take(10))
-                            SVNLogBridge.LogLine($"<color=#FF4444>  • {c}</color>");
-                        if (conflictFiles.Count > 10)
-                            SVNLogBridge.LogLine($"<color=#FF4444>  ... and {conflictFiles.Count - 10} more</color>");
-                        SVNLogBridge.LogLine("");
-                    }
-
-                    if (remoteChangesCount > 0)
-                    {
-                        string tempFile = await WriteRemoteChangesToTempFileAsync(remoteFiles, root, token);
-                        OpenInEditor(tempFile);
-
-                        SVNLogBridge.LogLine($"<b>Summary:</b> Found <color=#FFAA00>{remoteChangesCount}</color> items to update.");
-                        SVNLogBridge.LogLine("<color=yellow>Full list opened in external text editor.</color>");
-                    }
-                    else
-                    {
-                        SVNLogBridge.LogLine("<color=green>Your working copy is up to date.</color>");
+                        string rawPath = line.Length > 8 ? line.Substring(8).Trim() : line.Trim();
+                        string cleanPath = SvnRunner.NormalizeRepositoryPath(SvnRunner.CleanSvnPath(rawPath));
+                        if (!conflictFiles.Contains(cleanPath))
+                            conflictFiles.Add(cleanPath);
                     }
                 }
-                catch (OperationCanceledException)
+
+                if (conflictFiles.Count > 0)
                 {
-                    SVNLogBridge.LogLine("<color=yellow>Remote update check canceled or timed out.</color>");
+                    SVNLogBridge.LogLine($"<color=#FF4444><b>WARNING: {conflictFiles.Count} local conflict(s) detected!</b></color>");
+                    SVNLogBridge.LogLine("<color=#FF4444>Resolve before updating or merge will fail.</color>");
+                    foreach (var c in conflictFiles.Take(10))
+                        SVNLogBridge.LogLine($"<color=#FF4444>  • {c}</color>");
+                    if (conflictFiles.Count > 10)
+                        SVNLogBridge.LogLine($"<color=#FF4444>  ... and {conflictFiles.Count - 10} more</color>");
+                    SVNLogBridge.LogLine("");
                 }
-                catch (Exception ex)
+
+                if (remoteChangesCount > 0)
                 {
-                    SVNLogBridge.LogErrorToOutput($"[SVN] Remote check error: {ex.Message}");
+                    string tempFile = await WriteRemoteChangesToTempFileAsync(remoteFiles, root, token);
+                    OpenInEditor(tempFile);
+
+                    SVNLogBridge.LogLine($"<b>Summary:</b> Found <color=#FFAA00>{remoteChangesCount}</color> items to update.");
+                    SVNLogBridge.LogLine("<color=yellow>Full list opened in external text editor.</color>");
                 }
-                finally
+                else
                 {
-                    IsProcessing = false;
+                    SVNLogBridge.LogLine("<color=green>Your working copy is up to date.</color>");
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogLine("<color=yellow>Remote update check canceled or timed out.</color>");
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN] Remote check error: {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;
             }
         }
 
@@ -687,7 +700,7 @@ namespace SVN.Core
 
             string tempFilePath = Path.Combine(Path.GetTempPath(), $"svn_remote_changes_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
             var sb = new StringBuilder();
-            sb.AppendLine($"# SVN Remote Changes Report");
+            sb.AppendLine("# SVN Remote Changes Report");
             sb.AppendLine($"# Root: {root}");
             sb.AppendLine($"# Generated: {DateTime.Now:G}");
             sb.AppendLine($"# Total items to update: {files.Count}");
@@ -752,8 +765,10 @@ namespace SVN.Core
             catch { }
         }
 
-        // UWAGA: semantyka zachowana ('?' liczone) dla starych callerów.
-        // NOWE użycia: svnManager.GetWorkingCopyDirtyStateAsync (S5).
+        // ===================================================================
+        //  Dirty-state (delegates to manager — S5)
+        // ===================================================================
+
         public async Task<bool> HasLocalModificationsAsync(string workingDir, CancellationToken token = default)
         {
             if (string.IsNullOrWhiteSpace(workingDir) || !Directory.Exists(workingDir))
@@ -768,12 +783,10 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 SVNLogBridge.LogErrorToOutput($"[SVN] Error checking local modifications: {ex.Message}");
-                return true;    // fail-safe
+                return true;
             }
         }
 
-        // === FIX drobiazg: IDisposable — manager sprząta moduły przez Dispose;
-        // _updateCTS przeciekał przy wyjściu aplikacji w trakcie update.
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;

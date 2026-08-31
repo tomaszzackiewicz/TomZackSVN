@@ -124,13 +124,13 @@ namespace SVN.Core
         }
 
         public async Task<bool> ResolveSingleMine(string path) =>
-    await RunWithLockAsync(async token =>
-    {
-        bool ok = await _resolver.ResolveSingleCoreAsync(path, "mine-full", token).ConfigureAwait(false);
-        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
-        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
-        return ok;
-    }).ConfigureAwait(false);
+            await RunWithLockAsync(async token =>
+            {
+                bool ok = await _resolver.ResolveSingleCoreAsync(path, "mine-full", token).ConfigureAwait(false);
+                if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+                else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+                return ok;
+            }).ConfigureAwait(false);
 
         public async Task<bool> ResolveSingleTheirs(string path) =>
             await RunWithLockAsync(async token =>
@@ -144,21 +144,30 @@ namespace SVN.Core
         public async Task RefreshConflictUI() =>
             await RefreshConflictUIAsync(CancellationToken.None).ConfigureAwait(false);
 
+        // === FIX P1: normalizacja path przez TryGetRelativePath (jak ResolveTree...).
+        // Path.Combine(root, absolutePath) na Windows POMIJA root — plik mógłby
+        // być otwierany z poza working copy lub w złym miejscu.
         public async Task OpenSingle(string path)
         {
+            if (!SVNPathUtilities.TryGetRelativePath(svnManager.WorkingDir, path, out string relativePath))
+            {
+                LogBoth($"<color=#FFAA00>Invalid path (outside working copy):</color> {path}");
+                return;
+            }
+
             string editorPath = svnManager.MergeToolPath ?? PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
             string resolveToolPath = GetResolveToolPath();
 
             await RunWithLockAsync(async token =>
             {
-                string full = Path.Combine(svnManager.WorkingDir, path);
+                string full = Path.Combine(svnManager.WorkingDir, relativePath);
                 if (!File.Exists(full))
                 {
-                    LogBoth($"<color=#FFAA00>File not found:</color> {path}");
+                    LogBoth($"<color=#FFAA00>File not found:</color> {relativePath}");
                     return;
                 }
 
-                if (!TryLaunchExternalResolveTool(full, path, resolveToolPath))
+                if (!TryLaunchExternalResolveTool(full, relativePath, resolveToolPath))
                 {
                     if (string.IsNullOrEmpty(editorPath))
                     {
@@ -168,7 +177,7 @@ namespace SVN.Core
 
                     try
                     {
-                        LogBoth($"Opening editor for: <color=green>{path}</color>");
+                        LogBoth($"Opening editor for: <color=green>{relativePath}</color>");
                         Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\"") { UseShellExecute = true });
                     }
                     catch (Exception ex)
@@ -178,7 +187,7 @@ namespace SVN.Core
                     }
                 }
 
-                var existing = _conflictCache.Get(path) ?? new SVNConflictData { Path = path };
+                var existing = _conflictCache.Get(relativePath) ?? new SVNConflictData { Path = relativePath };
 
                 _conflictCache.AddOrUpdate(new SVNConflictData
                 {
@@ -196,22 +205,22 @@ namespace SVN.Core
         }
 
         public async Task<bool> MarkSingleResolved(string path) =>
-    await RunWithLockAsync(async token =>
-    {
-        bool ok = await _resolver.MarkSingleResolvedAsync(path, token).ConfigureAwait(false);
-        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
-        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
-        return ok;
-    }).ConfigureAwait(false);
+            await RunWithLockAsync(async token =>
+            {
+                bool ok = await _resolver.MarkSingleResolvedAsync(path, token).ConfigureAwait(false);
+                if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+                else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+                return ok;
+            }).ConfigureAwait(false);
 
         public async Task<bool> ResolveTreeMine(string path) =>
-    await RunWithLockAsync(async token =>
-    {
-        bool ok = await _resolver.ResolveTreeStrategyAsync(path, "mine-full", token).ConfigureAwait(false);
-        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
-        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
-        return ok;
-    }).ConfigureAwait(false);
+            await RunWithLockAsync(async token =>
+            {
+                bool ok = await _resolver.ResolveTreeStrategyAsync(path, "mine-full", token).ConfigureAwait(false);
+                if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+                else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+                return ok;
+            }).ConfigureAwait(false);
 
         public async Task<bool> ResolveTreeTheirs(string path) =>
             await RunWithLockAsync(async token =>
@@ -232,13 +241,13 @@ namespace SVN.Core
             }).ConfigureAwait(false);
 
         public async Task<bool> ResolveTreeWorking(string path) =>
-    await RunWithLockAsync(async token =>
-    {
-        bool ok = await _resolver.ResolveTreeStrategyAsync(path, "working", token).ConfigureAwait(false);
-        if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
-        else await RefreshConflictUIAsync(token).ConfigureAwait(false);
-        return ok;
-    }).ConfigureAwait(false);
+            await RunWithLockAsync(async token =>
+            {
+                bool ok = await _resolver.ResolveTreeStrategyAsync(path, "working", token).ConfigureAwait(false);
+                if (ok) await RefreshAfterResolveAsync().ConfigureAwait(false);
+                else await RefreshConflictUIAsync(token).ConfigureAwait(false);
+                return ok;
+            }).ConfigureAwait(false);
 
         public async Task<bool> DeleteObstruction(string path, bool refreshUi = true) =>
             await DeleteObstructionAsync(path, refreshUi).ConfigureAwait(false);
@@ -297,13 +306,16 @@ namespace SVN.Core
                 foreach (var c in conflicts)
                 {
                     token.ThrowIfCancellationRequested();
-                    bool markers = await HasConflictMarkersAsync(Path.Combine(root, c.Path)).ConfigureAwait(false);
+
+                    // === FIX (konsolidacja): użyj wspólnej implementacji z Core (przez resolver)
+                    // (wraz z token dla cancel w trakcie skanu)
+                    bool markers = await _resolver.HasConflictMarkersAsync(Path.Combine(root, c.Path), token).ConfigureAwait(false);
                     infos.Add((c.Path, ConvertConflictType(c.Type), markers, c.TreeConflictReason));
                 }
 
                 var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-                PostToMainThread(() =>
+                UnityMainThreadDispatcher.Enqueue(() =>
                 {
                     try
                     {
@@ -314,10 +326,6 @@ namespace SVN.Core
                         }
 
                         var parent = svnUI.ResolveConsoleContent.transform;
-
-                        // === FIX 17: DestroyImmediate (jesteśmy na main thread) — zwykłe
-                        // Destroy zostawiało stare itemy przez jedną klatkę i listy
-                        // na chwilę się nakładały/migotały.
                         for (int i = parent.childCount - 1; i >= 0; i--)
                         {
                             var child = parent.GetChild(i).gameObject;
@@ -341,9 +349,7 @@ namespace SVN.Core
                     }
                 });
 
-                // === FIX 10: delay bez tokenu + check przed logiem — wcześniej
-                // anulowanie refreshu logowało fałszywy "UI Refresh timeout"
-                // (Task.Delay(token) natychmiast "wygrywał" WhenAny po cancel).
+                // === FIX 10: delay bez tokenu — bez fałszywego timeout przy cancel.
                 Task completed = await Task.WhenAny(tcs.Task, Task.Delay(2000)).ConfigureAwait(false);
                 if (completed != tcs.Task && !token.IsCancellationRequested)
                     LogBoth("<color=#FFAA00>UI Refresh timeout (main thread unresponsive).</color>");
@@ -395,14 +401,21 @@ namespace SVN.Core
                     return;
                 }
 
-                string full = Path.Combine(root, targetFile);
-                if (!File.Exists(full))
+                // === FIX P1: normalizacja przez TryGetRelativePath
+                if (!SVNPathUtilities.TryGetRelativePath(root, targetFile, out string normalizedTarget))
                 {
-                    LogBoth($"<color=#FFAA00>File not found:</color> {targetFile}");
+                    LogBoth($"<color=#FFAA00>Invalid path (outside working copy):</color> {targetFile}");
                     return;
                 }
 
-                if (!TryLaunchExternalResolveTool(full, targetFile, resolveToolPath))
+                string full = Path.Combine(root, normalizedTarget);
+                if (!File.Exists(full))
+                {
+                    LogBoth($"<color=#FFAA00>File not found:</color> {normalizedTarget}");
+                    return;
+                }
+
+                if (!TryLaunchExternalResolveTool(full, normalizedTarget, resolveToolPath))
                 {
                     if (string.IsNullOrEmpty(editorPath))
                     {
@@ -412,7 +425,7 @@ namespace SVN.Core
 
                     try
                     {
-                        LogBoth($"Opening editor for: <color=green>{targetFile}</color>");
+                        LogBoth($"Opening editor for: <color=green>{normalizedTarget}</color>");
                         Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\"") { UseShellExecute = true });
                     }
                     catch (Exception ex)
@@ -422,7 +435,7 @@ namespace SVN.Core
                     }
                 }
 
-                var existing = _conflictCache.Get(targetFile) ?? new SVNConflictData { Path = targetFile };
+                var existing = _conflictCache.Get(normalizedTarget) ?? new SVNConflictData { Path = normalizedTarget };
 
                 _conflictCache.AddOrUpdate(new SVNConflictData
                 {
@@ -513,6 +526,10 @@ namespace SVN.Core
             }
         }
 
+        // === FIX P1 (Dispose): usunięty task.Wait(3s) — nie blokuj main thread.
+        // Problem: Dispose z main thread Unity + task czeka na UnityMainThreadDispatcher
+        // → deadlock. Teraz: Cancel + fire-and-forget — task skończy się naturalnie.
+        // Delayed dispose CTS (zgodnie z patternem projektowym).
         private async Task RunWithLockAsync(Func<CancellationToken, Task> action)
         {
             if (IsDisposed) return;
@@ -525,8 +542,11 @@ namespace SVN.Core
 
             var cts = new CancellationTokenSource();
             var previousCts = Interlocked.Exchange(ref _activeCts, cts);
-            previousCts?.Cancel();
-            previousCts?.Dispose();
+            if (previousCts != null)
+            {
+                previousCts.Cancel();
+                _ = Task.Delay(1000).ContinueWith(_ => { try { previousCts.Dispose(); } catch { } });
+            }
 
             _activeTask = action(cts.Token);
 
@@ -545,7 +565,7 @@ namespace SVN.Core
             finally
             {
                 if (Interlocked.CompareExchange(ref _activeCts, null, cts) == cts)
-                    cts.Dispose();
+                    _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
 
                 _activeTask = null;
                 ExitProcessing();
@@ -564,8 +584,11 @@ namespace SVN.Core
 
             var cts = new CancellationTokenSource();
             var previousCts = Interlocked.Exchange(ref _activeCts, cts);
-            previousCts?.Cancel();
-            previousCts?.Dispose();
+            if (previousCts != null)
+            {
+                previousCts.Cancel();
+                _ = Task.Delay(1000).ContinueWith(_ => { try { previousCts.Dispose(); } catch { } });
+            }
 
             var task = action(cts.Token);
             _activeTask = task;
@@ -587,7 +610,7 @@ namespace SVN.Core
             finally
             {
                 if (Interlocked.CompareExchange(ref _activeCts, null, cts) == cts)
-                    cts.Dispose();
+                    _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
 
                 _activeTask = null;
                 ExitProcessing();
@@ -616,8 +639,7 @@ namespace SVN.Core
                 string mineFile = conflictedFullPath + ".mine";
 
                 // === FIX 16: Directory.GetFiles z patternem puszczał znaki glob
-                // ([, *, ?) z nazwy pliku — plik "Assets [final].prefab" psuł
-                // wyszukiwanie .r*. Ręczny filtr jest odporny na dowolne nazwy.
+                // ([, *, ?) z nazwy pliku. Ręczny filtr jest odporny na dowolne nazwy.
                 var revFiles = Directory.GetFiles(dir ?? ".")
                     .Where(f =>
                     {
@@ -668,65 +690,21 @@ namespace SVN.Core
             return int.TryParse(numStr, out int num) ? num : (int?)null;
         }
 
-        private async Task<bool> HasConflictMarkersAsync(string fullPath)
-        {
-            return await Task.Run(() =>
-            {
-                if (!File.Exists(fullPath)) return false;
-
-                var fileInfo = new FileInfo(fullPath);
-                if (fileInfo.Length > 5 * 1024 * 1024) return false;
-
-                try
-                {
-                    bool hasStart = false, hasSeparator = false;
-                    using var stream = new StreamReader(fullPath);
-                    string line;
-                    while ((line = stream.ReadLine()) != null)
-                    {
-                        string trimmed = line.TrimStart();
-                        if (trimmed.StartsWith("<<<<<<<", StringComparison.Ordinal))
-                        {
-                            // === FIX: reset separatora przy nowym bloku startowym —
-                            // sekwencja <<<<<<< ... ======= ... <<<<<<< ... >>>>>> bez
-                            // zamknięcia pierwszego bloku dawała fałszywy pozytyw.
-                            hasStart = true;
-                            hasSeparator = false;
-                        }
-                        else if (hasStart && trimmed.StartsWith("=======", StringComparison.Ordinal))
-                            hasSeparator = true;
-                        else if (hasStart && hasSeparator && trimmed.StartsWith(">>>>>>>", StringComparison.Ordinal))
-                            return true;
-                    }
-                    return false;
-                }
-                catch
-                {
-                    return false;
-                }
-            }).ConfigureAwait(false);
-        }
-
+        // === FIX P1 (Dispose): bez task.Wait() — nie blokuj main thread Unity.
+        // Cancel + fire-and-forget. Task skończy się naturalnie (SvnRunner kill na cancel).
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
             try { CancelResolve(); } catch { }
 
-            var task = Volatile.Read(ref _activeTask);
-            if (task != null)
-            {
-                try
-                {
-                    task.Wait(TimeSpan.FromSeconds(3));
-                }
-                catch { }
-            }
-
             _conflictCache.Clear();
 
             var cts = Interlocked.Exchange(ref _activeCts, null);
-            try { cts?.Dispose(); } catch { }
+            if (cts != null)
+            {
+                _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
+            }
 
             GC.SuppressFinalize(this);
         }

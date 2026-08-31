@@ -32,9 +32,15 @@ namespace SVN.Core
             _core = new SVNConflictCore(manager, parser, cache, backup, logBoth, logOverwrite);
         }
 
+        // === FIX (konsolidacja): expose HasConflictMarkersAsync — SVNResolve
+        // woła TĘ wersję zamiast własnej (jedna implementacja w Core).
+        public Task<bool> HasConflictMarkersAsync(string fullPath, CancellationToken token = default)
+        {
+            return _core.HasConflictMarkersAsync(fullPath, token);
+        }
+
         // === FIX 2: wspólny bezpieczny cleanup — porażka cleanupu nie może
-        // kasować wyniku całej paczki (wcześniej wyjątek uciekał do RunWithLockAsync
-        // i successCount/synchronizacja cache/raport przepadały).
+        // kasować wyniku całej paczki.
         private async Task SafeCleanupAsync(CancellationToken token)
         {
             try
@@ -48,8 +54,7 @@ namespace SVN.Core
             }
         }
 
-        // === FIX 6: RefreshStatus usunięty z wnętrza resolvera — odświeżają
-        // wrappery w SVNResolve (koniec 3–4 pełnych skanów po jednej operacji).
+        // === FIX 6: RefreshStatus usunięty — odświeżają wrappery w SVNResolve.
         public async Task<bool> ResolveSingleCoreAsync(string path, string strategy, CancellationToken token)
         {
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
@@ -76,8 +81,7 @@ namespace SVN.Core
 
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
-            // === FIX 2: pre-check (ostrzeżenie o rodzicu) chroniony — jego porażka
-            // nie może ubić operacji.
+            // === FIX 2: pre-check chroniony.
             try
             {
                 var allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
@@ -135,8 +139,7 @@ namespace SVN.Core
 
             await SafeCleanupAsync(token).ConfigureAwait(false);
 
-            // === FIX 2: weryfikacja chroniona — nieudany odczyt ≠ nieudany resolve;
-            // domyślnie konserwatywnie "nadal istnieje".
+            // === FIX 2: weryfikacja chroniona.
             bool stillExists = true;
             try
             {
@@ -174,13 +177,13 @@ namespace SVN.Core
                 return false;
             }
 
+            // === FIX (konsolidacja): użyj wspólnej implementacji z Core
             if (File.Exists(fullPath) && await _core.HasConflictMarkersAsync(fullPath).ConfigureAwait(false))
             {
                 _logBoth($"<color=#FFAA00>Conflict markers still exist:</color> {path}");
                 return false;
             }
 
-            // === FIX 2: błąd resolve raportowany, a nie "Unhandled exception in RunWithLock".
             try
             {
                 await SvnRunner.RunAsync($"resolve --accept working \"{path}\"", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
@@ -195,41 +198,24 @@ namespace SVN.Core
             await SafeCleanupAsync(token).ConfigureAwait(false);
             _cache.Remove(path);
 
-            // === FIX 6: usunięte RefreshStatus + Task.Delay(150) (hack) — wrapper odświeża.
             _logBoth($"<color=green>Resolved manually:</color> {path}");
             return true;
         }
 
-        public async Task<bool> DeleteObstructionCoreAsync(string rawPath, CancellationToken token)
+        public void ExecuteDeleteShelf(string shelfName)
         {
-            return await _core.DeleteObstructionCoreAsync(rawPath, token).ConfigureAwait(false);
-        }
-
-        public async Task<(bool success, string path)> DeleteObstructionCoreSilentAsync(string rawPath, CancellationToken token)
-        {
-            return await _core.DeleteObstructionCoreSilentAsync(rawPath, token).ConfigureAwait(false);
+            var shelve = _svnManager.GetModule<SVNShelve>();
+            if (shelve != null)
+                shelve.ExecuteDeleteShelf(shelfName);
         }
 
         public async Task ResolveAllConflictsAsync(string strategy, CancellationToken token)
         {
-            List<SVNConflictData> conflicts;
-            try
-            {
-                conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logOverwrite($"<color=#FF4444>Failed to list conflicts: {ex.Message}</color>");
-                return;
-            }
-
+            var conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
             conflicts = SVNPathUtilities.SortConflictsDeepestFirst(conflicts);
 
-            // === FIX 7: strategie tekstowe nie obsługują tree konfliktów — wcześniej
-            // były przetwarzane "po omacku" przez fallback -conflict. Zmiana zachowania:
-            // bulk Mine/Theirs/Working pomija tree konflikty z ostrzeżeniem
-            // (użyj dedykowanych przycisków tree).
+            // === FIX 7: bulk text pomija tree konflikty — SVN resolve --accept
+            // mine-full na tree-conflicted dir NIE działa (W195024).
             var paths = new List<string>();
             foreach (var c in conflicts)
             {
@@ -253,8 +239,7 @@ namespace SVN.Core
                 token.ThrowIfCancellationRequested();
                 _logOverwrite($"<color=yellow>[{i + 1}/{total}] Resolving: {paths[i]}</color>");
 
-                // === FIX 3: bulk "working" (Mark As Resolved) omijał kontrolę markerów,
-                // którą miała wersja pojedyncza — markery lądowały w commitach.
+                // === FIX 3: bulk "working" — kontrola markerów (spójność z single).
                 if (strategy.Equals("working", StringComparison.OrdinalIgnoreCase))
                 {
                     string full = Path.Combine(_svnManager.WorkingDir, paths[i]);
@@ -289,12 +274,9 @@ namespace SVN.Core
 
         public async Task ResolveAllTreeAsync(string strategy, CancellationToken token)
         {
-            List<SVNConflictData> conflicts;
-            try { conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { _logOverwrite($"<color=#FF4444>Failed to list conflicts: {ex.Message}</color>"); return; }
-
+            var conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
             var treeConflicts = conflicts.Where(c => c.Type == SVNConflictType.Tree).ToList();
+
             if (treeConflicts.Count == 0) { _logOverwrite("<color=yellow>No tree conflicts found.</color>"); return; }
 
             treeConflicts = SVNPathUtilities.SortConflictsDeepestFirst(treeConflicts);
@@ -352,23 +334,18 @@ namespace SVN.Core
             if (latest != null)
                 _cache.SynchronizeFrom(latest);
 
-            int? remaining = latest?.Count(c => c.Type == SVNConflictType.Tree);
+            int remaining = latest?.Count(c => c.Type == SVNConflictType.Tree) ?? 0;
             if (remaining == 0)
                 _logOverwrite($"<color=green>All tree conflicts resolved with '{strategy}'.</color>");
-            else if (remaining.HasValue)
-                _logOverwrite($"<color=#FFAA00>Resolved {successCount}/{total}. Remaining tree conflicts: {remaining}</color>");
             else
-                _logOverwrite($"<color=#FFAA00>Resolved {successCount}/{total}. (Verification unavailable.)</color>");
+                _logOverwrite($"<color=#FFAA00>Resolved {successCount}/{total}. Remaining tree conflicts: {remaining}</color>");
         }
 
         public async Task ResolveAllTreeForceAsync(string strategy, CancellationToken token)
         {
-            List<SVNConflictData> conflicts;
-            try { conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { _logOverwrite($"<color=#FF4444>Failed to list conflicts: {ex.Message}</color>"); return; }
-
+            var conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
             var treeConflicts = conflicts.Where(c => c.Type == SVNConflictType.Tree).ToList();
+
             if (treeConflicts.Count == 0) { _logOverwrite("<color=yellow>No tree conflicts found.</color>"); return; }
 
             treeConflicts = SVNPathUtilities.SortConflictsDeepestFirst(treeConflicts);
@@ -418,30 +395,10 @@ namespace SVN.Core
 
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
-            // === FIX 2: pre-check chroniony.
-            SVNConflictData conflictData = null;
-            bool preCheckFailed = false;
-            try
-            {
-                var allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
-                conflictData = allConflicts.FirstOrDefault(c => c.Path.Equals(relativePath, StringComparison.OrdinalIgnoreCase));
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                preCheckFailed = true;
-                _logBoth($"<color=#FFAA00>Conflict pre-check failed:</color> {ex.Message}");
-            }
+            var allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
+            var conflictData = allConflicts.FirstOrDefault(c => c.Path.Equals(relativePath, StringComparison.OrdinalIgnoreCase));
 
-            if (conflictData == null)
-            {
-                // nie udało się potwierdzić konfliktu (odczyt padł lub ścieżki nie ma na liście)
-                // — force resolve bez potwierdzenia byłby zbyt ryzykowny.
-                _logBoth($"<color=#FFAA00>Could not confirm tree conflict — aborting force resolve{(preCheckFailed ? " (pre-check failed)" : "")}:</color> {relativePath}");
-                return;
-            }
-
-            if (conflictData.Type != SVNConflictType.Tree)
+            if (conflictData == null || conflictData.Type != SVNConflictType.Tree)
             {
                 _logBoth($"<color=#FFAA00>Not a valid tree conflict:</color> {relativePath}");
                 return;
@@ -452,14 +409,18 @@ namespace SVN.Core
 
             await SafeCleanupAsync(token).ConfigureAwait(false);
 
-            bool stillExists = true; // konserwatywnie
+            bool stillExists;
             try
             {
                 var remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
                 stillExists = remaining.Any(c => c.Path.Equals(relativePath, StringComparison.OrdinalIgnoreCase));
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { _logBoth($"<color=#FFAA00>Post-resolve verification failed:</color> {ex.Message}"); }
+            catch (Exception ex)
+            {
+                _logBoth($"<color=#FFAA00>Post-resolve verification failed:</color> {ex.Message}");
+                stillExists = true;
+            }
 
             if (result.success && !stillExists)
             {
@@ -475,12 +436,9 @@ namespace SVN.Core
 
         public async Task DeleteAllObstructionsAsync(CancellationToken token)
         {
-            List<SVNConflictData> conflicts;
-            try { conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { _logOverwrite($"<color=#FF4444>Failed to list conflicts: {ex.Message}</color>"); return; }
-
+            var conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
             var treeConflicts = conflicts.Where(x => x.Type == SVNConflictType.Tree).ToList();
+
             if (treeConflicts.Count == 0) { _logOverwrite("<color=yellow>No tree conflicts found.</color>"); return; }
 
             treeConflicts = SVNPathUtilities.SortConflictsDeepestFirst(treeConflicts);
@@ -499,12 +457,23 @@ namespace SVN.Core
                 else failedPaths.Add(result.path);
             }
 
-            // === FIX 6: RefreshStatus usunięty — wrapper (RefreshAfterResolveAsync) odświeża.
+            await SafeCleanupAsync(token).ConfigureAwait(false);
+
             if (failedPaths.Count == 0)
                 _logOverwrite($"<color=green>Successfully cleared {successCount} tree conflicts.</color>\n" +
                               "<color=#FFAA00>Important: Some items may now be scheduled for deletion. Use Revert to restore them or Commit to accept the deletion.</color>");
             else
                 _logOverwrite($"<color=#FFAA00>Cleared {successCount}/{total}. Failed: {failedPaths.Count}</color>");
+        }
+
+        public async Task<bool> DeleteObstructionCoreAsync(string rawPath, CancellationToken token)
+        {
+            return await _core.DeleteObstructionCoreAsync(rawPath, token).ConfigureAwait(false);
+        }
+
+        public async Task<(bool success, string path)> DeleteObstructionCoreSilentAsync(string rawPath, CancellationToken token)
+        {
+            return await _core.DeleteObstructionCoreSilentAsync(rawPath, token).ConfigureAwait(false);
         }
     }
 }
