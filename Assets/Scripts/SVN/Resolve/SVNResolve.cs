@@ -710,5 +710,89 @@ namespace SVN.Core
         }
 
         #endregion
+
+        #region Backup Management API (UI)
+
+        private static readonly int[] BackupRetentionCycle = { 7, 14, 30, 90, 0 };      // 0 = off
+        private static readonly int[] BackupSizeCycleMB = { 1024, 2048, 5120, 10240, 0 }; // 0 = no cap
+
+        public void CleanBackups() => SafeFireAndForget(async () =>
+        {
+            LogOverwrite("<color=yellow>[Backup] Cleaning old backups...</color>");
+            await _backup.CleanupAsync().ConfigureAwait(false);
+        });
+
+        public void ShowBackupInfo() => SafeFireAndForget(async () =>
+        {
+            string info = await _backup.DescribeBackupsAsync().ConfigureAwait(false);
+            LogBoth(info);
+        });
+
+        public void OpenBackupFolder() => SafeFireAndForget(() => Task.Run(() =>
+        {
+            string root = _backup.GetBackupRootForUi();
+            if (string.IsNullOrEmpty(root))
+            {
+                LogBoth("<color=#FFAA00>[Backup] Backup folder unavailable.</color>");
+                return;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo { FileName = root, UseShellExecute = true });
+                LogBoth($"<color=yellow>[Backup] Opened folder:</color> {SVNPathUtilities.ForDisplay(root)}");
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=#FFAA00>[Backup] Failed to open folder: {SVNPathUtilities.ForDisplay(ex.Message)}</color>");
+            }
+        }));
+
+        /// <summary>Purge: panel musi potwierdzić dwuklikiem — moduł dostaje
+        /// już decyzję użytkownika. Guard przed resolve w toku robi panel
+        /// (CanExecute), bo purge nie może ścigać się z backupiem tworzonym
+        /// przez aktywny resolve.</summary>
+        public void PurgeAllBackups() => SafeFireAndForget(async () =>
+        {
+            LogOverwrite("<color=#FF4444>[Backup] PURGING ALL BACKUPS...</color>");
+            await _backup.PurgeAllAsync().ConfigureAwait(false);
+        });
+
+        // === Cykle polityki: SYNCHRONICZNE na main thread (zapis prefs =
+        // PlayerPrefs — wymagają main thread). Zwracają opis do labelki buttona.
+
+        public string CycleBackupRetention()
+        {
+            int current = _backup.RetentionDays;
+            int idx = Array.IndexOf(BackupRetentionCycle, current);
+            int next = BackupRetentionCycle[(idx >= 0 ? idx + 1 : 0) % BackupRetentionCycle.Length];
+            _backup.RetentionDays = next;
+
+            string desc = DescribeBackupRetention();
+            LogBoth($"<color=yellow>[Backup] Retention set to: {desc}</color>");
+            return desc;
+        }
+
+        public string DescribeBackupRetention() =>
+            _backup.RetentionDays <= 0 ? "off" : $"{_backup.RetentionDays}d";
+
+        public string CycleBackupMaxSize()
+        {
+            int current = _backup.MaxSizeMB;
+            int idx = Array.IndexOf(BackupSizeCycleMB, current);
+            int next = BackupSizeCycleMB[(idx >= 0 ? idx + 1 : 0) % BackupSizeCycleMB.Length];
+            _backup.MaxSizeMB = next;
+
+            string desc = DescribeBackupMaxSize();
+            LogBoth($"<color=yellow>[Backup] Size cap set to: {desc}</color>");
+            return desc;
+        }
+
+        public string DescribeBackupMaxSize() =>
+            _backup.MaxSizeMB <= 0 ? "no cap"
+            : _backup.MaxSizeMB >= 1024 ? $"{_backup.MaxSizeMB / 1024.0:0.#} GB"
+            : $"{_backup.MaxSizeMB} MB";
+
+        #endregion
     }
 }

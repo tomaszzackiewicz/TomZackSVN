@@ -34,6 +34,9 @@ namespace SVN.Core
         private const double DebounceIntervalMs = 1000d;
         private string _resolvedKeyPath;
 
+        // === PROGRESS (checkout): pasek ważony bajtami — ten sam tracker co update.
+        private SvnUpdateProgressUI _progress;
+
         public SVNCheckout(SVNUI svnUI, SVNManager manager) : base(svnUI, manager)
         {
             UnityMainThreadDispatcher.EnsureExists();
@@ -238,7 +241,12 @@ namespace SVN.Core
 
             string sshConfig = BuildSshConfigOption(keyPath);
             SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "Calculating repository size...", "SVN");
-            _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url, sshConfig).ConfigureAwait(false);
+
+            // === PROGRESS: sonda zwraca MAPĘ plików (cache) — total liczony z niej;
+            // ExecuteSvnOperationAsync weźmie tę samą mapę z cache (zero dodatkowego
+            // roundtripu) jako wagi bajtowe paska.
+            var sizeMap = await GetRemoteFileSizesAsync(url, sshConfig).ConfigureAwait(false);
+            _cachedTotalSizeBytes = sizeMap.Values.Sum();
 
             string checkoutArgs = $"checkout \"{url}\" \"{fullPath}\" --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
             await ExecuteSvnOperationAsync(url, fullPath, checkoutArgs, false, keyPath, "Downloading").ConfigureAwait(false);
@@ -276,9 +284,20 @@ namespace SVN.Core
                         if (!string.IsNullOrEmpty(savedKey) && File.Exists(savedKey))
                             _resolvedKeyPath = savedKey;
                     }
+                    // === FIX: fallback dla cancelu+restart — projekt jest w
+                    // liście (rejestracja przy przerwaniu), .svn istnieje,
+                    // svn update dokończy transfer. Wcześniej tylko brama
+                    // paused-state → "explicitly cancelled" zamykało drogę.
+                    else if (IsRegisteredProject(fullPath))
+                    {
+                        _canResume = true;
+                        SVNLogBridge.LogToOutput(
+                            "<color=yellow>[SVN] Brak zapisanej pauzy — wznawiam zarejestrowany (przerwany) checkout. " +
+                            "svn update dokończy pobieranie.</color>");
+                    }
                     else
                     {
-                        ShowError("Cannot resume. The operation was explicitly cancelled or no paused state found.");
+                        ShowError("Cannot resume. No paused state or registered project found for this path.");
                         return;
                     }
                 }
@@ -297,10 +316,26 @@ namespace SVN.Core
             SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, "<color=yellow><b>Resuming checkout...</b></color>", "SVN");
 
             if (_cachedTotalSizeBytes <= 0)
-                _cachedTotalSizeBytes = await GetRemoteRepositorySizeAsync(url, sshConfig).ConfigureAwait(false);
+            {
+                var sizeMap = await GetRemoteFileSizesAsync(url, sshConfig).ConfigureAwait(false);
+                _cachedTotalSizeBytes = sizeMap.Values.Sum();
+            }
 
             string updateArgs = "update --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
             await ExecuteSvnOperationAsync(url, fullPath, updateArgs, true, keyPath, "Resuming").ConfigureAwait(false);
+        }
+
+        /// <summary>Czy pod tą ścieżką istnieje zarejestrowany projekt (lista projektów).</summary>
+        private static bool IsRegisteredProject(string fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath)) return false;
+
+            string norm = fullPath.Replace("\\", "/").TrimEnd('/');
+            var projects = ProjectSettings.LoadProjects();
+            return projects.Any(p =>
+                !string.IsNullOrEmpty(p.workingDir) &&
+                string.Equals(p.workingDir.Replace("\\", "/").TrimEnd('/'), norm,
+                    StringComparison.OrdinalIgnoreCase));
         }
 
         public void PauseCheckout()
@@ -366,27 +401,33 @@ namespace SVN.Core
             catch (ObjectDisposedException) { }
         }
 
-        private long _cachedRepoSizeBytes;
-        private string _cachedRepoSizeUrl;
-        // === FIX: TTL cache — bez tego pomiar z pierwszego otwarcia panelu żył
-        // cały lifetime aplikacji i zaniżał wymagane miejsce przy rosnącym repo.
-        private DateTime _cachedRepoSizeTime = DateTime.MinValue;
+        // === PROGRESS: cache MAPY rozmiarów (path → bytes). Zastępuje dawne pola
+        // sumy — suma liczona z mapy, mapa służy jako wagi bajtowe paska.
+        private Dictionary<string, long> _cachedFileSizesMap;
+        private string _cachedFileSizesUrl;
+        private DateTime _cachedFileSizesTime = DateTime.MinValue;
         private static readonly TimeSpan RepoSizeCacheTtl = TimeSpan.FromMinutes(5);
         private readonly object _repoSizeLock = new object();
 
-        private async Task<long> GetRemoteRepositorySizeAsync(string url, string sshConfig = "", CancellationToken token = default)
+        /// <summary>
+        /// Rozmiary WSZYSTKICH plików repo (svn list --xml -R) — mapa ścieżka→bajty.
+        /// Klucze = ścieżki względne URL-a (format zgodny z wyjściem checkout/update).
+        /// Cache 5 min (TTL); pomiary nieudane NIE są cache'owane. Timeout 60 s.
+        /// </summary>
+        private async Task<Dictionary<string, long>> GetRemoteFileSizesAsync(
+            string url, string sshConfig = "", CancellationToken token = default)
         {
-            if (string.IsNullOrWhiteSpace(url)) return 0;
+            var empty = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(url)) return empty;
+            url = url.TrimEnd('/');
 
-            // === FIX: hit wymaga wartości > 0 — pomiary nieudane (0) NIE są
-            // cache'owane; każde kolejne wywołanie ponawia próbę.
             lock (_repoSizeLock)
             {
-                if (_cachedRepoSizeBytes > 0 &&
-                    string.Equals(_cachedRepoSizeUrl, url, StringComparison.OrdinalIgnoreCase) &&
-                    DateTime.UtcNow - _cachedRepoSizeTime < RepoSizeCacheTtl)
+                if (_cachedFileSizesMap != null &&
+                    string.Equals(_cachedFileSizesUrl, url, StringComparison.OrdinalIgnoreCase) &&
+                    DateTime.UtcNow - _cachedFileSizesTime < RepoSizeCacheTtl)
                 {
-                    return _cachedRepoSizeBytes;
+                    return _cachedFileSizesMap;
                 }
             }
 
@@ -394,103 +435,190 @@ namespace SVN.Core
             {
                 string args = $"list --xml -R \"{url}\" --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig);
 
-                // === FIX: timeout 60 s na rekurencyjne listowanie — wcześniej ta
-                // sonda wisiała bez ograniczenia i bez możliwości anulowania.
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(RemoteSizeProbeTimeoutSeconds));
 
                 string output = await SvnRunner.RunAsync(args, Path.GetTempPath(), false, timeoutCts.Token).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(output)) return 0;
+                if (string.IsNullOrWhiteSpace(output)) return empty;
 
-                long totalBytes = 0;
-                using (var reader = new StringReader(output))
-                using (var xmlReader = XmlReader.Create(reader, new XmlReaderSettings
+                var sizes = ParseSvnListSizes(output, url);
+
+                if (sizes.Count > 0)
                 {
-                    // === FIX: spójnie z parserem konfliktów (defense-in-depth).
-                    DtdProcessing = DtdProcessing.Prohibit
-                }))
-                {
-                    while (xmlReader.Read())
+                    long total = sizes.Values.Sum();
+                    SVNLogBridge.LogToOutput($"[SVN] Repository size: {total / BytesInMB:F2} MB ({sizes.Count} files)");
+
+                    lock (_repoSizeLock)
                     {
-                        if (xmlReader.NodeType == XmlNodeType.Element && xmlReader.Name == "size")
-                        {
-                            if (xmlReader.Read() && long.TryParse(xmlReader.Value, out long size))
-                                totalBytes += size;
-                        }
+                        _cachedFileSizesMap = sizes;
+                        _cachedFileSizesUrl = url;
+                        _cachedFileSizesTime = DateTime.UtcNow;
                     }
                 }
 
-                SVNLogBridge.LogToOutput($"[SVN] Repository size: {totalBytes / BytesInMB:F2} MB");
-
-                lock (_repoSizeLock)
-                {
-                    _cachedRepoSizeBytes = totalBytes;
-                    _cachedRepoSizeUrl = url;
-                    _cachedRepoSizeTime = DateTime.UtcNow;
-                }
-
-                return totalBytes;
+                return sizes;
             }
             catch (OperationCanceledException)
             {
                 SVNLogBridge.LogToOutput("<color=yellow>[SVN] Repository size probe timed out — skipping size check.</color>");
-                return 0;
+                return empty;
             }
             catch (Exception ex)
             {
                 SVNLogBridge.LogErrorToOutput($"[SVN] Failed to calculate repository size: {ex.Message}");
-                return 0;
+                return empty;
             }
+        }
+
+        /// <summary>Suma bajtów (kompatybilność starych wywołań) — z tej samej sondy/cache.</summary>
+        private async Task<long> GetRemoteRepositorySizeAsync(string url, string sshConfig = "", CancellationToken token = default)
+        {
+            var map = await GetRemoteFileSizesAsync(url, sshConfig, token).ConfigureAwait(false);
+            return map.Values.Sum();
+        }
+
+        /// <summary>Parsowanie list --xml -R: list path (URL lub relatywna) + entry/name/size.</summary>
+        private static Dictionary<string, long> ParseSvnListSizes(string xml, string url)
+        {
+            var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                // odporność na śmieci przed/za XML
+                int start = xml.IndexOf('<');
+                int end = xml.LastIndexOf('>');
+                if (start < 0 || end <= start) return sizes;
+
+                var doc = new XmlDocument();
+                doc.LoadXml(xml.Substring(start, end - start + 1));
+
+                XmlNodeList lists = doc.SelectNodes("//list");
+                if (lists == null) return sizes;
+
+                foreach (XmlNode listNode in lists)
+                {
+                    string listPath = (listNode.Attributes?["path"]?.Value ?? "")
+                        .Trim().Replace('\\', '/').TrimEnd('/');
+
+                    // list path może być pełnym URL-em — zdejmij prefiks
+                    int idx = listPath.IndexOf(url, StringComparison.OrdinalIgnoreCase);
+                    if (idx >= 0) listPath = listPath.Substring(idx + url.Length);
+                    listPath = listPath.Trim('/');
+
+                    foreach (XmlNode entry in listNode.SelectNodes("entry"))
+                    {
+                        if (!string.Equals(entry.Attributes?["kind"]?.Value, "file",
+                                StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string name = entry.SelectSingleNode("name")?.InnerText;
+                        XmlNode sizeNode = entry.SelectSingleNode("size");
+                        if (string.IsNullOrEmpty(name) || sizeNode == null) continue;
+                        if (!long.TryParse(sizeNode.InnerText, out long size)) continue;
+
+                        string rel = string.IsNullOrEmpty(listPath) ? name : listPath + "/" + name;
+                        rel = rel.Replace('\\', '/').TrimStart('/');
+                        if (rel.Length > 0)
+                            sizes[rel] = size;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN] Size map parse failed: {ex.Message}");
+            }
+
+            return sizes;
+        }
+
+        /// <summary>Ścieżki pozycji out-of-date ('*' w svn status -u) — podzbiór do wag przy resume.</summary>
+        private static async Task<List<string>> GetOutOfDatePathsAsync(string path, CancellationToken token)
+        {
+            var result = new List<string>();
+            try
+            {
+                string output = await SvnRunner.RunAsync("status -u", path, token: token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                if (string.IsNullOrWhiteSpace(output)) return result;
+
+                using var reader = new StringReader(output);
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    if (line.Length > 8 && line[8] == '*')
+                    {
+                        string rest = line.Substring(9).TrimStart();
+                        // po '*': [remote revision] ścieżka — zjedz wiodującą liczbę
+                        int sp = rest.IndexOf(' ');
+                        if (sp > 0 && long.TryParse(rest.Substring(0, sp), out _))
+                            rest = rest.Substring(sp + 1).TrimStart();
+                        string clean = rest.Replace('\\', '/').Trim();
+                        if (clean.Length > 0) result.Add(clean);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { }
+
+            return result;
         }
 
         private async Task ExecuteSvnOperationAsync(string url, string path, string command, bool isResume, string keyPath, string operationType)
         {
             // === FIX (race): atomowe wejście przez SVNBase.TryStart() (Interlocked).
-            // Wcześniej 'if (IsProcessing) return; IsProcessing = true;' było
-            // check-then-act — dwa szybkie kliknięcia (zwłaszcza Export, który
-            // NIE miał debounce z CanStartOperation) mogły przejść oba przez guard
-            // i odpalić DWA RÓWNOLEGŁE procesy svn na tę samą ścieżkę.
             if (!TryStart())
             {
                 SVNLogBridge.LogToOutput("<color=yellow>[SVN]</color> Operation already running.");
                 return;
             }
 
-            CancellationTokenSource cts = null;
-            Task monitorTask = null;
-            Task logFlushTask = null;
-            var logBuffer = new ConcurrentQueue<string>();
-
             int addedCount = 0;
             int updatedCount = 0;
             int conflictCount = 0;
 
             DateTime startTime = DateTime.Now;
-            DateTime lastActivity = DateTime.Now;
+
+            // === FIX (CS0103): isExport/token/sizeBeforeSession/monitorTask/barModule
+            // hoistowane PRZED try — catche używają barModule (dolny pasek przy
+            // pauzie/cancelu/błędzie), wnętrze try przypisuje wartości.
+            bool isExport = operationType == "Exporting";
+            CancellationTokenSource cts = null;
+            CancellationToken token = default;
+            long sizeBeforeSession = 0;
+            SVNBar barModule = null;
+
+            Task logFlushTask = null;
+            Task monitorTask = null;
+            var logBuffer = new ConcurrentQueue<string>();
 
             try
             {
                 cts = new CancellationTokenSource();
 
-                // === FIX (pauza-race, domknięcie): przypisanie _checkoutCTS w tym
-                // SAMYM locku co przejście na Running. Wcześniej assign następował
-                // PO zwolnieniu locka — PauseCheckout mógł zobaczyć Running, wyjść
-                // z locka i odczytać _checkoutCTS == null (operacyjny wątek jeszcze
-                // nie zdążył przypisać) → Cancel na null → pauza nie działała.
-                // Lock daje pełną barierę: kto widzi Running, widzi też CTS.
+                // === FIX (pauza-race): przypisanie _checkoutCTS w tym SAMYM locku
+                // co przejście na Running.
                 lock (_stateLock)
                 {
                     _state = OperationState.Running;
                     _checkoutCTS = cts;
                 }
 
-                CancellationToken token = cts.Token;
+                token = cts.Token;
 
-                long sizeBeforeSession = Directory.Exists(path) ? GetDirectorySizeFast(path) : 0;
-                bool isExport = operationType == "Exporting";
+                sizeBeforeSession = Directory.Exists(path) ? GetDirectorySizeFast(path) : 0;
 
                 if (!isExport && !Directory.Exists(path))
                     Directory.CreateDirectory(path);
+
+                // === DOLNY PASEK (SVNBar): stan Updating na czas checkoutu — monitor
+                // rozmiarów odświeża (x GB / y GB) na żywo, jak przy update.
+                // Nazwa projektu = folder docelowy. Export pomijamy (nie tworzy WC).
+                barModule = svnManager.GetModule<SVNBar>();
+                if (!isExport && barModule != null)
+                {
+                    string barProjectName = Path.GetFileName(path.TrimEnd('/', '\\'));
+                    barModule.BeginCheckout(barProjectName, path);
+                }
 
                 PostToMainThread(() =>
                 {
@@ -507,14 +635,14 @@ namespace SVN.Core
                         SVNLogBridge.LogCheckoutConsole($"<color=yellow>[Cleanup]</color> Cleaning working copy...\n");
                     });
 
-                    string sshConfig = BuildSshConfigOption(keyPath);
+                    string sshConfigCleanup = BuildSshConfigOption(keyPath);
                     using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, cleanupTimeout.Token);
 
                     try
                     {
                         await SvnRunner.RunAsync(
-                            $"cleanup --non-interactive --trust-server-cert" + FormatSshConfig(sshConfig), path, false, linkedCts.Token).ConfigureAwait(false);
+                            $"cleanup --non-interactive --trust-server-cert" + FormatSshConfig(sshConfigCleanup), path, false, linkedCts.Token).ConfigureAwait(false);
                         PostToMainThread(() =>
                             SVNLogBridge.LogCheckoutConsole($"<color=green>[Cleanup]</color> Complete.\n"));
                     }
@@ -540,6 +668,9 @@ namespace SVN.Core
                     catch (OperationCanceledException) { FlushLogBuffer(logBuffer); }
                 }, token);
 
+                // === MONITOR STATUSU (WIDOK 1 — CheckoutStatusInfoText): Status /
+                // Time Elapsed / Speed / Items odświeżane co 1 s. Pasek+pliki żyją
+                // osobno w CheckoutedFilesText (widok 2) — brak kolizji.
                 monitorTask = Task.Run(async () =>
                 {
                     try
@@ -548,7 +679,6 @@ namespace SVN.Core
                         while (!token.IsCancellationRequested)
                         {
                             double elapsedSeconds = Math.Max((DateTime.Now - startTime).TotalSeconds, 1);
-                            double silentSeconds = (DateTime.Now - lastActivity).TotalSeconds;
 
                             int curAdded = Volatile.Read(ref addedCount);
                             int curUpdated = Volatile.Read(ref updatedCount);
@@ -561,16 +691,13 @@ namespace SVN.Core
                             lock (_stateLock)
                             {
                                 // === FIX (report-overwrite): monitor publikuje UI TYLKO
-                                // dopóki operacja realnie trwa. Wcześniej ostatni tick
-                                // (okno między postem raportu końcowego a cts.Cancel()
-                                // w finally — a ten potrafi trwać sekundy przez pomiar
-                                // rozmiaru katalogu) mógł nadpisać raport COMPLETED
-                                // linijką "Status: ...".
+                                // dopóki operacja realnie trwa — ostatni tick nie nadpisze
+                                // raportu końcowego.
                                 if (_state != OperationState.Running && _state != OperationState.Pausing)
                                     break;
 
                                 stateText = _state == OperationState.Pausing ? "Pausing" : operationType;
-                                statusColor = _state == OperationState.Pausing ? "yellow" : silentSeconds > 15 ? "yellow" : "green";
+                                statusColor = _state == OperationState.Pausing ? "yellow" : "green";
                             }
 
                             sb.Clear();
@@ -585,7 +712,17 @@ namespace SVN.Core
                                 sb.Append(" | <b><color=#FFAA00>Conflicts: ").Append(curConflicts).Append("</color></b>");
 
                             string currentText = sb.ToString();
-                            PostToMainThread(() => svnUI.CheckoutStatusInfoText.text = currentText);
+                            PostToMainThread(() =>
+                            {
+                                // === FIX (domknięcie report-overwrite): re-check stanu
+                                // W MOMENCIE wykonania na main — zamyka okno wyścigu.
+                                lock (_stateLock)
+                                {
+                                    if (_state != OperationState.Running && _state != OperationState.Pausing) return;
+                                }
+                                if (svnUI != null && svnUI.CheckoutStatusInfoText != null)
+                                    svnUI.CheckoutStatusInfoText.text = currentText;
+                            });
 
                             await Task.Delay(1000, token).ConfigureAwait(false);
                         }
@@ -593,26 +730,55 @@ namespace SVN.Core
                     catch (OperationCanceledException) { }
                 }, token);
 
-                // === FIX (CWD): CWD procesu svn musi istnieć. Dla checkoutu parent
-                // istnieje (powyższy CreateDirectory tworzy całą hierarchię), ale
-                // dla EXPORTU destination nie jest tworzone z góry — eksport do
-                // "E:\NowyFolder\Sub" kończył się wyjątkiem Process.Start, bo
-                // CWD "E:\NowyFolder" nie istniał. Tworzymy parenta zawsze.
+                // === FIX (CWD): CWD procesu svn musi istnieć.
                 string workingDirectory = isResume ? path : Path.GetDirectoryName(path);
                 if (string.IsNullOrWhiteSpace(workingDirectory))
                     workingDirectory = Path.GetTempPath();
                 else if (!Directory.Exists(workingDirectory))
                     Directory.CreateDirectory(workingDirectory);
 
+                // === PROGRESS (wagi bajtowe): mapa z sondy (cache — przy StartCheckout
+                // hit; przy Export jedyny koszt). RESUME: mapa filtrowana do pozycji
+                // out-of-date ('*' z status -u), inaczej total objąłby CAŁE repo.
+                string sshConfigForSizes = BuildSshConfigOption(keyPath);
+                var sizeMap = await GetRemoteFileSizesAsync(url, sshConfigForSizes, token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+
+                int fallbackTotal = 0;
+                if (isResume)
+                {
+                    var outOfDate = await GetOutOfDatePathsAsync(path, token).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
+                    fallbackTotal = outOfDate.Count;
+
+                    if (sizeMap.Count > 0 && outOfDate.Count > 0)
+                    {
+                        var incomingOnly = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var p in outOfDate)
+                            if (sizeMap.TryGetValue(p, out long s))
+                                incomingOnly[p] = s;
+
+                        // brak dopasowań → pusta mapa → pasek per-plik na fallbackTotal
+                        sizeMap = incomingOnly;
+                    }
+                }
+
+                long totalBytes = sizeMap.Values.Sum();
+                int itemTotal = sizeMap.Count > 0 ? sizeMap.Count : fallbackTotal;
+                var weights = sizeMap;   // po tym punkcie niezmienne
+
+                // === PROGRESS UI (WIDOK 2 — CheckoutedFilesText): dwie linie
+                // podmieniane in-place — pasek ważony bajtami + % + GB, pod spodem
+                // aktualny plik na niebiesko + (x/y). Jak przy update.
+                _progress = new SvnUpdateProgressUI(svnUI.CheckoutedFilesText);
+                _progress.SetTotal(itemTotal, totalBytes, sizeMap);
+
+                int itemsProcessed = 0;
+
                 PostToMainThread(() =>
                     SVNLogBridge.LogCheckoutConsole($"<color=blue><b>[Download]</b> In progress...\n</color>"));
 
-                // === FIX (hardening): błędy svn idą do STDERR z prefiksem
-                // "[SVN ERROR]" — zwracany 'result' (stdout) ich nie zawiera,
-                // więc stary check result.Contains("[SVN ERROR]") był martwy.
-                // Uwaga: główna detekcja porażki to i tak wyjątek z RunLiveAsync
-                // (throwOnError = true); ta flaga łapie przypadek brzegowy
-                // "exit code 0 + tekst 'svn: E' w strumieniu".
+                // === FIX (hardening): svn: E w strumieniu → flaga błędu.
                 int sawError = 0;
 
                 string result = await SvnRunner.RunLiveAsync(command, workingDirectory, line =>
@@ -628,16 +794,20 @@ namespace SVN.Core
                     if (cleanLine.StartsWith("*****") || cleanLine.StartsWith("@@@@@")) return;
 
                     cleanLine = cleanLine.Replace("[SVN ERROR]", "").Trim();
-                    lastActivity = DateTime.Now;
 
-                    // === FIX (hardening): svn wypisuje status w kolumnie 0 i co
-                    // najmniej 3 spacje przed ścieżką ("A    path"). Ścisły format
-                    // odrzuca linie tekstowe zaczynające się od litery statusu.
-                    if (cleanLine.Length >= 4 &&
+                    // === FIX (parser): status + DOWOLNA liczba spacji + ścieżka.
+                    // Linie narracyjne ("Updating...", "Checked out...") odpadają: [1] != spacja.
+                    if (cleanLine.Length >= 2 &&
                         "UAGDCR".Contains(cleanLine[0]) &&
-                        cleanLine[1] == ' ' && cleanLine[2] == ' ' && cleanLine[3] == ' ')
+                        cleanLine[1] == ' ')
                     {
-                        switch (cleanLine[0])
+                        char status = cleanLine[0];
+
+                        int i = 1;
+                        while (i < cleanLine.Length && cleanLine[i] == ' ') i++;
+                        string rawPath = i < cleanLine.Length ? cleanLine.Substring(i).Trim() : "";
+
+                        switch (status)
                         {
                             case 'A': Interlocked.Increment(ref addedCount); break;
                             case 'U':
@@ -646,9 +816,49 @@ namespace SVN.Core
                             case 'D': Interlocked.Increment(ref updatedCount); break;
                             case 'C': Interlocked.Increment(ref conflictCount); break;
                         }
-                    }
 
-                    logBuffer.Enqueue(cleanLine);
+                        // === FIX (WAGI): zdejmij prefiks dest — bez tego klucze mapy
+                        // ("Assets/x.cs") nie matchowały ścieżek z svn ("MyProject/Assets/x.cs").
+                        string itemPath = StripCheckoutItemPath(rawPath, isResume ? "" : path);
+
+                        // (x/y): przy znanej mapie liczymy tylko pliki z mapy —
+                        // katalogi ("A    Assets") nie nadymają licznika ponad total.
+                        bool fileKnown = weights.Count > 0 &&
+                                         !string.IsNullOrEmpty(itemPath) &&
+                                         weights.ContainsKey(itemPath);
+                        if (weights.Count == 0 || fileKnown)
+                            itemsProcessed++;
+
+                        string prefix = status switch
+                        {
+                            'U' => "= Updated",
+                            'A' => "+ Added",
+                            'D' => "- Deleted",
+                            'C' => "x Conflict",
+                            'G' => "~ Merged",
+                            'R' => "~ Replaced",
+                            _ => $"  {status}"
+                        };
+                        string displayLine = $"{prefix}: {itemPath}";
+
+                        string progressStr = "";
+                        if (itemTotal > 0)
+                        {
+                            if (itemsProcessed > itemTotal)
+                                progressStr = $" ({itemTotal}/{itemTotal}, +{itemsProcessed - itemTotal} extra)";
+                            else
+                                progressStr = $" ({itemsProcessed}/{itemTotal})";
+                        }
+
+                        // === plik raportowany TYLKO przez tracker (linia 2 widoku 2,
+                        // format identyczny z update) — koniec dublowania ścieżek.
+                        _progress?.OnItem(itemPath, displayLine, progressStr, status == 'C');
+                    }
+                    else
+                    {
+                        // linie nie-plikowe (komunikaty svn) — białym strumieniem jak dotychczas
+                        logBuffer.Enqueue(cleanLine);
+                    }
 
                 }, token).ConfigureAwait(false);
 
@@ -664,6 +874,7 @@ namespace SVN.Core
                 {
                     if (hasError)
                     {
+                        _progress?.Clear();
                         lock (_stateLock) { _state = OperationState.Failed; }
                         PostToMainThread(() => SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
                             "<color=#FFAA00><b>Export Failed</b></color>\nCheck console for details.", "SVN"));
@@ -672,7 +883,12 @@ namespace SVN.Core
                 }
                 else if (!hasWorkingCopy || hasError)
                 {
+                    _progress?.Clear();
                     lock (_stateLock) { _state = OperationState.Failed; }
+
+                    // === DOLNY PASEK: porażka → Idle z danym snapshotem
+                    barModule?.EndUpdateFailed(svnManager.CurrentSnapshot);
+
                     PostToMainThread(() => SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
                         "<color=#FFAA00><b>Operation Failed</b></color>\nCheck console for details.", "SVN"));
                     return;
@@ -680,6 +896,21 @@ namespace SVN.Core
 
                 lock (_stateLock) { _state = OperationState.Completed; }
                 ClearPausedState();
+
+                _progress?.Finish();   // === sukces: snap do 100%
+
+                // === DOLNY PASEK: koniec — świeży snapshot (resetuje też incomplete).
+                if (!isExport && barModule != null)
+                {
+                    var snap = svnManager.CurrentSnapshot ?? new SVNProjectInfoSnapshot
+                    {
+                        ProjectName = Path.GetFileName(path.TrimEnd('/', '\\')),
+                        IsValid = true
+                    };
+                    snap.IsValid = true;
+                    svnManager.CurrentSnapshot = snap;
+                    await barModule.EndCheckout(snap).ConfigureAwait(false);
+                }
 
                 var elapsed = DateTime.Now - startTime;
                 long finalSize = GetDirectorySizeFast(path);
@@ -751,9 +982,34 @@ namespace SVN.Core
                     _state = isPaused ? OperationState.Paused : OperationState.Cancelled;
                 }
 
+                // === FIX (przerwany checkout ginął): rejestracja projektu PRZY
+                // PRZERWANIU, nie tylko po sukcesie.
+                if (!isExport && Directory.Exists(Path.Combine(path, ".svn")))
+                {
+                    RegisterProjectInList(path, url, keyPath ?? _resolvedKeyPath);
+
+                    SVNLogBridge.LogToOutput(
+                        $"<color=yellow>[SVN] Interrupted checkout saved as project: <b>{Path.GetFileName(path.TrimEnd('/', '\\'))}</b>. " +
+                        "Use Resume in the Checkout panel to finish downloading.</color>");
+                }
+
                 if (!isPaused)
                 {
                     ClearPausedState();
+                }
+
+                // === WIDOK 2, ostatnia linia: jawny "incomplete — Resume", ale tylko
+                // gdy .svn istnieje (jest co wznawiać); wczesne przerwanie → Clear.
+                if (Directory.Exists(Path.Combine(path, ".svn")))
+                    _progress?.FinishIncomplete(isPaused ? "PAUSED" : "CANCELLED");
+                else
+                    _progress?.Clear();
+
+                // === DOLNY PASEK: przerwany checkout → Idle; przy następnym
+                // BuildSnapshot check '!' doda badge "Incomplete checkout".
+                if (!isExport)
+                {
+                    barModule?.EndUpdateFailed(svnManager.CurrentSnapshot);
                 }
 
                 string statusMsg = isPaused ? "PAUSED" : "CANCELLED";
@@ -779,6 +1035,18 @@ namespace SVN.Core
             {
                 lock (_stateLock) { _state = OperationState.Failed; }
 
+                // === WIDOK 2: linia niekompletności tylko gdy .svn istnieje (resumable).
+                if (Directory.Exists(Path.Combine(path, ".svn")))
+                    _progress?.FinishIncomplete("FAILED");
+                else
+                    _progress?.Clear();
+
+                // === DOLNY PASEK: błąd → Idle z danym snapshotem.
+                if (!isExport)
+                {
+                    barModule?.EndUpdateFailed(svnManager.CurrentSnapshot);
+                }
+
                 PostToMainThread(() =>
                 {
                     SVNLogBridge.LogCheckoutConsole($"\n<color=#FF4444><b>ERROR:</b> {ex.Message}</color>\n\n");
@@ -791,16 +1059,12 @@ namespace SVN.Core
             finally
             {
                 try { cts?.Cancel(); } catch { }
-                try { if (monitorTask != null) await monitorTask.ConfigureAwait(false); } catch { }
                 try { if (logFlushTask != null) await logFlushTask.ConfigureAwait(false); } catch { }
+                try { if (monitorTask != null) await monitorTask.ConfigureAwait(false); } catch { }
                 FlushLogBuffer(logBuffer);
 
                 // === FIX (kolejność teardown): najpierw ODPIĘCIE _checkoutCTS i
-                // zwolnienie guardu (End), dopiero potem Dispose. Wcześniej
-                // Dispose następował przed nullowaniem pola — Pause/Cancel w tym
-                // oknie łapały disposed CTS (ratował je tylko catch ODE).
-                // Teraz: null → End() odcina Pause/Cancel przez IsProcessing →
-                // bezpieczny Dispose.
+                // zwolnienie guardu (End), dopiero potem Dispose.
                 _checkoutCTS = null;
                 End();
                 cts?.Dispose();
@@ -817,9 +1081,7 @@ namespace SVN.Core
 
         private async Task ExportRepositoryAsync()
         {
-            // === FIX: Export nie miał debounce ani sprawdzenia IsProcessing
-            // (CanStartOperation wywoływały tylko checkout/resume) — dwa szybkie
-            // kliknięcia startowały walidację równolegle.
+            // === FIX: Export nie miał debounce ani sprawdzenia IsProcessing.
             if (!CanStartOperation()) return;
 
             if (!TryValidateExportCommon(out string url, out string fullPath, out string keyPath, out string errorMsg))
@@ -950,9 +1212,7 @@ namespace SVN.Core
             long size = 0;
             try
             {
-                // === FIX: EnumerationOptions.IgnoreInaccessible — GetFiles/GetDirectories
-                // rzucały na niedostępnych podkatalogach przerywając cały pomiar;
-                // spójnie z SVNStatus.GetChangesDictionaryAsync.
+                // === FIX: EnumerationOptions.IgnoreInaccessible.
                 var options = new EnumerationOptions { IgnoreInaccessible = true };
 
                 foreach (FileInfo file in directory.EnumerateFiles("*", options))
@@ -1033,5 +1293,36 @@ namespace SVN.Core
             return string.Equals(normSavedPath, normCurrentPath, StringComparison.OrdinalIgnoreCase) &&
                    string.Equals(normSavedUrl, normCurrentUrl, StringComparison.OrdinalIgnoreCase);
         }
+
+        /// <summary>
+        /// === FIX (WAGI): svn checkout/export wypisuje ścieżki z prefiksem —
+        /// nazwą folderu docelowego (relatywnie do CWD) lub pełną ścieżką.
+        /// Klucze mapy wag są relatywne do URL — bez zdjęcia prefiksu pasek
+        /// stał na 0%. Resume (update w WC) ma ścieżki już relatywne — nic nie zdejmujemy.
+        /// </summary>
+        private static string StripCheckoutItemPath(string rawPath, string destFullPath)
+        {
+            if (string.IsNullOrEmpty(rawPath)) return rawPath;
+
+            string p = rawPath.Replace('\\', '/').Trim().Trim('"');
+            if (p.Length == 0) return p;
+
+            string full = (destFullPath ?? "").Replace('\\', '/').TrimEnd('/');
+
+            // 1) pełna ścieżka bezwzględna (CWD != parent dest, np. temp)
+            if (full.Length > 0 && p.StartsWith(full + "/", StringComparison.OrdinalIgnoreCase))
+                return p.Substring(full.Length + 1);
+            if (full.Length > 0 && string.Equals(p, full, StringComparison.OrdinalIgnoreCase))
+                return "";
+
+            // 2) prefiks nazwą folderu dest (typowe: CWD = parent)
+            string name = Path.GetFileName(full);
+            if (!string.IsNullOrEmpty(name) && p.StartsWith(name + "/", StringComparison.OrdinalIgnoreCase))
+                return p.Substring(name.Length + 1);
+
+            // 3) już relatywna
+            return p;
+        }
+
     }
 }

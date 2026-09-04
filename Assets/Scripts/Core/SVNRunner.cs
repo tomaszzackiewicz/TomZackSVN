@@ -308,7 +308,7 @@ namespace SVN.Core
         }
 
         private static async Task<(string output, string error, int exitCode)> ExecuteSvnProcessAsync(
-            List<string> argList, string workingDir, bool retryOnLock, Action<string> stdoutCb, Action<string> stderrCb, bool throwOnError, string logPrefix, CancellationToken token)
+    List<string> argList, string workingDir, bool retryOnLock, Action<string> stdoutCb, Action<string> stderrCb, bool throwOnError, string logPrefix, CancellationToken token)
         {
             string safeArgs = BuildSafeArguments(argList);
             SVNLogBridge.LogToOutput($"[SVN QUEUE]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Waiting: svn {safeArgs}");
@@ -338,7 +338,8 @@ namespace SVN.Core
                     var (output, error, exitCode) = await ExecuteRawProcessAsync(finalArgs, workingDir, stdoutCb, stderrCb, token).ConfigureAwait(false);
 
                     if (exitCode == 0 && !string.IsNullOrWhiteSpace(error))
-                        SVNLogBridge.LogToOutput($"[SvnRunner]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} svn warning: {error.Trim()}");
+                        // === FIX (display): '\'→'/' — inaczej "\trunk" w warningu renderuje się jako TAB
+                        SVNLogBridge.LogToOutput($"[SvnRunner]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} svn warning: {NormalizeForLog(error.Trim())}");
 
                     if (exitCode != 0)
                     {
@@ -365,8 +366,14 @@ namespace SVN.Core
 
                         if (throwOnError)
                         {
+                            // Diagnostyka liczona na surowym errorze (kody/słowa bez '\' — kolejność neutralna)
                             string diagnostic = error.Contains("E170013") || error.Contains("can't connect") ? " [Connection/URL issue]" : error.Contains("E215004") ? " [Authorization/Password error]" : "";
-                            string fullError = $"SVN Error (Code {exitCode}): {error}{diagnostic}";
+
+                            // === FIX (display): '\'→'/' w exception message — to stąd pochodzi
+                            // komunikat "Error: ..." w resolverach; normalizacja u źródła czyści
+                            // WSZYSTKIE miejsca wyświetlania (labels, GetShortError, result.error).
+                            string fullError = $"SVN Error (Code {exitCode}): {NormalizeForLog(error)}{diagnostic}";
+
                             SVNLogBridge.LogErrorToOutput(fullError);
 
                             try { OnOperationError?.Invoke(fullError); }
@@ -444,7 +451,8 @@ namespace SVN.Core
         public static async Task<int> RunStreamedAsync(IEnumerable<string> args, string workingDirectory, Action<string> onOutput, CancellationToken token)
         {
             Action<string> stdout = (line) => onOutput?.Invoke(line);
-            Action<string> stderr = (line) => onOutput?.Invoke($"<color=#FFAA00>{line}</color>");
+            // === FIX (display): jw.
+            Action<string> stderr = (line) => onOutput?.Invoke($"<color=#FFAA00>{NormalizeForLog(line)}</color>");
 
             var result = await ExecuteSvnProcessAsync(args.ToList(), workingDirectory, false, stdout, stderr, false, "STREAMED", token).ConfigureAwait(false);
             return result.exitCode;
@@ -458,7 +466,8 @@ namespace SVN.Core
         public static async Task<int> RunStreamedLiveAsync(IEnumerable<string> args, string workingDirectory, Action<string> onOutput, CancellationToken token)
         {
             Action<string> stdout = (line) => onOutput?.Invoke(line);
-            Action<string> stderr = (line) => onOutput?.Invoke($"<color=#FFAA00>{line}</color>");
+            
+            Action<string> stderr = (line) => onOutput?.Invoke($"<color=#FFAA00>{NormalizeForLog(line)}</color>");
 
             var result = await ExecuteSvnProcessAsync(args.ToList(), workingDirectory, false, stdout, stderr, false, "LIVE STREAMED", token).ConfigureAwait(false);
 
@@ -910,6 +919,12 @@ namespace SVN.Core
             if (p.StartsWith("./")) p = p.Substring(2);
 
             return p;
+        }
+
+        private static string NormalizeForLog(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return text.Replace('\\', '/');
         }
 
         public static string SanitizePath(string path)

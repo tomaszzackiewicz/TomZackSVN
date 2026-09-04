@@ -81,18 +81,16 @@ namespace SVN.Core
 
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
-            // === FIX 2: pre-check chroniony.
+            // Pre-check chroniony
+            List<SVNConflictData> allConflicts = null;
             try
             {
-                var allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
+                allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
                 if (SVNPathUtilities.HasUnresolvedParentConflict(path, allConflicts))
                     _logBoth($"<color=#FFAA00>Warning:</color> Parent directory also has a conflict. Consider resolving children first, then the parent.");
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logBoth($"<color=#FFAA00>Conflict pre-check failed:</color> {ex.Message}");
-            }
+            catch (Exception ex) { _logBoth($"<color=#FFAA00>Conflict pre-check failed:</color> {ex.Message}"); }
 
             var info = _cache.Get(path);
             string reason = info?.TreeConflictReason ?? "unknown";
@@ -104,6 +102,7 @@ namespace SVN.Core
             bool success = false;
             string error = null;
 
+            // === Próba 1: standard resolve ===
             try
             {
                 if (strategy.Equals("base", StringComparison.OrdinalIgnoreCase))
@@ -122,14 +121,14 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 error = ex.Message;
-                if (strategy.EndsWith("-full"))
+                // === Próba 2: fallback -conflict ===
+                if (strategy.EndsWith("-full", StringComparison.OrdinalIgnoreCase))
                 {
                     string fallback = strategy.Replace("-full", "-conflict");
                     try
                     {
                         await SvnRunner.RunAsync($"resolve --accept {fallback} \"{path}\"", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
-                        success = true;
-                        error = null;
+                        success = true; error = null;
                         _logBoth($"<color=yellow>Fallback to {fallback} succeeded.</color>");
                     }
                     catch (OperationCanceledException) { throw; }
@@ -137,9 +136,49 @@ namespace SVN.Core
                 }
             }
 
+            // === FIX (escalation): W195024/E155027 → structural force-flow ===
+            // UWAGA: wcześniejsza wersja warunku "... && err.Contains(\"W195024\") || err.Contains(...)"
+            // miała błąd priorytetu operatorów — przy UDANYM resolve (error == null)
+            // prawa strona || rzucała NullReferenceException. Poniższy warunek jest
+            // null-safe: każda gałąź short-circuit, sprawdzenie null PRZED Contains.
+            bool isTheirs = strategy.Contains("theirs", StringComparison.OrdinalIgnoreCase);
+            bool isMine = strategy.Contains("mine", StringComparison.OrdinalIgnoreCase);
+            bool isBase = strategy.Equals("base", StringComparison.OrdinalIgnoreCase);
+
+            bool inapplicable = !success
+                && !string.IsNullOrEmpty(error)
+                && SVNErrorHelper.IsInapplicableOrObstruction(new Exception(error));
+
+            if (inapplicable && (isTheirs || isMine || isBase))
+            {
+                _logBoth("<color=yellow>Resolve option inapplicable for this tree conflict (W195024) — escalating to structural force resolve...</color>");
+
+                // Łańcuch nigdy nie zwraca null: allConflicts → cache → fallback.
+                // Path gwarantowany niepusty (parser/cache walidują, fallback ustawia wprost).
+                var data = allConflicts?.FirstOrDefault(c =>
+                               SVNPathUtilities.NormalizePath(c.Path).Equals(
+                                   SVNPathUtilities.NormalizePath(path), StringComparison.OrdinalIgnoreCase))
+                           ?? info
+                           ?? new SVNConflictData { Path = path, Type = SVNConflictType.Tree };
+
+                try
+                {
+                    var force = await _core.ResolveTreeForceCoreAsync(data, strategy, token).ConfigureAwait(false);
+                    success = force.success;
+                    if (!force.success && !string.IsNullOrEmpty(force.error)) error = force.error;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex2) { error = ex2.Message; }
+            }
+            else if (inapplicable)
+            {
+                // np. "working" na obstrukcji — bez structural odpowiednika; wymaga wyboru strony
+                _logBoth("<color=#FFAA00>Option inapplicable — this tree conflict requires an explicit Mine/Theirs/Base (or Force) strategy.</color>");
+            }
+
             await SafeCleanupAsync(token).ConfigureAwait(false);
 
-            // === FIX 2: weryfikacja chroniona.
+            // Weryfikacja — czy konflikt realnie zniknął?
             bool stillExists = true;
             try
             {
@@ -148,10 +187,7 @@ namespace SVN.Core
                 stillExists = remaining.Any(c => SVNPathUtilities.NormalizePath(c.Path).Equals(normalized, StringComparison.OrdinalIgnoreCase));
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logBoth($"<color=#FFAA00>Post-resolve verification failed:</color> {ex.Message}");
-            }
+            catch (Exception ex) { _logBoth($"<color=#FFAA00>Post-resolve verification failed:</color> {ex.Message}"); }
 
             if (success && !stillExists)
             {

@@ -299,7 +299,27 @@ namespace SVN.Core
             // przenosi dalszy kod na pulę — PlayerPrefs jest main-only).
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
             var projects = ProjectSettings.LoadProjects();
-            var lastProject = projects.Find(p => p.workingDir == lastPath);
+
+            // === FIX: porównanie NORMALIZOWANE (case-insensitive + unify slash) —
+            // wcześniej 'p.workingDir == lastPath' gubiło projekt przy różnicy
+            // '\' vs '/' między zapisami checkoutu a LoadProject.
+            var lastProject = projects.Find(p =>
+                !string.IsNullOrEmpty(p.workingDir) &&
+                string.Equals(
+                    p.workingDir.Replace("\\", "/").TrimEnd('/'),
+                    lastPath.Replace("\\", "/").TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase));
+
+            // === FIX: hint o wstrzymanym checkoucie (stan pauzy istnieje po resecie,
+            // ale nikt go nie czytał — użytkownik nie wiedział, że może wznowić).
+            string pausedCheckoutPath = PlayerPrefs.GetString("SVN_CheckoutPaused_Path", "");
+            if (!string.IsNullOrEmpty(pausedCheckoutPath) &&
+                Directory.Exists(Path.Combine(pausedCheckoutPath, ".svn")))
+            {
+                SVNLogBridge.LogToOutput(
+                    $"<color=yellow>[SVN] Wykryto wstrzymany checkout: {pausedCheckoutPath}. " +
+                    "Dokończ go w panelu Checkout → Resume.</color>");
+            }
 
             // S6: środowisko SVN. Bez CFA — dalszy bootstrap ma wrócić na MAIN.
             bool svnOk = await VerifySvnClientInstalledAsync();
@@ -814,7 +834,7 @@ namespace SVN.Core
                 await statusModule.ExecuteRefreshWithAutoExpand(force: force);
                 await PostProcessStatus();
 
-                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>");
+                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>", false);
 
                 if (!IsUpdateRunning && Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
                 {
@@ -825,11 +845,12 @@ namespace SVN.Core
                             var bar = GetModule<SVNBar>();
                             if (bar != null && CurrentSnapshot != null && !token.IsCancellationRequested)
                             {
-                                string newSize = await bar.GetFolderSizeAsync(WorkingDir);
+                                var sizes = await bar.GetSizesWithCacheAsync(WorkingDir, token);
 
                                 if (token.IsCancellationRequested || IsUpdateRunning) return;
 
-                                CurrentSnapshot.WorkingCopySize = newSize;
+                                CurrentSnapshot.WorkingCopySize = sizes.WorkingSize;
+                                CurrentSnapshot.RepoTotalSize = sizes.TotalSize;
 
                                 UnityMainThreadDispatcher.Enqueue(() =>
                                 {

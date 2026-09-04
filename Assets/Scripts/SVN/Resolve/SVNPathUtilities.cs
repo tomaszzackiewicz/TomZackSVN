@@ -71,5 +71,11 @@ namespace SVN.Core
             }
             return false;
         }
+
+        public static string ForDisplay(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return text.Replace('\\', '/');
+        }
     }
 }

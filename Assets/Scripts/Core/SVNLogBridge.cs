@@ -31,6 +31,29 @@ namespace SVN.Core
 
         private static bool _globalHandlingEnabled = false;
 
+        // === FIX (display): ROOT FIX dla TAB-ów w ścieżkach. Wszystkie teksty
+        // trafiające do UI przechodzą przez tę normalizację na wejściu mostka.
+        //
+        // Problem: ścieżki Windows z '\' tworzą dwuznakowe sekwencje "\t" / "\n"
+        // (np. ...\trunk → "\t"), które renderer wyświetla jako TAB / newline.
+        // Dowód z logu: '\T' w '...SVN\TomZackSVN_Backup' wyświetla się jako
+        // backslash, '\t' w '...1885\trunk' jako TAB — dekodowane są tylko
+        // escape-sekwencje, nie każdy backslash.
+        //
+        // Własności:
+        //  - '/' jest neutralny: rich text TMP go ignoruje, svn/Unity/.NET
+        //    akceptują na Windows — nic się nie psuje.
+        //  - Idempotentne — wielokrotne przejścia (ShowNotification→LogLine,
+        //    LogLine→FlushImmediate) to no-op przy drugim przejściu.
+        //  - Null-safe — null/empty przechodzi bez zmian.
+        //  - Operacje na plikach NIGDY nie przechodzą przez mostek — dotyczy
+        //    wyłącznie tekstów wyświetlanych/logowanych.
+        private static string NormalizeForDisplay(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return text.Replace('\\', '/');
+        }
+
         public static void EnableGlobalExceptionHandling()
         {
             if (_globalHandlingEnabled) return;
@@ -86,6 +109,10 @@ namespace SVN.Core
 
         public static void LogLine(string message, bool append = true, string level = "INFO")
         {
+            // === FIX (display): normalizacja na wejściu — centralny punkt dla
+            // głównej konsoli (kolejka, bufor, flush, plik logu). Idempotentne.
+            message = NormalizeForDisplay(message);
+
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
             string uiMessage = $"<color=blue>[{timestamp}]</color> {message}";
             string cleanMessage = StripRichText(message);
@@ -136,6 +163,8 @@ namespace SVN.Core
         {
             if (ex == null) return;
 
+            // ex.Message / StackTrace mogą zawierać ścieżki Windows z '\' —
+            // normalizuje LogLine na wejściu (idempotentnie).
             StringBuilder sb = new StringBuilder();
             sb.AppendLine($"<color=#FF0000><b>[{level}] {ex.GetType().Name}:</b> {ex.Message}</color>");
 
@@ -144,14 +173,14 @@ namespace SVN.Core
                 sb.AppendLine($"<color=#FFAA00><b>Target:</b> {ex.TargetSite.DeclaringType?.Name}.{ex.TargetSite.Name}</color>");
             }
 
-            sb.AppendLine($"<color=#88CCFF>{ex.StackTrace}</color>");
+            sb.AppendLine($"<color=88CCFF>{ex.StackTrace}</color>");
 
             Exception inner = ex.InnerException;
             int depth = 1;
             while (inner != null && depth <= 5)
             {
                 sb.AppendLine($"<color=#FF9900><b>[INNER {depth}] {inner.GetType().Name}:</b> {inner.Message}</color>");
-                sb.AppendLine($"<color=#88CCFF>{inner.StackTrace}</color>");
+                sb.AppendLine($"<color=88CCFF>{inner.StackTrace}</color>");
                 inner = inner.InnerException;
                 depth++;
             }
@@ -163,15 +192,20 @@ namespace SVN.Core
         {
             if (uiField == null) return;
 
+            // === FIX (display): normalizacja treści (idempotentna — LogLine mógł
+            // już znormalizować; podwójne przejście to no-op).
+            content = NormalizeForDisplay(content);
+
             string cleanContent = StripRichText(content);
             if (!string.IsNullOrEmpty(cleanContent))
                 _ = Task.Run(() => SVNLogger.LogToFile(cleanContent, logLabel));
 
+            string uiContent = content;   // snapshot po normalizacji — stabilny w closure
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (uiField == null) return;
 
-                string trimmedContent = content.TrimEnd('\n', '\r');
+                string trimmedContent = uiContent.TrimEnd('\n', '\r');
 
                 if (append)
                 {
@@ -233,6 +267,11 @@ namespace SVN.Core
 
         public static void FlushImmediate(string singleMessage = null, bool clear = false)
         {
+            // === FIX (display): defense-in-depth — normalizuj także komunikaty
+            // przekazywane BEZPOŚREDNIO przez zewnętrznych callerów (metoda
+            // publiczna). Null-safe; dla ścieżek z LogLine/LogRaw to no-op.
+            singleMessage = NormalizeForDisplay(singleMessage);
+
             lock (_timerLock)
             {
                 _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
@@ -319,20 +358,30 @@ namespace SVN.Core
 
         public static void ShowNotification(string message)
         {
+            // === FIX (display): raz na wejściu; LogLine dostanie już znormalizowany
+            // string (idempotentne). Notyfikacja UI i log pozostają spójne.
+            message = NormalizeForDisplay(message);
+
             LogLine($"<color=blue>[NOTIFY]</color> {message}");
+
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null) return;
-                SVNUI.Instance.ShowNotificationWithTimer(message, DefaultNotificationDuration);
+                SVNUI.Instance.ShowNotificationWithTimer(uiMessage, DefaultNotificationDuration);
             });
         }
 
         public static void LogTooltip(string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
-                SVNUI.Instance.TooltipText.text = $"<color=#CCCCCC>{message}</color>";
+                SVNUI.Instance.TooltipText.text = $"<color=#CCCCCC>{uiMessage}</color>";
             });
         }
 
@@ -347,20 +396,26 @@ namespace SVN.Core
 
         public static void LogCheckoutConsole(string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
             string cleanMessage = StripRichText(message);
             if (!string.IsNullOrEmpty(cleanMessage))
                 _ = Task.Run(() => SVNLogger.LogToFile(cleanMessage, "CHECKOUT"));
 
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.CheckoutedFilesText == null) return;
-                SVNUI.Instance.CheckoutedFilesText.text = message;
+                SVNUI.Instance.CheckoutedFilesText.text = uiMessage;
             });
         }
 
         public static void LogRaw(string message)
         {
-            FlushImmediate(message, clear: true);
+            // === FIX (display): FlushImmediate dostaje znormalizowany string
+            // (FlushImmediate normalizuje też sam — idempotentnie, no-op).
+            FlushImmediate(NormalizeForDisplay(message), clear: true);
         }
 
         private static string StripRichText(string input)
@@ -385,12 +440,16 @@ namespace SVN.Core
 
         public static void LogToOutput(string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.OutputText == null)
                     return;
 
-                SVNUI.Instance.OutputText.text = message;
+                SVNUI.Instance.OutputText.text = uiMessage;
             });
         }
 
@@ -398,6 +457,10 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(message))
                 return;
+
+            // === FIX (display): normalizacja PRZED formatowaniem (sprawdzenie
+            // StartsWith neutralne — tagi rich text nie zawierają '\').
+            message = NormalizeForDisplay(message);
 
             string formattedMessage = message.StartsWith("<color=")
                 ? message
@@ -416,6 +479,9 @@ namespace SVN.Core
         // zamiast duplikować logikę przycinania.
         public static void TraceBar(string source, string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
             string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
             string line = $"<color=white>[{timestamp}][BAR:{source}] {message}</color>";
 

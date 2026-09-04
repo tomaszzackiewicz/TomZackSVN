@@ -578,8 +578,8 @@ namespace SVN.Core
 
         #region Utility
 
-        // === FIX P0: PermanentDelete zwraca bool + loguje błędy — wcześniej
-        // catch{} połykał wyjątki i kod myślał że usunięto.
+        // === FIX P0 + FIX (display): zwraca bool + loguje błędy (wcześniej catch{}
+        // połykał wyjątki) + normalizuje ścieżki w logu (sekwencja "\t" → TAB).
         private static bool PermanentDelete(string path, Action<string> log = null)
         {
             try
@@ -604,7 +604,7 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
-                log?.Invoke($"<color=#FF4444>PermanentDelete failed for {path}: {ex.Message}</color>");
+                log?.Invoke($"<color=#FF4444>PermanentDelete failed for {SVNPathUtilities.ForDisplay(path)}: {SVNPathUtilities.ForDisplay(ex.Message)}</color>");
                 return false;
             }
         }
