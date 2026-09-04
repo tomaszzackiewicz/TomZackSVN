@@ -1,6 +1,7 @@
 using SVN.Core;
 using UnityEngine;
 using System;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,7 +14,11 @@ public class ResolvePanel : MonoBehaviour
     private volatile bool _isRefreshing;
     private CancellationTokenSource _panelLifecycleCts;
 
-    private void Awake() => ResolveReferences();
+    private void Awake()
+    {
+        ResolveReferences();
+        WireBackupControls();
+    }
 
     private async void OnEnable()
     {
@@ -101,7 +106,7 @@ public class ResolvePanel : MonoBehaviour
         _resolveModule = _svnManager.GetModule<SVNResolve>();
         _externalModule = _svnManager.GetModule<SVNExternal>();
 
-        SyncBackupLabels();
+        SyncBackupControls();
     }
 
     private bool CanExecute()
@@ -140,14 +145,46 @@ public class ResolvePanel : MonoBehaviour
     public void Button_ResolveAllTreeMineForce() { if (CanExecute()) _resolveModule.ResolveAllTreeMineForce(); }
     public void Button_ResolveAllTreeBaseForce() { if (CanExecute()) _resolveModule.ResolveAllTreeBaseForce(); }
 
-    #region Backup buttons
+    #region Backup controls
 
-    // Opcjonalne labelki (TMP) pokazujące aktualną politykę — podłącz
-    // w inspectorze; bez podpięcia wszystko działa (wartości w logu).
-    [SerializeField] private TMPro.TextMeshProUGUI BackupRetentionLabel;
-    [SerializeField] private TMPro.TextMeshProUGUI BackupCapLabel;
+    // === Backup policy = INPUT FIELDY (zamiast cykli):
+    //   - BackupRetentionInput: dni retencji (0 / "off" = wiekowa retencja off)
+    //   - BackupCapInput:       cap w GB         (0 / "off" = bez limitu)
+    //   - BackupEnabledToggle:  master toggle    (default ON)
+    [SerializeField] private UnityEngine.UI.Toggle BackupEnabledToggle;
+    [SerializeField] private TMPro.TMP_InputField BackupRetentionInput;
+    [SerializeField] private TMPro.TMP_InputField BackupCapInput;
+
+    // Sanity limity — blokują literówki (np. "10000" dni / "999" GB).
+    private const int BackupRetentionMaxDays = 3650;   // 10 lat
+    private const double BackupCapMaxGB = 1024;        // 1 TB
 
     private float _purgeArmedUntil = -1f;
+
+    /// <summary>
+    /// Idempotentny wiring eventów (Remove+Add) — bezpieczny nawet gdy ktoś
+    /// podpiął te same metody w inspectorze. Awake = main thread, prefs OK.
+    /// Strzelamy na EndEdit (Enter / utrata focusu) — nie per-keystroke,
+    /// żeby nie zapisywać prefs przy każdej literze.
+    /// </summary>
+    private void WireBackupControls()
+    {
+        if (BackupEnabledToggle != null)
+        {
+            BackupEnabledToggle.onValueChanged.RemoveListener(Toggle_BackupEnabled);
+            BackupEnabledToggle.onValueChanged.AddListener(Toggle_BackupEnabled);
+        }
+        if (BackupRetentionInput != null)
+        {
+            BackupRetentionInput.onEndEdit.RemoveListener(Input_BackupRetentionEndEdit);
+            BackupRetentionInput.onEndEdit.AddListener(Input_BackupRetentionEndEdit);
+        }
+        if (BackupCapInput != null)
+        {
+            BackupCapInput.onEndEdit.RemoveListener(Input_BackupCapEndEdit);
+            BackupCapInput.onEndEdit.AddListener(Input_BackupCapEndEdit);
+        }
+    }
 
     public void Button_BackupInfo()
     {
@@ -188,29 +225,120 @@ public class ResolvePanel : MonoBehaviour
         }
     }
 
-    public void Button_CycleBackupRetention()
+    // === TOGGLE: działa natychmiast, nawet mid-resolve (każdy plik czyta
+    // pref osobno — zmiana dotyczy tylko kolejnych plików).
+    public void Toggle_BackupEnabled(bool enabled)
     {
-        if (_resolveModule == null) ResolveReferences();
-        if (_resolveModule == null) return;
-
-        string desc = _resolveModule.CycleBackupRetention();
-        if (BackupRetentionLabel != null) BackupRetentionLabel.text = desc;
+        if (_resolveModule == null) { ResolveReferences(); if (_resolveModule == null) return; }
+        _resolveModule.SetBackupEnabled(enabled);
     }
 
-    public void Button_CycleBackupMaxSize()
+    /// <summary>
+    /// Retencja z inputa — jednostka: DNI (np. "14", "90"). 0 / "off" / "none"
+    /// = retencja wiekowa off. Puste / śmieciowe → revert do bieżącej wartości + log.
+    /// </summary>
+    public void Input_BackupRetentionEndEdit(string raw)
     {
-        if (_resolveModule == null) ResolveReferences();
-        if (_resolveModule == null) return;
+        if (_resolveModule == null) { ResolveReferences(); if (_resolveModule == null) return; }
 
-        string desc = _resolveModule.CycleBackupMaxSize();
-        if (BackupCapLabel != null) BackupCapLabel.text = desc;
+        string text = raw?.Trim();
+
+        if (string.IsNullOrEmpty(text))
+        {
+            SyncBackupControls(); // revert
+            return;
+        }
+
+        if (text.Equals("off", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            _resolveModule.SetBackupRetentionDays(0);
+            SyncBackupControls();
+            return;
+        }
+
+        if (!TryParseFlexible(text, out double days))
+        {
+            SVNLogBridge.LogLine("<color=#FFAA00>[Backup] Invalid retention — enter days (e.g. 14) or 0 = off.</color>");
+            SyncBackupControls();
+            return;
+        }
+
+        if (days < 0) days = 0;
+        if (days > BackupRetentionMaxDays) days = BackupRetentionMaxDays;
+
+        _resolveModule.SetBackupRetentionDays((int)Math.Round(days));
+        SyncBackupControls(); // normalizuje tekst (np. "14.0" → "14")
     }
 
-    private void SyncBackupLabels()
+    /// <summary>
+    /// Cap z inputa — jednostka: GB (np. "10", "0.5"). 0 / "off" / "none" =
+    /// no cap. Puste / śmieciowe → revert do bieżącej wartości + log.
+    /// </summary>
+    public void Input_BackupCapEndEdit(string raw)
+    {
+        if (_resolveModule == null) { ResolveReferences(); if (_resolveModule == null) return; }
+
+        string text = raw?.Trim();
+
+        if (string.IsNullOrEmpty(text))
+        {
+            SyncBackupControls(); // revert
+            return;
+        }
+
+        if (text.Equals("off", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            _resolveModule.SetBackupMaxSizeMB(0);
+            SyncBackupControls();
+            return;
+        }
+
+        if (!TryParseFlexible(text, out double gb))
+        {
+            SVNLogBridge.LogLine("<color=#FFAA00>[Backup] Invalid cap — enter GB (e.g. 10) or 0 = no cap.</color>");
+            SyncBackupControls();
+            return;
+        }
+
+        if (gb < 0) gb = 0;
+        if (gb > BackupCapMaxGB) gb = BackupCapMaxGB;
+
+        _resolveModule.SetBackupMaxSizeMB((int)Math.Round(gb * 1024));
+        SyncBackupControls(); // normalizuje tekst (np. "10.0" → "10")
+    }
+
+    // Invariant (kropka) najpierw, potem current culture (przecinek PL).
+    private static bool TryParseFlexible(string text, out double value)
+    {
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+            return true;
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
+    }
+
+    /// <summary>
+    /// Odświeża kontrolki z prefs (bez odpalania eventów — *WithoutNotify).
+    /// Wywoływane: Awake / ResolveReferences / po każdym EndEdit (normalizacja).
+    /// Nie strzela per-frame, więc nie walczy z użytkownikiem piszącym w polu.
+    /// </summary>
+    private void SyncBackupControls()
     {
         if (_resolveModule == null) return;
-        if (BackupRetentionLabel != null) BackupRetentionLabel.text = _resolveModule.DescribeBackupRetention();
-        if (BackupCapLabel != null) BackupCapLabel.text = _resolveModule.DescribeBackupMaxSize();
+
+        if (BackupEnabledToggle != null)
+            BackupEnabledToggle.SetIsOnWithoutNotify(_resolveModule.IsBackupEnabled);
+
+        if (BackupRetentionInput != null)
+            BackupRetentionInput.SetTextWithoutNotify(
+                _resolveModule.GetBackupRetentionDays().ToString(CultureInfo.InvariantCulture));
+
+        if (BackupCapInput != null)
+        {
+            int mb = _resolveModule.GetBackupMaxSizeMB();
+            BackupCapInput.SetTextWithoutNotify(
+                mb <= 0 ? "0" : (mb / 1024.0).ToString("0.##", CultureInfo.InvariantCulture));
+        }
     }
 
     #endregion

@@ -20,9 +20,12 @@ namespace SVN.Core
         private const string KEY_MAX_SIZE_MB = "SVN_BackupMaxSizeMB";
         private const string KEY_AUTO_CLEAN = "SVN_BackupAutoClean";
         private const string KEY_LAST_AUTOCLEAN = "SVN_BackupLastAutoCleanTicks";
+        private const string KEY_BACKUP_ENABLED = "SVN_BackupEnabled";          // NOWE: master toggle
+        private const string KEY_PREFS_VERSION = "SVN_BackupPrefsVersion";      // NOWE: migracja
 
-        public const int DefaultRetentionDays = 14;   // 0 = retencja wiekowa wyłączona
-        public const int DefaultMaxSizeMB = 2048; // 2 GB; 0 = bez limitu
+        public const int DefaultRetentionDays = 14;       // 0 = retencja wiekowa wyłączona
+        public const int DefaultMaxSizeMB = 10240;        // 10 GB; 0 = bez limitu (ZMIANA: było 2048)
+        public const bool DefaultBackupEnabled = true;    // NOWE: backup domyślnie ON
 
         // Backupy młodsze niż 24h NIGDY nie są usuwane automatycznie —
         // okno na odkrycie pomyłkowego resolve jeszcze tego samego dnia.
@@ -38,6 +41,21 @@ namespace SVN.Core
         {
             _svnManager = manager;
             _log = log;
+            MigratePrefsOnce();
+        }
+
+        // === MIGRACJA: jednorazowy bump starego defaultu 2048 → 10240.
+        // Kto miał ŚWIADOMIE ustawione 2048 też dostanie 10240 (może wrócić
+        // cyklem/inputem). Wartości custom (np. 5120) nietknięte.
+        // UWAGA: ctor musi działać na main thread (PlayerPrefs/SVNPrefs).
+        private void MigratePrefsOnce()
+        {
+            if (GetPrefInt(KEY_PREFS_VERSION, 0) >= 1) return;
+
+            if (GetPrefInt(KEY_MAX_SIZE_MB, DefaultMaxSizeMB) == 2048)
+                SetPrefInt(KEY_MAX_SIZE_MB, DefaultMaxSizeMB);
+
+            SetPrefInt(KEY_PREFS_VERSION, 1);
         }
 
         #region Konfiguracja (prefs)
@@ -59,16 +77,26 @@ namespace SVN.Core
 
         public int MaxSizeMB
         {
-            get { int v = GetPrefInt(KEY_MAX_SIZEMB_KEY(), DefaultMaxSizeMB); return v < 0 ? 0 : v; }
-            set { SetPrefInt(KEY_MAX_SIZEMB_KEY(), Math.Max(0, value)); }
+            get { int v = GetPrefInt(KEY_MAX_SIZE_MB, DefaultMaxSizeMB); return v < 0 ? 0 : v; }
+            set { SetPrefInt(KEY_MAX_SIZE_MB, Math.Max(0, value)); }
         }
-
-        private static string KEY_MAX_SIZEMB_KEY() => KEY_MAX_SIZE_MB;
 
         public bool AutoCleanEnabled
         {
             get => GetPrefInt(KEY_AUTO_CLEAN, 1) != 0;
             set => SetPrefInt(KEY_AUTO_CLEAN, value ? 1 : 0);
+        }
+
+        /// <summary>
+        /// Master toggle backupów. OFF = BackupAsync natychmiast zwraca null
+        /// (SVNConflictCore traktuje to jak "brak backupu" → gałąź
+        /// SafeDeleteAsync), a SafeDeleteAsync usuwa TRWALE zamiast przenosić
+        /// do backupu. Default: ON.
+        /// </summary>
+        public bool BackupEnabled
+        {
+            get => GetPrefInt(KEY_BACKUP_ENABLED, DefaultBackupEnabled ? 1 : 0) != 0;
+            set => SetPrefInt(KEY_BACKUP_ENABLED, value ? 1 : 0);
         }
 
         #endregion
@@ -83,6 +111,12 @@ namespace SVN.Core
         private string BackupCore(string path, CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
+
+            // === TOGGLE: backup OFF → nic nie kopiujemy (szybki resolve przy
+            // dużej liczbie konfliktów). Null jest spójny z istniejącymi
+            // fallbackami w SVNConflictCore (gałąź SafeDeleteAsync).
+            // Celowo BEZ logu — przy 200 konfliktach byłby spam.
+            if (!BackupEnabled) return null;
 
             try
             {
@@ -124,7 +158,7 @@ namespace SVN.Core
                     CopyDirectory(path, destPath, token);
                 }
 
-                _log($"<color=#00FF88><b>[Backup]</b></color> Backup created:");
+                _log($"<color=00FF88><b>[Backup]</b></color> Backup created:");
                 _log($"<color=yellow>  Source :</color> {SVNPathUtilities.ForDisplay(path)}");
                 _log($"<color=yellow>  Backup :</color> <color=yellow>{SVNPathUtilities.ForDisplay(destPath)}</color>");
                 _log($"<color=yellow>  Backup folder: {SVNPathUtilities.ForDisplay(backupRoot)}</color>");
@@ -147,6 +181,16 @@ namespace SVN.Core
         private void SafeDeleteCore(string path, CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(path)) return;
+
+            // === TOGGLE: backup OFF → usuwamy TRWALE (szybkość kosztem siatki
+            // bezpieczeństwa — jawna decyzja użytkownika). Callerzy sprawdzają
+            // File.Exists/Directory.Exists po SafeDelete → porażka usunięcia
+            // = abort, identycznie jak dotychczas.
+            if (!BackupEnabled)
+            {
+                DeletePermanentlyCore(path, token);
+                return;
+            }
 
             try
             {
@@ -185,7 +229,7 @@ namespace SVN.Core
                     Directory.Move(path, destPath);
                 }
 
-                _log($"<color=#00FF88><b>[Backup]</b></color> File moved to backup:");
+                _log($"<color=00FF88><b>[Backup]</b></color> File moved to backup:");
                 _log($"<color=yellow>  Source :</color> {SVNPathUtilities.ForDisplay(path)}");
                 _log($"<color=yellow>  Backup :</color> <color=yellow>{SVNPathUtilities.ForDisplay(destPath)}</color>");
                 _log($"<color=yellow>  Backup folder: {SVNPathUtilities.ForDisplay(backupRoot)}</color>");
@@ -197,6 +241,38 @@ namespace SVN.Core
                 _log($"<color=#FF4444>  Path preserved: {SVNPathUtilities.ForDisplay(path)}</color>");
                 _log($"<color=#FF4444>  Reason: {SVNPathUtilities.ForDisplay(ex.Message)}</color>");
                 _log("<color=#FFAA00>  Resolve manually (file is still on disk).</color>");
+            }
+        }
+
+        // === TOGGLE OFF: trwałe usunięcie obstructionu (bez backupu).
+        private void DeletePermanentlyCore(string path, CancellationToken token)
+        {
+            try
+            {
+                if (!File.Exists(path) && !Directory.Exists(path)) return;
+
+                token.ThrowIfCancellationRequested();
+
+                if (File.Exists(path))
+                {
+                    File.SetAttributes(path, FileAttributes.Normal);
+                    File.Delete(path);
+                }
+                else
+                {
+                    foreach (var f in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+                        try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+                    foreach (var d in Directory.GetDirectories(path, "*", SearchOption.AllDirectories))
+                        try { File.SetAttributes(d, FileAttributes.Normal); } catch { }
+                    Directory.Delete(path, true);
+                }
+
+                _log($"<color=#FFAA00>[Backup OFF] Permanently deleted: {SVNPathUtilities.ForDisplay(path)}</color>");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log($"<color=#FF4444>[Backup OFF] Delete failed: {SVNPathUtilities.ForDisplay(ex.Message)} — file preserved.</color>");
             }
         }
 
@@ -260,10 +336,11 @@ namespace SVN.Core
                 try { free = new DriveInfo(rootFull).AvailableFreeSpace; }
                 catch { free = -1; }
 
-                return $"<color=yellow>[Backup] {FormatBytes(total)} in {count} backup(s)</color>\n" +
+                return (BackupEnabled ? "" : "<color=#FF4444>[Backup] DISABLED — no new backups; deletes are permanent.</color>\n") +
+                       $"<color=yellow>[Backup] {FormatBytes(total)} in {count} backup(s)</color>\n" +
                        $"<color=yellow>  Folder : {SVNPathUtilities.ForDisplay(root)}</color>\n" +
                        (oldest != DateTime.MaxValue ? $"  Oldest : {oldest:yyyy-MM-dd HH:mm} UTC\n" : "") +
-                       $"  Policy : retention {RetentionDays} d | cap {(MaxSizeMB <= 0 ? "unlimited" : FormatBytes((long)MaxSizeMB * 1024 * 1024))} | disk free {FormatBytes(free)}";
+                       $"  Policy : backup {(BackupEnabled ? "on" : "OFF")} | retention {RetentionDays} d | cap {(MaxSizeMB <= 0 ? "unlimited" : FormatBytes((long)MaxSizeMB * 1024 * 1024))} | disk free {FormatBytes(free)}";
             }, token);
         }
 
@@ -423,9 +500,9 @@ namespace SVN.Core
                 bytesRemaining = GetTreeSizeBytes(rootFull);
                 try { diskFree = new DriveInfo(rootFull).AvailableFreeSpace; } catch { }
 
-                _log($"<color=#00FF88><b>[Backup] Cleanup complete:</b></color> removed {backupsRemoved} backup(s) + {legacyFilesRemoved} legacy file(s) — {FormatBytes(bytesFreed)} freed.");
+                _log($"<color=00FF88><b>[Backup] Cleanup complete:</b></color> removed {backupsRemoved} backup(s) + {legacyFilesRemoved} legacy file(s) — {FormatBytes(bytesFreed)} freed.");
                 _log($"<color=yellow>  Remaining : {FormatBytes(bytesRemaining)} in {backupsRemaining} backup(s) | Disk free: {FormatBytes(diskFree)}</color>");
-                _log($"<color=yellow>  Policy    : retention {retentionDays} d, cap {(capBytes <= 0 ? "unlimited" : FormatBytes(capBytes))}, protected < {MinProtectedAge.TotalHours:0} h</color>");
+                _log($"<color=yellow>  Policy    : backup {(BackupEnabled ? "on" : "OFF")}, retention {retentionDays} d, cap {(capBytes <= 0 ? "unlimited" : FormatBytes(capBytes))}, protected < {MinProtectedAge.TotalHours:0} h</color>");
                 if (overCap)
                     _log("<color=#FFAA00>  Still over cap — backups younger than 24h are protected. Raise the cap or clean manually.</color>");
 

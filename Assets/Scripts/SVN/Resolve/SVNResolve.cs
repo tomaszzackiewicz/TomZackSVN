@@ -713,9 +713,6 @@ namespace SVN.Core
 
         #region Backup Management API (UI)
 
-        private static readonly int[] BackupRetentionCycle = { 7, 14, 30, 90, 0 };      // 0 = off
-        private static readonly int[] BackupSizeCycleMB = { 1024, 2048, 5120, 10240, 0 }; // 0 = no cap
-
         public void CleanBackups() => SafeFireAndForget(async () =>
         {
             LogOverwrite("<color=yellow>[Backup] Cleaning old backups...</color>");
@@ -758,16 +755,32 @@ namespace SVN.Core
             await _backup.PurgeAllAsync().ConfigureAwait(false);
         });
 
-        // === Cykle polityki: SYNCHRONICZNE na main thread (zapis prefs =
-        // PlayerPrefs — wymagają main thread). Zwracają opis do labelki buttona.
+        // === TOGGLE backupów (default ON). OFF = resolve bez kopiowania
+        // + trwałe usuwanie obstructionów — szybciej przy dużej liczbie
+        // konfliktów. Prefs (PlayerPrefs) → sync na main thread.
+        public bool IsBackupEnabled => _backup.BackupEnabled;
 
-        public string CycleBackupRetention()
+        public bool SetBackupEnabled(bool enabled)
         {
-            int current = _backup.RetentionDays;
-            int idx = Array.IndexOf(BackupRetentionCycle, current);
-            int next = BackupRetentionCycle[(idx >= 0 ? idx + 1 : 0) % BackupRetentionCycle.Length];
-            _backup.RetentionDays = next;
+            _backup.BackupEnabled = enabled;
 
+            LogBoth(enabled
+                ? "<color=green>[Backup] ENABLED — backups before destructive resolve steps ON.</color>"
+                : "<color=#FF4444>[Backup] DISABLED — NO backups, obstruction deletes are PERMANENT (faster).</color>");
+
+            return enabled;
+        }
+
+        public bool ToggleBackupEnabled() => SetBackupEnabled(!_backup.BackupEnabled);
+        public string DescribeBackupEnabled() => _backup.BackupEnabled ? "on" : "off";
+
+        // === INPUT FIELD API: retencja (dni). 0 = off.
+        public int GetBackupRetentionDays() => _backup.RetentionDays;
+
+        /// <summary>Dni retencji wiekowej. ≤0 = off (clamp ≥0 robi manager).</summary>
+        public string SetBackupRetentionDays(int days)
+        {
+            _backup.RetentionDays = days;
             string desc = DescribeBackupRetention();
             LogBoth($"<color=yellow>[Backup] Retention set to: {desc}</color>");
             return desc;
@@ -776,13 +789,12 @@ namespace SVN.Core
         public string DescribeBackupRetention() =>
             _backup.RetentionDays <= 0 ? "off" : $"{_backup.RetentionDays}d";
 
-        public string CycleBackupMaxSize()
-        {
-            int current = _backup.MaxSizeMB;
-            int idx = Array.IndexOf(BackupSizeCycleMB, current);
-            int next = BackupSizeCycleMB[(idx >= 0 ? idx + 1 : 0) % BackupSizeCycleMB.Length];
-            _backup.MaxSizeMB = next;
+        // === INPUT FIELD API: cap (MB; panel przelicza z GB). ≤0 = no cap.
+        public int GetBackupMaxSizeMB() => _backup.MaxSizeMB;
 
+        public string SetBackupMaxSizeMB(int mb)
+        {
+            _backup.MaxSizeMB = mb;
             string desc = DescribeBackupMaxSize();
             LogBoth($"<color=yellow>[Backup] Size cap set to: {desc}</color>");
             return desc;
