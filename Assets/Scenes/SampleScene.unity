@@ -10173,6 +10173,7 @@ GameObject:
   - component: {fileID: 159289263}
   - component: {fileID: 159289262}
   - component: {fileID: 159289265}
+  - component: {fileID: 159289266}
   m_Layer: 5
   m_Name: CheckoutPanel
   m_TagString: Untagged
@@ -10277,6 +10278,18 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &159289266
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 159289260}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &163629504
 GameObject:
   m_ObjectHideFlags: 0
@@ -13206,6 +13219,7 @@ GameObject:
   - component: {fileID: 217212061}
   - component: {fileID: 217212059}
   - component: {fileID: 217212063}
+  - component: {fileID: 217212064}
   m_Layer: 5
   m_Name: ProjectSelectionPanel
   m_TagString: Untagged
@@ -13319,6 +13333,18 @@ MonoBehaviour:
   renameNewNameInput: {fileID: 2135876259}
   searchInput: {fileID: 732975841}
   sortDropdown: {fileID: 1663690337}
+--- !u!114 &217212064
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 217212057}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &224999827
 GameObject:
   m_ObjectHideFlags: 0
@@ -14536,6 +14562,7 @@ GameObject:
   - component: {fileID: 242203810}
   - component: {fileID: 242203812}
   - component: {fileID: 242203813}
+  - component: {fileID: 242203814}
   m_Layer: 5
   m_Name: BranchPanel
   m_TagString: Untagged
@@ -14640,6 +14667,18 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &242203814
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 242203808}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &242223388
 GameObject:
   m_ObjectHideFlags: 0
@@ -16944,6 +16983,7 @@ GameObject:
   - component: {fileID: 288858257}
   - component: {fileID: 288858259}
   - component: {fileID: 288858260}
+  - component: {fileID: 288858261}
   m_Layer: 5
   m_Name: CommitPanel
   m_TagString: Untagged
@@ -17048,6 +17088,18 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &288858261
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 288858255}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &293785598
 GameObject:
   m_ObjectHideFlags: 0
@@ -25493,6 +25545,7 @@ GameObject:
   - component: {fileID: 511109531}
   - component: {fileID: 511109530}
   - component: {fileID: 511109533}
+  - component: {fileID: 511109534}
   m_Layer: 5
   m_Name: IgnoredFilesPanel
   m_TagString: Untagged
@@ -25597,6 +25650,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 36e2af767fb334c48b599121bb055d61, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!114 &511109534
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 511109527}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &515640295
 GameObject:
   m_ObjectHideFlags: 0
@@ -34685,6 +34750,7 @@ GameObject:
   - component: {fileID: 725259085}
   - component: {fileID: 725259084}
   - component: {fileID: 725259083}
+  - component: {fileID: 725259086}
   m_Layer: 5
   m_Name: RelocateProjectPanel
   m_TagString: Untagged
@@ -34778,6 +34844,18 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 725259081}
   m_CullTransparentMesh: 1
+--- !u!114 &725259086
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 725259081}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &727498760
 GameObject:
   m_ObjectHideFlags: 0
@@ -37672,6 +37750,7 @@ GameObject:
   - component: {fileID: 769680527}
   - component: {fileID: 769680529}
   - component: {fileID: 769680530}
+  - component: {fileID: 769680531}
   m_Layer: 5
   m_Name: AddRepoPanel
   m_TagString: Untagged
@@ -37776,6 +37855,18 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &769680531
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 769680524}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1001 &769752083
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -41251,6 +41342,7 @@ GameObject:
   - component: {fileID: 837554678}
   - component: {fileID: 837554677}
   - component: {fileID: 837554680}
+  - component: {fileID: 837554681}
   m_Layer: 5
   m_Name: BlamePanel
   m_TagString: Untagged
@@ -41355,6 +41447,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9599573a162dae145ae89312b1af3189, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BlamePanel
+--- !u!114 &837554681
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 837554674}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &838523975
 GameObject:
   m_ObjectHideFlags: 0
@@ -41748,6 +41852,7 @@ GameObject:
   - component: {fileID: 852893104}
   - component: {fileID: 852893103}
   - component: {fileID: 852893106}
+  - component: {fileID: 852893107}
   m_Layer: 5
   m_Name: StealLockPanel
   m_TagString: Untagged
@@ -41855,6 +41960,18 @@ MonoBehaviour:
   lockEntryPrefab: {fileID: 5155565009558540031, guid: b7b7262887fa2f847b28f616c802f9d3, type: 3}
   locksContainer: {fileID: 202043028}
   stealLockConsole: {fileID: 617836218}
+--- !u!114 &852893107
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 852893100}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &853317193
 GameObject:
   m_ObjectHideFlags: 0
@@ -49059,6 +49176,7 @@ GameObject:
   - component: {fileID: 1007711248}
   - component: {fileID: 1007711247}
   - component: {fileID: 1007711250}
+  - component: {fileID: 1007711251}
   m_Layer: 5
   m_Name: RevisionPanel
   m_TagString: Untagged
@@ -49163,6 +49281,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: db76312a403de4b41acf86687a77517c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RevisionPanel
+--- !u!114 &1007711251
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1007711244}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1009676034
 GameObject:
   m_ObjectHideFlags: 0
@@ -53692,6 +53822,7 @@ GameObject:
   - component: {fileID: 1117877837}
   - component: {fileID: 1117877836}
   - component: {fileID: 1117877839}
+  - component: {fileID: 1117877840}
   m_Layer: 5
   m_Name: CleanPanel
   m_TagString: Untagged
@@ -53796,6 +53927,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c592aea219688f14bb4628f3b463bf58, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CleanPanel
+--- !u!114 &1117877840
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1117877833}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1118236991
 GameObject:
   m_ObjectHideFlags: 0
@@ -57658,6 +57801,7 @@ GameObject:
   - component: {fileID: 1212322076}
   - component: {fileID: 1212322078}
   - component: {fileID: 1212322079}
+  - component: {fileID: 1212322080}
   m_Layer: 5
   m_Name: ResolvePanel
   m_TagString: Untagged
@@ -57765,6 +57909,18 @@ MonoBehaviour:
   BackupEnabledToggle: {fileID: 1619339825}
   BackupRetentionInput: {fileID: 958920653}
   BackupCapInput: {fileID: 259103790}
+--- !u!114 &1212322080
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1212322074}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1001 &1216936572
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -61083,6 +61239,7 @@ GameObject:
   - component: {fileID: 1260855996}
   - component: {fileID: 1260855995}
   - component: {fileID: 1260855998}
+  - component: {fileID: 1260855999}
   m_Layer: 5
   m_Name: ShelvePanel
   m_TagString: Untagged
@@ -61187,6 +61344,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0e687ef7724dd24dbaca0b30cca6e03, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ShalvePanel
+--- !u!114 &1260855999
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1260855992}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1262467710
 GameObject:
   m_ObjectHideFlags: 0
@@ -63630,6 +63799,7 @@ GameObject:
   - component: {fileID: 1326191447}
   - component: {fileID: 1326191449}
   - component: {fileID: 1326191450}
+  - component: {fileID: 1326191451}
   m_Layer: 5
   m_Name: MergePanel
   m_TagString: Untagged
@@ -63734,6 +63904,18 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &1326191451
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1326191445}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1326818228
 GameObject:
   m_ObjectHideFlags: 0
@@ -64345,6 +64527,7 @@ GameObject:
   - component: {fileID: 1338514697}
   - component: {fileID: 1338514696}
   - component: {fileID: 1338514699}
+  - component: {fileID: 1338514700}
   m_Layer: 5
   m_Name: LockPanel
   m_TagString: Untagged
@@ -64449,6 +64632,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c92cad27f04f7d24583bd1bf43b53c60, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::LocksPanel
+--- !u!114 &1338514700
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1338514693}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1338794497
 GameObject:
   m_ObjectHideFlags: 0
@@ -77832,6 +78027,7 @@ GameObject:
   - component: {fileID: 1631635759}
   - component: {fileID: 1631635758}
   - component: {fileID: 1631635757}
+  - component: {fileID: 1631635760}
   m_Layer: 5
   m_Name: RenameProjectPanel
   m_TagString: Untagged
@@ -77925,6 +78121,18 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1631635755}
   m_CullTransparentMesh: 1
+--- !u!114 &1631635760
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1631635755}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1633468625
 GameObject:
   m_ObjectHideFlags: 0
@@ -86969,6 +87177,7 @@ GameObject:
   - component: {fileID: 1795453539}
   - component: {fileID: 1795453542}
   - component: {fileID: 1795453543}
+  - component: {fileID: 1795453544}
   m_Layer: 5
   m_Name: SettingsPanel
   m_TagString: Untagged
@@ -87073,6 +87282,18 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &1795453544
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1795453538}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1798247352
 GameObject:
   m_ObjectHideFlags: 0
@@ -95547,6 +95768,7 @@ GameObject:
   - component: {fileID: 1947068006}
   - component: {fileID: 1947068005}
   - component: {fileID: 1947068004}
+  - component: {fileID: 1947068008}
   m_Layer: 5
   m_Name: DiffPanel
   m_TagString: Untagged
@@ -95651,6 +95873,18 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1947068002}
   m_CullTransparentMesh: 1
+--- !u!114 &1947068008
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1947068002}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &1949646192
 GameObject:
   m_ObjectHideFlags: 0
@@ -98748,6 +98982,7 @@ GameObject:
   - component: {fileID: 2025856763}
   - component: {fileID: 2025856762}
   - component: {fileID: 2025856761}
+  - component: {fileID: 2025856764}
   m_Layer: 5
   m_Name: CreateProjectPanel
   m_TagString: Untagged
@@ -98840,6 +99075,18 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2025856758}
   m_CullTransparentMesh: 1
+--- !u!114 &2025856764
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2025856758}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4de87f71c71ccdd4782bedd358661800, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::DraggableWindow
 --- !u!1 &2031456326
 GameObject:
   m_ObjectHideFlags: 0
@@ -99725,7 +99972,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 960, y: -10.67525}
+  m_AnchoredPosition: {x: 960, y: -10.675232}
   m_SizeDelta: {x: 1920, y: 21.3505}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!1 &2045958854
