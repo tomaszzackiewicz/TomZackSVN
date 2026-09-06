@@ -502,7 +502,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange>[DIAG] Timed out (3 min).</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>>[DIAG] Timed out (3 min).</color>");
             }
             catch (Exception ex)
             {

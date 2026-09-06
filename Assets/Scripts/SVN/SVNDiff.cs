@@ -78,7 +78,7 @@ namespace SVN.Core
         private async Task FireAndForget(Func<Task> operation)
         {
             try { await operation().ConfigureAwait(false); }
-            catch (OperationCanceledException) { PostLog("<color=orange>Operation cancelled.</color>"); }
+            catch (OperationCanceledException) { PostLog("<color=#8B0000>>Operation cancelled.</color>"); }
             catch (Exception ex) { PostLog($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
         }
 
@@ -271,7 +271,7 @@ namespace SVN.Core
 
                 if (diffContent.Contains("Cannot display: file marked as a binary type"))
                 {
-                    PostLog("<color=orange>Binary File:</color> Opening Explorer...");
+                    PostLog("<color=#8B0000>>Binary File:</color> Opening Explorer...");
                     string explorerPath = fullPath.Replace("/", "\\");
                     PostUI(() =>
                     {
@@ -331,7 +331,7 @@ namespace SVN.Core
                                     });
                                     if (process == null)
                                     {
-                                        PostLog("<color=orange>Warning:</color> Could not launch the external diff tool.");
+                                        PostLog("<color=#8B0000>>Warning:</color> Could not launch the external diff tool.");
                                     }
                                 });
 
@@ -408,14 +408,14 @@ namespace SVN.Core
                         using var process = Process.Start(new ProcessStartInfo(tempDiffPath) { UseShellExecute = true });
                         if (process == null)
                         {
-                            PostLog("<color=orange>Warning:</color> Could not open the diff file. No default application associated with .diff.");
+                            PostLog("<color=#8B0000>>Warning:</color> Could not open the diff file. No default application associated with .diff.");
                         }
                     });
                 }
             }
             catch (OperationCanceledException)
             {
-                PostLog("<color=orange>Diff operation cancelled.</color>");
+                PostLog("<color=#8B0000>>Diff operation cancelled.</color>");
             }
             catch (Exception ex)
             {

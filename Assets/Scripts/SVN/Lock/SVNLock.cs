@@ -126,7 +126,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToLockPanel("<color=orange>[Lock] Operation cancelled.</color>");
+                LogToLockPanel("<color=#8B0000>>[Lock] Operation cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -202,7 +202,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToLockPanel("<color=orange>[Unlock] Operation cancelled.</color>");
+                LogToLockPanel("<color=#8B0000>>[Unlock] Operation cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -231,7 +231,7 @@ namespace SVN.Core
         // === FIX K2: rdzeń bez guardu — wywoływalny z wnętrza innych operacji.
         private async Task ShowAllLocksCoreAsync()
         {
-            LogToLockPanel("<b><color=orange>Fetching Repository Status...</color></b>", append: false);
+            LogToLockPanel("<b><color=#8B0000>>Fetching Repository Status...</color></b>", append: false);
 
             await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
@@ -366,9 +366,15 @@ namespace SVN.Core
             else
             {
                 cmd = string.IsNullOrEmpty(safeComment)
-                    ? $"lock --force \"{fullPath}\""
-                    : $"lock -m \"{safeComment}\" --force \"{fullPath}\"";
+                    ? $"lock \"{fullPath}\""              // <<< BEZ --force (nie kradniemy)
+                    : $"lock -m \"{safeComment}\" \"{fullPath}\"";
             }
+            //else
+            //{
+            //    cmd = string.IsNullOrEmpty(safeComment)
+            //        ? $"lock --force \"{fullPath}\""
+            //        : $"lock -m \"{safeComment}\" --force \"{fullPath}\"";
+            //}
 
             LogToLockPanel($"<color=#00E5FF>[Lock]</color> Request: {cmd}");
 
@@ -461,7 +467,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToLockPanel("<color=orange>[Cleanup Locks] Operation cancelled.</color>");
+                LogToLockPanel("<color=#8B0000>>[Cleanup Locks] Operation cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -500,7 +506,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange>[Lock] Cache refresh cancelled.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>>[Lock] Cache refresh cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -563,6 +569,123 @@ namespace SVN.Core
 
             string sanitized = sb.ToString().Trim();
             return sanitized.Length > 200 ? sanitized.Substring(0, 200) : sanitized;
+        }
+
+        // ===================================================================
+        //  PER-PLIK lock/unlock/steal dla panelu Protected (ścieżki bez drzewa)
+        // ===================================================================
+
+        /// <summary>Lock pojedynczego pliku (z komentarzem z pola UI, jak Toggle).</summary>
+        public async Task<bool> LockSingleFileAsync(string fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath)) return false;
+            if (!TryEnterProcessing()) return false;
+
+            string root = SvnRunner.ForceCleanPath(svnManager.WorkingDir);
+            try
+            {
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
+                string safeComment = SanitizeLockComment(ReadLockComment());
+                string core = "lock";   // bez --force: cudzy lock = odmowa (Steal to świadoma decyzja)
+                string cmd = string.IsNullOrEmpty(safeComment)
+                    ? $"{core} \"{fullPath}\""
+                    : $"{core} -m \"{safeComment}\" \"{fullPath}\"";
+
+                LogToLockPanel($"<color=#00E5FF>[Lock]</color> {Path.GetFileName(fullPath)}");
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await SvnRunner.RunAsync(cmd, root, token: cts.Token).ConfigureAwait(false);
+
+                SVNStatus.ClearLockCache();
+                PostToMainThread(() => ClearLockCommentInput());
+                _ = RefreshLockCacheAsync(true);
+                PostToMainThread(() => svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly());
+                LogToLockPanel($"<color=green>Locked:</color> {Path.GetFileName(fullPath)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogToLockPanel($"<color=red>[Lock Error]:</color> {Path.GetFileName(fullPath)} — {ex.Message}");
+                return false;
+            }
+            finally { ExitProcessing(); }
+        }
+
+        /// <summary>Unlock Twojego locka (unlock --force na własnym locku jest bezpieczny).</summary>
+        public async Task<bool> UnlockSingleFileAsync(string fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath)) return false;
+            if (!TryEnterProcessing()) return false;
+
+            string root = SvnRunner.ForceCleanPath(svnManager.WorkingDir);
+            try
+            {
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
+                LogToLockPanel($"<color=#00E5FF>[Unlock]</color> {Path.GetFileName(fullPath)}");
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await SvnRunner.RunAsync($"unlock --force \"{fullPath}\"", root, token: cts.Token).ConfigureAwait(false);
+
+                SVNStatus.ClearLockCache();
+                _ = RefreshLockCacheAsync(true);
+                PostToMainThread(() => svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly());
+                LogToLockPanel($"<color=green>Unlocked:</color> {Path.GetFileName(fullPath)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogToLockPanel($"<color=red>[Unlock Error]:</color> {Path.GetFileName(fullPath)} — {ex.Message}");
+                return false;
+            }
+            finally { ExitProcessing(); }
+        }
+
+        /// <summary>
+        /// Kradzież cudzego locka — ŚWIADOMA decyzja z panelu: unlock --force
+        /// (odbiera locka właścicielowi), potem natychmiast lock dla Ciebie.
+        /// </summary>
+        public async Task<bool> StealLockAsync(string fullPath)
+        {
+            if (string.IsNullOrWhiteSpace(fullPath)) return false;
+            if (!TryEnterProcessing()) return false;
+
+            string root = SvnRunner.ForceCleanPath(svnManager.WorkingDir);
+            try
+            {
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
+                LogToLockPanel($"<color=#8B0000>[Steal]</color> {Path.GetFileName(fullPath)} — taking over the lock...");
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+                // Krok 1: odebranie locka (force):
+                await SvnRunner.RunAsync($"unlock --force \"{fullPath}\"", root, token: cts.Token).ConfigureAwait(false);
+
+                // Krok 2: przejęcie (jeśli ktoś ubiegł nas w ułamku sekundy — lock pada,
+                // uczciwy RAW w logu):
+                string safeComment = SanitizeLockComment(ReadLockComment());
+                string lockCmd = string.IsNullOrEmpty(safeComment)
+                    ? $"lock \"{fullPath}\""
+                    : $"lock -m \"{safeComment}\" \"{fullPath}\"";
+                await SvnRunner.RunAsync(lockCmd, root, token: cts.Token).ConfigureAwait(false);
+
+                SVNStatus.ClearLockCache();
+                PostToMainThread(() => ClearLockCommentInput());
+                _ = RefreshLockCacheAsync(true);
+                PostToMainThread(() => svnManager.GetModule<SVNStatus>()?.RefreshVisibleUIOnly());
+                LogToLockPanel($"<color=green>Lock stolen and taken:</color> {Path.GetFileName(fullPath)}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SVNStatus.ClearLockCache();
+                _ = RefreshLockCacheAsync(true);
+                LogToLockPanel($"<color=red>[Steal Error]:</color> {Path.GetFileName(fullPath)} — {ex.Message}");
+                return false;
+            }
+            finally { ExitProcessing(); }
         }
     }
 }

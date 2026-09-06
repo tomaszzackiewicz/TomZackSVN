@@ -507,14 +507,21 @@ namespace SVN.Core
             return sizes;
         }
 
-        // Format na pasek: "12.30 GB / 24.87 GB" (total wyszarzony)
+        // Format na pasek: "Project: 12.3 GB / Repo: 24.9 GB" — obie wartości w tym
+        // samym kolorze (etykiety turkusowe, wartości standardowe).
+        // Project = pliki projektu (bez ukrytego .svn); Repo = całość zajmowana
+        // lokalnie przez checkout (pliki + cache SVN, przy zagnieżdżeniu: cały
+        // korzeń checkoutu — stąd Repo > Project).
         private static string FormatSizeDisplay(string workingSize, string totalSize)
         {
+            string working = string.IsNullOrWhiteSpace(workingSize) ? "..." : workingSize;
+
             if (string.IsNullOrWhiteSpace(totalSize) ||
                 totalSize == "unknown" || totalSize == "Size unknown")
-                return workingSize ?? "...";
+                return $"<color=#00E5FF>Project:</color> {working}";
 
-            return $"{workingSize} / <color=#999999>{totalSize}</color>";
+            return $"<color=#00E5FF>Project:</color> {working} " +
+                   $"/ <color=#00E5FF>Repo:</color> {totalSize}";
         }
 
         // ==================== CHECKOUT NIEKOMPLETNY ====================

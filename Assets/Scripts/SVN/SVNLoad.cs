@@ -24,7 +24,7 @@ namespace SVN.Core
 
             if (Interlocked.CompareExchange(ref _isBusy, 1, 0) == 1)
             {
-                SVNLogBridge.LogLine("<color=orange>Another operation is running. Please wait.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>>Another operation is running. Please wait.</color>");
                 return;
             }
 
@@ -128,13 +128,13 @@ namespace SVN.Core
                     }
                     catch (Exception ex)
                     {
-                        SVNLogBridge.LogLine($"<color=orange>Warning:</color> Cannot read directory: {ex.Message}");
+                        SVNLogBridge.LogLine($"<color=#8B0000>>Warning:</color> Cannot read directory: {ex.Message}");
                         isFolderEmpty = false;
                     }
 
                     string forceFlag = isFolderEmpty ? "" : " --force";
                     if (!isFolderEmpty)
-                        SVNLogBridge.LogLine("<color=orange>Note:</color> Folder not empty. Merging with existing files...");
+                        SVNLogBridge.LogLine("<color=#8B0000>>Note:</color> Folder not empty. Merging with existing files...");
 
                     SVNLogBridge.LogLine("<color=yellow>Starting Checkout...</color>");
                     await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath, token: token).ConfigureAwait(false);
@@ -202,7 +202,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange>[SVNLoad] Operation canceled.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>>[SVNLoad] Operation canceled.</color>");
             }
             catch (Exception ex)
             {

@@ -173,7 +173,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToConsole("<color=orange><b>[Revert All]</b> Cancelled.</color>");
+                LogToConsole("<color=#8B0000>><b>[Revert All]</b> Cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -259,7 +259,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToConsole("<color=orange><b>[Revert]</b> Cancelled.</color>");
+                LogToConsole("<color=#8B0000>><b>[Revert]</b> Cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -285,7 +285,7 @@ namespace SVN.Core
                 var cts = Volatile.Read(ref _revertCts);
                 if (cts == null || cts.IsCancellationRequested) return;
                 cts.Cancel();
-                LogToConsole("<color=orange><b>[Revert]</b> Cancel requested...</color>");
+                LogToConsole("<color=#8B0000>><b>[Revert]</b> Cancel requested...</color>");
             }
             catch (ObjectDisposedException) { }
             catch (Exception ex)

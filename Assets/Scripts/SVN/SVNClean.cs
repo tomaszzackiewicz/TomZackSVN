@@ -344,7 +344,7 @@ namespace SVN.Core
             await SvnRunner.RunAsync("cleanup --remove-unversioned --include-externals", path, true, t).ConfigureAwait(false);
             await SvnRunner.RunAsync("update --force --accept theirs-full", path, true, t).ConfigureAwait(false);
 
-            LogClean("<color=orange>Hard Reset Complete.</color>");
+            LogClean("<color=#8B0000>>Hard Reset Complete.</color>");
         }
 
         public async Task RepairStructureAsync(CancellationToken t)

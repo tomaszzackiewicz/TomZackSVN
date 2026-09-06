@@ -58,7 +58,7 @@ namespace SVN.Core
                 var cts = Volatile.Read(ref _operationCts);
                 if (cts == null || cts.IsCancellationRequested) return;
                 cts.Cancel();
-                LogInfo("<color=orange>Cancellation requested...</color>");
+                LogInfo("<color=#8B0000>>Cancellation requested...</color>");
             }
             catch (ObjectDisposedException) { }
         }
@@ -73,7 +73,7 @@ namespace SVN.Core
 
             if (!hasLock)
             {
-                LogInfo("<color=orange>Another branch/tag operation is already in progress.</color>");
+                LogInfo("<color=#8B0000>>Another branch/tag operation is already in progress.</color>");
                 return;
             }
 
@@ -85,7 +85,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogInfo("<color=orange>Operation cancelled.</color>");
+                LogInfo("<color=#8B0000>>Operation cancelled.</color>");
             }
             catch (Exception ex)
             {

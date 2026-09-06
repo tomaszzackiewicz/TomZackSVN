@@ -21,7 +21,7 @@ namespace SVN.Core
         // Jeśli font nie ma █/░ (pokażą się kwadraty) — podmień na '#'/'.'
         private const char BarFilled = '█';
         private const char BarEmpty = '░';
-        private const int BarWidth = 24;
+        private const int BarWidth = 40;
         private const int RenderThrottleMs = 100;
 
         private readonly TMPro.TMP_Text _target;

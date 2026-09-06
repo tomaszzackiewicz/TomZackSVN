@@ -42,7 +42,7 @@ namespace SVN.Core
         {
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
             {
-                LogToConsole("<color=orange>Another commit operation is already running.</color>");
+                LogToConsole("<color=#8B0000>>Another commit operation is already running.</color>");
                 return false;
             }
 
@@ -175,7 +175,7 @@ namespace SVN.Core
                 if (!cts.IsCancellationRequested)
                 {
                     cts.Cancel();
-                    LogToConsole("<color=orange><b>[System]</b> Cancellation requested...</color>");
+                    LogToConsole("<color=#8B0000>><b>[System]</b> Cancellation requested...</color>");
                 }
             }
             catch (ObjectDisposedException) { }
@@ -369,7 +369,7 @@ namespace SVN.Core
                     {
                         "M" => "yellow",
                         "A" => "green",
-                        "R" => "orange",
+                        "R" => "<color=#8B0000>",
                         "!" => "#FF4444",
                         "?" => "#00E5FF",
                         "D" => "red",
@@ -611,7 +611,8 @@ namespace SVN.Core
                     Interlocked.Exchange(ref _commitFilesProcessed, 0);
                     Interlocked.Exchange(ref _commitFilesTotal, 0);
 
-                    string command = $"commit -F \"{msgFile}\" --non-interactive .";
+                    //string command = $"commit -F \"{msgFile}\" --non-interactive .";
+                    string command = $"commit --no-unlock -F \"{msgFile}\" --non-interactive .";
 
                     try
                     {
@@ -633,7 +634,7 @@ namespace SVN.Core
                     }
                     catch (OperationCanceledException)
                     {
-                        LogToConsole("<color=orange><b>[ABORTED]</b> User cancelled.</color>");
+                        LogToConsole("<color=#8B0000>><b>[ABORTED]</b> User cancelled.</color>");
                     }
                     catch (Exception ex)
                     {
@@ -738,7 +739,7 @@ namespace SVN.Core
 
                 if (selectedItems.Count == 0)
                 {
-                    LogToConsole("<color=orange>Nothing selected for commit.</color>");
+                    LogToConsole("<color=#8B0000>>Nothing selected for commit.</color>");
                     return;
                 }
 
@@ -904,7 +905,7 @@ namespace SVN.Core
                     }
                     catch (OperationCanceledException)
                     {
-                        LogToConsole("<color=orange><b>[ABORTED]</b> Commit cancelled.</color>");
+                        LogToConsole("<color=#8B0000>><b>[ABORTED]</b> Commit cancelled.</color>");
                     }
                     catch (Exception ex)
                     {
@@ -1027,7 +1028,8 @@ namespace SVN.Core
 
             try
             {
-                string command = $"commit --depth empty --targets \"{targetsFile}\" -F \"{msgFilePath}\" --non-interactive";
+                //string command = $"commit --depth empty --targets \"{targetsFile}\" -F \"{msgFilePath}\" --non-interactive";
+                string command = $"commit --depth empty --no-unlock --targets \"{targetsFile}\" -F \"{msgFilePath}\" --non-interactive";
                 return await RunCommitProcessAsync(command, root, token);
             }
             finally

@@ -390,7 +390,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                PostUI(() => SVNLogBridge.LogLine("<color=orange>[Stash] Cancelled.</color>"));
+                PostUI(() => SVNLogBridge.LogLine("<color=#8B0000>>[Stash] Cancelled.</color>"));
                 return false;
             }
             catch (Exception ex)
@@ -567,7 +567,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                PostUI(() => SVNLogBridge.LogLine("<color=orange>[Stash] Restore cancelled.</color>"));
+                PostUI(() => SVNLogBridge.LogLine("<color=#8B0000>>[Stash] Restore cancelled.</color>"));
                 return false;
             }
             catch (Exception ex)

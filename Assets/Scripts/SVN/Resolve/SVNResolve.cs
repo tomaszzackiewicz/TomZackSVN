@@ -114,7 +114,7 @@ namespace SVN.Core
                 var cts = Volatile.Read(ref _activeCts);
                 if (cts == null || cts.IsCancellationRequested) return;
                 cts.Cancel();
-                LogBoth("<color=orange><b>[Resolve]</b> Cancel requested...</color>");
+                LogBoth("<color=#8B0000>><b>[Resolve]</b> Cancel requested...</color>");
             }
             catch (ObjectDisposedException) { }
             catch (Exception ex)
@@ -556,7 +556,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogBoth("<color=orange><b>[Resolve]</b> Operation canceled.</color>");
+                LogBoth("<color=#8B0000>><b>[Resolve]</b> Operation canceled.</color>");
             }
             catch (Exception ex)
             {
@@ -599,7 +599,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogBoth("<color=orange><b>[Resolve]</b> Operation canceled.</color>");
+                LogBoth("<color=#8B0000>><b>[Resolve]</b> Operation canceled.</color>");
                 return default;
             }
             catch (Exception ex)
@@ -789,7 +789,6 @@ namespace SVN.Core
         public string DescribeBackupRetention() =>
             _backup.RetentionDays <= 0 ? "off" : $"{_backup.RetentionDays}d";
 
-        // === INPUT FIELD API: cap (MB; panel przelicza z GB). ≤0 = no cap.
         public int GetBackupMaxSizeMB() => _backup.MaxSizeMB;
 
         public string SetBackupMaxSizeMB(int mb)

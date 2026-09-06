@@ -372,6 +372,53 @@ namespace SVN.Core
             public bool Exists;
         }
 
+        // === [P]: propget svn:needs-lock -R --xml — wzbogacenie refreshu.
+        // Porażka fetchu NIE może wywalić refreshu statusu (stąd wrapper).
+        private static async Task<HashSet<string>> SafeGetProtectedPathsAsync(
+            string root, CancellationToken token)
+        {
+            try
+            {
+                return await SvnRunner.GetProtectedPathsAsync(root, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[SVNStatus] Protected fetch failed (flags disabled): {ex.Message}");
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        // === [P]: mirror ApplyLockColors — flagi svn:needs-lock na elementach.
+        // FullPath elementów drzewa jest root-relatywny; normalizacja jest
+        // tolerancyjna też na formę absolutną i "./" (spójnie z kluczami
+        // GetProtectedPathsAsync).
+        public void ApplyProtectionFlags(List<SvnTreeElement> elements, HashSet<string> protectedPaths)
+        {
+            if (elements == null || protectedPaths == null)
+                return;
+
+            string root = svnManager?.WorkingDir?.Replace("\\", "/").TrimEnd('/');
+            bool hasRoot = !string.IsNullOrEmpty(root);
+
+            foreach (var e in elements)
+            {
+                if (e.IsFolder || string.IsNullOrEmpty(e.FullPath))
+                    continue;
+
+                string p = e.FullPath.Replace('\\', '/').Trim().TrimStart('/');
+                if (p.StartsWith("./")) p = p.Substring(2);
+
+                if (hasRoot && p.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+                    p = p.Substring(root.Length + 1);
+
+                e.IsProtected = protectedPaths.Contains(p);
+            }
+        }
+
         public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
         {
             UpdateListSelection(_flatTreeData, parentFolder.FullPath, isChecked);
@@ -829,6 +876,7 @@ namespace SVN.Core
                 string root = svnManager.WorkingDir;
                 Dictionary<string, SvnChangeInfo> statusDict = null;
                 Dictionary<string, SVNLockDetails> lockDict = null;
+                HashSet<string> protectedPaths = null;                       // === [P]
 
                 // === FIX B: konwersja do formatu czytanego przez managera
                 // (PostProcessStatus → auto-open Resolve przy konfliktach).
@@ -838,12 +886,14 @@ namespace SVN.Core
                 {
                     var statusTask = GetChangesDictionaryAsync(root, ShowUnversionedFiles, token);
                     var locksTask = GetLocksDictionaryAsync(root, token);
+                    var protTask = SafeGetProtectedPathsAsync(root, token);  // === [P]
 
-                    await Task.WhenAll(statusTask, locksTask);
+                    await Task.WhenAll(statusTask, locksTask, protTask);     // === [P]
                     token.ThrowIfCancellationRequested();
 
                     statusDict = statusTask.Result;
                     lockDict = locksTask.Result;
+                    protectedPaths = protTask.Result;                        // === [P]
 
                     var ignoreModule = svnManager.GetModule<SVNIgnore>();
                     if (ignoreModule != null && statusDict != null && statusDict.Count > 0)
@@ -867,7 +917,7 @@ namespace SVN.Core
 
                 if (svnManager.WorkingDir != expectedWorkingDir)
                 {
-                    SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Project changed during refresh — discarding results.");
+                    SVNLogBridge.LogToOutput("<color=#8B0000>>[SVN]</color> Project changed during refresh — discarding results.");
                     ResetScanningText();
                     return;
                 }
@@ -915,6 +965,10 @@ namespace SVN.Core
 
                 if (lockDict != null && lockDict.Count > 0)
                     ApplyLockColors(buildResult.Elements, lockDict);
+
+                // === [P]: flagi svn:needs-lock (BuildCommitView trzyma TE SAME
+                // obiekty elementów → commit-view dostaje flagi automatycznie):
+                ApplyProtectionFlags(buildResult.Elements, protectedPaths);
 
                 var localFlatData = buildResult.Elements;
                 var localCommitData = newCommitData;

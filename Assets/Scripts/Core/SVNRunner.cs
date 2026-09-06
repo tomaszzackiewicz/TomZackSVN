@@ -743,7 +743,7 @@ namespace SVN.Core
         {
             "M" => "<color=#FFD700><b>[M]</b></color>",
             "A" => "<color=#00FF41><b>[A]</b></color>",
-            "I" => "<color=#888888>[I]</color>",
+            "I" => "<color=yellow>[I]</color>",
             "?" => "<color=#00E5FF><b>[?]</b></color>",
             "C" => "<color=#FF3D00><b>[C]</b></color>",
             "!" => "<color=#FF00FF><b>[!]</b></color>",
@@ -763,6 +763,50 @@ namespace SVN.Core
                 i++;
             }
             return $"{dblSByte:0.##}{Suffix[i]}";
+        }
+
+        /// <summary>
+        /// Zbiór ścieżek (root-relatywnych, '/') z property svn:needs-lock
+        /// w working copy. Lokalne (bez serwera); widzi także NIEZACOMMITOWANE
+        /// propset/propdel (czyta stan WC, nie HEAD). Klucze są normalizowane
+        /// do postaci root-relatywnej niezależnie od formy ścieżek w XML.
+        /// Brak '*' w argumentach — bezpieczne przy kliencie globującym argv
+        /// (root cause "Models" — patrz SVNFileProtection, FIX 7).
+        /// </summary>
+        public static async Task<HashSet<string>> GetProtectedPathsAsync(
+            string workingDir, CancellationToken token = default)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(workingDir)) return set;
+
+            string xml = await RunAsync("propget svn:needs-lock -R --xml .", workingDir, token: token)
+                .ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(xml)) return set;
+
+            string wd = workingDir.Replace('\\', '/').TrimEnd('/');
+
+            try
+            {
+                var doc = XDocument.Parse(xml);
+                foreach (var t in doc.Descendants("target"))
+                {
+                    string p = CleanSvnPath((string)t.Attribute("path"));
+                    if (string.IsNullOrWhiteSpace(p)) continue;
+
+                    string norm = p.Replace('\\', '/');
+                    if (wd.Length > 0 && norm.StartsWith(wd + "/", StringComparison.OrdinalIgnoreCase))
+                        norm = norm.Substring(wd.Length + 1);   // absolutna → root-relatywna
+
+                    if (!string.IsNullOrWhiteSpace(norm))
+                        set.Add(norm);
+                }
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput("[SvnRunner] Protected-list parse error: " + ex.Message);
+            }
+
+            return set;
         }
 
         public static async Task<Dictionary<string, (string status, string size)>> GetFullStatusDictionaryAsync(

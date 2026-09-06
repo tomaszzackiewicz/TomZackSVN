@@ -18,6 +18,8 @@ namespace SVN.Core
         public bool IsCommitDelegate;
         public bool LockedByMe;
         public bool LockedByOther;
+        public bool IsProtected;
+        public bool IsProtectionRemovalPending;
         public bool IsRootChange;
         public int AddedLines;
         public int RemovedLines;

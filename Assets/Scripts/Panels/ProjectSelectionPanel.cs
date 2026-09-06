@@ -216,7 +216,7 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         if (Interlocked.CompareExchange(ref _isRenaming, 1, 0) == 1)
         {
-            SVNLogBridge.LogLine("<color=orange>Rename already in progress...</color>");
+            SVNLogBridge.LogLine("<color=#8B0000>>Rename already in progress...</color>");
             return;
         }
 
@@ -326,7 +326,7 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         if (Interlocked.CompareExchange(ref _isRelocating, 1, 0) == 1)
         {
-            SVNLogBridge.LogLine("<color=orange>Relocate already in progress...</color>");
+            SVNLogBridge.LogLine("<color=#8B0000>>Relocate already in progress...</color>");
             return;
         }
 
@@ -341,7 +341,7 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         if (newUrl == _projectToRelocate.repoUrl)
         {
-            SVNLogBridge.LogLine("<color=orange>New URL is the same as current. No changes made.</color>");
+            SVNLogBridge.LogLine("<color=#8B0000>>New URL is the same as current. No changes made.</color>");
             Interlocked.Exchange(ref _isRelocating, 0);
             Button_CancelRelocate();
             return;
@@ -441,7 +441,7 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (project == null || svnManager == null || !svnManager.isActiveAndEnabled) return;
         if (svnManager.IsProcessing)
         {
-            SVNLogBridge.LogLine("<color=orange>Another operation is running. Please wait.</color>");
+            SVNLogBridge.LogLine("<color=#8B0000>>Another operation is running. Please wait.</color>");
             return;
         }
 

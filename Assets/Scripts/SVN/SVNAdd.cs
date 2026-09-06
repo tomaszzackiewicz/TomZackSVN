@@ -82,7 +82,7 @@ namespace SVN.Core
                 if (cts == null || cts.IsCancellationRequested) return;
 
                 cts.Cancel();
-                SVNLogBridge.LogLine("<color=orange><b>[Add]</b> Cancellation requested...</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>><b>[Add]</b> Cancellation requested...</color>");
             }
             catch (ObjectDisposedException) { }
             catch (Exception ex)
@@ -211,7 +211,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange><b>[ABORTED]</b> Add operation cancelled by user.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>><b>[ABORTED]</b> Add operation cancelled by user.</color>");
             }
             catch (Exception ex)
             {
@@ -274,7 +274,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange><b>[ABORTED]</b> Add operation cancelled.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>><b>[ABORTED]</b> Add operation cancelled.</color>");
             }
             catch (Exception ex)
             {
@@ -351,7 +351,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange><b>[ABORTED]</b> Add Selected cancelled.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>><b>[ABORTED]</b> Add Selected cancelled.</color>");
             }
             catch (Exception ex)
             {

@@ -291,7 +291,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                PostUI(() => SVNLogBridge.LogLine("<color=orange>[Snapshot] Cancelled.</color>"));
+                PostUI(() => SVNLogBridge.LogLine("<color=#8B0000>>[Snapshot] Cancelled.</color>"));
                 return false;
             }
             catch (Exception ex)
@@ -466,7 +466,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                PostUI(() => SVNLogBridge.LogLine("<color=orange>[Snapshot] Restore cancelled.</color>"));
+                PostUI(() => SVNLogBridge.LogLine("<color=#8B0000>>[Snapshot] Restore cancelled.</color>"));
                 return false;
             }
             catch (Exception ex)

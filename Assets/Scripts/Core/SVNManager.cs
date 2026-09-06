@@ -37,7 +37,9 @@ namespace SVN.Core
         [Header("Project Load Safety")]
         [SerializeField] private bool autoSwitchRootCheckoutToTrunk = false;
 
-        private static readonly AsyncReaderWriterLock _managerLock = new();
+		public event Action OnRepositoryStateChanged;
+
+		private static readonly AsyncReaderWriterLock _managerLock = new();
 
         private bool _ignoreSync;
         private float _lastFocusRefreshTime;
@@ -91,7 +93,16 @@ namespace SVN.Core
             CurrentStatusDict = data;
         }
 
-        public string WorkingDir
+		public void RaiseRepositoryStateChanged()
+		{
+			UnityMainThreadDispatcher.Enqueue(() =>
+			{
+				try { OnRepositoryStateChanged?.Invoke(); }
+				catch (Exception ex) { SVNLogBridge.LogError($"[SVNManager] OnRepositoryStateChanged handler: {ex.Message}"); }
+			});
+		}
+
+		public string WorkingDir
         {
             get => workingDir;
             set
@@ -234,6 +245,8 @@ namespace SVN.Core
                 RegisterModule(new SVNRevision(svnUI, this));
                 RegisterModule(new SVNRepoRepair(svnUI, this));
                 RegisterModule(new SVNSnapshot(svnUI, this));
+                RegisterModule(new SVNFileProtection(svnUI, this));
+                RegisterModule(new SVNAutoLock(svnUI, this));
 
                 SVNLogBridge.LogToOutput($"<color=green>[SVN] Successfully initialized {_modules.Count} modules manually.</color>");
             }
@@ -343,7 +356,7 @@ namespace SVN.Core
                 {
                     GetModule<SVNBar>()?.ShowNoWorkingCopy(lastProject?.projectName);
                     SVNLogBridge.LogToOutput(
-                        $"<color=orange>[SVN] Working copy '{lastProject?.projectName ?? lastPath}' is missing on disk. Showing project selection.</color>");
+                        $"<color=#8B0000>>[SVN] Working copy '{lastProject?.projectName ?? lastPath}' is missing on disk. Showing project selection.</color>");
 
                     if (projectSelectionPanel != null)
                     {
@@ -671,7 +684,7 @@ namespace SVN.Core
 
             if (!autoSwitchRootCheckoutToTrunk)
             {
-                SVNLogBridge.LogToOutput("<color=#888888>[SVN Init] Working copy is rooted at repository root. Auto-switch to /trunk is disabled (enable in SVNManager inspector).</color>");
+                SVNLogBridge.LogToOutput("<color=#00E5FF>[SVN Init] Working copy is rooted at repository root. Auto-switch to /trunk is disabled (enable in SVNManager inspector).</color>");
                 return;
             }
 
@@ -680,7 +693,7 @@ namespace SVN.Core
                 string localStatus = await SvnRunner.RunAsync("status", WorkingDir, false, _lifetimeCts.Token);
                 if (!string.IsNullOrWhiteSpace(localStatus))
                 {
-                    SVNLogBridge.LogToOutput("<color=orange>[SVN Init] Root checkout has local changes — auto-switch to /trunk skipped.</color>");
+                    SVNLogBridge.LogToOutput("<color=#8B0000>>[SVN Init] Root checkout has local changes — auto-switch to /trunk skipped.</color>");
                     return;
                 }
             }
@@ -696,7 +709,7 @@ namespace SVN.Core
             }
             catch
             {
-                SVNLogBridge.LogToOutput("<color=orange>[SVN Init] Repository has no /trunk — auto-switch skipped.</color>");
+                SVNLogBridge.LogToOutput("<color=#8B0000>>[SVN Init] Repository has no /trunk — auto-switch skipped.</color>");
                 return;
             }
 
@@ -806,7 +819,7 @@ namespace SVN.Core
 
             if (!Directory.Exists(WorkingDir) || !SVNAssetLocator.IsWorkingCopy(WorkingDir))
             {
-                SVNLogBridge.LogToOutput("<color=orange>[SVN] Working copy is missing — status refresh skipped.</color>");
+                SVNLogBridge.LogToOutput("<color=#8B0000>>[SVN] Working copy is missing — status refresh skipped.</color>");
                 GetModule<SVNBar>()?.ShowNoWorkingCopy(CurrentProject?.projectName);
                 return;
             }

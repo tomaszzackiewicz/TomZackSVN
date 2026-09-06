@@ -29,74 +29,76 @@ public class LockUIItem : MonoBehaviour
 
     private const float ConfirmationTimeout = 3f;
 
-    public void Setup(string path, string owner, string date, string comment, bool isMe, Action onStealAction, Action onBreakAction = null, TMP_Text panelConsole = null)
-    {
-        _path = path;
-        _stealAction = onStealAction;
-        _breakAction = onBreakAction;
-        _panelConsole = panelConsole;
+	public void Setup(string path, string owner, string date, string comment, bool isMe, Action onStealAction, Action onBreakAction = null, TMP_Text panelConsole = null)
+	{
+		_path = path;
+		_stealAction = onStealAction;
+		_breakAction = onBreakAction;
+		_panelConsole = panelConsole;
 
-        ResetStealState();
-        ResetBreakState();
+		// === NAJPIERW zapisz oryginalne kolory (przed Reset!)
+		if (stealButton != null)
+		{
+			var stealColors = stealButton.colors;
+			_originalStealColor = stealColors.normalColor;
+			_originalStealColor.a = 1f;
+			stealColors.normalColor = _originalStealColor;
+			stealButton.colors = stealColors;
+		}
 
-        if (fileText == null || infoText == null || stealButton == null)
-        {
-            Debug.LogError("[LockUIItem] Missing UI references in Inspector!", this);
-            return;
-        }
+		if (breakButton != null)
+		{
+			var breakColors = breakButton.colors;
+			_originalBreakColor = breakColors.normalColor;
+			_originalBreakColor.a = 1f;
+			breakColors.normalColor = _originalBreakColor;
+			breakButton.colors = breakColors;
+		}
 
-        string safePath = SanitizeRichText(path);
-        string safeOwner = SanitizeRichText(owner);
-        string safeComment = SanitizeRichText(comment);
+		// Dopiero teraz resetuj stany (użyją poprawnych oryginalnych kolorów)
+		ResetStealState();
+		ResetBreakState();
 
-        fileText.text = $"<b>Path:</b> {safePath}";
+		if (fileText == null || infoText == null || stealButton == null)
+		{
+			Debug.LogError("[LockUIItem] Missing UI references in Inspector!", this);
+			return;
+		}
 
-        string formattedDate = date;
-        if (DateTime.TryParse(date, out DateTime parsedDate))
-            formattedDate = parsedDate.ToString("yyyy-MM-dd HH:mm");
+		string safePath = SanitizeRichText(path);
+		string safeOwner = SanitizeRichText(owner);
+		string safeComment = SanitizeRichText(comment);
 
-        infoText.text = $"<b>Owner:</b> {(isMe ? "<color=green>YOU</color>" : safeOwner)}\n" +
-                        $"<size=90%><color=#E6E6E6>Date: {formattedDate}</color></size>";
+		fileText.text = $"<b>Path:</b> {safePath}";
 
-        if (commentText != null)
-            commentText.text = string.IsNullOrEmpty(safeComment) ? "" : $"<i>\"{safeComment}\"</i>";
+		string formattedDate = date;
+		if (DateTime.TryParse(date, out DateTime parsedDate))
+			formattedDate = parsedDate.ToString("yyyy-MM-dd HH:mm");
 
-        stealButton.gameObject.SetActive(!isMe);
-        if (breakButton != null) breakButton.gameObject.SetActive(!isMe);
+		infoText.text = $"<b>Owner:</b> {(isMe ? "<color=green>YOU</color>" : safeOwner)}\n" +
+						$"<size=90%><color=#E6E6E6>Date: {formattedDate}</color></size>";
 
-        stealButton.onClick.RemoveAllListeners();
-        stealButton.onClick.AddListener(OnStealClick);
+		if (commentText != null)
+			commentText.text = string.IsNullOrEmpty(safeComment) ? "" : $"<i>\"{safeComment}\"</i>";
 
-        if (breakButton != null)
-        {
-            breakButton.onClick.RemoveAllListeners();
-            breakButton.onClick.AddListener(OnBreakClick);
+		stealButton.gameObject.SetActive(!isMe);
+		if (breakButton != null) breakButton.gameObject.SetActive(!isMe);
 
-            // === FIX K2: _originalBreakColor inicjalizowany ZAWSZE gdy breakButton
-            // istnieje — wcześniej przy Setup z isMe=true (przycisk ukrywany) pole
-            // zostawało default(0,0,0,0) i recykling itemu na isMe=false ustawiał
-            // przezroczysty normalColor.
-            var colors = breakButton.colors;
-            _originalBreakColor = colors.normalColor;
-            _originalBreakColor.a = 1f;
-            colors.normalColor = _originalBreakColor;
-            breakButton.colors = colors;
-        }
+		stealButton.onClick.RemoveAllListeners();
+		stealButton.onClick.AddListener(OnStealClick);
 
-        var stealColors = stealButton.colors;
-        _originalStealColor = stealColors.normalColor;
-        _originalStealColor.a = 1f;
-        stealColors.normalColor = _originalStealColor;
-        stealButton.colors = stealColors;
+		if (breakButton != null)
+		{
+			breakButton.onClick.RemoveAllListeners();
+			breakButton.onClick.AddListener(OnBreakClick);
+		}
 
-        // === FIX K1: Update domyślnie wyłączone — włącza się tylko na czas
-        // aktywnego potwierdzenia. Przy 50 lockach: 0-2 Update/frame zamiast 50.
-        enabled = false;
-    }
+		enabled = false;
+	}
 
-    // === FIX K1: całe ciało Update wykonywane tylko gdy component enabled
-    // (ustawiane w OnStealClick/OnBreakClick; reset wyłącza gdy oba stany nieaktywne).
-    private void Update()
+	// === FIX K1: całe ciało Update wykonywane tylko gdy component enabled
+	// (ustawiane w OnStealClick/OnBreakClick; reset wyłącza gdy oba stany nieaktywne).
+	private void Update()
     {
         if (_awaitingStealConfirmation)
         {
@@ -129,7 +131,7 @@ public class LockUIItem : MonoBehaviour
         }
         else
         {
-            LogToPanel($"<color=orange>[Steal]</color> Force stealing lock: <b>{_path}</b>...");
+            LogToPanel($"<color=#8B0000>>[Steal]</color> Force stealing lock: <b>{_path}</b>...");
             _stealAction?.Invoke();
             ResetStealState();
         }
@@ -153,7 +155,7 @@ public class LockUIItem : MonoBehaviour
         }
         else
         {
-            LogToPanel($"<color=orange>[Break]</color> Force breaking lock on server: <b>{_path}</b>...");
+            LogToPanel($"<color=#8B0000>>[Break]</color> Force breaking lock on server: <b>{_path}</b>...");
             _breakAction?.Invoke();
             ResetBreakState();
         }

@@ -128,7 +128,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                PostLog("<color=orange>Blame cancelled or timed out.</color>");
+                PostLog("<color=#8B0000>>Blame cancelled or timed out.</color>");
             }
             catch (Exception ex)
             {
@@ -170,7 +170,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                PostLog("<color=orange>Blame cancelled or timed out.</color>");
+                PostLog("<color=#8B0000>>Blame cancelled or timed out.</color>");
             }
             catch (Exception ex)
             {
@@ -276,7 +276,7 @@ namespace SVN.Core
 
             if (raw.Contains("Skipping binary file") || raw.Contains("is a binary file"))
             {
-                PostUI(() => DisplayBlameMessage("<color=orange>Binary file – blame not available.</color>"));
+                PostUI(() => DisplayBlameMessage("<color=#8B0000>>Binary file – blame not available.</color>"));
                 return;
             }
 

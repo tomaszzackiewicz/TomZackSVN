@@ -34,7 +34,7 @@ namespace SVN.Core
                 var cts = Volatile.Read(ref _cts);
                 if (cts == null || cts.IsCancellationRequested) return;
                 cts.Cancel();
-                LogToConsole("<color=orange><b>[Missing Files]</b> Cancel requested...</color>");
+                LogToConsole("<color=#8B0000>><b>[Missing Files]</b> Cancel requested...</color>");
             }
             catch (ObjectDisposedException) { }
         }
@@ -92,7 +92,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                LogToConsole("<color=orange>Fix missing files cancelled.</color>");
+                LogToConsole("<color=#8B0000>>Fix missing files cancelled.</color>");
             }
             catch (Exception ex)
             {

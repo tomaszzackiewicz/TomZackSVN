@@ -90,7 +90,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange>Log request cancelled or timed out.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>>Log request cancelled or timed out.</color>");
             }
             catch (Exception ex)
             {
@@ -169,7 +169,7 @@ namespace SVN.Core
             }
             catch (OperationCanceledException)
             {
-                SVNLogBridge.LogLine("<color=orange>Log request cancelled or timed out.</color>");
+                SVNLogBridge.LogLine("<color=#8B0000>>Log request cancelled or timed out.</color>");
             }
             catch (Exception ex)
             {

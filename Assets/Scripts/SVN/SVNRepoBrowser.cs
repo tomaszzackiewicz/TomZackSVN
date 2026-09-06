@@ -395,7 +395,7 @@ namespace SVN.Core
 
             if (!string.IsNullOrEmpty(svnUI.RepoBrowserFilterInput?.text))
             {
-                SVNLogBridge.LogLine("<color=orange>[RepoBrowser]</color> Clear filter first.");
+                SVNLogBridge.LogLine("<color=#8B0000>>[RepoBrowser]</color> Clear filter first.");
                 return;
             }
 
@@ -409,7 +409,7 @@ namespace SVN.Core
             }
             else
             {
-                SVNLogBridge.LogLine("<color=orange>[RepoBrowser]</color> Already at the root.");
+                SVNLogBridge.LogLine("<color=#8B0000>>[RepoBrowser]</color> Already at the root.");
             }
         }
 

@@ -74,7 +74,7 @@ namespace SVN.Core
 
             if (IsProcessing || updateBusy)
             {
-                SVNLogBridge.LogToOutput("<color=orange>Update already running...</color>");
+                SVNLogBridge.LogToOutput("<color=#8B0000>>Update already running...</color>");
                 return;
             }
 
@@ -136,7 +136,7 @@ namespace SVN.Core
 
             if (IsProcessing || updateBusy)
             {
-                SVNLogBridge.LogLine("<color=orange>Update already running...</color>", false);
+                SVNLogBridge.LogLine("<color=#8B0000>>Update already running...</color>", false);
                 return;
             }
 
@@ -180,18 +180,10 @@ namespace SVN.Core
             var cts = Volatile.Read(ref _remoteCheckCTS);
             if (cts == null) return;
 
-            SVNLogBridge.LogToOutput("<color=orange><b>[SVN]</b> Cancelling remote change check - update has priority...</color>");
+            SVNLogBridge.LogToOutput("<color=#8B0000>><b>[SVN]</b> Cancelling remote change check - update has priority...</color>");
             try { cts.Cancel(); }
             catch (ObjectDisposedException) { }
         }
-
-        // ===================================================================
-        //  Core update logic
-        // ===================================================================
-
-        // ===================================================================
-        //  Core update logic
-        // ===================================================================
 
         // ===================================================================
         //  Core update logic
@@ -329,27 +321,61 @@ namespace SVN.Core
                     SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Progress estimation unavailable: {ex.Message}</color>");
                 }
 
-                // === PROGRESS (wagi bajtowe): rozmiary plików z HEAD przez svn list -R.
-                // Porażka → totalBytes = 0 → tracker działa per-plikowo (fallback).
-                // UWAGA: przy update -r N rozmiary z HEAD są przybliżeniem.
+                // === FIX (GB): URL do 'svn list' brany z 'svn info' WORKING COPY,
+                // nie z svnManager.RepositoryUrl — to pole bywa ROOT-em repo (np. dla
+                // projektów ładowanych z roota), a wtedy klucze listu ("trunk/Proj/...")
+                // nie trafiały w ścieżki status -u ("Content/...") → totalBytes = 0
+                // → pasek spadał na tryb "tylko procent". URL z svn info = dokładnie
+                // katalog WC → klucze WC-relative, identyczne jak status -u (jak checkout).
                 Dictionary<string, long> incomingSizes = null;
                 long totalBytes = 0;
-                if (outOfDatePaths.Count > 0 && !string.IsNullOrWhiteSpace(svnManager.RepositoryUrl))
+                if (outOfDatePaths.Count > 0)
                 {
                     try
                     {
-                        SVNLogBridge.LogToOutput("<b>[SVN]</b> Fetching file sizes for byte-weighted progress...");
-                        incomingSizes = await FetchIncomingSizesAsync(targetPath, svnManager.RepositoryUrl, token);
-                        token.ThrowIfCancellationRequested();
+                        string listUrl = null;
+                        try
+                        {
+                            listUrl = await SvnRunner.GetRepoUrlAsync(targetPath);
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch { /* info padło — fallback niżej */ }
 
-                        foreach (var p in outOfDatePaths)
-                            if (incomingSizes.TryGetValue(p, out long s))
-                                totalBytes += s;
+                        if (string.IsNullOrWhiteSpace(listUrl))
+                            listUrl = svnManager.RepositoryUrl;
 
-                        SVNLogBridge.LogToOutput(
-                            totalBytes > 0
-                                ? $"<b>[SVN]</b> Byte weights ready: {FormatSize(totalBytes)} across {outOfDatePaths.Count} item(s)."
-                                : "<color=yellow>[SVN] No byte weights matched — using file-count progress.</color>");
+                        if (!string.IsNullOrWhiteSpace(listUrl))
+                        {
+                            SVNLogBridge.LogToOutput("<b>[SVN]</b> Fetching file sizes for byte-weighted progress...");
+                            incomingSizes = await FetchIncomingSizesAsync(targetPath, listUrl, token);
+                            token.ThrowIfCancellationRequested();
+
+                            foreach (var p in outOfDatePaths)
+                                if (incomingSizes.TryGetValue(p, out long s))
+                                    totalBytes += s;
+
+                            // === FIX (GB): rescue — gdy klucze NADAL nie trafiają (list
+                            // pobrany po innym URL niż katalog WC), dopasowanie po sufiksie
+                            // i przemapowanie słownika na ścieżki status -u. Ochrona rozmiaru:
+                            // przy gigantycznych zbiorach pomijamy (pętla paths×keys).
+                            if (totalBytes == 0 && incomingSizes.Count > 0 &&
+                                (long)outOfDatePaths.Count * incomingSizes.Count <= 2_000_000)
+                            {
+                                var remapped = RemapSizesBySuffix(incomingSizes, outOfDatePaths);
+                                if (remapped != null)
+                                {
+                                    incomingSizes = remapped;
+                                    foreach (var p in outOfDatePaths)
+                                        if (remapped.TryGetValue(p, out long s))
+                                            totalBytes += s;
+                                }
+                            }
+
+                            SVNLogBridge.LogToOutput(
+                                totalBytes > 0
+                                    ? $"<b>[SVN]</b> Byte weights ready: {FormatSize(totalBytes)} across {outOfDatePaths.Count} item(s)."
+                                    : "<color=yellow>[SVN] No byte weights matched — using file-count progress.</color>");
+                        }
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
@@ -728,6 +754,56 @@ namespace SVN.Core
             return sizes;
         }
 
+        /// <summary>
+        /// === FIX (GB): dopasowuje klucze słownika rozmiarów do ścieżek WC
+        /// (status -u) po SUFIKSIE — ratunek, gdy 'svn list' pobrano po URL-u
+        /// innym niż katalog working copy (klucze mają prefiks typu
+        /// "trunk/Proj/Content/x" vs "Content/x"). Zwraca przemapowany słownik
+        /// (klucze = referencePaths) albo null, gdy nic nie dopasowano.
+        /// </summary>
+        private static Dictionary<string, long> RemapSizesBySuffix(
+            Dictionary<string, long> sizes, List<string> referencePaths)
+        {
+            if (sizes == null || sizes.Count == 0 || referencePaths == null || referencePaths.Count == 0)
+                return null;
+
+            var result = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var p in referencePaths)
+            {
+                if (string.IsNullOrEmpty(p)) continue;
+
+                string bestKey = null;
+                long bestSize = 0;
+
+                foreach (var kv in sizes)
+                {
+                    // trafienie 1:1 — nic lepszego nie ma:
+                    if (string.Equals(kv.Key, p, StringComparison.OrdinalIgnoreCase))
+                    {
+                        bestKey = kv.Key;
+                        bestSize = kv.Value;
+                        break;
+                    }
+
+                    // sufiks wymaga co najmniej "/" przed ścieżką (klucz dłuższy);
+                    // przy wielu trafieniach bierzemy NAJKRÓTSZY klucz = najmniejszy prefiks:
+                    if (kv.Key.Length > p.Length + 1 &&
+                        kv.Key.EndsWith("/" + p, StringComparison.OrdinalIgnoreCase) &&
+                        (bestKey == null || kv.Key.Length < bestKey.Length))
+                    {
+                        bestKey = kv.Key;
+                        bestSize = kv.Value;
+                    }
+                }
+
+                if (bestKey != null)
+                    result[p] = bestSize;
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+
         // ===================================================================
         //  Cancel
         // ===================================================================
@@ -737,7 +813,7 @@ namespace SVN.Core
             var cts = Volatile.Read(ref _updateCTS);
             if (cts == null || !svnManager.IsUpdateRunning) return;
 
-            SVNLogBridge.LogToOutput("<color=orange><b>[SVN]</b> Cancel requested...</color>");
+            SVNLogBridge.LogToOutput("<color=#8B0000>><b>[SVN]</b> Cancel requested...</color>");
 
             svnManager.WasUpdateCanceled = true;
             svnManager.LastUpdateSucceeded = false;
@@ -882,7 +958,7 @@ namespace SVN.Core
 
             if (IsProcessing || (_runningTask != null && !_runningTask.IsCompleted))
             {
-                SVNLogBridge.LogToOutput("<color=orange>Another SVN operation is running...</color>");
+                SVNLogBridge.LogToOutput("<color=#8B0000>>Another SVN operation is running...</color>");
                 return;
             }
 
@@ -1388,13 +1464,13 @@ namespace SVN.Core
             }
             else if (report.LogError.Length > 0)
             {
-                SVNLogBridge.LogLine($"<color=orange>Commit details unavailable: {report.LogError}</color>");
+                SVNLogBridge.LogLine($"<color=#8B0000>>Commit details unavailable: {report.LogError}</color>");
             }
 
             if (report.Unmatched.Count > 0)
             {
                 string where = report.LocalRevision > 0 ? $"older than r{report.LocalRevision + 1}" : "older revisions";
-                SVNLogBridge.LogLine($"<color=orange>{report.Unmatched.Count} item(s) changed in {where} (mixed-revision working copy).</color>");
+                SVNLogBridge.LogLine($"<color=#8B0000>>{report.Unmatched.Count} item(s) changed in {where} (mixed-revision working copy).</color>");
             }
 
             if (report.Sizes != null)

@@ -73,7 +73,7 @@ namespace SVN.Core
                 if (string.IsNullOrWhiteSpace(keyPath) && url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase))
                 { ShowErrorSafe("SSH repository requires a valid private key."); return; }
 
-                PostRepairStatus("<color=orange><b>Step 1/2:</b> Removing old .svn metadata...</color>\n<size=11><i>Please wait...</i></size>");
+                PostRepairStatus("<color=#8B0000>><b>Step 1/2:</b> Removing old .svn metadata...</color>\n<size=11><i>Please wait...</i></size>");
 
                 // UWAGA: po naprawie watcher nie jest restartowany — dziś bez skutku
                 // (InitFileSystemWatcher nie jest nigdzie wołany), ale po ewentualnym

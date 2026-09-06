@@ -80,6 +80,52 @@ namespace SVN.Core
             SafeFireAndForget(() => DeleteSvnGlobalIgnorePropertyAsync());
         }
 
+        private async Task DeleteSvnGlobalIgnorePropertyAsync()
+        {
+            if (!TryEnterProcessing()) return;
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            CancellationToken token = cts.Token;
+
+            try
+            {
+                string root = svnManager?.WorkingDir;
+                if (string.IsNullOrWhiteSpace(root))
+                {
+                    PostUI(() => UpdateStatusInUI("<color=#FFAA00>Error:</color> Working directory not set!"));
+                    return;
+                }
+
+                bool success = await RunPropDelAsync("svn:global-ignores", root, token).ConfigureAwait(false);
+
+                if (success)
+                {
+                    PostUI(() => UpdateStatusInUI(
+                        "<color=#00FF99><b>SUCCESS:</b> svn:global-ignores deleted locally.\n" +
+                        "<color=#FFFF00>Don't forget to COMMIT this change to propagate it to the team!</color>"));
+
+                    await RefreshIgnoredPanelCoreAsync(token).ConfigureAwait(false);   // === FIX K1
+                    TriggerStatusRefresh();
+                }
+                else
+                {
+                    PostUI(() => UpdateStatusInUI("<color=#FFAA00>Error:</color> Failed to delete property. It might not exist or SVN returned an error."));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                PostUI(() => UpdateStatusInUI("<color=yellow>Delete cancelled / timed out.</color>"));
+            }
+            catch (Exception ex)
+            {
+                PostUI(() => UpdateStatusInUI($"<color=#FFAA00>Error deleting property:</color> {ex.Message}"));
+            }
+            finally
+            {
+                ExitProcessing();
+            }
+        }
+
         public void OpenIgnoreConfigInEditor() => OpenIgnoreConfigInEditorAction();
 
         private async Task ReloadIgnoreRulesAsync()
@@ -225,10 +271,11 @@ namespace SVN.Core
             }
         }
 
-        // === FIX K1: RDZEŃ bez guardu — wywoływalny z wnętrza innych operacji
-        // (Push/Delete trzymają flagę; wcześniej RefreshIgnoredPanelAsync wołany
-        // z ich wnętrza ZAWSZE wychodził na 'if (!TryEnterProcessing()) return;'
-        // i panel nigdy nie odświeżał się po push/delete reguł — po cichu).
+        // === FIX K1: RDZEŃ bez guardu — wywoływalny z wnętrza innych operacji.
+        // === FEEDBACK: końcówka z kontekstowym breadcrumbem — jeżeli push
+        // został zrobiony, a property wisi niecommitowane (status 'M' na '.'),
+        // panel pokazuje [ACTION REQUIRED] przy KAŻDYM odświeżeniu, aż user
+        // commitnie korzeń (wcześniej po pushu następne odświeżenia "milczały").
         private async Task RefreshIgnoredPanelCoreAsync(CancellationToken token = default)
         {
             string root = svnManager?.WorkingDir;
@@ -314,6 +361,11 @@ namespace SVN.Core
                 }
             }
 
+            // === FEEDBACK: breadcrumb — push wisi niecommitowany?
+            string trailingInfo = await BuildPushBreadcrumbAsync(root, token).ConfigureAwait(false);
+            sb.AppendLine();
+            sb.AppendLine(trailingInfo);
+
             string result = sb.ToString();
 
             PostUI(() =>
@@ -323,11 +375,49 @@ namespace SVN.Core
             });
         }
 
+        /// <summary>
+        /// === FEEDBACK: kontekstowa końcówka panelu. Wykrywa zmianę property
+        /// svn:global-ignores na korzeniu (status 'M' na '.') i przypomina
+        /// o commicie, dopóki nie zostanie zrobiony. Format linii statusu SVN
+        /// jest stały: kolumny statusu (8 znaków) + spacja + ścieżka.
+        /// </summary>
+        private async Task<string> BuildPushBreadcrumbAsync(string root, CancellationToken token)
+        {
+            try
+            {
+                // Tani, LOKALNY status (bez -u, bez sieci).
+                string status = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(status)) return "";
+
+                foreach (var rawLine in status.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    string line = rawLine.TrimEnd('\r');
+
+                    // linia musi mieć min. 8 kolumn statusu + ścieżkę; ścieżka '.'
+                    if (line.Length < 9) continue;
+
+                    string statusCols = line.Substring(0, 8);
+                    string path = line.Substring(8).Trim();
+
+                    // property change = kolumna 2 ('M' na pozycji 1); korzeń = '.'
+                    bool propertyChanged = statusCols[1] == 'M' && statusCols[0] == ' ';
+                    if (propertyChanged && (path == "." || path.Length == 0))
+                    {
+                        return "<color=#FFAA00><b>[ACTION REQUIRED]</b> Ignore rules pushed but NOT committed.\n" +
+                               "Commit the project ROOT folder to share them with the team.</color>";
+                    }
+                }
+            }
+            catch { }
+
+            return "<color=yellow><i>Tip: edit .svnignore → 'Apply' (push). Rules work locally; commit root after push to share.</i></color>";
+        }
+
         private async Task OpenIgnoredFilesInEditorAsync(CancellationToken token = default)
         {
             if (!TryEnterProcessing())
             {
-                PostUI(() => UpdateStatusInUI("<color=orange>Please wait... Another operation is currently running.</color>"));
+                PostUI(() => UpdateStatusInUI("<color=#8B0000>>Please wait... Another operation is currently running.</color>"));
                 return;
             }
 
@@ -554,8 +644,9 @@ namespace SVN.Core
             }
         }
 
-        // === FIX: catch — błąd SvnRunner (throwOnError) propagował się jako
-        // "Unhandled" zamiast przyjaznego komunikatu; refresh przez RDZEŃ (K1).
+        // === FEEDBACK: push pokazuje pełny DIFF (added/removed dla zespołu).
+        // Snapshot starych reguł MUSI być pobrany PRZED propset — dlatego
+        // GetIgnoreRulesFromSvnAsync na początku, nie po akcji.
         private async Task PushLocalRulesToSvnAsync()
         {
             if (!TryEnterProcessing()) return;
@@ -580,13 +671,54 @@ namespace SVN.Core
                 }
 
                 string rules = await File.ReadAllTextAsync(ignoreFilePath, token).ConfigureAwait(false);
+
+                // === DIFF: stan OBECNY (przed pushem) — do porównania po akcji.
+                var oldRules = await GetIgnoreRulesFromSvnAsync(root, token).ConfigureAwait(false);
+
                 await SetSvnGlobalIgnorePropertyAsync(root, rules, token).ConfigureAwait(false);
 
-                PostUI(() => UpdateStatusInUI(
-                    "<color=#00FF99><b>SUCCESS:</b> Global ignores set. Commit the root folder.</color>\n" +
-                    "<color=#FFFF00>You can now remove the <b>.svnignore</b> file if you no longer need it.</color>"));
+                // === parsowanie NOWEJ listy z pliku (identyczne filtrowanie co
+                // LoadIgnoreRulesFromFile: bez komentarzy/pustych, bez duplikatów):
+                var newRules = rules.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .Where(l => l.Length > 0 && !l.StartsWith("#"))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
-                await RefreshIgnoredPanelCoreAsync(token).ConfigureAwait(false);   // === FIX K1
+                var removed = oldRules
+                    .Where(r => !newRules.Contains(r, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                var added = newRules
+                    .Where(r => !oldRules.Contains(r, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+
+                // === FEEDBACK: pełny komunikat z diffem i next-stepem.
+                var sb = new StringBuilder();
+                sb.AppendLine("<color=#00FF99><b>SUCCESS:</b> svn:global-ignores replaced on project root.</color>\n");
+
+                if (removed.Count > 0)
+                {
+                    sb.AppendLine($"<color=#FFAA00><b>Rules REMOVED for the whole team ({removed.Count}):</b></color>");
+                    foreach (var r in removed)
+                        sb.AppendLine($" <color=#FF8844>- {r}</color>");
+                    sb.AppendLine();
+                }
+                if (added.Count > 0)
+                {
+                    sb.AppendLine($"<color=#00E5FF><b>Rules ADDED ({added.Count}):</b></color>");
+                    foreach (var r in added)
+                        sb.AppendLine($" <color=#00CC88>+ {r}</color>");
+                    sb.AppendLine();
+                }
+                if (removed.Count == 0 && added.Count == 0)
+                    sb.AppendLine("<color=#888888>No changes — rules identical to the repository.</color>");
+
+                sb.AppendLine("<color=#FFFF00><b>NEXT STEP:</b> Commit the project ROOT folder (it now shows 'M' — property change).\n" +
+                              "After that, the team runs Update and gets the new rules.</color>");
+
+                PostUI(() => UpdateStatusInUI(sb.ToString()));
+
+                await RefreshIgnoredPanelCoreAsync(token).ConfigureAwait(false);
                 TriggerStatusRefresh();
             }
             catch (OperationCanceledException)
@@ -596,52 +728,6 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 PostUI(() => UpdateStatusInUI($"<color=#FFAA00>Error pushing rules:</color> {ex.Message}"));
-            }
-            finally
-            {
-                ExitProcessing();
-            }
-        }
-
-        private async Task DeleteSvnGlobalIgnorePropertyAsync()
-        {
-            if (!TryEnterProcessing()) return;
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            CancellationToken token = cts.Token;
-
-            try
-            {
-                string root = svnManager?.WorkingDir;
-                if (string.IsNullOrWhiteSpace(root))
-                {
-                    PostUI(() => UpdateStatusInUI("<color=#FFAA00>Error:</color> Working directory not set!"));
-                    return;
-                }
-
-                bool success = await RunPropDelAsync("svn:global-ignores", root, token).ConfigureAwait(false);
-
-                if (success)
-                {
-                    PostUI(() => UpdateStatusInUI(
-                        "<color=#00FF99><b>SUCCESS:</b> svn:global-ignores deleted locally.\n" +
-                        "<color=#FFFF00>Don't forget to COMMIT this change to propagate it to the team!</color>"));
-
-                    await RefreshIgnoredPanelCoreAsync(token).ConfigureAwait(false);   // === FIX K1
-                    TriggerStatusRefresh();
-                }
-                else
-                {
-                    PostUI(() => UpdateStatusInUI("<color=#FFAA00>Error:</color> Failed to delete property. It might not exist or SVN returned an error."));
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                PostUI(() => UpdateStatusInUI("<color=yellow>Delete cancelled / timed out.</color>"));
-            }
-            catch (Exception ex)
-            {
-                PostUI(() => UpdateStatusInUI($"<color=#FFAA00>Error deleting property:</color> {ex.Message}"));
             }
             finally
             {

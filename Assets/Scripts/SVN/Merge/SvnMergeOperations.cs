@@ -315,11 +315,21 @@ namespace SVN.Core
                 output = await SvnRunner.RunAsync(args, merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
             }
 
+            // ========== PRZED ==========
+            //if (autoCommit)
+            //{
+            //    string msg = $"Undo merge from {source} (r{revBefore}→r{revAfter})";
+            //    merge.LogInfo($"[{opName}] Auto-committing: {msg}");
+            //    await SvnRunner.RunAsync($"commit -m {SvnMergeUrlResolver.EscapeSvnArg(msg)}", merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
+            //    merge.LogSuccess($"[{opName}] Changes committed automatically.");
+            //}
+
+            // ========== PO ==========
             if (autoCommit)
             {
                 string msg = $"Undo merge from {source} (r{revBefore}→r{revAfter})";
                 merge.LogInfo($"[{opName}] Auto-committing: {msg}");
-                await SvnRunner.RunAsync($"commit -m {SvnMergeUrlResolver.EscapeSvnArg(msg)}", merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
+                await SvnRunner.RunAsync($"commit -m {SvnMergeUrlResolver.EscapeSvnArg(msg)} --no-unlock", merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
                 merge.LogSuccess($"[{opName}] Changes committed automatically.");
             }
 
