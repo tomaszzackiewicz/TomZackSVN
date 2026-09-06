@@ -8,6 +8,10 @@ namespace SVN.Core
 {
     public abstract class SVNBase
     {
+        // === FIX (drobiazg): limit linii konsoli modułu (merge loguje blokami;
+        // terminal ma własny trim — tu brakowało jakiegokolwiek).
+        private const int MaxConsoleLines = 400;
+
         public SVNManager svnManager;
         public SVNUI svnUI;
 
@@ -71,16 +75,63 @@ namespace SVN.Core
 
         protected virtual TMP_Text GetConsole() => null;
 
+        // === FIX K1: Append przez dispatcher. LogInfo/LogSuccess/LogWarning/
+        // LogErrorLocal wołane są m.in. z SVNMerge/SVNBranchTag PO ConfigureAwait(false)
+        // (thread pool) — 'console.text +=' poza main thread to niezdefiniowane
+        // zachowanie Unity. Naprawione RAZ, tutaj, dla wszystkich modułów.
+        // (Efekt uboczny: log pojawia się o klatkę później — nieszkodliwe.)
         protected void Append(string msg, string color)
         {
-            var console = GetConsole();
-            if (console != null)
+            PostToMainThread(() =>
+            {
+                var console = GetConsole();
+                if (console == null) return;
+
                 console.text += $"<color={color}>{msg}</color>\n";
+                TrimConsole(console);
+            });
+        }
+
+        private static void TrimConsole(TMP_Text console)
+        {
+            try
+            {
+                string text = console.text;
+                int lineCount = 0;
+                for (int i = 0; i < text.Length; i++)
+                    if (text[i] == '\n') lineCount++;
+                if (text.Length > 0 && text[text.Length - 1] != '\n') lineCount++;
+
+                if (lineCount <= MaxConsoleLines) return;
+
+                int linesToRemove = lineCount - MaxConsoleLines;
+                int cutIndex = 0;
+                for (int i = 0; i < linesToRemove; i++)
+                {
+                    int next = text.IndexOf('\n', cutIndex);
+                    if (next < 0) { cutIndex = text.Length; break; }
+                    cutIndex = next + 1;
+                }
+
+                if (cutIndex > 0 && cutIndex <= text.Length)
+                    console.text = text.Substring(cutIndex);
+            }
+            catch { }
+        }
+
+        public void LogSuccess(string msg)
+        {
+            Append(msg, "#01ff09");
+            SVNLogBridge.LogToFile(msg, "MODULE");
+        }
+
+        public void LogWarning(string msg)
+        {
+            Append(msg, "#FFEB3B");
+            SVNLogBridge.LogToFile(msg, "MODULE");
         }
 
         public void LogInfo(string msg) => Append(msg, "#0400ff");
-        public void LogSuccess(string msg) => Append(msg, "#01ff09");
-        public void LogWarning(string msg) => Append(msg, "#FFEB3B");
 
         public void LogErrorLocal(string msg)
         {
@@ -136,6 +187,10 @@ namespace SVN.Core
             return keyPath;
         }
 
+        // === Ś3: DEPRECATED — SvnRunner ustawia env SVN_SSH (z aktualnym kluczem)
+        // per-proces; ten --config-option jest redundantny i konkurujący. Już
+        // wycięty z Merge/BranchTag — JEDYNE żywe użycie: SVNCheckout (do wycięcia
+        // jako follow-up; wtedy usunąć tę metodę).
         protected string BuildSshConfigOption(string keyPath)
         {
             if (string.IsNullOrWhiteSpace(keyPath)) return string.Empty;
@@ -147,18 +202,28 @@ namespace SVN.Core
 
         protected void HandleOperationException(Exception ex)
         {
-            IsProcessing = false;
+            // === FIX (drobiazg): End() zamiast IsProcessing=false — symetria
+            // z TryStart() (oba atomowe).
+            End();
             SVNLogBridge.LogErrorToOutput($"[SVN] Unhandled operation exception:\n{ex}");
             ShowError(ex.Message);
         }
 
+        // === FIX K2: pole UI wyłącznie przez dispatcher — HandleOperationException
+        // bywa wołane z thread poolu (catch w async void po ConfigureAwait(false),
+        // np. SVNCheckout.StartCheckout).
         protected void ShowError(string message)
         {
-            SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText, $"<color=#FFAA00>Error:</color> {message}", "Checkout");
+            PostToMainThread(() =>
+                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
+                    $"<color=#FFAA00>Error:</color> {message}", "Checkout"));
         }
 
+        // === FIX Ś1: guard na null (kiedyś NRE).
         protected bool IsValidSvnUrl(string url)
         {
+            if (string.IsNullOrWhiteSpace(url)) return false;
+
             return url.StartsWith("svn://", StringComparison.OrdinalIgnoreCase) ||
                    url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase) ||
                    url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
@@ -168,6 +233,18 @@ namespace SVN.Core
         protected bool TryValidatePath(string inputPath, out string fullPath)
         {
             fullPath = null;
+
+            // === FIX Ś2: na nowoczesnym .NET (Unity) Path.GetFullPath NIE waliduje
+            // nielegalnych znaków ścieżki ('|', '<', '*', ...?) — GetFullPath przechodzi,
+            // a Directory.CreateDirectory/Process.Start rzucają głęboko w operacji.
+            // Jawny filtr znaków jako pierwsza linia obrony.
+            if (string.IsNullOrWhiteSpace(inputPath) ||
+                inputPath.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+            {
+                ShowError("Invalid destination path (empty or contains illegal characters).");
+                return false;
+            }
+
             try { fullPath = Path.GetFullPath(inputPath); }
             catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return false; }
 

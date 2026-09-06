@@ -14,21 +14,39 @@ namespace SVN.Core
         public async Task EnterReadAsync(CancellationToken token = default)
         {
             ThrowIfDisposed();
+
+            // === FIX K1: czekaj na readSemaphore PRZED try — wyjątek z WaitAsync
+            // (np. cancel przed wejściem) NIE może trafiać do catch, który robi
+            // rollback --_readers/Release: wcześniej cancel w tym punkcie
+            // ZMNIEJSZAŁ cudzy licznik czytelników i wypuszczał cudzy slot
+            // (trwała korupcja stanu przy pierwszym EnterReadAsync z canceled tokenem).
             await _readSemaphore.WaitAsync(token).ConfigureAwait(false);
 
             try
             {
-                if (++_readers == 1)
-                    await _writeSemaphore.WaitAsync(token).ConfigureAwait(false);
-            }
-            catch
-            {
-                --_readers;
-                _readSemaphore.Release();
-                throw;
-            }
+                // Jesteśmy w sekcji — inkrementacja i ewentualne wzięcie write-locka.
+                // UWAGA: pierwszy czytelnik TRZYMA readSemaphore przez czas oczekiwania
+                // na writeSemaphore — kolejni czytelnicy czekają na readSemaphore.
+                // To zamierzone: gwarantuje, że _readers nie zmieni się między
+                // checkem a wzięciem write-locka.
+                _readers++;
 
-            _readSemaphore.Release();
+                try
+                {
+                    if (_readers == 1)
+                        await _writeSemaphore.WaitAsync(token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Wyjątek w oczekiwaniu na write-lock — cofamy inkrementację.
+                    _readers--;
+                    throw;
+                }
+            }
+            finally
+            {
+                _readSemaphore.Release();
+            }
         }
 
         public void ExitRead()
@@ -38,7 +56,8 @@ namespace SVN.Core
 
             try
             {
-                if (--_readers == 0)
+                _readers--;
+                if (_readers == 0)
                     _writeSemaphore.Release();
             }
             finally
@@ -54,7 +73,8 @@ namespace SVN.Core
 
             try
             {
-                if (--_readers == 0)
+                _readers--;
+                if (_readers == 0)
                     _writeSemaphore.Release();
             }
             finally

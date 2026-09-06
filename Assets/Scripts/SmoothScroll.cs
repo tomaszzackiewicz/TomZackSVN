@@ -16,7 +16,16 @@ namespace SVN.Core
 
         private void Start()
         {
-            if (scrollRect != null) _content = scrollRect.content;
+            // === FIX K1: null-check scrollRect na starcie — drugi blok Update
+            // dereferuje go bez guarda (NRE co klatkę przy nieprzypisanym polu
+            // i raz ustawionym _targetPosition).
+            if (scrollRect == null)
+            {
+                enabled = false;
+                return;
+            }
+
+            _content = scrollRect.content;
         }
 
         private void Update()
@@ -45,13 +54,14 @@ namespace SVN.Core
 
         public void ScrollToBottom()
         {
-            if (gameObject.activeInHierarchy)
+            // === FIX K1: guard scrollRect (wcześniej przy nieprzypisanym polu
+            // korutyna ustawiała _targetPosition na martwym scrollRect → NRE w Update).
+            if (scrollRect != null && gameObject.activeInHierarchy)
                 StartCoroutine(EnsureScroll());
         }
 
         private IEnumerator EnsureScroll()
         {
-
             yield return new WaitForEndOfFrame();
             Canvas.ForceUpdateCanvases();
             _targetPosition = 0f;

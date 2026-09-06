@@ -386,13 +386,17 @@ namespace SVN.Core
                 return;
             }
 
-            _cachedGraphItems.Sort((a, b) => b.GetRevision().CompareTo(a.GetRevision()));
+            // === FIX D3: sort na KOPII — wcześniej Sort() in-place na _cachedGraphItems
+            // trwale zmieniał kolejność cache'u (efekt uboczny "getteru raportu";
+            // nieszkodliwe dla działania, ale nieoczekiwany side-effect).
+            var items = new List<SVNGraphItem>(_cachedGraphItems);
+            items.Sort((a, b) => b.GetRevision().CompareTo(a.GetRevision()));
 
             var authorStats = new Dictionary<string, (int Commits, int FileChanges)>(StringComparer.OrdinalIgnoreCase);
 
-            for (int i = 0; i < _cachedGraphItems.Count; i++)
+            for (int i = 0; i < items.Count; i++)
             {
-                var item = _cachedGraphItems[i];
+                var item = items[i];
                 if (item == null) continue;
 
                 string author = string.IsNullOrWhiteSpace(item.GetAuthor()) ? "Unknown" : item.GetAuthor();
@@ -407,7 +411,7 @@ namespace SVN.Core
             SharedSb.Clear();
             SharedSb.AppendLine("=== SVN REVISION HISTORY REPORT ===");
             SharedSb.AppendLine(string.Concat("Generated: ", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)));
-            SharedSb.AppendLine(string.Concat("Total Revisions: ", _cachedGraphItems.Count));
+            SharedSb.AppendLine(string.Concat("Total Revisions: ", items.Count));
             SharedSb.AppendLine("===================================");
             SharedSb.AppendLine();
             SharedSb.AppendLine("=== AUTHOR STATISTICS ===");
@@ -426,9 +430,9 @@ namespace SVN.Core
             SharedSb.AppendLine("==============================");
             SharedSb.AppendLine();
 
-            for (int i = 0; i < _cachedGraphItems.Count; i++)
+            for (int i = 0; i < items.Count; i++)
             {
-                var item = _cachedGraphItems[i];
+                var item = items[i];
                 if (item == null) continue;
 
                 SharedSb.Append("[r").Append(item.GetRevision()).AppendLine("]");

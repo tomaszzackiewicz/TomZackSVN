@@ -21,7 +21,11 @@ namespace SVN.Core
         private const bool ENABLE_FILE_SIZES = true;
         private CancellationTokenSource _projectSwitchDebounceCts;
 
-        private static (DateTime time, string root, Dictionary<string, SVNLockDetails> data) _lockCache;
+        // === FIX CACHE: cache locków kluczowany per root — dwie instancje
+        // SVNStatus (np. dwa okna edytora) nie nadpisywały sobie nawzajem
+        // wpisów innego projektu.
+        private static readonly Dictionary<string, (DateTime time, Dictionary<string, SVNLockDetails> data)> _lockCacheMap
+            = new Dictionary<string, (DateTime, Dictionary<string, SVNLockDetails>)>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan LockCacheDuration = TimeSpan.FromMinutes(2);
         private static readonly object _cacheLock = new object();
 
@@ -39,9 +43,15 @@ namespace SVN.Core
 
             if (svnUI.StatsText != null)
             {
+                // === FIX R/~: "~" rzadkie — pokazywane tylko gdy występuje,
+                // żeby nie wydłużać linii zbędnym zerem.
+                string obstructedPart = stats.ObstructedCount > 0
+                    ? $" | <color=#FF8800>Obs (~): {stats.ObstructedCount}</color>"
+                    : "";
+
                 string statsContent = isIgnoredView
                     ? $"<color=#444444><b>VIEW: IGNORED</b></color> | Folders: {stats.IgnoredFolderCount} | Files: {stats.IgnoredFileCount} | Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>"
-                    : $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | <color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | <color=#00FF00>Add (A): {stats.AddedCount}</color> | <color=#00E5FF>New (?): {stats.NewFilesCount}</color> | <color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | <color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>";
+                    : $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | <color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | <color=#00FF00>Add (A): {stats.AddedCount}</color> | <color=#00E5FF>New (?): {stats.NewFilesCount}</color> | <color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | <color=#A0A0FF>Rep (R): {stats.ReplacedCount}</color> | <color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>{obstructedPart}";
 
                 SVNLogBridge.UpdateUIField(svnUI.StatsText, statsContent, "STATS", append: false);
             }
@@ -56,11 +66,18 @@ namespace SVN.Core
                 }
                 else
                 {
+                    // === FIX R: R jest commitowalne → wchodzi do Total.
+                    // C i ~ NIE wchodzą (wymagają resolve/naprawy przed committem).
                     int totalToCommit = stats.ModifiedCount + stats.AddedCount +
-                                        stats.NewFilesCount + stats.DeletedCount;
+                                        stats.NewFilesCount + stats.DeletedCount +
+                                        stats.ReplacedCount;
 
                     string conflictPart = stats.ConflictsCount > 0
                         ? $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>"
+                        : "";
+
+                    string obstructedPart = stats.ObstructedCount > 0
+                        ? $" | <color=#FF8800><b> OBSTRUCTED (~): {stats.ObstructedCount} (Fix first!)</b></color>"
                         : "";
 
                     string commitStats =
@@ -69,7 +86,8 @@ namespace SVN.Core
                         $"<color=#00FF00>A: {stats.AddedCount}</color> | " +
                         $"<color=#00E5FF>?: {stats.NewFilesCount}</color> | " +
                         $"<color=#FF4444>D/!: {stats.DeletedCount}</color> | " +
-                        $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>{conflictPart}";
+                        $"<color=#A0A0FF>R: {stats.ReplacedCount}</color> | " +
+                        $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>{conflictPart}{obstructedPart}";
 
                     SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, commitStats, "STATS", append: false);
                 }
@@ -77,15 +95,20 @@ namespace SVN.Core
         }
 
         public static async Task<Dictionary<string, SvnChangeInfo>> GetChangesDictionaryAsync(
-    string workingDir,
-    bool expandUnversioned = true,
-    CancellationToken cancellationToken = default)
+            string workingDir,
+            bool expandUnversioned = true,
+            CancellationToken cancellationToken = default)
         {
             const int svnStatusPrefixLength = 8;
             const string allowedSvnStatuses = "MA?!DC~R";
             const string directoryLabel = "DIR";
             const string fileLabel = "FILE";
-            const int maxUnversionedFilesPerDir = 500;
+            // === FIX LIMIT: 500 tnęło CAŁE poddrzewo w jednym strumieniu
+            // rekursywnej enumeracji — duży folder "?" tracił wszystko poza
+            // pierwszymi ~500 wpisami (w porządku alfabetycznym).
+            // BFS + realny fail-safe per folder "?" (dostosuj wartości do siebie).
+            const int maxUnversionedFilesPerRoot = 25_000;
+            const int maxUnversionedDirsPerRoot = 10_000;
 
             workingDir = workingDir.Replace("\\", "/").TrimEnd('/');
 
@@ -111,6 +134,19 @@ namespace SVN.Core
 
                     char itemStatus = line[0];
                     char propStatus = line[1];
+
+                    // === FIX TREE-CONFLICT: svn status pokazuje tree-conflicts jako
+                    // 'C' w kolumnie 6 (nie 0). Format: "!      C Models" — parser
+                    // widział '!' (missing) i gubił 'C' (conflict) → STATS 0 konfliktów
+                    // → Resolve panel pusty → Commit All pada na E155015.
+                    char treeConflictStatus = line.Length > 6 ? line[6] : ' ';
+
+                    // Jeżeli tree-conflict: nadpisz status na 'C' (priorytet)
+                    if (treeConflictStatus == 'C')
+                    {
+                        itemStatus = 'C';
+                        propStatus = ' ';
+                    }
 
                     char activeChar = itemStatus != ' '
                         ? char.ToUpperInvariant(itemStatus)
@@ -146,7 +182,6 @@ namespace SVN.Core
                         .Replace('/', Path.DirectorySeparatorChar);
 
                     bool isDir = false;
-                    bool isFile = false;
                     bool existsOnDisk = false;
                     bool isDeletedOrMissing = (activeChar == 'D' || activeChar == '!');
                     string sizeLabel = fileLabel;
@@ -162,7 +197,6 @@ namespace SVN.Core
                         }
                         else if (File.Exists(fullPathNative))
                         {
-                            isFile = true;
                             existsOnDisk = true;
                             try { bytes = new FileInfo(fullPathNative).Length; }
                             catch { bytes = 0; }
@@ -175,6 +209,14 @@ namespace SVN.Core
                             : cleanPath;
                         bool hasExtension = nameOnly.LastIndexOf('.') > 0;
                         sizeLabel = hasExtension ? fileLabel : directoryLabel;
+
+                        // === FIX TREE-CONFLICT: tree-conflicted dirs mogą istnieć na dysku
+                        if (activeChar == 'C' && Directory.Exists(fullPathNative))
+                        {
+                            isDir = true;
+                            existsOnDisk = true;
+                            sizeLabel = directoryLabel;
+                        }
                     }
 
                     dict[cleanPath] = new SvnChangeInfo
@@ -193,12 +235,6 @@ namespace SVN.Core
                         .Select(kvp => kvp.Key)
                         .ToList();
 
-                    var enumOptions = new EnumerationOptions
-                    {
-                        IgnoreInaccessible = true,
-                        RecurseSubdirectories = true
-                    };
-
                     foreach (var dirRelPath in unversionedDirs)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
@@ -210,75 +246,91 @@ namespace SVN.Core
                         if (!Directory.Exists(fullDirPathNative))
                             continue;
 
+                        // === FIX LIMIT: BFS po katalogach (poziomami) zamiast jednego
+                        // rekursywnego strumienia — komplet plików top-level +
+                        // podkatalogi przed głębokimi poziomami. Fail-safe chroni
+                        // tylko przed patologicznymi drzewami.
                         int countedFiles = 0;
-                        try
-                        {
-                            foreach (var fileFullPath in Directory.EnumerateFiles(fullDirPathNative, "*", enumOptions))
-                            {
-                                if (++countedFiles > maxUnversionedFilesPerDir) break;
-
-                                cancellationToken.ThrowIfCancellationRequested();
-
-                                var pathParts = fileFullPath.Split(Path.DirectorySeparatorChar, '/');
-                                if (pathParts.Any(p => p.Equals(".svn", StringComparison.OrdinalIgnoreCase)))
-                                    continue;
-
-                                string normalizedFullPath = fileFullPath.Replace('\\', '/');
-                                if (!normalizedFullPath.StartsWith(workingDir + "/", StringComparison.OrdinalIgnoreCase))
-                                    continue;
-
-                                string fileRelPath = normalizedFullPath.Substring(workingDir.Length + 1).Trim('/');
-                                if (string.IsNullOrWhiteSpace(fileRelPath) || dict.ContainsKey(fileRelPath))
-                                    continue;
-
-                                long fileBytes = 0;
-                                try { fileBytes = new FileInfo(fileFullPath).Length; }
-                                catch { }
-
-                                dict[fileRelPath] = new SvnChangeInfo
-                                {
-                                    Status = "?",
-                                    Size = fileLabel,
-                                    Bytes = fileBytes,
-                                    Exists = true
-                                };
-                            }
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch {}
-
                         int countedDirs = 0;
-                        try
+
+                        var dirQueue = new Queue<string>();
+                        dirQueue.Enqueue(fullDirPathNative);
+
+                        while (dirQueue.Count > 0 &&
+                               countedFiles < maxUnversionedFilesPerRoot &&
+                               countedDirs < maxUnversionedDirsPerRoot)
                         {
-                            foreach (var dirFullPath in Directory.EnumerateDirectories(fullDirPathNative, "*", enumOptions))
+                            string currentDir = dirQueue.Dequeue();
+
+                            try
                             {
-                                if (++countedDirs > maxUnversionedFilesPerDir) break;
-
-                                cancellationToken.ThrowIfCancellationRequested();
-
-                                var pathParts = dirFullPath.Split(Path.DirectorySeparatorChar, '/');
-                                if (pathParts.Any(p => p.Equals(".svn", StringComparison.OrdinalIgnoreCase)))
-                                    continue;
-
-                                string normalizedDirPath = dirFullPath.Replace('\\', '/');
-                                if (!normalizedDirPath.StartsWith(workingDir + "/", StringComparison.OrdinalIgnoreCase))
-                                    continue;
-
-                                string dirRel = normalizedDirPath.Substring(workingDir.Length + 1).Trim('/');
-                                if (string.IsNullOrWhiteSpace(dirRel) || dict.ContainsKey(dirRel))
-                                    continue;
-
-                                dict[dirRel] = new SvnChangeInfo
+                                foreach (var fileFullPath in Directory.EnumerateFiles(currentDir))
                                 {
-                                    Status = "?",
-                                    Size = directoryLabel,
-                                    Bytes = 0,
-                                    Exists = true
-                                };
+                                    if (++countedFiles > maxUnversionedFilesPerRoot) break;
+
+                                    cancellationToken.ThrowIfCancellationRequested();
+
+                                    if (SvnPathUtils.IsInsideSvnAdminDir(fileFullPath))
+                                        continue;
+
+                                    string normalizedFullPath = fileFullPath.Replace('\\', '/');
+                                    if (!normalizedFullPath.StartsWith(workingDir + "/", StringComparison.OrdinalIgnoreCase))
+                                        continue;
+
+                                    string fileRelPath = normalizedFullPath.Substring(workingDir.Length + 1).Trim('/');
+                                    if (string.IsNullOrWhiteSpace(fileRelPath) || dict.ContainsKey(fileRelPath))
+                                        continue;
+
+                                    long fileBytes = 0;
+                                    try { fileBytes = new FileInfo(fileFullPath).Length; }
+                                    catch { }
+
+                                    dict[fileRelPath] = new SvnChangeInfo
+                                    {
+                                        Status = "?",
+                                        Size = fileLabel,
+                                        Bytes = fileBytes,
+                                        Exists = true
+                                    };
+                                }
                             }
+                            catch (OperationCanceledException) { throw; }
+                            catch { }
+
+                            try
+                            {
+                                foreach (var dirFullPath in Directory.EnumerateDirectories(currentDir))
+                                {
+                                    cancellationToken.ThrowIfCancellationRequested();
+
+                                    // .svn pomijamy PRZY ENKOLEJKOWANIU — zero I/O w środku
+                                    if (SvnPathUtils.IsInsideSvnAdminDir(dirFullPath))
+                                        continue;
+
+                                    string normalizedDirPath = dirFullPath.Replace('\\', '/');
+                                    if (!normalizedDirPath.StartsWith(workingDir + "/", StringComparison.OrdinalIgnoreCase))
+                                        continue;
+
+                                    string dirRel = normalizedDirPath.Substring(workingDir.Length + 1).Trim('/');
+                                    if (string.IsNullOrWhiteSpace(dirRel) || dict.ContainsKey(dirRel))
+                                        continue;
+
+                                    if (++countedDirs > maxUnversionedDirsPerRoot) break;
+
+                                    dict[dirRel] = new SvnChangeInfo
+                                    {
+                                        Status = "?",
+                                        Size = directoryLabel,
+                                        Bytes = 0,
+                                        Exists = true
+                                    };
+
+                                    dirQueue.Enqueue(dirFullPath);
+                                }
+                            }
+                            catch (OperationCanceledException) { throw; }
+                            catch { }
                         }
-                        catch (OperationCanceledException) { throw; }
-                        catch { }
                     }
                 }
                 else
@@ -320,6 +372,53 @@ namespace SVN.Core
             public bool Exists;
         }
 
+        // === [P]: propget svn:needs-lock -R --xml — wzbogacenie refreshu.
+        // Porażka fetchu NIE może wywalić refreshu statusu (stąd wrapper).
+        private static async Task<HashSet<string>> SafeGetProtectedPathsAsync(
+            string root, CancellationToken token)
+        {
+            try
+            {
+                return await SvnRunner.GetProtectedPathsAsync(root, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[SVNStatus] Protected fetch failed (flags disabled): {ex.Message}");
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        // === [P]: mirror ApplyLockColors — flagi svn:needs-lock na elementach.
+        // FullPath elementów drzewa jest root-relatywny; normalizacja jest
+        // tolerancyjna też na formę absolutną i "./" (spójnie z kluczami
+        // GetProtectedPathsAsync).
+        public void ApplyProtectionFlags(List<SvnTreeElement> elements, HashSet<string> protectedPaths)
+        {
+            if (elements == null || protectedPaths == null)
+                return;
+
+            string root = svnManager?.WorkingDir?.Replace("\\", "/").TrimEnd('/');
+            bool hasRoot = !string.IsNullOrEmpty(root);
+
+            foreach (var e in elements)
+            {
+                if (e.IsFolder || string.IsNullOrEmpty(e.FullPath))
+                    continue;
+
+                string p = e.FullPath.Replace('\\', '/').Trim().TrimStart('/');
+                if (p.StartsWith("./")) p = p.Substring(2);
+
+                if (hasRoot && p.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+                    p = p.Substring(root.Length + 1);
+
+                e.IsProtected = protectedPaths.Contains(p);
+            }
+        }
+
         public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
         {
             UpdateListSelection(_flatTreeData, parentFolder.FullPath, isChecked);
@@ -352,13 +451,15 @@ namespace SVN.Core
         public async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(
             string root, CancellationToken token = default)
         {
+            var empty = new Dictionary<string, SVNLockDetails>();
+            if (string.IsNullOrEmpty(root)) return empty;
+
             lock (_cacheLock)
             {
-                if (_lockCache.data != null &&
-                    string.Equals(_lockCache.root, root, StringComparison.OrdinalIgnoreCase) &&
-                    (DateTime.UtcNow - _lockCache.time) < LockCacheDuration)
+                if (_lockCacheMap.TryGetValue(root, out var cached) &&
+                    (DateTime.UtcNow - cached.time) < LockCacheDuration)
                 {
-                    return _lockCache.data;
+                    return cached.data;
                 }
             }
 
@@ -370,7 +471,9 @@ namespace SVN.Core
                 if (lockModule == null)
                     return result;
 
-                var locks = await lockModule.GetDetailedLocks(root);
+                // === FIX: token przekazywany do modułu — cancel nie czeka na
+                // proces svn. Wymaga przeciążenia w SVNLock (patrz notka A/C).
+                var locks = await lockModule.GetDetailedLocks(root, token);
                 token.ThrowIfCancellationRequested();
 
                 foreach (var l in locks)
@@ -385,7 +488,8 @@ namespace SVN.Core
 
                 lock (_cacheLock)
                 {
-                    _lockCache = (DateTime.UtcNow, root, result);
+                    PruneLockCache();
+                    _lockCacheMap[root] = (DateTime.UtcNow, result);
                 }
             }
             catch (OperationCanceledException)
@@ -400,12 +504,18 @@ namespace SVN.Core
             return result;
         }
 
+        private static void PruneLockCache()
+        {
+            var expired = _lockCacheMap
+                .Where(kvp => (DateTime.UtcNow - kvp.Value.time) > LockCacheDuration)
+                .Select(kvp => kvp.Key)
+                .ToList();
+            foreach (var key in expired) _lockCacheMap.Remove(key);
+        }
+
         public static void ClearLockCache()
         {
-            lock (_cacheLock)
-            {
-                _lockCache = default;
-            }
+            lock (_cacheLock) _lockCacheMap.Clear();
         }
 
         public void NotifySelectionChanged()
@@ -480,19 +590,21 @@ namespace SVN.Core
         {
             if (project == null) return;
 
-            _projectSwitchDebounceCts?.Cancel();
-            _projectSwitchDebounceCts?.Dispose();
+            var oldDebounce = _projectSwitchDebounceCts;
             _projectSwitchDebounceCts = new CancellationTokenSource();
             var debounceToken = _projectSwitchDebounceCts.Token;
+
+            oldDebounce?.Cancel();
+            _ = Task.Delay(1000).ContinueWith(_ =>
+            {
+                try { oldDebounce?.Dispose(); } catch { }
+            });
 
             try
             {
                 await Task.Delay(250, debounceToken);
 
-                _cts?.Cancel();
-                _cts?.Dispose();
-                _cts = null;
-                IsProcessing = false;
+                CancelCurrentRefresh();
 
                 if (svnManager != null)
                 {
@@ -701,7 +813,10 @@ namespace SVN.Core
             if (oldCts != null)
             {
                 oldCts.Cancel();
-                oldCts.Dispose();
+                _ = Task.Delay(1000).ContinueWith(_ =>
+                {
+                    try { oldCts.Dispose(); } catch { }
+                });
             }
 
             IsProcessing = true;
@@ -711,6 +826,7 @@ namespace SVN.Core
             {
                 RunOnMainThread(() =>
                 {
+                    if (Volatile.Read(ref _activeRefreshId) != myId) return;
                     if (svnUI != null && svnUI.TreeDisplay != null &&
                         svnUI.TreeDisplay.text.Contains("Scanning"))
                     {
@@ -722,9 +838,21 @@ namespace SVN.Core
             try
             {
                 var expandedPaths = CaptureExpandedPaths();
+                CommitExpandedPaths(expandedPaths);
+
+                var previousSelectionStates = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                if (_flatTreeData != null)
+                {
+                    foreach (var e in _flatTreeData)
+                    {
+                        if (!string.IsNullOrEmpty(e.FullPath))
+                            previousSelectionStates[e.FullPath] = e.IsChecked;
+                    }
+                }
 
                 RunOnMainThread(() =>
                 {
+                    if (Volatile.Read(ref _activeRefreshId) != myId) return;
                     if (svnUI != null)
                     {
                         if (svnUI.TreeDisplay != null)
@@ -748,42 +876,65 @@ namespace SVN.Core
                 string root = svnManager.WorkingDir;
                 Dictionary<string, SvnChangeInfo> statusDict = null;
                 Dictionary<string, SVNLockDetails> lockDict = null;
+                HashSet<string> protectedPaths = null;                       // === [P]
+
+                // === FIX B: konwersja do formatu czytanego przez managera
+                // (PostProcessStatus → auto-open Resolve przy konfliktach).
+                Dictionary<string, (string status, string size)> legacyStatusDict = null;
 
                 await Task.Run(async () =>
                 {
                     var statusTask = GetChangesDictionaryAsync(root, ShowUnversionedFiles, token);
                     var locksTask = GetLocksDictionaryAsync(root, token);
+                    var protTask = SafeGetProtectedPathsAsync(root, token);  // === [P]
 
-                    await Task.WhenAll(statusTask, locksTask);
+                    await Task.WhenAll(statusTask, locksTask, protTask);     // === [P]
                     token.ThrowIfCancellationRequested();
 
                     statusDict = statusTask.Result;
                     lockDict = locksTask.Result;
+                    protectedPaths = protTask.Result;                        // === [P]
 
                     var ignoreModule = svnManager.GetModule<SVNIgnore>();
                     if (ignoreModule != null && statusDict != null && statusDict.Count > 0)
                         ignoreModule.FilterOutLocallyIgnored(statusDict);
+
+                    // === FIX B: nikt nie aktualizował svnManager.CurrentStatusDict
+                    // w tym refreshu — PostProcessStatus działał na danych
+                    // POPRZEDNIEGO projektu (false-positive/negative konfliktów).
+                    legacyStatusDict = new Dictionary<string, (string status, string size)>(
+                        statusDict.Count, StringComparer.OrdinalIgnoreCase);
+                    foreach (var kvp in statusDict)
+                    {
+                        string sizeStr = (kvp.Value.Size == "FILE" && kvp.Value.Bytes > 0)
+                            ? SvnPathUtils.FormatBytes(kvp.Value.Bytes)
+                            : "";
+                        legacyStatusDict[kvp.Key] = (kvp.Value.Status, sizeStr);
+                    }
                 }, token).ConfigureAwait(false);
 
-                await Task.Yield();
+                token.ThrowIfCancellationRequested();
 
                 if (svnManager.WorkingDir != expectedWorkingDir)
                 {
-                    SVNLogBridge.LogToOutput("<color=orange>[SVN]</color> Project changed during refresh — discarding results.");
+                    SVNLogBridge.LogToOutput("<color=#8B0000>>[SVN]</color> Project changed during refresh — discarding results.");
                     ResetScanningText();
                     return;
                 }
 
-                token.ThrowIfCancellationRequested();
-
                 if (statusDict == null || statusDict.Count == 0)
                 {
-                    RunOnMainThread(ShowEmptyState);
+                    RunOnMainThread(() =>
+                    {
+                        if (Volatile.Read(ref _activeRefreshId) != myId) return;
+                        ShowEmptyState();
+                    });
                     return;
                 }
 
                 RunOnMainThread(() =>
                 {
+                    if (Volatile.Read(ref _activeRefreshId) != myId) return;
                     if (svnUI != null)
                     {
                         if (svnUI.TreeDisplay != null)
@@ -797,41 +948,45 @@ namespace SVN.Core
                     }
                 });
 
-                var previousSelectionStates = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-                foreach (var e in _flatTreeData)
-                {
-                    if (!string.IsNullOrEmpty(e.FullPath))
-                        previousSelectionStates[e.FullPath] = e.IsChecked;
-                }
-
                 var buildResult = await Task.Run(
-                    () => BuildFlatTreeStructureText(root, statusDict, previousSelectionStates), token);
+                    () => BuildFlatTreeStructureText(root, statusDict, previousSelectionStates), token).ConfigureAwait(false);
 
                 token.ThrowIfCancellationRequested();
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
 
                 var newCommitData = await Task.Run(
-                    () => BuildCommitView(buildResult.Elements), token);
+                    () => BuildCommitView(buildResult.Elements), token).ConfigureAwait(false);
 
                 token.ThrowIfCancellationRequested();
                 if (svnManager.WorkingDir != expectedWorkingDir) return;
 
-                _flatTreeData = buildResult.Elements;
-                _commitTreeData = newCommitData;
-                totalCommitBytes = buildResult.TotalBytes;
-
-                RestoreExpandedPaths(_flatTreeData, expandedPaths);
-                RestoreExpandedPaths(_commitTreeData, expandedPaths);
+                RestoreExpandedPaths(buildResult.Elements, expandedPaths);
+                RestoreExpandedPaths(newCommitData, expandedPaths);
 
                 if (lockDict != null && lockDict.Count > 0)
-                    ApplyLockColors(_flatTreeData, lockDict);
+                    ApplyLockColors(buildResult.Elements, lockDict);
 
-                var localFlatData = _flatTreeData;
-                var localCommitData = _commitTreeData;
+                // === [P]: flagi svn:needs-lock (BuildCommitView trzyma TE SAME
+                // obiekty elementów → commit-view dostaje flagi automatycznie):
+                ApplyProtectionFlags(buildResult.Elements, protectedPaths);
+
+                var localFlatData = buildResult.Elements;
+                var localCommitData = newCommitData;
+                var localTotalBytes = buildResult.TotalBytes;
 
                 RunOnMainThread(() =>
                 {
+                    if (Volatile.Read(ref _activeRefreshId) != myId) return;
                     if (svnManager.WorkingDir != expectedWorkingDir) return;
+
+                    // === FIX B: publikacja PRZED jakimkolwiek czytaniem przez
+                    // PostProcessStatus (który biegnie po powrocie z tej metody).
+                    if (legacyStatusDict != null)
+                        svnManager.SetCurrentStatus(legacyStatusDict);
+
+                    _flatTreeData = localFlatData;
+                    _commitTreeData = localCommitData;
+                    totalCommitBytes = localTotalBytes;
 
                     if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
                     {
@@ -861,6 +1016,7 @@ namespace SVN.Core
             {
                 RunOnMainThread(() =>
                 {
+                    if (Volatile.Read(ref _activeRefreshId) != myId) return;
                     if (svnUI != null && svnUI.TreeDisplay != null && svnUI.TreeDisplay.text.Contains("Scanning"))
                     {
                         SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
@@ -888,6 +1044,10 @@ namespace SVN.Core
             _commitTreeData?.Clear();
             svnUI.SvnTreeView?.ClearView();
             svnUI.SVNCommitTreeDisplay?.ClearView();
+
+            // === FIX B: pusty status ≠ ostatni status — bez tego PostProcessStatus
+            // po przełączeniu na czysty projekt widziałby konflikty poprzedniego.
+            svnManager.SetCurrentStatus(new Dictionary<string, (string status, string size)>());
 
             if (svnUI.TreeDisplay != null)
                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
@@ -954,7 +1114,16 @@ namespace SVN.Core
                 if (isFolder)
                 {
                     stats.FolderCount++;
-                    if (s == "?") stats.NewFilesCount++;
+
+                    switch (s)
+                    {
+                        case "?": stats.NewFilesCount++; break;
+                        // === FIX TREE-CONFLICT: konflikt na FOLDERZE też liczony ===
+                        case "C": stats.ConflictsCount++; break;
+                        // === FIX R/~: wcześniej R i ~ na katalogach ginęły całkowicie ===
+                        case "R": stats.ReplacedCount++; break;
+                        case "~": stats.ObstructedCount++; break;
+                    }
                     continue;
                 }
 
@@ -968,6 +1137,10 @@ namespace SVN.Core
                     case "D":
                     case "!": stats.DeletedCount++; break;
                     case "C": stats.ConflictsCount++; break;
+                    // === FIX R/~: parser dopuszczał te statusy ("MA?!DC~R"),
+                    // więc statystyki muszą je liczyć, żeby zgadzały się z drzewem ===
+                    case "R": stats.ReplacedCount++; break;
+                    case "~": stats.ObstructedCount++; break;
                 }
             }
 
@@ -1095,20 +1268,31 @@ namespace SVN.Core
                     {
                         bytes = fileInfo.Bytes;
                         fileSize = FormatSize(bytes);
-
-                        if (displayStatus != " " && displayStatus != "DIR" &&
-                            displayStatus != "!" && displayStatus != "D")
-                        {
-                            localTotalBytes += bytes;
-                        }
                     }
 
-                    bool isChecked = !string.IsNullOrWhiteSpace(displayStatus) &&
-                                     displayStatus != " " &&
-                                     displayStatus != "I";
+                    // === FIX R/~: WHITELISTA statusów commitowalnych zamiast
+                    // "wszystko poza ' ' i 'I'". Wcześniej zaznaczało to też C i ~
+                    // (commit pada: E155015/E200009 — ich bajty szły do Total Commit
+                    // Size, choć nie dało się ich zcommitować) oraz status "DIR".
+                    // Foldery-rodzice i tak dostają checkbox z pętli na końcu metody.
+                    // "I" nie występuje — parser filtrował je już na wejściu.
+                    // UWAGA (zmiana zachowania): C nie jest już domyślnie zaznaczone —
+                    // zgodnie z komunikatem "(Resolve first!)". Po resolve i refresh
+                    // status zmieni się na M/A i plik wróci do zaznaczenia.
+                    bool isChecked = displayStatus == "M" ||
+                                     displayStatus == "A" ||
+                                     displayStatus == "?" ||
+                                     displayStatus == "D" ||
+                                     displayStatus == "!" ||
+                                     displayStatus == "R";
 
                     if (previousSelectionStates.TryGetValue(currentPath, out bool prev))
                         isChecked = prev;
+
+                    // === FIX R/~: suma spójna z whitelistą zaznaczania (C/~ nie wliczają
+                    // się — inaczej Total Commit Size rozjeżdżałby się z "Pending Changes")
+                    if (isChecked && !isActuallyFolder && isLastPart)
+                        localTotalBytes += bytes;
 
                     pathToIndex[currentPath] = elements.Count;
 
@@ -1179,6 +1363,7 @@ namespace SVN.Core
                 $"Total Commit Size: <color=#FFFF00>{FormatSize(selectedBytes)}</color>";
         }
 
+        /// <summary>Czysty odczyt — NIE mutuje managera (=== FIX: rozdzielenie capture/commit).</summary>
         private HashSet<string> CaptureExpandedPaths()
         {
             var expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1201,16 +1386,19 @@ namespace SVN.Core
                 }
             }
 
-            if (svnManager != null)
-            {
-                svnManager.ExpandedPaths.Clear();
-                foreach (var p in expanded)
-                    svnManager.ExpandedPaths.Add(p);
-
-                svnManager.ExpandedPaths.Add("");
-            }
-
             return expanded;
+        }
+
+        /// <summary>Zapis przechwyconych ścieżek do managera.</summary>
+        private void CommitExpandedPaths(HashSet<string> expanded)
+        {
+            if (svnManager == null) return;
+
+            svnManager.ExpandedPaths.Clear();
+            foreach (var p in expanded)
+                svnManager.ExpandedPaths.Add(p);
+
+            svnManager.ExpandedPaths.Add("");
         }
 
         private void RestoreExpandedPaths(List<SvnTreeElement> elements, HashSet<string> expanded)
@@ -1271,6 +1459,172 @@ namespace SVN.Core
                 if (e.IsFolder && e.IsExpanded && !string.IsNullOrEmpty(e.FullPath))
                     svnManager.ExpandedPaths.Add(e.FullPath);
             }
+        }
+
+        /// <summary>
+        /// === FIX A: publiczne wejście widoku ignored (analog ShowOnlyModified).
+        /// Podłącz pod przycisk/tab "Ignored" — do tej pory format "VIEW: IGNORED"
+        /// w UpdateAllStatisticsUI był martwy (flaga nigdy nie dostawała true,
+        /// a CalculateStats nie liczył pól Ignored*).
+        /// </summary>
+        public async void ShowOnlyIgnored()
+        {
+            try { await RefreshIgnoredInternal(); }
+            catch (Exception e)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN] Błąd podczas odświeżania widoku ignored: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// === FIX A: pełny flow widoku ignored: GetIgnoredOnlyAsync (svn I + reguły
+        /// lokalne z .svnignore i properties) → drzewo → statystyki z polami Ignored*.
+        /// Powrót do widoku zmian: ShowOnlyModified() (resetuje flagę).
+        /// </summary>
+        public async Task RefreshIgnoredInternal()
+        {
+            int myId = Interlocked.Increment(ref _activeRefreshId);
+
+            var oldCts = _cts;
+            _cts = new CancellationTokenSource();
+            CancellationToken token = _cts.Token;
+
+            if (oldCts != null)
+            {
+                oldCts.Cancel();
+                _ = Task.Delay(1000).ContinueWith(_ =>
+                {
+                    try { oldCts.Dispose(); } catch { }
+                });
+            }
+
+            IsProcessing = true;
+            string expectedWorkingDir = svnManager.WorkingDir;
+
+            ClearSVNTreeView();
+
+            RunOnMainThread(() =>
+            {
+                if (Volatile.Read(ref _activeRefreshId) != myId) return;
+                if (svnUI != null && svnUI.TreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "Scanning ignored files...", "TREE", append: false);
+            });
+
+            try
+            {
+                string root = svnManager.WorkingDir;
+
+                var ignoreModule = svnManager.GetModule<SVNIgnore>();
+                if (ignoreModule == null)
+                {
+                    SVNLogBridge.LogErrorToOutput("[SVNStatus] SVNIgnore module not available — ignored view unavailable.");
+                    return;
+                }
+
+                var ignoredDict = await ignoreModule.GetIgnoredOnlyAsync(root, token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                if (svnManager.WorkingDir != expectedWorkingDir) return;
+
+                if (ignoredDict == null || ignoredDict.Count == 0)
+                {
+                    RunOnMainThread(() =>
+                    {
+                        if (Volatile.Read(ref _activeRefreshId) != myId) return;
+
+                        _flatTreeData.Clear();
+                        _commitTreeData = null;
+                        _isCurrentViewIgnored = true;
+
+                        svnUI.SvnTreeView?.ClearView();
+                        svnUI.SVNCommitTreeDisplay?.ClearView();
+
+                        if (svnUI.TreeDisplay != null)
+                            SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No ignored files.</i>", "TREE", append: false);
+
+                        UpdateAllStatisticsUI(new SvnStats(), isIgnoredView: true);
+                    });
+                    return;
+                }
+
+                // Konwersja (status, size) → SvnChangeInfo + drzewo — off-thread.
+                // "I" nie jest na whiteliście zaznaczania (BuildFlatTreeStructureText),
+                // więc ignored pliki nie dostają checkboxa do commitu — poprawnie.
+                var localFlatData = await Task.Run(() =>
+                {
+                    var statusDict = new Dictionary<string, SvnChangeInfo>(
+                        ignoredDict.Count, StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var kvp in ignoredDict)
+                    {
+                        statusDict[kvp.Key] = new SvnChangeInfo
+                        {
+                            Status = kvp.Value.status,   // "I"
+                            Size = kvp.Value.size,       // "DIR" / "FILE"
+                            Bytes = 0,
+                            Exists = true
+                        };
+                    }
+
+                    return BuildFlatTreeStructureText(
+                        root, statusDict, new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase))
+                        .Elements;
+                }, token).ConfigureAwait(false);
+
+                token.ThrowIfCancellationRequested();
+                if (svnManager.WorkingDir != expectedWorkingDir) return;
+
+                var stats = CalculateIgnoredStats(ignoredDict);
+
+                RunOnMainThread(() =>
+                {
+                    if (Volatile.Read(ref _activeRefreshId) != myId) return;
+                    if (svnManager.WorkingDir != expectedWorkingDir) return;
+
+                    _flatTreeData = localFlatData;
+                    _commitTreeData = null;          // brak panelu commit dla ignored
+                    totalCommitBytes = 0;
+                    _isCurrentViewIgnored = true;
+
+                    if (svnUI.TreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+
+                    svnUI.SvnTreeView?.RefreshUI(localFlatData, this);
+                    svnUI.SVNCommitTreeDisplay?.ClearView();
+
+                    UpdateAllStatisticsUI(stats, isIgnoredView: true);
+                });
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"Ignored view refresh error: {ex}");
+            }
+            finally
+            {
+                if (Volatile.Read(ref _activeRefreshId) == myId)
+                {
+                    IsProcessing = false;
+                }
+            }
+        }
+
+        /// <summary>=== FIX A: statystyki widoku ignored — pola, których CalculateStats nie rusza.</summary>
+        private static SvnStats CalculateIgnoredStats(Dictionary<string, (string status, string size)> ignoredDict)
+        {
+            var stats = new SvnStats();
+            if (ignoredDict == null) return stats;
+
+            foreach (var item in ignoredDict.Values)
+            {
+                if (item.size == "DIR")
+                    stats.IgnoredFolderCount++;
+                else
+                    stats.IgnoredFileCount++;
+
+                stats.IgnoredCount++;
+            }
+
+            return stats;
         }
     }
 }

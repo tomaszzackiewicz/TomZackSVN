@@ -19,13 +19,19 @@ namespace SVN.Core
         [InitializeOnLoadMethod]
         private static void InitEditorQuitHook()
         {
+            EditorApplication.quitting -= KillAll;
             EditorApplication.quitting += KillAll;
-            AppDomain.CurrentDomain.DomainUnload += (_, __) => KillAll();
+
+            AppDomain.CurrentDomain.DomainUnload -= OnDomainUnload;
+            AppDomain.CurrentDomain.DomainUnload += OnDomainUnload;
+
+            static void OnDomainUnload(object sender, EventArgs e) => KillAll();
         }
 #else
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void InitRuntimeQuitHook()
         {
+            Application.quitting -= KillAll;
             Application.quitting += KillAll;
         }
 #endif
@@ -44,10 +50,7 @@ namespace SVN.Core
             {
                 process.EnableRaisingEvents = true;
 
-                process.Exited += (_, __) =>
-                {
-                    Unregister(process);
-                };
+                process.Exited += (_, __) => Unregister(process);
             }
             catch (Exception ex)
             {
@@ -98,16 +101,29 @@ namespace SVN.Core
                 if (process == null)
                     return;
 
-                if (process.HasExited)
-                    return;
+                // === FIX (shutdown noise): proces mógł zakończyć się naturalnie I zostać
+                // zdisposowany przez właściciela (SvnRunner 'using'), zanim handler Exited
+                // (threadpool) wyrejestrował go ze zbioru. HasExited/Id na takim obiekcie
+                // rzuca "No process is associated with this object" (lub ObjectDisposedException,
+                // który jest PODKLASĄ InvalidOperationException — dlatego jeden catch na
+                // bazową klasę załatwia oba). Dla killa: już martwy = cichy powrót.
+                try
+                {
+                    if (process.HasExited)
+                        return;
+                }
+                catch (InvalidOperationException) { return; }        // ⊇ ObjectDisposedException ("No process...")
+                catch (System.ComponentModel.Win32Exception) { return; }   // np. brak dostępu do uchwytu
 
-                Process.Start(new ProcessStartInfo
+                using var killer = Process.Start(new ProcessStartInfo
                 {
                     FileName = "taskkill",
                     Arguments = $"/PID {process.Id} /T /F",
                     CreateNoWindow = true,
                     UseShellExecute = false
-                })?.WaitForExit(500);
+                });
+
+                killer?.WaitForExit(500);
             }
             catch (Exception ex)
             {

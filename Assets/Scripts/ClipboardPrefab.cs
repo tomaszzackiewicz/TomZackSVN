@@ -11,6 +11,14 @@ public class ClipboardPrefab : MonoBehaviour
     public TextMeshProUGUI summaryText;
     public Transform scrollContent;
 
+    // === FIX K1: whitelist tagów TMP — goły '<.*?>' zjadał legalne znaki < >
+    // w treści (np. 'a < b' w komunikatach commitów).
+    private static readonly Regex RichTextTagRegex = new Regex(
+        @"</?(color|size|b|i|u|s|mark|noparse|mspace|sprite|sub|sup|br|pos|font|style|a|link|width|page|indent|line-height)(\s[^>]*)?/?>",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    // UWAGA: GUIUtility.systemCopyBuffer wymaga main thread — klasa wołana
+    // wyłącznie z przycisków UI (gwarancja main). Nie wołać z modułów async.
     public void Button_CopyEverythingToClipboard()
     {
         if (scrollContent == null)
@@ -23,7 +31,7 @@ public class ClipboardPrefab : MonoBehaviour
 
         if (summaryText != null && !string.IsNullOrEmpty(summaryText.text))
         {
-            string cleanSummary = Regex.Replace(summaryText.text, "<.*?>", string.Empty).Trim();
+            string cleanSummary = RichTextTagRegex.Replace(summaryText.text, string.Empty).Trim();
             sb.AppendLine("=== SUMMARY ===");
             sb.AppendLine(cleanSummary);
             sb.AppendLine("---------------------------");
@@ -39,7 +47,7 @@ public class ClipboardPrefab : MonoBehaviour
                 TextMeshProUGUI tmp = item.GetComponentInChildren<TextMeshProUGUI>();
                 if (tmp != null)
                 {
-                    string cleanLine = Regex.Replace(tmp.text, "<.*?>", string.Empty).Trim();
+                    string cleanLine = RichTextTagRegex.Replace(tmp.text, string.Empty).Trim();
                     if (!string.IsNullOrEmpty(cleanLine))
                     {
                         sb.AppendLine(cleanLine);
@@ -55,7 +63,7 @@ public class ClipboardPrefab : MonoBehaviour
             {
                 if (tmp == summaryText) continue;
 
-                string cleanLine = Regex.Replace(tmp.text, "<.*?>", string.Empty).Trim();
+                string cleanLine = RichTextTagRegex.Replace(tmp.text, string.Empty).Trim();
                 if (!string.IsNullOrEmpty(cleanLine))
                 {
                     sb.AppendLine(cleanLine);

@@ -1,6 +1,7 @@
 using SVN.Core;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -58,9 +59,16 @@ public class SvnLineController : MonoBehaviour
     private SvnTreeElement _element;
     private SVNStatus _svnStatus;
     private Image _rowBackground;
-    private float _lastClickTime;
+    // === FIX K4: -10f — Time.time≈0 na starcie + 0 czyniło PIERWSZY klik pełnym
+    // "double-clickiem" (external diff zamiast podglądu). Wzorzec SVNFileItem/SVNRevert.
+    private float _lastClickTime = -10f;
     private const float DoubleClickThreshold = 0.3f;
     private CancellationTokenSource _destroyCts;
+    // === FIX K2: guard pojedynczości commitu (podwójny szybki klik = dwa commity).
+    private int _commitBusy;
+
+    // === FIX drobiazg: cache CanvasGroup dla ApplyFilter (GetComponent per keystroke).
+    private CanvasGroup _canvasGroup;
 
     private UnityAction _onFoldClickDelegate;
     private UnityAction<bool> _onToggleChangedDelegate;
@@ -89,6 +97,8 @@ public class SvnLineController : MonoBehaviour
         if (!TryGetComponent(out _layoutElement))
             _layoutElement = gameObject.AddComponent<LayoutElement>();
 
+        _canvasGroup = GetComponent<CanvasGroup>();
+
         _hoverHandlersCache = new Dictionary<Button, SVNHoverHandler>();
         Button[] allButtons = GetComponentsInChildren<Button>(true);
         foreach (var btn in allButtons)
@@ -104,7 +114,14 @@ public class SvnLineController : MonoBehaviour
     private void OnDestroy()
     {
         _destroyCts?.Cancel();
-        _destroyCts?.Dispose();
+        // === FIX K3: delayed dispose — commit/lock w locie trzymają token w
+        // SvnRunner; natychmiastowy dispose dawał ODE (nie-OCE) → fałszywy
+        // "Commit failed: safe handle...".
+        var cts = _destroyCts;
+        _destroyCts = null;
+        if (cts != null)
+            _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
+
         RemoveAllButtonListeners();
     }
 
@@ -143,7 +160,14 @@ public class SvnLineController : MonoBehaviour
         SetButtonActive(blameBtn, false);
         SetButtonActive(explorerBtn, false);
         SetButtonActive(resolveBtn, false);
-        SetButtonActive(commitBtn, false);
+        // === FIX K1: ResetAllButtons zdejmował też listener commitu — wcześniej
+        // Setup nie robił Remove przed Add → recykling itemu akumulował delegaty
+        // (klik = N commitów po N odświeżeniach listy).
+        if (commitBtn != null)
+        {
+            commitBtn.gameObject.SetActive(false);
+            commitBtn.onClick.RemoveListener(_onCommitClickDelegate);
+        }
         SetButtonActive(restoreFromRevBtn, false);
         SetButtonActive(extractToRevBtn, false);
     }
@@ -179,6 +203,14 @@ public class SvnLineController : MonoBehaviour
             ? ""
             : $" [{_element.Status}]";
 
+        // === [P]: tag ochrony doklejany do STATUSU (nie nazwy) — ta sama
+        // czcionka i rozmiar co [M]; bez spacji po tagu (ciasno przy [M]).
+        // Tylko pliki (foldery nie mają svn:needs-lock).
+        string protTag =
+    _element.IsProtectionRemovalPending ? "<color=#FFA500><b>[P-]</b></color>" :
+    _element.IsProtected ? "<color=#FFA500><b>[P]</b></color>" : "";
+        // statusText.text = "<color=#ADD8E6>[FILE]</color> " + statusClean + protTag;
+
         if (nameText != null)
         {
             nameText.fontStyle = FontStyles.Normal;
@@ -190,8 +222,8 @@ public class SvnLineController : MonoBehaviour
             if (statusText != null)
             {
                 statusText.text = isRoot
-                    ? $"<b><color={DirHex}>[ROOT]</color></b>{statusClean}"
-                    : $"<b><color={DirHex}>[DIR]</color></b>{statusClean}";
+                    ? $"<b><color={DirHex}>[ROOT]</color></b>{statusClean}{protTag}"
+                    : $"<b><color={DirHex}>[DIR]</color></b>{statusClean}{protTag}";
                 statusText.color = Color.black;
             }
 
@@ -209,7 +241,7 @@ public class SvnLineController : MonoBehaviour
         {
             if (statusText != null)
             {
-                statusText.text = "<color=#ADD8E6>[FILE]</color> " + statusClean;
+                statusText.text = "<color=#ADD8E6>[FILE]</color> " + statusClean + protTag;
                 statusText.color = GetStatusColor(_element.Status);
             }
 
@@ -310,6 +342,7 @@ public class SvnLineController : MonoBehaviour
             if (!string.IsNullOrEmpty(_element.Size)) tooltip.Append($" | Size: {_element.Size}");
             if (_element.LockedByMe) tooltip.Append(" | Locked by you");
             else if (_element.LockedByOther) tooltip.Append(" | Locked by another user");
+            if (_element.IsProtected) tooltip.Append(" | Protected (svn:needs-lock)");   // === [P]
             if (_element.DiffStatsLoaded) tooltip.Append($" | Diff: +{_element.AddedLines} -{_element.RemovedLines}");
             tooltip.Append(" | Click: Preview | Double-Click: External Diff");
 
@@ -356,6 +389,9 @@ public class SvnLineController : MonoBehaviour
         if (!isUnversioned && status != "!" && status != "C" && commitBtn != null)
         {
             commitBtn.gameObject.SetActive(true);
+            // === FIX K1: Remove przed Add — listener zdejmowany też w ResetAllButtons,
+            // podwójne zabezpieczenie na wypadek przyszłych edycji.
+            commitBtn.onClick.RemoveListener(_onCommitClickDelegate);
             commitBtn.onClick.AddListener(_onCommitClickDelegate);
             BindHover(commitBtn, "Commit only this file.");
         }
@@ -434,7 +470,11 @@ public class SvnLineController : MonoBehaviour
         {
             lockBtnText.text = "<color=#E6E6E6>U</color>";
             lockBtn.interactable = true;
-            BindHover(lockBtn, "Click to lock.");
+
+            // === [P]: plik chroniony jest read-only do czasu wzięcia locka:
+            BindHover(lockBtn, _element.IsProtected
+                ? "Click to lock. File is protected (svn:needs-lock) — read-only until you hold the lock."
+                : "Click to lock.");
         }
     }
 
@@ -507,26 +547,50 @@ public class SvnLineController : MonoBehaviour
 
     private async Task OnCommitClickAsync()
     {
-        if (_destroyCts.IsCancellationRequested) return;
+        if (_destroyCts == null || _destroyCts.IsCancellationRequested) return;
 
-        string msg = $"Commit {_element.Name}";
+        // Guard pojedynczości.
+        if (Interlocked.Exchange(ref _commitBusy, 1) == 1) return;
+
+        string msgFile = null;
         try
         {
             var manager = SVNManager.Instance;
             if (manager == null) return;
 
+            // Sanityzacja nazwy (znaki kontrolne + cudzysłowy) — jak SVNCommit.
+            string safeName = (_element.Name ?? "file").Replace("\"", "'");
+            var sb = new System.Text.StringBuilder(safeName.Length);
+            foreach (char c in $"Commit {safeName}")
+                if (!char.IsControl(c)) sb.Append(c);
+            string message = sb.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(message)) message = "Commit single file";
+
+            // Wiadomość przez plik -F (UTF-8 bez BOM) — wzorzec SVNCommit.
+            msgFile = Path.Combine(Path.GetTempPath(), $"svn_line_msg_{Guid.NewGuid():N}.txt");
+            await File.WriteAllTextAsync(msgFile, message, new System.Text.UTF8Encoding(false), _destroyCts.Token);
+
+            // === FIX: usunięty martwy warunek '($"...") == null ? "" : ...' —
+            // interpolated string nigdy nie jest null, więc ternary zawsze
+            // zwracał BuildSingleCommitCommand (kod "działał przez przypadek",
+            // pozostałość uszkodzonej edycji).
             string result = await SvnRunner.RunAsync(
-                $"commit -m \"{msg}\" \"{_element.FullPath}\"",
+                BuildSingleCommitCommand(msgFile),
                 manager.WorkingDir,
                 false,
                 _destroyCts.Token);
 
             if (this == null) return;
 
-            if (result.Contains("Committed revision"))
+            if (result != null && result.Contains("Committed revision"))
             {
                 SVNLogBridge.LogLine($"<color=green>Committed:</color> {_element.Name}");
-                await manager.RefreshStatus();
+
+                // Stan po commicie — spójnie z SVNCommit.
+                SVNStatus.ClearLockCache();
+                manager.DiskChangesDetected = true;
+
+                await manager.RefreshStatus(force: true);
             }
             else
             {
@@ -539,11 +603,25 @@ public class SvnLineController : MonoBehaviour
             if (this != null)
                 SVNLogBridge.LogError($"Commit failed: {ex.Message}");
         }
+        finally
+        {
+            if (msgFile != null) { try { if (File.Exists(msgFile)) File.Delete(msgFile); } catch { } }
+            Interlocked.Exchange(ref _commitBusy, 0);
+        }
+    }
+
+    // Komenda commitu: message przez -F, ścieżka przez --targets (plik targets
+    // odpada przy pojedynczej ścieżce ze względu na nadmiar — escapujemy jak
+    // SvnRunner.EscapeSingleArgument bycie: cudzysłowy wewnątrz bezpieczne).
+    private string BuildSingleCommitCommand(string msgFilePath)
+    {
+        string escapedPath = _element.FullPath.Replace("\"", "\\\"");
+        return $"commit -F \"{msgFilePath}\" \"{escapedPath}\"";
     }
 
     private async Task OnLockClickAsync()
     {
-        if (_destroyCts.IsCancellationRequested) return;
+        if (_destroyCts == null || _destroyCts.IsCancellationRequested) return;
 
         var lockModule = SVNManager.Instance?.GetModule<SVNLock>();
         if (lockModule == null) return;
@@ -631,8 +709,7 @@ public class SvnLineController : MonoBehaviour
             if (!gameObject.activeSelf) gameObject.SetActive(true);
             _layoutElement.ignoreLayout = false;
 
-            var cg = GetComponent<CanvasGroup>();
-            if (cg != null) { cg.alpha = 1f; cg.blocksRaycasts = true; }
+            if (_canvasGroup != null) { _canvasGroup.alpha = 1f; _canvasGroup.blocksRaycasts = true; }
             return;
         }
 
@@ -645,18 +722,16 @@ public class SvnLineController : MonoBehaviour
         if (matches)
         {
             _layoutElement.ignoreLayout = false;
-            var cg = GetComponent<CanvasGroup>();
-            if (cg != null) { cg.alpha = 1f; cg.blocksRaycasts = true; }
+            if (_canvasGroup != null) { _canvasGroup.alpha = 1f; _canvasGroup.blocksRaycasts = true; }
         }
         else
         {
             _layoutElement.ignoreLayout = true;
 
-            var cg = GetComponent<CanvasGroup>();
-            if (cg != null)
+            if (_canvasGroup != null)
             {
-                cg.alpha = 0f;
-                cg.blocksRaycasts = false;
+                _canvasGroup.alpha = 0f;
+                _canvasGroup.blocksRaycasts = false;
             }
             else
             {

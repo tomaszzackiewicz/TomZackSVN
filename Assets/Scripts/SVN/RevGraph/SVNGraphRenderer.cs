@@ -8,6 +8,11 @@ namespace SVN.Core
     {
         private const string COLOR_TRUNK = "#3B82F6";
 
+        // === FIX D1: licznik "unknown branch" — repo z r1-dotykającym "/" sypało
+        // LOGIEM PER NODE przy każdym renderze (2000 rewizji = 2000 linii w Output).
+        // Teraz: pierwszy przypadek logowany, kolejne liczone, podsumowanie co 100.
+        private static int _unknownBranchCount;
+
         #region Public API
 
         public static GraphData AnalyzeBranches(List<SVNRevisionNode> nodes)
@@ -134,6 +139,11 @@ namespace SVN.Core
                 data.BranchColors[branch] = branch == "trunk" ? COLOR_TRUNK : "#" + ColorUtility.ToHtmlStringRGB(c);
             }
 
+            // === FIX D1: podsumowanie zamiast spamu.
+            if (_unknownBranchCount > 1)
+                SVNLogBridge.LogToOutput($"<color=#FFAA00>[SVN Branch Parser] {_unknownBranchCount} revisions mapped to 'trunk' (unrecognized paths).</color>");
+            _unknownBranchCount = 0;
+
             return data;
         }
 
@@ -205,10 +215,17 @@ namespace SVN.Core
                 }
             }
 
-            SVNLogBridge.LogToOutput($"<color=#FFAA00>[SVN Branch Parser] Unknown branch for r{node.Revision}. Path: '{NormalizePath(node.ChangedPaths[0])}'</color>");
+            // === FIX D1: pierwszy przypadek z logiem (przykład), reszta licznikiem.
+            _unknownBranchCount++;
+            if (_unknownBranchCount == 1)
+                SVNLogBridge.LogToOutput($"<color=#FFAA00>[SVN Branch Parser] Unknown branch for r{node.Revision}. Example path: '{NormalizePath(node.ChangedPaths[0])}'</color>");
+
             return BranchInfo.Unknown;
         }
 
+        // UWAGA (znane ograniczenie heurystyki): IsMergeCommit klasyfikuje po
+        // słowie "merge"/"reintegrate" w wiadomości — "fixed merge bug" też da ◉.
+        // Świadome; poprawka wymagałaby analizy mergeinfo zamiast heurystyk.
         public static bool IsMergeCommit(SVNRevisionNode node)
         {
             if (node == null) return false;

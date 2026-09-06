@@ -135,10 +135,11 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
             editMessageButton.interactable = isOwnCommit;
         }
 
-        string cleanMsg = node.Message ?? "";
-        int idx = cleanMsg.LastIndexOf(" /", StringComparison.Ordinal);
-        if (idx != -1) cleanMsg = cleanMsg.Substring(0, idx).Trim();
-        this.rawMessage = cleanMsg;
+        // === FIX K2: usunięta heurystyka LastIndexOf(" /") — obcinała LEGALNE
+        // wiadomości ("Refactor ModuleA / ModuleB" → "Refactor ModuleA").
+        // Commit-message to dane użytkownika; bez pewnego wzorca sufiksu
+        // nie manipulujemy treścią.
+        this.rawMessage = node.Message ?? "";
 
         if (graphVisualText != null)
         {
@@ -256,8 +257,12 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
 
     public void OnPointerClick(PointerEventData eventData)
     {
-        if (eventData.pointerCurrentRaycast.gameObject != gameObject &&
-            !eventData.pointerCurrentRaycast.gameObject.transform.IsChildOf(transform))
+        // === FIX K1: null-guard raycastu — klik "w nic" (raycast pada poza
+        // kolidery) daje pointerCurrentRaycast.gameObject == null → wcześniej
+        // NRE na porównaniu z gameObject.
+        var hitGo = eventData.pointerCurrentRaycast.gameObject;
+        if (hitGo == null) return;
+        if (hitGo != gameObject && !hitGo.transform.IsChildOf(transform))
             return;
 
         if (eventData.button == PointerEventData.InputButton.Left)
@@ -269,7 +274,16 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
             }
             else
             {
-                bool multi = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                // === FIX K1: legacy Input w try/catch — na projekcie z nowym
+                // Input System Input.GetKey rzuca InvalidOperationException
+                // przy KAŻDYM kliku (wzorzec z SVNTerminal/MainWindow).
+                bool multi = false;
+                try
+                {
+                    multi = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                }
+                catch (InvalidOperationException) { /* Input System bez legacy */ }
+
                 var panel = GetComponentInParent<RevGraphPanel>();
                 if (panel != null)
                     panel.OnItemClicked(this, multi);

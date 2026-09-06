@@ -60,14 +60,16 @@ namespace SVN.Core
             svnUI.SettingsBlameToolPathInput?.SetTextWithoutNotify(svnManager.BlameToolPath ?? "");
         }
 
+        // UWAGA: odczyt inputów (.text) na początku każdej metody — PRZED pierwszym
+        // await — wykonuje się synchronicznie na main thread (wywołanie z przycisku). Bezpieczne.
+
         private async Task SaveRepoUrlAsync()
         {
             string newUrl = svnUI?.SettingsRepoUrlInput?.text?.Trim() ?? "";
             if (string.IsNullOrEmpty(newUrl)) return;
 
             await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.repoUrl = newUrl).ConfigureAwait(false);
-            PlayerPrefs.SetString(SVNManager.KEY_REPO_URL, newUrl);
-            PlayerPrefs.Save();
+            SVNPrefs.SetString(SVNManager.KEY_REPO_URL, newUrl);   // === FIX: thread-safe
 
             if (svnManager != null)
                 svnManager.RepositoryUrl = newUrl;
@@ -80,13 +82,12 @@ namespace SVN.Core
             string path = svnUI?.SettingsSshKeyPathInput?.text?.Trim() ?? "";
 
             await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.privateKeyPath = path).ConfigureAwait(false);
-            PlayerPrefs.SetString(SVNManager.KEY_SSH_PATH, path);
-            PlayerPrefs.Save();
+            SVNPrefs.SetString(SVNManager.KEY_SSH_PATH, path);   // === FIX: thread-safe
 
             if (svnManager != null)
             {
                 svnManager.CurrentKey = path;
-                SvnRunner.KeyPath = path;
+                SvnRunner.KeyPath = path;    // setter już thread-safe (patrz SvnRunner)
             }
 
             SVNLogBridge.LogLine($"Saved ssh key = '{path}'");
@@ -97,8 +98,7 @@ namespace SVN.Core
             string newPath = svnUI?.SettingsMergeToolPathInput?.text?.Trim() ?? "";
 
             await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.mergeToolPath = newPath).ConfigureAwait(false);
-            PlayerPrefs.SetString(SVNManager.KEY_TEXTEDITOR_TOOL, newPath);
-            PlayerPrefs.Save();
+            SVNPrefs.SetString(SVNManager.KEY_TEXTEDITOR_TOOL, newPath);   // === FIX
 
             if (svnManager != null)
                 svnManager.MergeToolPath = newPath;
@@ -106,6 +106,46 @@ namespace SVN.Core
             SVNLogBridge.LogLine($"Saved merge tool = '{newPath}'");
         }
 
+        private async Task SaveDiffToolPathAsync()
+        {
+            string newPath = svnUI?.SettingsDiffToolPathInput?.text?.Trim() ?? "";
+
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.diffToolPath = newPath).ConfigureAwait(false);
+            SVNPrefs.SetString(SVNManager.KEY_DIFF_TOOL, newPath);   // === FIX
+
+            if (svnManager != null)
+                svnManager.DiffToolPath = newPath;
+
+            SVNLogBridge.LogLine($"Saved diff tool = '{newPath}'");
+        }
+
+        private async Task SaveResolveToolPathAsync()
+        {
+            string newPath = svnUI?.SettingsResolveToolPathInput?.text?.Trim() ?? "";
+
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.resolveToolPath = newPath).ConfigureAwait(false);
+            SVNPrefs.SetString(SVNManager.KEY_RESOLVE_TOOL, newPath);   // === FIX
+
+            if (svnManager != null)
+                svnManager.ResolveToolPath = newPath;
+
+            SVNLogBridge.LogLine($"Saved resolve tool = '{newPath}'");
+        }
+
+        private async Task SaveBlameToolPathAsync()
+        {
+            string newPath = svnUI?.SettingsBlameToolPathInput?.text?.Trim() ?? "";
+
+            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.blameToolPath = newPath).ConfigureAwait(false);
+            SVNPrefs.SetString(SVNManager.KEY_BLAME_TOOL, newPath);   // === FIX
+
+            if (svnManager != null)
+                svnManager.BlameToolPath = newPath;
+
+            SVNLogBridge.LogLine($"Saved blame tool = '{newPath}'");
+        }
+
+        // === S1+S4: pełne przełączenie projektu przez LoadProject.
         private async Task SaveWorkingDirAsync()
         {
             if (!TryEnterProcessing()) return;
@@ -119,10 +159,7 @@ namespace SVN.Core
                     return;
                 }
 
-                try
-                {
-                    newPath = Path.GetFullPath(newPath).Replace("\\", "/");
-                }
+                try { newPath = Path.GetFullPath(newPath).Replace("\\", "/"); }
                 catch (Exception ex)
                 {
                     SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Invalid path: {ex.Message}");
@@ -141,33 +178,22 @@ namespace SVN.Core
                     return;
                 }
 
-                List<SVNProject> projects = await Task.Run(() => ProjectSettings.LoadProjects()).ConfigureAwait(false);
                 string normalizedPath = newPath.TrimEnd('/');
 
-                var existing = projects.Find(p =>
-                    !string.IsNullOrEmpty(p.workingDir) &&
-                    NormalizePath(p.workingDir) == normalizedPath);
-
-                if (existing == null)
+                SVNProject project = ProjectSettings.AddOrUpdateProject(normalizedPath, (p, created) =>
                 {
-                    projects.Add(new SVNProject
-                    {
-                        projectName = Path.GetFileName(newPath),
-                        workingDir = normalizedPath,
-                        lastOpened = DateTime.UtcNow
-                    });
-                    await Task.Run(() => ProjectSettings.SaveProjects(projects)).ConfigureAwait(false);
-                }
+                    if (created)
+                        p.projectName = Path.GetFileName(newPath);
+                    p.lastOpened = DateTime.UtcNow;
+                });
 
-                PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
-                PlayerPrefs.Save();
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
-                if (svnManager != null)
+                bool loaded = await svnManager.LoadProject(project).ConfigureAwait(false);
+                if (!loaded)
                 {
-                    svnManager.WorkingDir = normalizedPath;
-                    await svnManager.RefreshRepositoryInfo().ConfigureAwait(false);
-                    await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
-                    await svnManager.RefreshStatus().ConfigureAwait(false);
+                    SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Project could not be loaded (working copy invalid).");
+                    return;
                 }
 
                 SVNLogBridge.LogLine($"<color=green>Success:</color> Switched to project at {normalizedPath}");
@@ -186,6 +212,7 @@ namespace SVN.Core
         {
             if (svnManager == null) return;
 
+            // Odczyt PRZED pierwszym await — main thread, bezpieczne.
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
             if (string.IsNullOrEmpty(lastPath)) return;
 
@@ -194,94 +221,39 @@ namespace SVN.Core
 
             var current = projects.Find(p =>
                 !string.IsNullOrEmpty(p.workingDir) &&
-                NormalizePath(p.workingDir) == normalizedLast);
+                string.Equals(NormalizePath(p.workingDir), normalizedLast, StringComparison.OrdinalIgnoreCase));
 
             if (current != null)
-                await svnManager.LoadProject(current).ConfigureAwait(false);
+            {
+                bool loaded = await svnManager.LoadProject(current).ConfigureAwait(false);
+                if (!loaded)
+                    SVNLogBridge.LogLine($"<color=#FFAA00>[Settings]</color> Last project '{current.projectName}' has no valid working copy — not loaded.");
+            }
         }
 
-        private async Task UpdateProjectInJsonAsync(string workingDir, Action<SVNProject> updateAction)
+        // === S1: delegacja do atomowego API ProjectSettings.
+        private static Task UpdateProjectInJsonAsync(string workingDir, Action<SVNProject> updateAction)
         {
-            if (string.IsNullOrEmpty(workingDir) || updateAction == null) return;
+            if (string.IsNullOrEmpty(workingDir) || updateAction == null) return Task.CompletedTask;
 
-            try
+            return Task.Run(() =>
             {
-                await Task.Run(() =>
+                try
                 {
-                    List<SVNProject> projects = ProjectSettings.LoadProjects();
-                    string normalizedWd = NormalizePath(workingDir);
-
-                    var project = projects.Find(p =>
-                        !string.IsNullOrEmpty(p.workingDir) &&
-                        NormalizePath(p.workingDir) == normalizedWd);
-
-                    if (project != null)
-                    {
-                        updateAction(project);
-
-                        project.repoUrl ??= "";
-                        project.privateKeyPath ??= "";
-                        project.mergeToolPath ??= "";
-                        project.diffToolPath ??= "";
-                        project.resolveToolPath ??= "";
-                        project.blameToolPath ??= "";
-
-                        ProjectSettings.SaveProjects(projects);
-                    }
-                }).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogLine($"<color=#FFAA00>Settings save failed:</color> {ex.Message}");
-            }
+                    if (!ProjectSettings.UpdateProject(workingDir, updateAction))
+                        SVNLogBridge.LogLine("<color=yellow>[Settings] Project not found in list — change kept for this session only.</color>");
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogLine($"<color=#FFAA00>Settings save failed:</color> {ex.Message}");
+                }
+            });
         }
 
         private static string NormalizePath(string path)
         {
             if (string.IsNullOrEmpty(path)) return "";
             return path.Replace("\\", "/").TrimEnd('/');
-        }
-
-        private async Task SaveDiffToolPathAsync()
-        {
-            string newPath = svnUI?.SettingsDiffToolPathInput?.text?.Trim() ?? "";
-
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.diffToolPath = newPath).ConfigureAwait(false);
-            PlayerPrefs.SetString(SVNManager.KEY_DIFF_TOOL, newPath);
-            PlayerPrefs.Save();
-
-            if (svnManager != null)
-                svnManager.DiffToolPath = newPath;
-
-            SVNLogBridge.LogLine($"Saved diff tool = '{newPath}'");
-        }
-
-        private async Task SaveResolveToolPathAsync()
-        {
-            string newPath = svnUI?.SettingsResolveToolPathInput?.text?.Trim() ?? "";
-
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.resolveToolPath = newPath).ConfigureAwait(false);
-            PlayerPrefs.SetString(SVNManager.KEY_RESOLVE_TOOL, newPath);
-            PlayerPrefs.Save();
-
-            if (svnManager != null)
-                svnManager.ResolveToolPath = newPath;
-
-            SVNLogBridge.LogLine($"Saved resolve tool = '{newPath}'");
-        }
-
-        private async Task SaveBlameToolPathAsync()
-        {
-            string newPath = svnUI?.SettingsBlameToolPathInput?.text?.Trim() ?? "";
-
-            await UpdateProjectInJsonAsync(svnManager?.WorkingDir, p => p.blameToolPath = newPath).ConfigureAwait(false);
-            PlayerPrefs.SetString(SVNManager.KEY_BLAME_TOOL, newPath);
-            PlayerPrefs.Save();
-
-            if (svnManager != null)
-                svnManager.BlameToolPath = newPath;
-
-            SVNLogBridge.LogLine($"Saved blame tool = '{newPath}'");
         }
     }
 }

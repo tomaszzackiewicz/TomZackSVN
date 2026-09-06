@@ -21,12 +21,38 @@ namespace SVN.Core
         private static List<string> _buffer = new();
         private static bool _flushScheduled;
         private static Timer _flushTimer;
+        private static readonly object _timerLock = new();
 
-        private static string _fullLogText = "";
-
-        private static Queue<string> _allLines = new Queue<string>();
+        // === FIX K1/Ś1: WŁASNOŚĆ MAIN THREAD ONLY (dokumentowane). Mutowane
+        // wyłącznie w kodzie wykonywanym przez UnityMainThreadDispatcher —
+        // Flush/FlushImmediate/TraceBar/ClearConsole (wszystkie w Enqueue).
+        private static readonly StringBuilder _fullLogBuilder = new StringBuilder(16 * 1024);
+        private static readonly Queue<string> _allLines = new Queue<string>(MaxUILines + 8);
 
         private static bool _globalHandlingEnabled = false;
+
+        // === FIX (display): ROOT FIX dla TAB-ów w ścieżkach. Wszystkie teksty
+        // trafiające do UI przechodzą przez tę normalizację na wejściu mostka.
+        //
+        // Problem: ścieżki Windows z '\' tworzą dwuznakowe sekwencje "\t" / "\n"
+        // (np. ...\trunk → "\t"), które renderer wyświetla jako TAB / newline.
+        // Dowód z logu: '\T' w '...SVN\TomZackSVN_Backup' wyświetla się jako
+        // backslash, '\t' w '...1885\trunk' jako TAB — dekodowane są tylko
+        // escape-sekwencje, nie każdy backslash.
+        //
+        // Własności:
+        //  - '/' jest neutralny: rich text TMP go ignoruje, svn/Unity/.NET
+        //    akceptują na Windows — nic się nie psuje.
+        //  - Idempotentne — wielokrotne przejścia (ShowNotification→LogLine,
+        //    LogLine→FlushImmediate) to no-op przy drugim przejściu.
+        //  - Null-safe — null/empty przechodzi bez zmian.
+        //  - Operacje na plikach NIGDY nie przechodzą przez mostek — dotyczy
+        //    wyłącznie tekstów wyświetlanych/logowanych.
+        private static string NormalizeForDisplay(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return text.Replace('\\', '/');
+        }
 
         public static void EnableGlobalExceptionHandling()
         {
@@ -55,7 +81,7 @@ namespace SVN.Core
         {
             if (type == LogType.Exception || type == LogType.Error)
             {
-                string msg = $"<color=#FF0000><b>[UNITY {type}]</b> {logString}</color>\n<color=#88CCFF>{stackTrace}</color>";
+                string msg = $"<color=#FF0000><b>[UNITY {type}]</b> {logString}</color>\n<color=88CCFF>{stackTrace}</color>";
                 LogLine(msg, true, type.ToString());
             }
         }
@@ -83,6 +109,10 @@ namespace SVN.Core
 
         public static void LogLine(string message, bool append = true, string level = "INFO")
         {
+            // === FIX (display): normalizacja na wejściu — centralny punkt dla
+            // głównej konsoli (kolejka, bufor, flush, plik logu). Idempotentne.
+            message = NormalizeForDisplay(message);
+
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
             string uiMessage = $"<color=blue>[{timestamp}]</color> {message}";
             string cleanMessage = StripRichText(message);
@@ -95,7 +125,14 @@ namespace SVN.Core
                 return;
             }
 
-            bool forceFlush = level == "ERROR" || level == "EXCEPTION" || level == "UNHANDLED_DOMAIN" || level == "UNobserved_TASK";
+            // === FIX drobiazg: porównanie OrdinalIgnoreCase — literówka
+            // "UNobserved_TASK" sprawiała, że unobserved task exceptions nigdy
+            // nie force-flushowały.
+            bool forceFlush = level.Equals("ERROR", StringComparison.OrdinalIgnoreCase) ||
+                              level.Equals("EXCEPTION", StringComparison.OrdinalIgnoreCase) ||
+                              level.Equals("UNHANDLED_DOMAIN", StringComparison.OrdinalIgnoreCase) ||
+                              level.Equals("UNOBSERVED_TASK", StringComparison.OrdinalIgnoreCase);
+
             int count;
             lock (_bufferLock)
             {
@@ -110,7 +147,7 @@ namespace SVN.Core
             {
                 FlushImmediate();
             }
-            else if (!_flushScheduled)
+            else
             {
                 ScheduleFlush();
             }
@@ -126,6 +163,8 @@ namespace SVN.Core
         {
             if (ex == null) return;
 
+            // ex.Message / StackTrace mogą zawierać ścieżki Windows z '\' —
+            // normalizuje LogLine na wejściu (idempotentnie).
             StringBuilder sb = new StringBuilder();
             sb.AppendLine($"<color=#FF0000><b>[{level}] {ex.GetType().Name}:</b> {ex.Message}</color>");
 
@@ -134,14 +173,14 @@ namespace SVN.Core
                 sb.AppendLine($"<color=#FFAA00><b>Target:</b> {ex.TargetSite.DeclaringType?.Name}.{ex.TargetSite.Name}</color>");
             }
 
-            sb.AppendLine($"<color=#88CCFF>{ex.StackTrace}</color>");
+            sb.AppendLine($"<color=88CCFF>{ex.StackTrace}</color>");
 
             Exception inner = ex.InnerException;
             int depth = 1;
             while (inner != null && depth <= 5)
             {
                 sb.AppendLine($"<color=#FF9900><b>[INNER {depth}] {inner.GetType().Name}:</b> {inner.Message}</color>");
-                sb.AppendLine($"<color=#88CCFF>{inner.StackTrace}</color>");
+                sb.AppendLine($"<color=88CCFF>{inner.StackTrace}</color>");
                 inner = inner.InnerException;
                 depth++;
             }
@@ -153,15 +192,20 @@ namespace SVN.Core
         {
             if (uiField == null) return;
 
+            // === FIX (display): normalizacja treści (idempotentna — LogLine mógł
+            // już znormalizować; podwójne przejście to no-op).
+            content = NormalizeForDisplay(content);
+
             string cleanContent = StripRichText(content);
             if (!string.IsNullOrEmpty(cleanContent))
                 _ = Task.Run(() => SVNLogger.LogToFile(cleanContent, logLabel));
 
+            string uiContent = content;   // snapshot po normalizacji — stabilny w closure
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (uiField == null) return;
 
-                string trimmedContent = content.TrimEnd('\n', '\r');
+                string trimmedContent = uiContent.TrimEnd('\n', '\r');
 
                 if (append)
                 {
@@ -177,23 +221,31 @@ namespace SVN.Core
             });
         }
 
+        // === FIX K1: ScheduleFlush pod lockiem — dwa wątki jednocześnie mogły
+        // utworzyć DWA Timery (jeden zombie-strzelał flushami w pustkę).
         private static void ScheduleFlush()
         {
-            _flushScheduled = true;
+            lock (_timerLock)
+            {
+                if (_flushScheduled) return;   // === FIX: idempotentne (wcześniej
+                                               // ustawiało flagę NA ZEWNĄTRZ checka)
+                _flushScheduled = true;
 
-            if (_flushTimer == null)
-            {
-                _flushTimer = new Timer(_ =>
+                if (_flushTimer == null)
                 {
-                    UnityMainThreadDispatcher.Enqueue(Flush);
-                }, null, FlushDelayMs, Timeout.Infinite);
-            }
-            else
-            {
-                _flushTimer.Change(FlushDelayMs, Timeout.Infinite);
+                    _flushTimer = new Timer(_ =>
+                    {
+                        UnityMainThreadDispatcher.Enqueue(Flush);
+                    }, null, FlushDelayMs, Timeout.Infinite);
+                }
+                else
+                {
+                    _flushTimer.Change(FlushDelayMs, Timeout.Infinite);
+                }
             }
         }
 
+        // Wykonywane WYŁĄCZNIE na main thread (z dispatchera).
         private static void Flush()
         {
             List<string> linesToAdd;
@@ -210,24 +262,41 @@ namespace SVN.Core
             }
 
             AppendToLog(linesToAdd);
-            SetLogText(_fullLogText, scroll: true);
+            SetLogText(BuildCurrentText(), scroll: true);
         }
 
         public static void FlushImmediate(string singleMessage = null, bool clear = false)
         {
-            _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-            _flushScheduled = false;
+            // === FIX (display): defense-in-depth — normalizuj także komunikaty
+            // przekazywane BEZPOŚREDNIO przez zewnętrznych callerów (metoda
+            // publiczna). Null-safe; dla ścieżek z LogLine/LogRaw to no-op.
+            singleMessage = NormalizeForDisplay(singleMessage);
+
+            lock (_timerLock)
+            {
+                _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                _flushScheduled = false;
+            }
+
+            string single = singleMessage;   // snapshot do closure
+            bool doClear = clear;
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
-                if (clear)
+                if (doClear)
                 {
-                    _allLines.Clear();
                     lock (_bufferLock) _buffer.Clear();
 
-                    _allLines.Enqueue(singleMessage);
-                    _fullLogText = singleMessage + "\n";
-                    SetLogText(_fullLogText, scroll: false);
+                    _allLines.Clear();
+                    _fullLogBuilder.Clear();
+
+                    if (!string.IsNullOrEmpty(single))
+                    {
+                        _allLines.Enqueue(single);
+                        _fullLogBuilder.AppendLine(single);
+                    }
+
+                    SetLogText(BuildCurrentText(), scroll: false);
                     return;
                 }
 
@@ -237,14 +306,15 @@ namespace SVN.Core
                     pending = new List<string>(_buffer);
                     _buffer.Clear();
                 }
-                if (!string.IsNullOrEmpty(singleMessage))
-                    pending.Add(singleMessage);
+                if (!string.IsNullOrEmpty(single))
+                    pending.Add(single);
 
                 AppendToLog(pending);
-                SetLogText(_fullLogText, scroll: true);
+                SetLogText(BuildCurrentText(), scroll: true);
             });
         }
 
+        // MAIN THREAD ONLY.
         private static void AppendToLog(List<string> linesToAdd)
         {
             if (linesToAdd == null || linesToAdd.Count == 0) return;
@@ -252,7 +322,7 @@ namespace SVN.Core
             foreach (var line in linesToAdd)
             {
                 _allLines.Enqueue(line);
-                _fullLogText += line + "\n";
+                _fullLogBuilder.AppendLine(line);
             }
 
             if (_allLines.Count > MaxUILines)
@@ -263,13 +333,17 @@ namespace SVN.Core
                     _allLines.Dequeue();
                 }
 
-                var sb = new StringBuilder(_allLines.Count * 128);
+                // === FIX Ś1: przebudowa TYLKO przy przycięciu (rzadko), nie co linię —
+                // wcześniej '_fullLogText += line' = O(n²) + pełny re-parse TMP
+                // przy każdym flushu (GC-thrash, zjadanie klatek przy zalewie logów).
+                _fullLogBuilder.Clear();
                 foreach (var l in _allLines)
-                    sb.AppendLine(l);
-
-                _fullLogText = sb.ToString();
+                    _fullLogBuilder.AppendLine(l);
             }
         }
+
+        // MAIN THREAD ONLY.
+        private static string BuildCurrentText() => _fullLogBuilder.ToString();
 
         private static void SetLogText(string text, bool scroll)
         {
@@ -284,20 +358,30 @@ namespace SVN.Core
 
         public static void ShowNotification(string message)
         {
+            // === FIX (display): raz na wejściu; LogLine dostanie już znormalizowany
+            // string (idempotentne). Notyfikacja UI i log pozostają spójne.
+            message = NormalizeForDisplay(message);
+
             LogLine($"<color=blue>[NOTIFY]</color> {message}");
+
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null) return;
-                SVNUI.Instance.ShowNotificationWithTimer(message, DefaultNotificationDuration);
+                SVNUI.Instance.ShowNotificationWithTimer(uiMessage, DefaultNotificationDuration);
             });
         }
 
         public static void LogTooltip(string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
-                SVNUI.Instance.TooltipText.text = $"<color=#CCCCCC>{message}</color>";
+                SVNUI.Instance.TooltipText.text = $"<color=#CCCCCC>{uiMessage}</color>";
             });
         }
 
@@ -312,20 +396,26 @@ namespace SVN.Core
 
         public static void LogCheckoutConsole(string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
             string cleanMessage = StripRichText(message);
             if (!string.IsNullOrEmpty(cleanMessage))
                 _ = Task.Run(() => SVNLogger.LogToFile(cleanMessage, "CHECKOUT"));
 
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.CheckoutedFilesText == null) return;
-                SVNUI.Instance.CheckoutedFilesText.text = message;
+                SVNUI.Instance.CheckoutedFilesText.text = uiMessage;
             });
         }
 
         public static void LogRaw(string message)
         {
-            FlushImmediate(message, clear: true);
+            // === FIX (display): FlushImmediate dostaje znormalizowany string
+            // (FlushImmediate normalizuje też sam — idempotentnie, no-op).
+            FlushImmediate(NormalizeForDisplay(message), clear: true);
         }
 
         private static string StripRichText(string input)
@@ -338,18 +428,28 @@ namespace SVN.Core
         {
             DisableGlobalExceptionHandling();
             FlushImmediate();
-            _flushTimer?.Dispose();
-            _flushTimer = null;
+            SVNLogger.Shutdown();
+
+            lock (_timerLock)
+            {
+                _flushTimer?.Dispose();
+                _flushTimer = null;
+                _flushScheduled = false;
+            }
         }
 
         public static void LogToOutput(string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
+            string uiMessage = message;   // snapshot
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (SVNUI.Instance == null || SVNUI.Instance.OutputText == null)
                     return;
 
-                SVNUI.Instance.OutputText.text = message;
+                SVNUI.Instance.OutputText.text = uiMessage;
             });
         }
 
@@ -357,6 +457,10 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(message))
                 return;
+
+            // === FIX (display): normalizacja PRZED formatowaniem (sprawdzenie
+            // StartsWith neutralne — tagi rich text nie zawierają '\').
+            message = NormalizeForDisplay(message);
 
             string formattedMessage = message.StartsWith("<color=")
                 ? message
@@ -371,47 +475,37 @@ namespace SVN.Core
             });
         }
 
+        // === FIX drobiazg: TraceBar korzysta ze wspólnego AppendToLog (main)
+        // zamiast duplikować logikę przycinania.
         public static void TraceBar(string source, string message)
         {
+            // === FIX (display)
+            message = NormalizeForDisplay(message);
+
             string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
             string line = $"<color=white>[{timestamp}][BAR:{source}] {message}</color>";
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
-                if (SVNUI.Instance == null || SVNUI.Instance.LogText == null)
-                    return;
-
-                _allLines.Enqueue(line);
-                _fullLogText += line + "\n";
-
-                if (_allLines.Count > MaxUILines)
-                {
-                    int excess = _allLines.Count - MaxUILines;
-                    for (int i = 0; i < excess; i++) _allLines.Dequeue();
-
-                    var sb = new StringBuilder(_allLines.Count * 128);
-                    foreach (var l in _allLines) sb.AppendLine(l);
-                    _fullLogText = sb.ToString();
-                }
-
-                SVNUI.Instance.LogText.text = _fullLogText;
-
-                if (SVNUI.Instance.LogScrollRect != null)
-                    SVNUI.Instance.LogScrollRect.verticalNormalizedPosition = 0f;
+                AppendToLog(new List<string> { line });
+                SetLogText(BuildCurrentText(), scroll: true);
             });
         }
 
         public static void ClearConsole()
         {
-            _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-            _flushScheduled = false;
+            lock (_timerLock)
+            {
+                _flushTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                _flushScheduled = false;
+            }
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 lock (_bufferLock) _buffer.Clear();
 
                 _allLines.Clear();
-                _fullLogText = string.Empty;
+                _fullLogBuilder.Clear();
 
                 if (SVNUI.Instance != null && SVNUI.Instance.LogText != null)
                 {

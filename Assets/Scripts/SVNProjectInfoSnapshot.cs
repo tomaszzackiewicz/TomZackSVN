@@ -18,6 +18,7 @@ namespace SVN.Core
         public string RelativeUrl;
 
         public string WorkingCopySize;
+        public string RepoTotalSize;
 
         public bool IsOutdated;
 
@@ -35,5 +36,7 @@ namespace SVN.Core
         public bool WasCanceled;
         public string LastOperation;
         public double DurationSeconds;
+
+        public bool CheckoutIncomplete;
     }
 }

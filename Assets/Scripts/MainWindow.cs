@@ -25,29 +25,39 @@ namespace SVN.Core
             if (svnUI?.TerminalInputField != null)
             {
                 svnUI.TerminalInputField.onEndEdit.RemoveAllListeners();
-                svnUI.TerminalInputField.onEndEdit.AddListener(_ =>
-                {
-                    if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
-                        ExecuteTerminalCommand();
-                });
+
+                // === FIX K1: JEDNO źródło prawdy dla Enter. Wcześniej onEndEdit
+                // (z kruchym Input.GetKeyDown w środku — onEndEdit odpala po Input
+                // w tej samej klatce, GetKeyDown często już false) + Update() z
+                // isFocused (focus znika dopiero następną klatkę) = komenda
+                // wykonywana PODWÓJNIE w jednej klatce (2× svn add/commit!).
+                // TMP ma onSubmit — wołane TYLKO przy Enter, bez Input-API.
+                svnUI.TerminalInputField.onSubmit.AddListener(_ => ExecuteTerminalCommand());
             }
         }
 
         public void ExecuteCommand() => ExecuteTerminalCommand();
 
-        private void Update()
+        // === FIX K3: Update usunięte —jego rolę (Enter) przejął onSubmit;
+        // dodatkowo legacy Input.GetKeyDown rzucał InvalidOperationException
+        // co klatkę na projektach z nowym Input System.
+
+        // === FIX K2: null-safe routingi — GetModule zwraca null przy częściowej
+        // porażce InitializeAllModules; wcześniej NRE na klik.
+        private T Module<T>() where T : SVNBase
         {
-            if (svnUI?.TerminalInputField != null &&
-                svnUI.TerminalInputField.isFocused &&
-                (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)))
-            {
-                ExecuteTerminalCommand();
-            }
+            if (svnManager == null) svnManager = SVNManager.Instance;
+            var m = svnManager?.GetModule<T>();
+            if (m == null)
+                SVNLogBridge.LogError($"[MainWindow] {typeof(T).Name} module is not available.");
+            return m;
         }
 
         public void Button_ToggleExpand()
         {
-            var statusModule = svnManager.GetModule<SVNStatus>();
+            var statusModule = Module<SVNStatus>();
+            if (statusModule == null) return;
+
             var data = statusModule.GetCurrentData();
 
             bool anyExpanded = data != null && data.Any(e => e.IsFolder && e.IsExpanded);
@@ -64,30 +74,34 @@ namespace SVN.Core
             }
         }
 
-        public void ExecuteTerminalCommand() => terminal?.ExecuteTerminalCommand();
+        public void ExecuteTerminalCommand()
+        {
+            if (terminal == null) terminal = svnManager?.GetModule<SVNTerminal>() ?? SVNManager.Instance?.GetModule<SVNTerminal>();
+            terminal?.ExecuteTerminalCommand();
+        }
 
         public void Button_TerminalSubmit() => ExecuteTerminalCommand();
 
         public void Button_CancelTerminalCommand()
         {
             terminal?.Cancel();
-            if (svnUI?.TerminalInputField != null)
-            {
-                svnUI.TerminalInputField.text = "";
-                svnUI.TerminalInputField.ActivateInputField();
-            }
+            FocusTerminalInput();
         }
 
         public void Button_ClearTerminalLog()
         {
             terminal?.ClearLog();
+            FocusTerminalInput();
+        }
+
+        private void FocusTerminalInput()
+        {
             if (svnUI?.TerminalInputField != null)
             {
                 svnUI.TerminalInputField.text = "";
                 svnUI.TerminalInputField.ActivateInputField();
             }
         }
-
 
         public void Button_ClearMainLog()
         {
@@ -102,35 +116,31 @@ namespace SVN.Core
             if (svnUI?.ResolveLogConsole != null)
                 SVNLogBridge.UpdateUIField(svnUI.ResolveLogConsole, "", "RESOLVE", false);
 
-            if (svnUI?.TerminalInputField != null)
-            {
-                svnUI.TerminalInputField.text = "";
-                svnUI.TerminalInputField.ActivateInputField();
-            }
+            FocusTerminalInput();
         }
 
-        public void Button_Load() => svnManager.GetModule<SVNLoad>().LoadRepoPathAndRefresh();
-        public void Button_Update() => svnManager.GetModule<SVNUpdate>().Update();
-        public void Button_CancelUpdate() => svnManager.GetModule<SVNUpdate>().CancelUpdate();
-        public void Button_Refresh() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();
-        public void Button_Log() => svnManager.GetModule<SVNLog>().ShowLog();
-        public void Button_RevertAllMissing() => svnManager.GetModule<SVNCommit>().ExecuteRevertAllMissing();
-        public void Button_ShowOnlyIgnored() => svnManager.GetModule<SVNIgnore>().RefreshIgnoredPanel();
-        public void Button_Explore() => svnManager.GetModule<SVNExternal>().OpenInExplorer();
-        public void Button_ShowToCommit() => svnManager.GetModule<SVNCommit>().ShowWhatWillBeCommitted();
-        public void Button_CheckRemoteModifications() => svnManager.GetModule<SVNUpdate>().CheckRemoteModificationsButton();
+        public void Button_Load() { var m = Module<SVNLoad>(); m?.LoadRepoPathAndRefresh(); }
+        public void Button_Update() { var m = Module<SVNUpdate>(); m?.Update(); }
+        public void Button_CancelUpdate() { var m = Module<SVNUpdate>(); m?.CancelUpdate(); }
+        public void Button_Refresh() { var m = Module<SVNStatus>(); m?.ShowOnlyModified(); }
+        public void Button_Log() { var m = Module<SVNLog>(); m?.ShowLog(); }
+        public void Button_RevertAllMissing() { var m = Module<SVNCommit>(); m?.ExecuteRevertAllMissing(); }
+        public void Button_ShowOnlyIgnored() { var m = Module<SVNIgnore>(); m?.RefreshIgnoredPanel(); }
+        public void Button_Explore() { var m = Module<SVNExternal>(); m?.OpenInExplorer(); }
+        public void Button_ShowToCommit() { var m = Module<SVNCommit>(); m?.ShowWhatWillBeCommitted(); }
+        public void Button_CheckRemoteModifications() { var m = Module<SVNUpdate>(); m?.CheckRemoteModificationsButton(); }
         public void Button_OpenLogs() => SVNLogger.OpenLogFolder();
-        public void Button_Revert() => svnManager.GetModule<SVNRevert>().RevertAll();
-        public void Button_CancelRevert() => svnManager.GetModule<SVNRevert>().CancelRevert();
-        public void Button_Add() => svnManager.GetModule<SVNAdd>().AddAll();
-        public void Button_AddSelected() => svnManager.GetModule<SVNAdd>().AddSelected();
-        public void Button_FixMissing() => svnManager.GetModule<SVNMissing>().FixMissingFiles();
-        public void Button_DiscardUntracked() => svnManager.GetModule<SVNClean>().DiscardUnversioned();
-        public void Button_GoUpRepoBrowser() => svnManager.GetModule<SVNRepoBrowser>().GoUp();
-        public void Button_CollapsAll() => svnManager.GetModule<SVNRepoBrowser>().CollapseAllToRoot();
-        public void Button_TestConnection() => svnManager.GetModule<SVNExternal>().TestConnection();
-        public void Button_TakeSnapshot() => svnManager.GetModule<SVNSnapshot>().ExecuteCreateSnapshot();
-        public void Button_RestoreSnapshot() => svnManager.GetModule<SVNSnapshot>().ExecuteRestoreSnapshot();
-        public void Button_DeleteSnapshot() => svnManager.GetModule<SVNSnapshot>().ExecuteDeleteSnapshot();
+        public void Button_Revert() { var m = Module<SVNRevert>(); m?.RevertAll(); }
+        public void Button_CancelRevert() { var m = Module<SVNRevert>(); m?.CancelRevert(); }
+        public void Button_Add() { var m = Module<SVNAdd>(); m?.AddAll(); }
+        public void Button_AddSelected() { var m = Module<SVNAdd>(); m?.AddSelected(); }
+        public void Button_FixMissing() { var m = Module<SVNMissing>(); m?.FixMissingFiles(); }
+        public void Button_DiscardUntracked() { var m = Module<SVNClean>(); m?.DiscardUnversioned(); }
+        public void Button_GoUpRepoBrowser() { var m = Module<SVNRepoBrowser>(); m?.GoUp(); }
+        public void Button_CollapsAll() { var m = Module<SVNRepoBrowser>(); m?.CollapseAllToRoot(); }
+        public void Button_TestConnection() { var m = Module<SVNExternal>(); m?.TestConnection(); }
+        public void Button_TakeSnapshot() { var m = Module<SVNSnapshot>(); m?.ExecuteCreateSnapshot(); }
+        public void Button_RestoreSnapshot() { var m = Module<SVNSnapshot>(); m?.ExecuteRestoreSnapshot(); }
+        public void Button_DeleteSnapshot() { var m = Module<SVNSnapshot>(); m?.ExecuteDeleteSnapshot(); }
     }
 }

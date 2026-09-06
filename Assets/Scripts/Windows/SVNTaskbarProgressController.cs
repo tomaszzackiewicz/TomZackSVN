@@ -8,14 +8,16 @@ public class SVNTaskbarProgressController : MonoBehaviour
 
     private void OnEnable()
     {
-        SVNLogBridge.LogLine("[Taskbar] Controller enabled – subscribing to SvnRunner events.");
+        // === FIX: diagnostyka do PLIKU (wcześniej LogLine → główna konsola UI
+        // + plik przy każdym włączeniu/wyłączeniu — spam).
+        SVNLogBridge.LogToFile("[Taskbar] Controller enabled.", "TASKBAR");
         SvnRunner.OnProcessingStateChanged += HandleProcessingState;
         SvnRunner.OnOperationError += HandleOperationError;
     }
 
     private void OnDisable()
     {
-        SVNLogBridge.LogLine("[Taskbar] Controller disabled – unsubscribing from SvnRunner events.");
+        SVNLogBridge.LogToFile("[Taskbar] Controller disabled.", "TASKBAR");
         SvnRunner.OnProcessingStateChanged -= HandleProcessingState;
         SvnRunner.OnOperationError -= HandleOperationError;
         ResetTaskbar();
@@ -26,13 +28,9 @@ public class SVNTaskbarProgressController : MonoBehaviour
         UnityMainThreadDispatcher.Enqueue(() =>
         {
             if (isProcessing)
-            {
                 WindowsTaskbarProgress.SetState(WindowsTaskbarProgress.TaskbarState.Indeterminate);
-            }
             else
-            {
                 WindowsTaskbarProgress.SetState(WindowsTaskbarProgress.TaskbarState.NoProgress);
-            }
         });
     }
 
@@ -43,9 +41,8 @@ public class SVNTaskbarProgressController : MonoBehaviour
             WindowsTaskbarProgress.SetState(WindowsTaskbarProgress.TaskbarState.Error);
 
             if (_errorResetRoutine != null)
-            {
                 StopCoroutine(_errorResetRoutine);
-            }
+
             _errorResetRoutine = StartCoroutine(ResetErrorAfterDelay(2f));
         });
     }
@@ -61,6 +58,8 @@ public class SVNTaskbarProgressController : MonoBehaviour
     {
         UnityMainThreadDispatcher.Enqueue(() =>
         {
+            if (this == null) return;
+
             if (_errorResetRoutine != null)
             {
                 StopCoroutine(_errorResetRoutine);

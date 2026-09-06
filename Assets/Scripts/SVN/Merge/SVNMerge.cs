@@ -12,6 +12,12 @@ namespace SVN.Core
     {
         public event Action<MergeFileResult> OnDryRunCompleted;
 
+        // === FIX P3: SshConfigOption pozostaje wyłącznie dla kompatybilności
+        // (możliwe odwołania z plików, których nie widzę) — komendy merge NIE
+        // używają go już nigdzie. SvnRunner wstrzykuje SVN_SSH (klucz + opcje)
+        // do środowiska KAŻDEGO procesu svn, więc --config-option był redundantny,
+        // konkurował z env i korzystał z cache klucza, który nie odświeżał się
+        // przy zmianie klucza bez zmiany projektu.
         internal static string _cachedSshConfigOption;
         internal static string _lastCachedKeyPath;
 
@@ -27,12 +33,20 @@ namespace SVN.Core
         internal string[] _cachedTags;
         internal int _isFetchingTagsFlag;
 
+        // === FIX P1: _isMergingFlag/TryEnterMerging/ExitMerging pozostają jako
+        // legacy (nieużywane przez operacje) — jedynym guardem merge jest teraz
+        // TryStart()/End() ze SVNBase, wspólny wzorzec dla całej aplikacji.
         internal int _isMergingFlag;
         internal string _cachedRepoRoot;
         internal string _cachedWcRoot;
         internal bool _obstructionsJustDeleted;
 
         internal bool _hadLocalChangesBeforeMerge;
+
+        // === FIX P2: true = komenda 'svn merge' realnie wystartowała (live).
+        // SafeCleanupAfterCancel revertuje TYLKO wtedy — cancel podczas
+        // pre-checków/update nie ma czego revertować.
+        internal bool _mergeCommandStarted;
 
         internal CancellationTokenSource _mergeCts;
 
@@ -67,7 +81,7 @@ namespace SVN.Core
             get
             {
                 string currentKey = SvnRunner.KeyPath;
-                
+
                 if (_cachedSshConfigOption != null &&
                     string.Equals(_lastCachedKeyPath, currentKey, StringComparison.OrdinalIgnoreCase))
                 {
@@ -101,6 +115,7 @@ namespace SVN.Core
             _tagsCacheValid = false;
             _cachedTags = null;
             _obstructionsJustDeleted = false;
+            _mergeCommandStarted = false;
             _snapshotManager.ClearRollbackSnapshot();
 
             _cachedSshConfigOption = null;
@@ -185,7 +200,8 @@ namespace SVN.Core
         {
             try
             {
-                string command = $"{SshConfigOption}list {SvnMergeUrlResolver.EscapeSvnArg(url)} --non-interactive";
+                // === FIX P3: bez SshConfigOption — SSH zapewnia SvnRunner (env SVN_SSH).
+                string command = $"list {SvnMergeUrlResolver.EscapeSvnArg(url)} --non-interactive";
                 string output = await SvnRunner.RunAsync(command, svnManager.WorkingDir, false, token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(output)) return Array.Empty<string>();
 
@@ -206,7 +222,6 @@ namespace SVN.Core
             }
         }
 
-        // FIX: Dodano ConfigureAwait(false)
         internal async Task<bool> HasPendingMergeChanges(CancellationToken token = default)
         {
             try
@@ -227,13 +242,17 @@ namespace SVN.Core
             catch { return true; }
         }
 
-
         internal async Task RefreshResolveUI()
         {
             try { await svnManager.RefreshStatus().ConfigureAwait(false); }
             catch (Exception ex) { LogWarning($"[RefreshResolveUI] {ex.Message}"); }
         }
 
+        // === FIX P2: revert wyłącznie gdy merge realnie modyfikował kopię.
+        // Bezpieczeństwo 'revert -R' gwarantuje niezmiennik: każda operacja merge
+        // blokuje się na brudnej kopii, więc przy starcie merge kopia jest CZYSTA
+        // — wszystko zmodyfikowane od tego momentu pochodzi z merge (lub update,
+        // którego wyniki są w BASE i revert ich nie cofa).
         internal async Task SafeCleanupAfterCancel()
         {
             try
@@ -243,6 +262,14 @@ namespace SVN.Core
                     LogWarning("[SafeCleanup] Local changes existed before merge – automatic revert skipped.");
                     using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                     await SvnRunner.RunAsync("cleanup", svnManager.WorkingDir, true, timeoutCts.Token).ConfigureAwait(false);
+                    return;
+                }
+
+                if (!_mergeCommandStarted)
+                {
+                    LogInfo("[SafeCleanup] Cancelled before merge command started – nothing to revert.");
+                    using var cts0 = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                    await SvnRunner.RunAsync("cleanup", svnManager.WorkingDir, true, cts0.Token).ConfigureAwait(false);
                     return;
                 }
 

@@ -63,12 +63,9 @@ namespace SVN.Core
                     continue;
                 }
 
-                if (path.Contains("conflict", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Conflicts++;
-                    result.Files.Add(new MergeFileInfo { State = 'C', Path = path });
-                    continue;
-                }
+                // === FIX P4: usunięta heurystyka 'path.Contains("conflict")' —
+                // plik o nazwie zawierającej "conflict" był liczony jako konflikt.
+                // Konflikt rozpoznaje wyłącznie kolumna statusu ('C') powyżej.
 
                 switch (state)
                 {

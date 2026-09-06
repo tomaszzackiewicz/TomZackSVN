@@ -15,6 +15,8 @@ namespace SVN.Core
         public int LockedByOthersCount; // O
         public int IgnoredFileCount;
         public int IgnoredFolderCount;
+        public int ReplacedCount;    // R — replaced (delete + add together)
+        public int ObstructedCount;  // ~ — obstructed (invalid object type, blocks commit)
 
         public string ToRichText(bool isIgnoredView)
         {

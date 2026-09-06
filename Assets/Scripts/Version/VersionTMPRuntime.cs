@@ -12,8 +12,15 @@ public class VersionTMPReplacer : MonoBehaviour
         if (targetText == null)
             targetText = GetComponent<TMP_Text>();
 
-        string version = GetVersion();
+        // === FIX K1: guard po fallbacku — brak TMP_Text (pole puste + komponent
+        // nie na tym obiekcie) = czytelny błąd zamiast NRE w Awake.
+        if (targetText == null)
+        {
+            Debug.LogError("[VersionTMPReplacer] No TMP_Text assigned and none found on this GameObject.", this);
+            return;
+        }
 
+        string version = GetVersion();
         targetText.text = targetText.text.Replace(PLACEHOLDER, version);
     }
 

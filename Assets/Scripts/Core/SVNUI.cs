@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -89,8 +90,8 @@ namespace SVN.Core
         [SerializeField] private TextMeshProUGUI stealLocksConsole;
         [SerializeField] private TMP_InputField lockCommentInput;
         [Header("Notifications")]
-        [SerializeField] private GameObject NotificationPanel;
-        [SerializeField] private TextMeshProUGUI NotificationText;
+        [SerializeField] private GameObject notificationPanel;
+        [SerializeField] private TextMeshProUGUI notificationText;
         [Header("Resolve")]
         [SerializeField] private TMP_InputField resolveTargetFileInput;
         [SerializeField] private TextMeshProUGUI resolveConsoleContent;
@@ -120,7 +121,7 @@ namespace SVN.Core
         [SerializeField] private TMP_InputField updateRevisionInput;
         [SerializeField] private TextMeshProUGUI revisionDisplayArea;
         [SerializeField] private TMP_InputField revisionFilePathInput;
-        [Header("Revision References")]
+        [Header("Snapshot")]   // === FIX: duplikat nagłówka "Revision References"
         [SerializeField] private Toggle snapshotUnversionedOnlyToggle;
 
         private Coroutine _notificationCoroutine;
@@ -237,22 +238,24 @@ namespace SVN.Core
                 var statusModule = SvnManager?.GetModule<SVNStatus>();
                 if (statusModule != null)
                 {
-                    ShowUnversionedToggle.isOn = statusModule.ShowUnversionedFiles;
+                    ShowUnversionedToggle.SetIsOnWithoutNotify(statusModule.ShowUnversionedFiles);
                 }
 
                 ShowUnversionedToggle.onValueChanged.AddListener(OnToggleUnversioned);
             }
         }
 
+        // === FIX K1-minor: nie odpalaj odświeżania, gdy projekt jeszcze niezaładowany
+        // (pierwszy klik toggle'a przed load = "Błąd podczas odświeżania"-klasy logów).
         private void OnToggleUnversioned(bool show)
         {
-            if (SvnManager != null)
+            var statusModule = SvnManager?.GetModule<SVNStatus>();
+            if (statusModule != null)
             {
-                var statusModule = SvnManager.GetModule<SVNStatus>();
-                if (statusModule != null)
-                    statusModule.ShowUnversionedFiles = show;
+                statusModule.ShowUnversionedFiles = show;
 
-                statusModule?.ShowOnlyModified();
+                if (!string.IsNullOrEmpty(SvnManager?.WorkingDir))
+                    statusModule.ShowOnlyModified();
             }
 
             SVNLogBridge.LogLine(show
@@ -264,25 +267,30 @@ namespace SVN.Core
         {
             if (ShowUnversionedToggle != null)
                 ShowUnversionedToggle.onValueChanged.RemoveListener(OnToggleUnversioned);
+
+            // === FIX: czyszczenie singletonu (po zniszczeniu jedynego SVNUI
+            // Instance wisiło jako "fake null"; Unity == ratuje, ale czyściej).
+            if (Instance == this)
+                Instance = null;
         }
 
         public void ShowNotificationWithTimer(string message, float delay = 5f)
         {
-            if (NotificationPanel == null) return;
+            if (notificationPanel == null || notificationText == null) return;   // === FIX: null-check Text
 
-            NotificationText.text = message;
-            NotificationPanel.SetActive(true);
-
+            notificationText.text = message;
+            notificationPanel.SetActive(true);
 
             if (_notificationCoroutine != null) StopCoroutine(_notificationCoroutine);
 
             _notificationCoroutine = StartCoroutine(HideNotificationAfterDelay(delay));
         }
 
-        private System.Collections.IEnumerator HideNotificationAfterDelay(float delay)
+        private IEnumerator HideNotificationAfterDelay(float delay)
         {
             yield return new WaitForSeconds(delay);
-            NotificationPanel.SetActive(false);
+            if (notificationPanel != null)   // === FIX: obiekt mógł zostać zniszczony
+                notificationPanel.SetActive(false);
             _notificationCoroutine = null;
         }
 

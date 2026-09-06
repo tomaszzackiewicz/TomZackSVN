@@ -129,7 +129,8 @@ namespace SVN.Core
 
         public void Button_CloseResolve()
         {
-            if (resolvePanel != null) resolvePanel.SetActive(false);
+            if (resolvePanel != null)
+                resolvePanel.SetActive(false);
         }
 
         // ============================================================
@@ -143,7 +144,8 @@ namespace SVN.Core
 
         public void Button_CloseSettings()
         {
-            if (settingsPanel != null) settingsPanel.SetActive(false);
+            if (settingsPanel != null)
+                settingsPanel.SetActive(false);
         }
 
         // ============================================================
@@ -157,7 +159,8 @@ namespace SVN.Core
 
         public void Button_CloseBranch()
         {
-            if (branchPanel != null) branchPanel.SetActive(false);
+            if (branchPanel != null)
+                branchPanel.SetActive(false);
         }
 
         // ============================================================
@@ -171,7 +174,8 @@ namespace SVN.Core
 
         public void Button_CloseMerge()
         {
-            if (mergePanel != null) mergePanel.SetActive(false);
+            if (mergePanel != null)
+                mergePanel.SetActive(false);
         }
 
         // ============================================================
@@ -186,11 +190,14 @@ namespace SVN.Core
 
         public void Button_CloseCommit()
         {
-            if (commitPanel != null) commitPanel.SetActive(false);
+            if (commitPanel != null)
+                commitPanel.SetActive(false);
 
+            // === FIX Ś1: zwykłe czyszczenie .text (jesteśmy na main — klik przycisku);
+            // UpdateUIField z "" robiło Task.Run(logowania pustego stringu + dispatchera).
             if (svnUI != null && svnUI.CommitConsoleContent != null)
             {
-                SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, "", "COMMIT_CONSOLE", append: false);
+                svnUI.CommitConsoleContent.text = "";
             }
         }
 
@@ -205,7 +212,8 @@ namespace SVN.Core
 
         public void Button_CloseCheckout()
         {
-            if (checkoutPanel != null) checkoutPanel.SetActive(false);
+            if (checkoutPanel != null)
+                checkoutPanel.SetActive(false);
         }
 
         // ============================================================
@@ -219,26 +227,45 @@ namespace SVN.Core
 
         public void Button_CloseLoad()
         {
-            if (loadPanel != null) loadPanel.SetActive(false);
+            if (loadPanel != null)
+                loadPanel.SetActive(false);
         }
 
         // ============================================================
         //  PROJECT SELECTION
         // ============================================================
+        // === FIX K1: (1) svnManager NULL-safe (pole z Start() — klik może przyjść
+        // wcześniej lub obiekt bywa włączany dynamicznie); (2) JEDNO źródło prawdy —
+        // lokalne pole [SerializeField]; property managera tylko jako fallback,
+        // gdy pole niepodpięte; (3) RefreshList tylko na istniejącym komponencie.
         public void Button_OpenProjectSelection()
         {
             ResetAllPanels();
-            if (projectSelectionPanel != null)
-            {
-                svnManager.ProjectSelectionPanel.gameObject.SetActive(true);
-                svnManager.ProjectSelectionPanel.RefreshList();
-                projectSelectionPanel.SetActive(true);
-            }
+
+            var manager = svnManager ?? SVNManager.Instance;
+            var panelComponent = manager != null ? manager.ProjectSelectionPanel : null;
+
+            // Priorytet: lokalne pole; fallback: panel z managera.
+            GameObject panelObject = projectSelectionPanel;
+            if (panelObject == null && panelComponent != null)
+                panelObject = panelComponent.gameObject;
+
+            if (panelObject != null)
+                panelObject.SetActive(true);
+
+            panelComponent?.RefreshList();
         }
 
         public void Button_CloseProjectSelection()
         {
-            if (projectSelectionPanel != null) projectSelectionPanel.SetActive(false);
+            // === FIX K1: zamykamy to samo, co otwieramy (jedno źródło prawdy).
+            var manager = svnManager ?? SVNManager.Instance;
+            var panelComponent = manager != null ? manager.ProjectSelectionPanel : null;
+
+            if (projectSelectionPanel != null)
+                projectSelectionPanel.SetActive(false);
+            else if (panelComponent != null)
+                panelComponent.gameObject.SetActive(false);
         }
 
         // ============================================================
@@ -252,7 +279,8 @@ namespace SVN.Core
 
         public void Button_CloseIgnored()
         {
-            if (ignoredPanel != null) ignoredPanel.SetActive(false);
+            if (ignoredPanel != null)
+                ignoredPanel.SetActive(false);
         }
 
         // ============================================================
@@ -264,13 +292,14 @@ namespace SVN.Core
             if (shelvePanel != null)
             {
                 shelvePanel.SetActive(true);
-                svnManager.GetModule<SVNShelve>()?.RefreshShelvesUI();
+                (svnManager ?? SVNManager.Instance)?.GetModule<SVNShelve>()?.RefreshShelvesUI();
             }
         }
 
         public void Button_CloseShelve()
         {
-            if (shelvePanel != null) shelvePanel.SetActive(false);
+            if (shelvePanel != null)
+                shelvePanel.SetActive(false);
         }
 
         // ============================================================
@@ -284,7 +313,8 @@ namespace SVN.Core
 
         public void Button_CloseSteal()
         {
-            if (stealPanel != null) stealPanel.SetActive(false);
+            if (stealPanel != null)
+                stealPanel.SetActive(false);
         }
 
         // ============================================================
@@ -298,7 +328,8 @@ namespace SVN.Core
 
         public void Button_CloseDiff()
         {
-            if (diffPanel != null) diffPanel.SetActive(false);
+            if (diffPanel != null)
+                diffPanel.SetActive(false);
         }
 
         // ============================================================
@@ -312,7 +343,8 @@ namespace SVN.Core
 
         public void Button_CloseBlame()
         {
-            if (blamePanel != null) blamePanel.SetActive(false);
+            if (blamePanel != null)
+                blamePanel.SetActive(false);
         }
 
         // ============================================================
@@ -326,7 +358,8 @@ namespace SVN.Core
 
         public void Button_CloseClean()
         {
-            if (cleanPanel != null) cleanPanel.SetActive(false);
+            if (cleanPanel != null)
+                cleanPanel.SetActive(false);
         }
 
         // ============================================================
@@ -340,7 +373,8 @@ namespace SVN.Core
 
         public void Button_CloseLock()
         {
-            if (lockPanel != null) lockPanel.SetActive(false);
+            if (lockPanel != null)
+                lockPanel.SetActive(false);
         }
 
         // ============================================================
@@ -354,7 +388,8 @@ namespace SVN.Core
 
         public void Button_CloseRevision()
         {
-            if (revisionPanel != null) revisionPanel.SetActive(false);
+            if (revisionPanel != null)
+                revisionPanel.SetActive(false);
         }
 
         // ============================================================
@@ -362,7 +397,13 @@ namespace SVN.Core
         // ============================================================
         public void Button_Exit()
         {
+            // === FIX Ś2: Application.Quit() w edytorze nic nie robi (warning w
+            // nowszych wersjach) — explicite stop play mode.
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
             Application.Quit();
+#endif
         }
     }
 }

@@ -12,6 +12,7 @@ namespace SVN.Core
         private string _lastValidWorkingDir = "";
         private int _isCheckingFlag;
         private CancellationTokenSource _lifetimeCts;
+        private CancellationTokenSource _currentCheckCts;
 
         public bool IsPaused { get; set; } = false;
 
@@ -36,19 +37,25 @@ namespace SVN.Core
             if (currentTime - _lastFocusCheckTime < focusCheckCooldownSeconds)
                 return;
 
-            if (Interlocked.Exchange(ref _isCheckingFlag, 1) == 1)
-                return;
-
             _lastFocusCheckTime = currentTime;
-            _ = CheckForRemoteCommitsAsync(_lifetimeCts.Token).ContinueWith(_ =>
-                Interlocked.Exchange(ref _isCheckingFlag, 0));
+            _ = CheckForRemoteCommitsAsync(_lifetimeCts.Token);
         }
 
         private void OnDestroy()
         {
             _lifetimeCts?.Cancel();
-            _lifetimeCts?.Dispose();
+            // === FIX: delayed dispose — check w locie może trzymać token.
+            var lifetime = _lifetimeCts;
             _lifetimeCts = null;
+            if (lifetime != null)
+                _ = Task.Delay(1000).ContinueWith(_ => { try { lifetime.Dispose(); } catch { } });
+
+            var current = Interlocked.Exchange(ref _currentCheckCts, null);
+            if (current != null)
+            {
+                try { current.Cancel(); } catch { }
+                _ = Task.Delay(1000).ContinueWith(_ => { try { current.Dispose(); } catch { } });
+            }
         }
 
         public void ResetRevisionTracking()
@@ -57,20 +64,52 @@ namespace SVN.Core
             _lastValidWorkingDir = "";
         }
 
+        // === FIX K2: anuluje biegnący check przez per-check CTS — działa
+        // niezależnie od tego, jakim tokenem check został uruchomiony
+        // (wcześniej lifetime nie obejmował wywołań z token=default).
         public void CancelCurrentCheck()
         {
-            if (_lifetimeCts != null)
+            var current = Volatile.Read(ref _currentCheckCts);
+            if (current != null)
             {
-                _lifetimeCts.Cancel();
-                _lifetimeCts.Dispose();
+                try { current.Cancel(); } catch (ObjectDisposedException) { }
             }
-
-            _lifetimeCts = new CancellationTokenSource();
-
-            Interlocked.Exchange(ref _isCheckingFlag, 0);
         }
 
+        // === FIX K1+K2: JEDYNE wejście — flaga + linked token (external +
+        // lifetime + per-check) + IsPaused sprawdzane W TU (manager focus-path
+        // i Repair pause nie da się już obejść).
         public async Task CheckForRemoteCommitsAsync(CancellationToken token = default)
+        {
+            if (IsPaused) return;
+
+            if (Interlocked.Exchange(ref _isCheckingFlag, 1) == 1)
+                return; // single-flight: koniec podwójnych notyfikacji o jednym commicie
+
+            var localCts = new CancellationTokenSource();
+            var prevCts = Interlocked.Exchange(ref _currentCheckCts, localCts);
+            if (prevCts != null)
+            {
+                try { prevCts.Cancel(); } catch { }
+                _ = Task.Delay(500).ContinueWith(_ => { try { prevCts.Dispose(); } catch { } });
+            }
+
+            try
+            {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                    token, _lifetimeCts?.Token ?? CancellationToken.None, localCts.Token);
+
+                await CheckForRemoteCommitsCoreAsync(linked.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.CompareExchange(ref _currentCheckCts, null, localCts);
+                _ = Task.Delay(500).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
+                Interlocked.Exchange(ref _isCheckingFlag, 0);
+            }
+        }
+
+        private async Task CheckForRemoteCommitsCoreAsync(CancellationToken token)
         {
             try
             {
@@ -98,7 +137,7 @@ namespace SVN.Core
                 string revOutput = await SvnRunner.RunAsync(
                     "info -r HEAD --show-item last-changed-revision", wd, false, token).ConfigureAwait(false);
 
-                if (!int.TryParse(revOutput.Trim(), out int remoteRev))
+                if (!int.TryParse((revOutput ?? "").Trim(), out int remoteRev))
                     return;
 
                 if (_lastKnownRemoteRevision == -1)
