@@ -1,67 +1,58 @@
 using System;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
-using TMPro;
 using SVN.Core;
 
 /// <summary>
-/// Wiersz panelu PROTECTED (oś property svn:needs-lock — NIE oś locków
-/// serwerowych; steal/break siedzi w panelu Locków i tam zostaje).
+/// Wiersz panelu PROTECTED – dokładnie cztery przyciski:
+///   Lock / Unlock / Locked    – toggle stanu locka
+///   Unprotect / Publish / Finish – zależnie od stanu ochrony
+///   Cancel / Restore          – anulowanie pending / przywracanie ochrony
+///   Explorer                  – Eksplorator Windows z zaznaczonym plikiem
 ///
-/// Kontrakt LockUIItem-style: panel (ProtectedPanel) dostarcza w Setup
-/// dane + delegatki akcji + konsolę. Wiersz NIE woła modułów sam —
-/// renderuje stan i przekazuje kliknięcie do panelu (guard isProcessing,
-/// refresh po akcji — wszystko po stronie panelu).
-///
-/// === WYGLĄD: czarne przyciski (spójność wizualna z LockUIItem w
-/// lock-tabeli). Kolor ustawiany JAWNIE w Awake (raz) — niezależnie od
-/// prefabu, oba panele zawsze identyczne. disabledColor ustawiony
-/// jawnie — czytelna szarość dla LOCKED*/CANCEL.
-///
-/// === UKŁAD: przycisk CANCEL/RESTORE zawsze widoczny, wyłączony gdy
-/// brak PENDING (tooltip wyjaśnia). lockBtn ukryty w PENDING (inna
-/// kategoria akcji).
-///
-/// Stany i akcje:
-///   PROTECTED, brak locka   → Lock       (weź locka → plik edytowalny u Ciebie)
-///   PROTECTED, Twój lock    → Unlock     (release; plik wraca read-only po Update)
-///   PROTECTED, cudzy lock   → Locked (szary; wskazanie do panelu Locków)
-///   PENDING+  → Publish / Cancel
-///   PENDING−  → Finish  / Restore
-///   Dodatkowo zawsze: Unprotect (panel → UnprotectFiles — pełna polityka
-///   locków w module), Explorer.
+/// Zgodne z dokumentacją: przyciski zmieniają etykietę i akcję w zależności
+/// od ProtectionInfo.State i LockOwner. Po każdej akcji emitowane jest
+/// zdarzenie ActionCompleted, aby panel mógł odświeżyć wiersze.
 /// </summary>
 public class ProtectedRowController : MonoBehaviour
 {
-    [SerializeField] private TextMeshProUGUI statusText;
-    [SerializeField] private TextMeshProUGUI nameText;
-    [SerializeField] private TextMeshProUGUI infoText;
-    [SerializeField] private Button lockBtn;
-    [SerializeField] private Button unprotectBtn;
-    [SerializeField] private Button revertBtn;
-    [SerializeField] private Button explorerBtn;
+    public event Action ActionCompleted;
 
-    // === Spójność wizualna z lock-tabelą (LockUIItem): czarne przyciski.
-    // Publiczne — chcesz zmienić motyw, zmieniasz tu (albo przeciągasz
-    // w Inspectorze, bo SerializeField):
-    [Header("Wspólny motyw przycisków (jak lock-tabela)")]
-    [SerializeField] private Color normalColor = new Color(0f, 0f, 0f, 0.85f);        // czarny, lekko prześwitujący
-    [SerializeField] private Color highlightedColor = new Color(0.15f, 0.15f, 0.15f, 0.9f);
-    [SerializeField] private Color pressedColor = new Color(0f, 0f, 0f, 1f);
-    [SerializeField] private Color disabledColor = new Color(0.35f, 0.35f, 0.35f, 0.5f); // czytelna szarość (Locked/Cancel)
-    [SerializeField] private float colorMultiplier = 1f;
+    [Header("Etykiety przycisku-toggle (edytowalne)")]
+    [SerializeField] private string lockLabelText = "Lock";
+    [SerializeField] private string unlockLabelText = "Unlock";
+    [SerializeField] private string lockedLabelText = "Locked";
+
+    [Header("Teksty")]
+    [SerializeField] private TMP_Text pathLabel = null;
+    [SerializeField] private TMP_Text stateLabel = null;
+    [SerializeField] private TMP_Text lockOwnerLabel = null;
+
+    [Header("Przyciski")]
+    [SerializeField] private Button lockButton = null;
+    [SerializeField] private Button unprotectButton = null;
+    [SerializeField] private Button revertButton = null;
+    [SerializeField] private Button explorerButton = null;
+
+    [Header("Etykiety przycisków (opcjonalne, jeśli nie dzieci)")]
+    [SerializeField] private TMP_Text lockButtonLabel = null;
+    [SerializeField] private TMP_Text unprotectButtonLabel = null;
+    [SerializeField] private TMP_Text revertButtonLabel = null;
+
+    [Header("Wyróżnienie wiersza")]
+    [SerializeField] private Image rowBackground = null;
+    [SerializeField] private Color baseColor = new Color(1f, 1f, 1f, 0.05f);
+    [SerializeField] private Color lockedColor = new Color(1f, 0.55f, 0.15f, 0.18f);
 
     private SVNFileProtection.ProtectionInfo _info;
-    private string _absPath;
-
-    // === Delegatki akcji z panelu (kontrakt LockUIItem):
-    private Action<string, string> _lockAction;
     private Action<string, string> _unlockAction;
+    private Action<string, string> _lockAction;
     private Action<string, string> _unprotectAction;
     private Action<string, string> _revertAction;
-    private TMP_Text _console;
+    private TMP_Text _logArea;
 
     private Dictionary<Button, SVNHoverHandler> _hoverCache;
 
@@ -80,244 +71,284 @@ public class ProtectedRowController : MonoBehaviour
         _hoverCache = new Dictionary<Button, SVNHoverHandler>();
         foreach (var btn in GetComponentsInChildren<Button>(true))
         {
-            var h = btn.GetComponent<SVNHoverHandler>();
-            if (h == null) h = btn.gameObject.AddComponent<SVNHoverHandler>();
-            _hoverCache[btn] = h;
-
-            // === UJEDNOLICENIE: wspólny ColorBlock na WSZYSTKICH przyciskach
-            // wiersza (raz, w Awake — nie per-Setup; kolory prefabowe
-            // nadpisane świadomie, spójność z lock-tabelą niezależnie od
-            // assetu):
-            ApplyButtonTheme(btn);
+            if (btn == null) continue;
+            var hover = btn.GetComponent<SVNHoverHandler>();
+            if (hover == null) hover = btn.gameObject.AddComponent<SVNHoverHandler>();
+            _hoverCache[btn] = hover;
         }
     }
 
-    private void OnDestroy() => RemoveListeners();
-
-    /// <summary>Nadpisuje ColorBlock przycisku wspólnym motywem (czarny).
-    /// Target Graphic bez zmian — tint robi standardowy mechanizm Button.</summary>
-    private void ApplyButtonTheme(Button btn)
+    private void OnDestroy()
     {
-        if (btn == null) return;
-
-        var cb = btn.colors;
-        cb.normalColor = normalColor;
-        cb.highlightedColor = highlightedColor;
-        cb.pressedColor = pressedColor;
-        cb.disabledColor = disabledColor;
-        cb.colorMultiplier = colorMultiplier;
-        cb.fadeDuration = 0.08f;
-        btn.colors = cb;
+        RemoveListeners();
     }
-
-    // ===================================================================
-    //  SETUP — dane + akcje + konsola (jak LockUIItem.Setup w LockPanel)
-    // ===================================================================
 
     public void Setup(
         SVNFileProtection.ProtectionInfo info,
-        Action<string, string> lockAction,
         Action<string, string> unlockAction,
+        Action<string, string> lockAction,
         Action<string, string> unprotectAction,
         Action<string, string> revertAction,
-        TMP_Text console)
+        TMP_Text logArea)
     {
-        _info = info;
-        if (info == null) return;
+        RemoveListeners();
 
-        _lockAction = lockAction;
+        _info = info;
         _unlockAction = unlockAction;
+        _lockAction = lockAction;
         _unprotectAction = unprotectAction;
         _revertAction = revertAction;
-        _console = console;
+        _logArea = logArea;
 
-        // Setup biegnie na main thread (Populate w panelu):
-        string root = (SVNManager.Instance?.WorkingDir ?? "").Replace('\\', '/').TrimEnd('/');
-        _absPath = root + "/" + info.Path;
-
-        RemoveListeners();
         Render();
         WireButtons();
     }
 
-    // ===================================================================
-    //  RENDER — maszyna stanów
-    // ===================================================================
+    public void UpdateInfo(SVNFileProtection.ProtectionInfo info)
+    {
+        _info = info;
+        Render();
+    }
 
     private void Render()
     {
-        bool protected_ = _info.State == SVNFileProtection.ProtectionState.Protected;
+        if (_info == null) return;
+
+        bool protectedFile = _info.State == SVNFileProtection.ProtectionState.Protected;
         bool pendingAdd = _info.State == SVNFileProtection.ProtectionState.PendingAdd;
         bool pendingRem = _info.State == SVNFileProtection.ProtectionState.PendingRemoval;
+        bool hasLock = !string.IsNullOrWhiteSpace(_info.LockOwner);
 
-        // === Kolumna statusu:
-        if (statusText != null)
+        // ---- Status label ----
+        if (stateLabel != null)
         {
-            if (protected_ && _info.LockIsMine)
-                statusText.text = "<color=#66FF66><b>[EDITABLE]</b></color>";
-            else if (protected_ && _info.LockOwner != null)
-                statusText.text = "<color=#FF5555><b>[FOREIGN]</b></color>";
-            else if (protected_)
-                statusText.text = "<color=#FFA500><b>[READ-ONLY]</b></color>";
+            if (protectedFile && _info.LockIsMine)
+                stateLabel.text = "<color=#66FF66><b>[EDITABLE]</b></color>";
+            else if (protectedFile && hasLock)
+                stateLabel.text = "<color=#FF5555><b>[FOREIGN]</b></color>";
+            else if (protectedFile)
+                stateLabel.text = "<color=#FFA500><b>[READ-ONLY]</b></color>";
             else if (pendingAdd)
-                statusText.text = "<color=#4FC3F7><b>[PENDING+]</b></color>";
+                stateLabel.text = "<color=#4FC3F7><b>[PENDING+]</b></color>";
             else
-                statusText.text = "<color=#FFA500><b>[PENDING-]</b></color>";
+                stateLabel.text = "<color=#FFA500><b>[PENDING-]</b></color>";
         }
 
-        if (nameText != null)
+        // ---- Path label ----
+        if (pathLabel != null)
+            pathLabel.text = _info.Path;
+
+        // ---- Lock owner label ----
+        if (lockOwnerLabel != null)
         {
-            nameText.text = _info.Path;
-            nameText.fontStyle = (pendingAdd || pendingRem) ? FontStyles.Italic : FontStyles.Normal;
+            if (_info.LockIsMine) lockOwnerLabel.text = "lock: you";
+            else if (hasLock) lockOwnerLabel.text = $"lock: {_info.LockOwner}";
+            else if (protectedFile) lockOwnerLabel.text = "no lock — read-only for everyone";
+            else if (pendingAdd) lockOwnerLabel.text = "protection not published yet";
+            else lockOwnerLabel.text = "removal not committed yet";
         }
 
-        // === Info (kolumna zamiast przycisku-steal):
-        if (infoText != null)
+        // ---- Lock button ----
+        var lockText = lockButtonLabel != null ? lockButtonLabel : lockButton?.GetComponentInChildren<TMP_Text>(true);
+        if (lockButton != null)
         {
-            if (_info.LockIsMine) infoText.text = "lock: you";
-            else if (_info.LockOwner != null) infoText.text = $"lock: {_info.LockOwner}";
-            else if (protected_) infoText.text = "no lock — read-only for everyone";
-            else if (pendingAdd) infoText.text = "protection not published yet";
-            else infoText.text = "removal not committed yet";
-        }
-
-        // === Przycisk LOCK (bez STEAL — kompetencja panelu Locków):
-        var lt = lockBtn != null ? lockBtn.GetComponentInChildren<TMPro.TMP_Text>() : null;
-        if (lockBtn != null)
-        {
-            if (!protected_)
+            if (!protectedFile)
             {
-                // PENDING: lock nie ma zastosowania (ochrona nieopublikowana):
-                lockBtn.gameObject.SetActive(false);
+                lockButton.gameObject.SetActive(false);
             }
             else if (_info.LockIsMine)
             {
-                lockBtn.gameObject.SetActive(true);
-                lockBtn.interactable = true;
-                if (lt != null) lt.text = "Unlock";
-                BindHover(lockBtn, "Release your lock. File returns to read-only in your copy after the next Update.");
+                lockButton.gameObject.SetActive(true);
+                lockButton.interactable = true;
+                if (lockText != null) lockText.text = unlockLabelText;
+                BindHover(lockButton, "Release your lock. File returns to read-only after Update.");
             }
-            else if (_info.LockOwner != null)
+            else if (hasLock)
             {
-                // Cudzy lock: bez akcji w TYM panelu — wskazanie do panelu Locków:
-                lockBtn.gameObject.SetActive(true);
-                lockBtn.interactable = false;
-                if (lt != null) lt.text = "Locked";
-                BindHover(lockBtn, $"Locked by {_info.LockOwner}. Steal/break is available in the LOCKS panel (intentional decision).");
+                lockButton.gameObject.SetActive(true);
+                lockButton.interactable = false;
+                if (lockText != null) lockText.text = lockedLabelText;
+                BindHover(lockButton, $"Locked by {_info.LockOwner}. Steal/break is available in the LOCKS panel.");
             }
             else
             {
-                lockBtn.gameObject.SetActive(true);
-                lockBtn.interactable = true;
-                if (lt != null) lt.text = "Lock";
-                BindHover(lockBtn, "Take the lock — the file becomes editable in your working copy.");
+                lockButton.gameObject.SetActive(true);
+                lockButton.interactable = true;
+                if (lockText != null) lockText.text = lockLabelText;
+                BindHover(lockButton, "Take the lock — file becomes editable.");
             }
         }
 
-        // === Przycisk UNPROTECT / PUBLISH / FINISH:
-        var ut = unprotectBtn != null ? unprotectBtn.GetComponentInChildren<TMPro.TMP_Text>() : null;
-        if (unprotectBtn != null)
+        // ---- Unprotect / Publish / Finish button ----
+        var unprotectText = unprotectButtonLabel != null ? unprotectButtonLabel : unprotectButton?.GetComponentInChildren<TMP_Text>(true);
+        if (unprotectButton != null)
         {
-            unprotectBtn.gameObject.SetActive(true);
-            unprotectBtn.interactable = true;
+            // NOWE: obcy lock → moduł i tak zwróci BLOCKED (polityka: nie ruszamy
+            // pliku, na którym ktoś aktywnie pracuje). Przycisk komunikuje to
+            // PRZED kliknięciem, zamiast klikać się w nic:
+            bool foreignLock = hasLock && !_info.LockIsMine;
+
+            unprotectButton.gameObject.SetActive(true);
+            unprotectButton.interactable = !foreignLock;
+
+            string blockedNote = foreignLock
+                ? $" [BLOCKED: locked by {_info.LockOwner} — steal/break the lock in the LOCKS panel first]"
+                : "";
+
             if (pendingAdd)
             {
-                if (ut != null) ut.text = "Publish";
-                BindHover(unprotectBtn, "Commit the protection (retry the failed commit).");
+                if (unprotectText != null) unprotectText.text = "Publish";
+                BindHover(unprotectButton, "Commit the protection (retry)." + blockedNote);
             }
             else if (pendingRem)
             {
-                if (ut != null) ut.text = "Finish";
-                BindHover(unprotectBtn, "Commit the removal (retry after the lock is released/stolen in the Locks panel).");
+                if (unprotectText != null) unprotectText.text = "Finish";
+                BindHover(unprotectButton, "Commit the removal (retry)." + blockedNote);
             }
             else
             {
-                if (ut != null) ut.text = "Unprotect";
-                BindHover(unprotectBtn, "Remove svn:needs-lock. Foreign lock = blocked (policy).");
+                if (unprotectText != null) unprotectText.text = "Unprotect";
+                BindHover(unprotectButton, "Remove svn:needs-lock." + blockedNote);
             }
         }
 
-        // === Przycisk CANCEL / RESTORE — zawsze widoczny, wyłączony (szary
-        // przez disabledColor) gdy plik nie jest w stanie PENDING:
-        var rt = revertBtn != null ? revertBtn.GetComponentInChildren<TMPro.TMP_Text>() : null;
-        if (revertBtn != null)
+        // ---- Cancel / Restore button ----
+        var revertText = revertButtonLabel != null ? revertButtonLabel : revertButton?.GetComponentInChildren<TMP_Text>(true);
+        if (revertButton != null)
         {
             bool revertActive = pendingAdd || pendingRem;
 
-            revertBtn.gameObject.SetActive(true);
-            revertBtn.interactable = revertActive;
+            revertButton.gameObject.SetActive(true);
+            revertButton.interactable = revertActive;
 
-            if (rt != null)
-                rt.text = pendingRem ? "Restore" : "Cancel";
+            if (revertText != null)
+                revertText.text = pendingRem ? "Restore" : "Cancel";
 
-            BindHover(revertBtn, revertActive
-                ? (pendingRem
-                    ? "svn revert — bring the protection back (discards the local removal)."
-                    : "svn revert — cancel the unpublished protection.")
-                : "Nothing to cancel — this file has no pending local property change.");
+            BindHover(revertButton, revertActive
+                ? (pendingRem ? "svn revert — bring the protection back." : "svn revert — cancel the unpublished protection.")
+                : "Nothing to cancel.");
         }
 
-        if (explorerBtn != null)
-            BindHover(explorerBtn, "Open file location in Windows Explorer.");
+        // ---- Explorer ----
+        if (explorerButton != null)
+            BindHover(explorerButton, "Open file location in Windows Explorer.");
+
+        // ---- Row background ----
+        if (rowBackground != null)
+            rowBackground.color = hasLock ? lockedColor : baseColor;
     }
 
     private void WireButtons()
     {
-        if (lockBtn != null && lockBtn.gameObject.activeSelf && lockBtn.interactable)
-            lockBtn.onClick.AddListener(_onLockClick);
-        if (unprotectBtn != null) unprotectBtn.onClick.AddListener(_onUnprotectClick);
-        // revertBtn: listener zawsze (szary przycisk sam nie klika — Unity;
-        // isProcessing w panelu to drugi guard):
-        if (revertBtn != null) revertBtn.onClick.AddListener(_onRevertClick);
-        if (explorerBtn != null) explorerBtn.onClick.AddListener(_onExplorerClick);
+        if (lockButton != null && lockButton.gameObject.activeSelf && lockButton.interactable)
+            lockButton.onClick.AddListener(_onLockClick);
+
+        if (unprotectButton != null)
+            unprotectButton.onClick.AddListener(_onUnprotectClick);
+
+        if (revertButton != null)
+            revertButton.onClick.AddListener(_onRevertClick);
+
+        if (explorerButton != null)
+            explorerButton.onClick.AddListener(_onExplorerClick);
     }
 
     private void RemoveListeners()
     {
-        lockBtn?.onClick.RemoveListener(_onLockClick);
-        unprotectBtn?.onClick.RemoveListener(_onUnprotectClick);
-        revertBtn?.onClick.RemoveListener(_onRevertClick);
-        explorerBtn?.onClick.RemoveListener(_onExplorerClick);
+        lockButton?.onClick.RemoveListener(_onLockClick);
+        unprotectButton?.onClick.RemoveListener(_onUnprotectClick);
+        revertButton?.onClick.RemoveListener(_onRevertClick);
+        explorerButton?.onClick.RemoveListener(_onExplorerClick);
     }
-
-    // ===================================================================
-    //  AKCJE — tylko delegują do panelu (guard/refresh po stronie panelu)
-    // ===================================================================
 
     private void OnLockClick()
     {
-        // Lock lub Unlock — cudzy lock nie dociera tu jako aktywny przycisk
-        // (Render wyłącza Locked):
+        if (_info == null) return;
+
         if (_info.LockIsMine)
-            _unlockAction?.Invoke(_absPath, _info.Path);
+            _unlockAction?.Invoke(_info.Path, _info.LockOwner);
         else
-            _lockAction?.Invoke(_absPath, _info.Path);
+            _lockAction?.Invoke(_info.Path, _info.LockOwner);
+
+        ActionCompleted?.Invoke();
     }
 
     private void OnUnprotectClick()
     {
-        // Unprotect / Publish / Finish — panel deleguje do modułu
-        // (UnprotectFiles ma wbudowane retry-pending i politykę locków):
-        _unprotectAction?.Invoke(_absPath, _info.Path);
+        if (_info == null) return;
+
+        // W zależności od stanu:
+        // PendingAdd → ProtectFiles (retry publish)
+        // PendingRemoval → UnprotectFiles (retry finish)
+        // Protected → UnprotectFiles
+        _unprotectAction?.Invoke(_info.Path, _info.LockOwner);
+
+        ActionCompleted?.Invoke();
     }
 
     private void OnRevertClick()
     {
-        _revertAction?.Invoke(_absPath, _info.Path);
+        if (_info == null) return;
+
+        // Cancel/Restore – svn revert:
+        _revertAction?.Invoke(_info.Path, _info.LockOwner);
+
+        ActionCompleted?.Invoke();
     }
 
     private void OnExplorerClick()
     {
-        SVNManager.Instance?.GetModule<SVNExternal>()?.OpenInExplorerAndSelect(_info.Path);
+        if (_info == null || string.IsNullOrWhiteSpace(_info.Path)) return;
+
+        try
+        {
+            // System działa na '/' (svn), ale explorer.exe /select, chce '\' —
+            // z '/' parser Explorera otwiera folder domyślny (Desktop):
+            string abs = MakeAbsolutePath(_info.Path).Replace('/', '\\');
+
+            if (System.IO.File.Exists(abs))
+            {
+                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{abs}\"");
+                return;
+            }
+
+            string dir = System.IO.Path.GetDirectoryName(abs);
+
+            if (!string.IsNullOrEmpty(dir) && System.IO.Directory.Exists(dir))
+            {
+                System.Diagnostics.Process.Start("explorer.exe", $"\"{dir}\"");
+                LogToPanel($"Explorer: file missing locally — opened parent folder: {_info.Path}");
+                return;
+            }
+
+            LogToPanel($"Explorer: path not found: {_info.Path}");
+        }
+        catch (Exception ex)
+        {
+            LogToPanel($"Explorer failed: {ex.Message}");
+        }
     }
 
-    // ===================================================================
-    //  INFRASTRUKTURA
-    // ===================================================================
+    private string MakeAbsolutePath(string path)
+    {
+        string p = (path ?? "").Replace('\\', '/').Trim();
+        if (p.IndexOf(':') >= 0) return p;
+
+        string root = (SVNManager.Instance?.WorkingDir ?? "").Replace('\\', '/').TrimEnd('/');
+        return root + "/" + p.TrimStart('/');
+    }
 
     private void BindHover(Button btn, string tooltip)
     {
-        if (btn != null && _hoverCache.TryGetValue(btn, out var h))
-            h.TooltipText = tooltip;
+        if (btn != null && _hoverCache != null && _hoverCache.TryGetValue(btn, out var handler))
+            handler.TooltipText = tooltip;
+    }
+
+    private void LogToPanel(string message)
+    {
+        if (_logArea is TextMeshProUGUI ugui)
+            SVNLogBridge.UpdateUIField(ugui, message, append: true);
+        else
+            SVNLogBridge.LogLine(message, true);
     }
 }

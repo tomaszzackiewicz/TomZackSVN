@@ -464,16 +464,36 @@ namespace SVN.Core
                     }
                 }
 
-                LogToRevisionPanel("");
-                LogToRevisionPanel($"UPDATE TO {revision} COMPLETE");
-                LogToRevisionPanel("");
-                LogToRevisionPanel("  Working copy is synchronized.");
-                LogToRevisionPanel("  Check the Update Report above for details.");
-                LogToRevisionPanel("");
-                LogToRevisionPanel("REVISION PANEL OPERATION FINISHED");
+                // === NEW (FIX): sprawdzamy WYNIK operacji, nie tylko koniec aktywności.
+                // LastUpdateSucceeded jest ustawiany przez SVNUpdate ZAWSZE (sukces/cancel/
+                // błąd) przed zdjęciem IsProcessing — gdy pętla wyjdzie, wartość jest finalna.
+                bool success = svnManager?.LastUpdateSucceeded ?? false;
+
                 LogToRevisionPanel("");
 
-                LogEnd(true);
+                if (success)
+                {
+                    LogToRevisionPanel($"UPDATE TO {revision} COMPLETE");
+                    LogToRevisionPanel("");
+                    LogToRevisionPanel("  Working copy is synchronized.");
+                    LogToRevisionPanel("  Check the Update Report above for details.");
+                    LogToRevisionPanel("");
+                    LogToRevisionPanel("REVISION PANEL OPERATION FINISHED");
+                    LogToRevisionPanel("");
+                    LogEnd(true);
+                }
+                else
+                {
+                    LogToRevisionPanel($"UPDATE TO {revision} FAILED");
+                    LogToRevisionPanel("");
+                    LogToRevisionPanel("  Update did not complete - connection dropped repeatedly");
+                    LogToRevisionPanel("  or the operation was cancelled by the user.");
+                    LogToRevisionPanel("  Check the SVN output panel for the full report.");
+                    LogToRevisionPanel("");
+                    LogToRevisionPanel("REVISION PANEL OPERATION FINISHED");
+                    LogToRevisionPanel("");
+                    LogEnd(false);
+                }
 
                 if (svnManager != null)
                 {
@@ -763,11 +783,26 @@ namespace SVN.Core
                 }
 
                 LogStep(2, 2, "Export process finished.");
-                LogSuccess($"Export operation for r{rev} completed.");
-                LogDetail("Check export destination folder for output.");
-                StopOperationTimer();
-                LogDetail($"Elapsed time: {GetElapsedTime()}");
-                LogEnd(true);
+
+                // === NEW (FIX): wynik z modułu — wcześniej monitor raportował sukces
+                // ZAWSZE, także gdy svn export padł (SVNExternal łapie błąd wewnętrznie
+                // i nic nie komunikuje na zewnątrz). Panel drukował "COMPLETED
+                // SUCCESSFULLY" mimo porażki (np. E210002 po zerwaniu połączenia).
+                if (externalModule.LastExportSucceeded)
+                {
+                    LogSuccess($"Export operation for r{rev} completed.");
+                    LogDetail("Check export destination folder for output.");
+                    StopOperationTimer();
+                    LogDetail($"Elapsed time: {GetElapsedTime()}");
+                    LogEnd(true);
+                }
+                else
+                {
+                    LogError($"Export operation for r{rev} failed - see SVN output log for details.");
+                    StopOperationTimer();
+                    LogDetail($"Elapsed time: {GetElapsedTime()}");
+                    LogEnd(false);
+                }
             }
             catch (Exception ex)
             {

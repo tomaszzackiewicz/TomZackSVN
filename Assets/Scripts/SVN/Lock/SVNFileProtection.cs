@@ -559,6 +559,230 @@ namespace SVN.Core
         }
 
         // ===================================================================
+        //  PROTECT IN PATH — bulk propset na poddrzewie folderu
+        // ===================================================================
+
+        /// <summary>
+        /// Ustawia svn:needs-lock na WSZYSTKICH plikach w folderze (scope).
+        /// Źródło listy: rekursywny scan dysku w scope (status nie pokazuje
+        /// plików czystych — a to główny przypadek: folder istniejących,
+        /// niezmodyfikowanych plików). Obsługa:
+        ///  - plik '?' → svn add + propset (jak Protect Selected),
+        ///  - plik czysty/M → propset (jeśli już protected — pomijamy, cicho),
+        ///  - cudzy lock → pomijamy (policy BLOCKED; nie ruszamy chroniąc aktywną pracę).
+        /// Scope obowiązkowy — ta sama semantyka co LockAllProtectedAsync:
+        /// puste = odmowa, '.' = jawnie całe WC.
+        /// </summary>
+        public async Task ProtectInPathAsync(string scopeFolder = null)
+        {
+            if (string.IsNullOrWhiteSpace((scopeFolder ?? "").Trim()))
+            {
+                LogToLockPanel(
+                    "<color=#FFAA00>[Protect] No scope given — enter a folder path or '.' for the whole working copy. Nothing protected.</color>");
+                return;
+            }
+
+            string root = svnManager.WorkingDir;
+            if (!TryEnterProcessing()) return;
+
+            LogToLockPanel($"<b><color=#1E90FF>[Protect]</color></b> Protecting files in scope: {scopeFolder}", append: false);
+
+            try
+            {
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
+                // === Normalizacja scope — analogicznie do SVNLock (tam private,
+                // tu duplikujemy minimalną wersję dla autonomii modułu):
+                string s = scopeFolder.Trim().Trim('"', '\'').Replace('\\', '/').Trim().TrimEnd('/');
+                if (s == ".") s = "";
+                if (!string.IsNullOrEmpty(s))
+                {
+                    string r = (root ?? "").Replace('\\', '/').TrimEnd('/');
+                    if (!string.IsNullOrEmpty(r) && s.StartsWith(r + "/", StringComparison.OrdinalIgnoreCase))
+                        s = s.Substring(r.Length + 1);
+                }
+
+                string scopeAbs = Path.Combine(root, s.Replace('/', Path.DirectorySeparatorChar));
+                if (!Directory.Exists(scopeAbs) && !File.Exists(scopeAbs))
+                {
+                    LogToLockPanel($"<color=#FFAA00>[Protect] Path does not exist: {s} — nothing protected.</color>");
+                    return;
+                }
+
+                // === Snapshot locków (czy cudzy lock nie blokuje) + stanu protected:
+                await EnsureLockCacheFreshAsync().ConfigureAwait(false);
+                string me = (svnManager.CurrentUserName ?? "").Trim();
+                var alreadyProtected = await SvnRunner.GetProtectedPathsAsync(root).ConfigureAwait(false);
+
+                // === Przygotuj listę plików w scope (rekursywnie):
+                var toProtect = new List<string>();
+                var toAddAndProtect = new List<string>();
+                int skippedForeign = 0, skippedAlready = 0;
+
+                if (File.Exists(scopeAbs))
+                {
+                    // scope = pojedynczy plik — obsłuż jak jednego kandydata:
+                    ProcessFile(scopeAbs, root, alreadyProtected, me, toProtect, toAddAndProtect, ref skippedForeign, ref skippedAlready);
+                }
+                else
+                {
+                    foreach (var f in Directory.EnumerateFiles(scopeAbs, "*", SearchOption.AllDirectories))
+                    {
+                        // .svn i meta pomijamy:
+                        if (f.Replace('\\', '/').Contains("/.svn/") || f.EndsWith(".meta")) continue;
+                        ProcessFile(f, root, alreadyProtected, me, toProtect, toAddAndProtect, ref skippedForeign, ref skippedAlready);
+                    }
+                }
+
+                if (toProtect.Count == 0 && toAddAndProtect.Count == 0)
+                {
+                    LogToLockPanel(
+                        $"<color=yellow>[Protect] No files to protect in scope (already protected: {skippedAlready}, blocked by foreign lock: {skippedForeign}).</color>");
+                    return;
+                }
+
+                // === Propset na już-wersjonowanych:
+                int protectedCount = 0, addedCount = 0, failed = 0;
+
+                foreach (var f in toProtect)
+                {
+                    try
+                    {
+                        await SvnRunner.RunAsync($"propset svn:needs-lock \"\" \"{f}\"", root).ConfigureAwait(false);
+                        protectedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        LogToLockPanel($"<color=#FF5555>Failed: {Path.GetFileName(f)} — {ex.Message}</color>");
+                        failed++;
+                    }
+                }
+
+                // === Add + propset na '?' (analogia do Protect Selected):
+                foreach (var f in toAddAndProtect)
+                {
+                    try
+                    {
+                        await SvnRunner.RunAsync($"add --parents \"{f}\"", root).ConfigureAwait(false);
+                        await SvnRunner.RunAsync($"propset svn:needs-lock \"\" \"{f}\"", root).ConfigureAwait(false);
+                        addedCount++;
+                        protectedCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        try { await SvnRunner.RunAsync($"revert \"{f}\"", root).ConfigureAwait(false); } catch { }
+                        LogToLockPanel($"<color=#FF5555>Failed (could not add to SVN): {Path.GetFileName(f)} — {ex.Message}</color>");
+                        failed++;
+                    }
+                }
+
+                // === COMMIT zbiorczy (property + nowe pliki w jednym):
+                var allFiles = new List<string>(toProtect.Count + toAddAndProtect.Count);
+                foreach (var f in toProtect) if (File.Exists(f) || Directory.Exists(f)) allFiles.Add(f);
+                foreach (var f in toAddAndProtect) if (File.Exists(f)) allFiles.Add(f);
+
+                if (allFiles.Count > 0)
+                {
+                    try
+                    {
+                        await RunWithTargetsAsync(
+                            "commit -m \"[SVN] protect files in path (svn:needs-lock)\" --no-unlock",
+                            allFiles, root).ConfigureAwait(false);
+                    }
+                    catch (Exception cex)
+                    {
+                        LogToLockPanel(
+                            $"<color=#FF5555>Commit FAILED: {cex.Message}</color>\n" +
+                            "<color=#FFAA00>→ Protection saved locally (PENDING ADD). Fix the issue, then run Protect again.</color>");
+                    }
+                }
+
+                // === Summary:
+                var summary = new StringBuilder();
+                summary.Append($"<color=green>Protected {protectedCount} file(s) in scope.</color>");
+                if (addedCount > 0)
+                    summary.Append($"\n<color=#00E5FF>{addedCount} were new — added to SVN in the same commit.</color>");
+                if (skippedAlready > 0)
+                    summary.Append($"\n<color=yellow>{skippedAlready} already protected (skipped).</color>");
+                if (skippedForeign > 0)
+                    summary.Append($"\n<color=#FF5555>{skippedForeign} blocked by foreign lock (skipped — active work in progress).</color>");
+                if (failed > 0)
+                    summary.Append($"\n<color=#FF5555>{failed} failed.</color>");
+                LogToLockPanel(summary.ToString());
+
+                svnManager.RaiseRepositoryStateChanged();
+                svnManager.DiskChangesDetected = true;
+
+                var statusModule = svnManager.GetModule<SVNStatus>();
+                if (statusModule != null)
+                    await statusModule.RefreshAfterAction().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogToLockPanel($"<color=#FF5555>Protect in path error:</color> {ex.Message}");
+            }
+            finally
+            {
+                ExitProcessing();
+            }
+        }
+
+        /// <summary>Klasyfikacja pojedynczego pliku w scope — helper dla ProtectInPathAsync.</summary>
+        private void ProcessFile(
+            string filePath, string root, HashSet<string> alreadyProtected, string me,
+            List<string> toProtect, List<string> toAddAndProtect,
+            ref int skippedForeign, ref int skippedAlready)
+        {
+            try
+            {
+                string clean = SvnRunner.ForceCleanPath(filePath);
+                string rel = MakeRelativePath(root, clean);
+                if (string.IsNullOrWhiteSpace(rel)) return;   // poza WC
+
+                // Już protected → pomijamy (idempotentne, ale bez sensu):
+                if (alreadyProtected.Contains(rel.Replace('\\', '/')))
+                {
+                    skippedAlready++;
+                    return;
+                }
+
+                // Cudzy lock → pomijamy (policy jak UnprotectFiles):
+                if (svnManager.LockCache.Locks.TryGetValue(rel.Replace('\\', '/'), out var li))
+                {
+                    string owner = (li.Owner ?? "").Trim();
+                    if (!string.IsNullOrEmpty(owner) && !owner.Equals(me, StringComparison.OrdinalIgnoreCase))
+                    {
+                        skippedForeign++;
+                        return;
+                    }
+                }
+
+                // Klasyfikacja wersjonowania — analogia Protect Selected:
+                bool versioned = false;
+                try
+                {
+                    var st = SvnRunner.RunDetailedAsync($"status \"{clean}\"", root, false, false).GetAwaiter().GetResult();
+                    string output = (st.output ?? "").Trim();
+                    // Plik wersjonowany gdy status pokazuje cokolwiek (M/A/' '/'?' → '?' = unversioned):
+                    if (output.Length > 0 && output[0] != '?') versioned = true;
+                    // Status może zwrócić pusty output dla czystych plików — wtedy sprawdź info:
+                    if (string.IsNullOrEmpty(output))
+                    {
+                        var inf = SvnRunner.RunDetailedAsync($"info \"{clean}\"", root, false, false).GetAwaiter().GetResult();
+                        versioned = (inf.exitCode == 0);
+                    }
+                }
+                catch { /* nie dało się ustalić — traktuj jako unversioned */ }
+
+                if (versioned)
+                    toProtect.Add(clean);
+                else
+                    toAddAndProtect.Add(clean);
+            }
+            catch { /* pojedynczy plik nie może wywrócić całości */ }
+        }
+
+        // ===================================================================
         //  UNPROTECT — z POLITYKĄ locków i nowym kolorem BLOCKED
         // ===================================================================
 

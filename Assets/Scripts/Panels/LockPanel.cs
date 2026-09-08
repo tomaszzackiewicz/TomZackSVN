@@ -6,245 +6,396 @@ using System;
 using System.Threading.Tasks;
 using TMPro;
 
+/// <summary>
+/// Panel LOCKÓW — tabela obcych locków (Steal/Break).
+///
+/// === TRZY ŚCIEŻKI ODŚWIEŻANIA (jedna prawda: lock cache w SVNManager):
+///  1. RĘCZNY (przycisk Refresh / ogon Steal-Break): RefreshAllAsync —
+///     JEDNO svn status -u → lock cache (preloaded, ×0 odpytań) → tabela
+///     → RaiseRepositoryStateChanged (sygnał dla pozostałych paneli).
+///  2. EVENT (poll z SVNPollingService co 30 s / akcje modułów):
+///     OnRepositoryStateChanged → RebuildLocksTableFromCache — tabela
+///     Z CACHE (zero svn!), rebuild TYLKO przy zmianie fingerprintu.
+///  3. ZMIANA PROJEKTU: natychmiastowe czyszczenie + pełny cykl po 0.75 s
+///     (kaskada przełączania WorkingDir musi się uspokoić).
+///
+///  Zero wołań panel→panel. Timer pollingu mieszka w SVNPollingService.
+/// </summary>
 public class LockPanel : MonoBehaviour
 {
-	[Header("UI References")]
-	[SerializeField] private GameObject lockEntryPrefab;
-	[SerializeField] private Transform locksContainer;
-	[SerializeField] private TMP_Text stealLockConsole;
+    [Header("UI References")]
+    [SerializeField] private GameObject lockEntryPrefab;
+    [SerializeField] private Transform locksContainer;
+    [SerializeField] private TMP_Text stealLockConsole;
 
-	// UWAGA: dostęp wyłącznie z main thread (wszystkie kontynuacje wracają na main —
-	// brak ConfigureAwait(false) w tej klasie jest zamierzony i poprawny).
-	private bool isProcessing = false;
-	private SVNUI svnUI;
-	private SVNManager svnManager;
+    private bool isProcessing = false;
+    private SVNUI svnUI;
+    private SVNManager svnManager;
 
-	private void Awake()
-	{
-		svnUI = SVNUI.Instance;
-		svnManager = SVNManager.Instance;
-	}
+    private string _lastLocksFingerprint;   // gate rebuildów z cache
+    private int _lastForeignLocksCount = -1;
 
-	private async void OnEnable()
-	{
-		if (!Application.isPlaying) return;
+    private void Awake()
+    {
+        svnUI = SVNUI.Instance;
+        svnManager = SVNManager.Instance;
+    }
 
-		if (svnManager != null && string.IsNullOrEmpty(svnManager.WorkingDir) && svnManager.IsProcessing)
-		{
-			LogToPanel("<color=yellow>[System]</color> Waiting for project initialization...", append: false);
+    private async void OnEnable()
+    {
+        if (!Application.isPlaying) return;
 
-			while (svnManager.IsProcessing && gameObject.activeInHierarchy)
-			{
-				await Task.Yield();
-			}
-		}
+        if (svnManager != null)
+        {
+            svnManager.OnProjectChanged += OnProjectChangedHandler;
+            svnManager.OnRepositoryStateChanged += OnRepositoryStateChangedHandler;
+        }
 
-		// === FIX K2: panel mógł zostać zniszczony/wyłączony podczas czekania —
-		// bez tego gardu kontynuacja Instantiate'owała na martwym obiekcie.
-		if (this == null || !gameObject.activeInHierarchy) return;
+        if (svnManager != null && string.IsNullOrEmpty(svnManager.WorkingDir) && svnManager.IsProcessing)
+        {
+            LogToPanel("<color=yellow>[System]</color> Waiting for project initialization...", append: false);
 
-		if (!string.IsNullOrEmpty(svnManager?.WorkingDir))
-		{
-			Button_RefreshLocks();
-		}
-		else
-		{
-			LogToPanel("<color=#FFAA00>[System]</color> No project loaded.", append: false);
-		}
-	}
+            while (svnManager.IsProcessing && gameObject.activeInHierarchy)
+            {
+                await Task.Yield();
+            }
+        }
 
-	private void OnDisable()
-	{
-		ClearContainer();
-	}
+        if (this == null || !gameObject.activeInHierarchy) return;
 
-	public void Button_RefreshLocks() => SafeFireAndForget(RefreshAndShowAsync);
+        if (!string.IsNullOrEmpty(svnManager?.WorkingDir))
+        {
+            _ = RefreshAllAsync();
+        }
+        else
+        {
+            LogToPanel("<color=#FFAA00>[System]</color> No project loaded.", append: false);
+        }
+    }
 
-	private async Task RefreshAndShowAsync()
-	{
-		if (isProcessing || !Application.isPlaying) return;
+    private void OnDisable()
+    {
+        if (svnManager != null)
+        {
+            svnManager.OnProjectChanged -= OnProjectChangedHandler;
+            svnManager.OnRepositoryStateChanged -= OnRepositoryStateChangedHandler;
+        }
 
-		isProcessing = true;
-		LogToPanel("<color=#8B0000>>[System]</color> Fetching locks...", append: false);
-		ClearContainer();
+        ClearContainer();
+        _lastLocksFingerprint = null;   // zamknięty panel = stan nieznany
+    }
 
-		try
-		{
-			await svnManager.CancelBackgroundTasksAsync();
+    // ================= ZMIANA PROJEKTU =================
 
-			// === FIX drobiazg: null-safe moduł (błąd inicjalizacji = NRE wcześniej).
-			var lockModule = svnManager.GetModule<SVNLock>();
-			if (lockModule == null)
-			{
-				LogToPanel("<color=#FFAA00>[Error]</color> SVNLock module unavailable.");
-				return;
-			}
+    private void OnProjectChangedHandler(SVNProject project)
+    {
+        UnityMainThreadDispatcher.Enqueue(() =>
+        {
+            if (this == null || !isActiveAndEnabled) return;
 
-			var allLocks = await lockModule.GetDetailedLocks(svnManager.WorkingDir);
-			LogToPanel($"<color=white>[Info]</color> Found {allLocks.Count} total locks on server.");
+            // Stare wpisy z poprzedniego projektu nie mogą wisieć:
+            ClearContainer();
+            _lastLocksFingerprint = null;
+            LogToPanel("<color=yellow>[System]</color> Project changed — reloading locks...", append: false);
 
-			string currentUserName = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();
+            _ = RefreshAfterProjectSwitchAsync();
+        });
+    }
 
-			var othersLocks = allLocks.Where(l =>
-			{
-				if (string.IsNullOrEmpty(l.Owner)) return false;
-				return l.Owner.Trim().ToLower() != currentUserName;
-			}).ToList();
+    private async Task RefreshAfterProjectSwitchAsync()
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(0.75)).ConfigureAwait(false);
+        }
+        catch { }
 
-			if (othersLocks.Count == 0)
-			{
-				LogToPanel("<color=green>[Info]</color> No locks from other users found.");
-			}
-			else
-			{
-				LogToPanel($"<color=yellow>[UI]</color> Spawning {othersLocks.Count} entries...");
-				Populate(othersLocks);
-				LogToPanel("<color=green>[Success]</color> List updated.");
-			}
+        UnityMainThreadDispatcher.Enqueue(() =>
+        {
+            if (this == null || !gameObject.activeInHierarchy) return;
+            _ = RefreshAllAsync();   // nowe WC: locks + cache + event
+        });
+    }
 
-			// === NEW (OPCJA A): ręczny refresh = "świat mógł się zmienić" —
-			// ogłaszamy na szynie; zainteresowane panele (ProtectedPanel)
-			// odświeżają się same. LockPanel NIE wie, kto nasłuchuje.
-			// Uwaga wzorcowa: emity tylko z akcji i ręcznego refresha —
-			// handler zdarzenia NIGDY nie emituje ponownie (ochrona przed
-			// ping-pongiem panel↔panel; pętla i tak niegroźna dzięki
-			// isProcessing, ale zasada zostaje czysta).
-			svnManager.RaiseRepositoryStateChanged();
-		}
-		catch (Exception ex)
-		{
-			LogToPanel($"<color=#FFAA00>[Error]</color> Sync failed: {ex.Message}");
-		}
-		finally
-		{
-			isProcessing = false;
-		}
-	}
+    // ================= EVENT: repository state =================
+    // Źródła: SVNPollingService (poll co 30 s), akcje modułów
+    // (lock/unlock/protect...), własny RefreshAllAsync (fingerprint już
+    // ustawiony → handler robi skip — zero podwójnego rebuildu).
 
-	private void Populate(List<SVNLockDetails> locks)
-	{
-		if (!Application.isPlaying) return;
-		if (lockEntryPrefab == null || locksContainer == null) return;
+    private void OnRepositoryStateChangedHandler()
+    {
+        UnityMainThreadDispatcher.Enqueue(() =>
+        {
+            if (this == null || !isActiveAndEnabled) return;
+            RebuildLocksTableFromCache();
+        });
+    }
 
-		foreach (var lockItem in locks)
-		{
-			GameObject entry = Instantiate(lockEntryPrefab, locksContainer);
-			LockUIItem uiItem = entry.GetComponent<LockUIItem>();
+    private void RebuildLocksTableFromCache()
+    {
+        if (isProcessing || !Application.isPlaying) return;
 
-			if (uiItem != null)
-			{
-				uiItem.Setup(
-					lockItem.Path,
-					lockItem.Owner,
-					lockItem.CreationDate,
-					lockItem.Comment,
-					false,
-					() => ExecuteSteal(lockItem),
-					() => ExecuteBreak(lockItem),
-					stealLockConsole
-				);
-			}
-		}
-	}
+        var locks = svnManager?.LockCache?.Locks;
+        if (locks == null) return;
 
-	// === FIX K1: refresh PO zwolnieniu flagi. Wcześniej Button_RefreshLocks()
-	// wołane było Z WNĘTRZA try z podniesioną flagą → RefreshAndShowAsync
-	// zwracał się natychmiast na 'if (isProcessing) return;' → po steal/break
-	// lista NIGDY się nie odświeżała (zeszły lock wisiał do ręcznego Refresh).
-	private async void ExecuteSteal(SVNLockDetails lockDetails)
-	{
-		if (isProcessing || lockDetails == null || !Application.isPlaying) return;
+        string me = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();
 
-		isProcessing = true;
-		try
-		{
-			await svnManager.CancelBackgroundTasksAsync();
+        var othersLocks = new List<SVNLockDetails>();
+        foreach (var kv in locks)
+        {
+            var l = kv.Value;
+            if (l == null || string.IsNullOrEmpty(l.Owner)) continue;
+            if (l.Owner.Trim().ToLower() == me) continue;
+            othersLocks.Add(l);
+        }
 
-			// === FIX drobiazg: escape cudzysłowów w username (komenda -m "...").
-			string safeUser = (svnManager.CurrentUserName ?? "Unknown").Replace("\"", "'");
-			string cmd = $"lock --force -m \"Administrative takeover by {safeUser}\" \"{lockDetails.FullPath}\"";
-			await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+        string fingerprint = ComputeFingerprint(othersLocks);
 
-			LogToPanel($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
+        // Baseline bez szumu (pierwszy event przy pustym stanie):
+        if (_lastLocksFingerprint == null && othersLocks.Count == 0)
+        {
+            _lastLocksFingerprint = fingerprint;
+            _lastForeignLocksCount = 0;
+            return;
+        }
 
-			SVNStatus.ClearLockCache();
-			var statusModule = svnManager.GetModule<SVNStatus>();
-			if (statusModule != null) await statusModule.RefreshAfterAction();
+        if (fingerprint == _lastLocksFingerprint)
+            return;   // nic się nie zmieniło — cisza
 
-			// === NEW: świat się zmienił — panele na szynie odświeżają się same
-			// (ProtectedPanel pokaże lock jako Twój; LOCKED* → UNLOCK):
-			svnManager.RaiseRepositoryStateChanged();
-		}
-		catch (Exception ex)
-		{
-			LogToPanel($"<color=#FFAA00>[Error]</color> Steal failed: {ex.Message}");
-		}
-		finally
-		{
-			isProcessing = false;
-		}
+        ClearContainer();
+        if (othersLocks.Count > 0)
+            Populate(othersLocks);
 
-		// Po zwolnieniu flagi — refresh realnie się wykona.
-		if (this != null && gameObject.activeInHierarchy)
-			Button_RefreshLocks();
-	}
+        LogToPanel(_lastForeignLocksCount >= 0
+            ? $"<color=#4FC3F7>[Sync]</color> Foreign locks {_lastForeignLocksCount} → {othersLocks.Count} — tables updated"
+            : $"<color=#4FC3F7>[Sync]</color> Foreign locks: {othersLocks.Count} — tables updated");
 
-	// === FIX K1: jw.
-	private async void ExecuteBreak(SVNLockDetails lockDetails)
-	{
-		if (isProcessing || lockDetails == null || !Application.isPlaying) return;
+        _lastLocksFingerprint = fingerprint;
+        _lastForeignLocksCount = othersLocks.Count;
+    }
 
-		isProcessing = true;
-		try
-		{
-			await svnManager.CancelBackgroundTasksAsync();
+    // ================= REFRESH — pełny cykl (ręczny) =================
 
-			string cmd = $"unlock --force \"{lockDetails.FullPath}\"";
-			await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+    /// <summary>Przycisk „Refresh" — pełny cykl (locks + cache + event).</summary>
+    public void Button_RefreshAll() => _ = RefreshAllAsync();
 
-			LogToPanel($"<color=green>[Success]</color> Lock broken: {lockDetails.Path}");
+    /// <summary>ALIAS pod stary binding — identyczne zachowanie.</summary>
+    public void Button_RefreshLocks() => _ = RefreshAllAsync();
 
-			SVNStatus.ClearLockCache();
-			var statusModule = svnManager.GetModule<SVNStatus>();
-			if (statusModule != null) await statusModule.RefreshAfterAction();
+    /// <summary>
+    /// Pełny cykl: JEDNO svn status -u → lock cache (preloaded) → tabela →
+    /// JEDEN event. Feedback: DWIE linie — potwierdzenie startu + podsumowanie
+    /// obejmujące locki I protection (snapshot protection dociągnięty tu
+    /// tylko do liczb; tabela protected odświeża się sama z eventu).
+    /// </summary>
+    private async Task RefreshAllAsync()
+    {
+        if (isProcessing || !Application.isPlaying) return;
 
-			// === NEW: jw. — ExecuteBreak.
-			svnManager.RaiseRepositoryStateChanged();
-		}
-		catch (Exception ex)
-		{
-			LogToPanel($"<color=#FFAA00>[Error]</color> Break failed: {ex.Message}");
-		}
-		finally
-		{
-			isProcessing = false;
-		}
+        isProcessing = true;
+        LogToPanel("<color=#8B0000>[Refresh]</color> Syncing with server...", append: false);
+        ClearContainer();
 
-		if (this != null && gameObject.activeInHierarchy)
-			Button_RefreshLocks();
-	}
+        try
+        {
+            await svnManager.CancelBackgroundTasksAsync();
 
-	private void ClearContainer()
-	{
-		if (locksContainer == null) return;
-		foreach (Transform child in locksContainer) Destroy(child.gameObject);
-	}
+            var lockModule = svnManager.GetModule<SVNLock>();
+            if (lockModule == null)
+            {
+                LogToPanel("<color=#FFAA00>[Refresh]</color> SVNLock module unavailable.");
+                return;
+            }
 
-	private void LogToPanel(string msg, bool append = true)
-	{
-		if (stealLockConsole != null)
-		{
-			if (append)
-				stealLockConsole.text += msg + "\n";
-			else
-				stealLockConsole.text = msg + "\n";
-		}
-	}
+            // 1. JEDYNE 'svn status -u' w cyklu:
+            var allLocks = await lockModule.GetDetailedLocks(svnManager.WorkingDir);
 
-	private static void SafeFireAndForget(Func<Task> operation) => _ = FireAndForgetInternal(operation);
-	private static async Task FireAndForgetInternal(Func<Task> operation)
-	{
-		try { await operation(); }
-		catch (Exception ex) { SVNLogBridge.LogError($"[LockPanel] Unhandled error: {ex.Message}"); }
-	}
+            // 2. Cache z TYCH SAMYCH danych (ReplaceAll + drzewo lock-flags):
+            await lockModule.RefreshLockCacheAsync(true, preloadedLocks: allLocks);
+
+            // 3. Tabela obcych locków:
+            string me = (svnManager.CurrentUserName ?? "NULL").Trim().ToLower();
+
+            var othersLocks = allLocks.Where(l =>
+            {
+                if (string.IsNullOrEmpty(l.Owner)) return false;
+                return l.Owner.Trim().ToLower() != me;
+            }).ToList();
+
+            if (othersLocks.Count > 0)
+                Populate(othersLocks);
+
+            // 4. Protection — TYLKO do podsumowania (FillLockInfo czyta
+            //    świeży cache z kroku 2, więc liczby są aktualne):
+            string protectedPart = "protection: unavailable";
+            var protection = svnManager.GetModule<SVNFileProtection>();
+
+            if (protection != null)
+            {
+                try
+                {
+                    var snapshot = await protection.GetProtectionSnapshotAsync()
+                        .ConfigureAwait(false);
+
+                    if (snapshot != null)
+                    {
+                        int total = snapshot.Count;
+                        int locked = snapshot.Count(i =>
+                            i != null && !string.IsNullOrWhiteSpace(i.LockOwner));
+
+                        protectedPart = total == 0
+                            ? "protection: none"
+                            : locked > 0
+                                ? $"protection: {total} ({locked} locked, {total - locked} free)"
+                                : $"protection: {total} (all free)";
+                    }
+                }
+                catch { /* podsumowanie bez protection — refresh NIE pada */ }
+            }
+
+            // 5. PODSUMOWANIE — jedna linia, zero żargonu:
+            string locksPart =
+                allLocks.Count == 0
+                    ? "no locks"
+                    : othersLocks.Count == 0
+                        ? $"no foreign locks ({allLocks.Count} total)"
+                        : $"{othersLocks.Count} foreign lock{(othersLocks.Count == 1 ? "" : "s")} ({allLocks.Count} total)";
+
+            LogToPanel($"<color=green>[Refresh]</color> {locksPart} — {protectedPart}");
+
+            // 6. Fingerprint + licznik PRZED eventem (własny event → skip):
+            _lastLocksFingerprint = ComputeFingerprint(othersLocks);
+            _lastForeignLocksCount = othersLocks.Count;
+
+            // 7. JEDYNY sygnał — ProtectedPanel odświeża się sam:
+            svnManager.RaiseRepositoryStateChanged();
+        }
+        catch (Exception ex)
+        {
+            LogToPanel($"<color=#FFAA00>[Refresh]</color> Sync failed: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private static string ComputeFingerprint(List<SVNLockDetails> locks)
+    {
+        if (locks == null || locks.Count == 0) return "";
+
+        return string.Join("|", locks
+            .OrderBy(l => l.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(l => $"{l.Path}|{l.Owner}"));
+    }
+
+    private void Populate(List<SVNLockDetails> locks)
+    {
+        if (!Application.isPlaying) return;
+        if (lockEntryPrefab == null || locksContainer == null) return;
+
+        foreach (var lockItem in locks)
+        {
+            GameObject entry = Instantiate(lockEntryPrefab, locksContainer);
+            LockUIItem uiItem = entry.GetComponent<LockUIItem>();
+
+            if (uiItem != null)
+            {
+                uiItem.Setup(
+                    lockItem.Path,
+                    lockItem.Owner,
+                    lockItem.CreationDate,
+                    lockItem.Comment,
+                    false,
+                    () => ExecuteSteal(lockItem),
+                    () => ExecuteBreak(lockItem),
+                    stealLockConsole
+                );
+            }
+        }
+    }
+
+    // ================= STEAL / BREAK — akcja + 1 pełny cykl =================
+
+    private async void ExecuteSteal(SVNLockDetails lockDetails)
+    {
+        if (isProcessing || lockDetails == null || !Application.isPlaying) return;
+
+        isProcessing = true;
+        try
+        {
+            await svnManager.CancelBackgroundTasksAsync();
+
+            string safeUser = (svnManager.CurrentUserName ?? "Unknown").Replace("\"", "'");
+            string cmd = $"lock --force -m \"Administrative takeover by {safeUser}\" \"{lockDetails.FullPath}\"";
+            await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+
+            LogToPanel($"<color=green>[Success]</color> Stole lock: {lockDetails.Path}");
+
+            SVNStatus.ClearLockCache();
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            if (statusModule != null) await statusModule.RefreshAfterAction();
+        }
+        catch (Exception ex)
+        {
+            LogToPanel($"<color=#FFAA00>[Error]</color> Steal failed: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+
+        if (this != null && gameObject.activeInHierarchy)
+            _ = RefreshAllAsync();   // locks + cache + event → protected
+    }
+
+    private async void ExecuteBreak(SVNLockDetails lockDetails)
+    {
+        if (isProcessing || lockDetails == null || !Application.isPlaying) return;
+
+        isProcessing = true;
+        try
+        {
+            await svnManager.CancelBackgroundTasksAsync();
+
+            string cmd = $"unlock --force \"{lockDetails.FullPath}\"";
+            await SvnRunner.RunAsync(cmd, svnManager.WorkingDir);
+
+            LogToPanel($"<color=green>[Success]</color> Lock broken: {lockDetails.Path}");
+
+            SVNStatus.ClearLockCache();
+            var statusModule = svnManager.GetModule<SVNStatus>();
+            if (statusModule != null) await statusModule.RefreshAfterAction();
+        }
+        catch (Exception ex)
+        {
+            LogToPanel($"<color=#FFAA00>[Error]</color> Break failed: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+
+        if (this != null && gameObject.activeInHierarchy)
+            _ = RefreshAllAsync();   // locks + cache + event → protected
+    }
+
+    // ================= POMOCNICZE =================
+
+    private void ClearContainer()
+    {
+        if (locksContainer == null) return;
+        foreach (Transform child in locksContainer) Destroy(child.gameObject);
+    }
+
+    private void LogToPanel(string msg, bool append = true)
+    {
+        if (stealLockConsole != null)
+        {
+            if (append)
+                stealLockConsole.text += msg + "\n";
+            else
+                stealLockConsole.text = msg + "\n";
+        }
+    }
 }

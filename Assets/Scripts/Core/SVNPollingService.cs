@@ -6,6 +6,13 @@ using UnityEngine;
 
 namespace SVN.Core
 {
+    /// <summary>
+    /// Polling SVN — FOCUS + ON-DEMAND (commity/rewizje).
+    /// Bez timera: akcje lokalne są event-driven, a locki/protection
+    /// przy focusie odświeża SVNManager.FocusRefreshAsync →
+    /// PollRepositoryStateAsync (poll rewizji jest na locki ślepy —
+    /// lock nie bumpuje HEAD).
+    /// </summary>
     public class SVNPollingService : MonoBehaviour
     {
         private int _lastKnownRemoteRevision = -1;
@@ -33,6 +40,18 @@ namespace SVN.Core
         {
             if (!hasFocus || IsPaused) return;
 
+            SVNManager manager = SVNManager.Instance;
+
+            // NOWE: okno narzędzia zamknięte → nie pytamy serwera (nic nie widać):
+            if (manager != null && manager.MainUIPanel != null &&
+                !manager.MainUIPanel.activeInHierarchy)
+                return;
+
+            // Nie canceluj niczego w trakcie operacji usera
+            // (CheckForRemoteCommits robi CancelBackgroundTasksAsync):
+            if (manager != null && (manager.IsProcessing || manager.IsUpdateRunning))
+                return;
+
             float currentTime = Time.realtimeSinceStartup;
             if (currentTime - _lastFocusCheckTime < focusCheckCooldownSeconds)
                 return;
@@ -44,7 +63,6 @@ namespace SVN.Core
         private void OnDestroy()
         {
             _lifetimeCts?.Cancel();
-            // === FIX: delayed dispose — check w locie może trzymać token.
             var lifetime = _lifetimeCts;
             _lifetimeCts = null;
             if (lifetime != null)
@@ -64,9 +82,6 @@ namespace SVN.Core
             _lastValidWorkingDir = "";
         }
 
-        // === FIX K2: anuluje biegnący check przez per-check CTS — działa
-        // niezależnie od tego, jakim tokenem check został uruchomiony
-        // (wcześniej lifetime nie obejmował wywołań z token=default).
         public void CancelCurrentCheck()
         {
             var current = Volatile.Read(ref _currentCheckCts);
@@ -76,15 +91,12 @@ namespace SVN.Core
             }
         }
 
-        // === FIX K1+K2: JEDYNE wejście — flaga + linked token (external +
-        // lifetime + per-check) + IsPaused sprawdzane W TU (manager focus-path
-        // i Repair pause nie da się już obejść).
         public async Task CheckForRemoteCommitsAsync(CancellationToken token = default)
         {
             if (IsPaused) return;
 
             if (Interlocked.Exchange(ref _isCheckingFlag, 1) == 1)
-                return; // single-flight: koniec podwójnych notyfikacji o jednym commicie
+                return;
 
             var localCts = new CancellationTokenSource();
             var prevCts = Interlocked.Exchange(ref _currentCheckCts, localCts);

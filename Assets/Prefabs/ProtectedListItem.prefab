@@ -12,7 +12,7 @@ GameObject:
   - component: {fileID: 7727205071686874308}
   - component: {fileID: 5947494660723983390}
   m_Layer: 5
-  m_Name: StatusLabel
+  m_Name: PathLabel
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -35,7 +35,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 200, y: 60}
+  m_SizeDelta: {x: 450, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &7727205071686874308
 CanvasRenderer:
@@ -150,7 +150,7 @@ GameObject:
   - component: {fileID: 3064750745551025913}
   - component: {fileID: 7568009298320261978}
   m_Layer: 5
-  m_Name: CancelButton
+  m_Name: RevertButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -540,7 +540,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 71.651, y: 0}
-  m_SizeDelta: {x: 1475, y: 60}
+  m_SizeDelta: {x: 1460, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2090676968819305097
 MonoBehaviour:
@@ -580,18 +580,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 98bf068e24b845b47a60b88acf20dc8a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ProtectedRowController
-  statusText: {fileID: 5947494660723983390}
-  nameText: {fileID: 7092389657206197140}
-  infoText: {fileID: 4081969228772373994}
-  lockBtn: {fileID: 3703625882645790687}
-  unprotectBtn: {fileID: 3168318317564346275}
-  revertBtn: {fileID: 7568009298320261978}
-  explorerBtn: {fileID: 8975945924339437017}
-  normalColor: {r: 0, g: 0, b: 0, a: 0.85}
-  highlightedColor: {r: 0.15, g: 0.15, b: 0.15, a: 0.9}
-  pressedColor: {r: 0, g: 0, b: 0, a: 1}
-  disabledColor: {r: 0.35, g: 0.35, b: 0.35, a: 0.5}
-  colorMultiplier: 1
+  lockLabelText: Lock
+  unlockLabelText: Unlock
+  lockedLabelText: Locked
+  pathLabel: {fileID: 5947494660723983390}
+  stateLabel: {fileID: 7092389657206197140}
+  lockOwnerLabel: {fileID: 4081969228772373994}
+  lockButton: {fileID: 3703625882645790687}
+  unprotectButton: {fileID: 3168318317564346275}
+  revertButton: {fileID: 7568009298320261978}
+  explorerButton: {fileID: 8975945924339437017}
+  lockButtonLabel: {fileID: 4378563765783597366}
+  unprotectButtonLabel: {fileID: 6887370571547459164}
+  revertButtonLabel: {fileID: 4279322981611282705}
+  rowBackground: {fileID: 2918637336940059932}
+  baseColor: {r: 0.2, g: 0.2, b: 0.2, a: 1}
+  lockedColor: {r: 0.4811321, g: 0.2466006, b: 0.038581353, a: 1}
 --- !u!1 &5953974236757358550
 GameObject:
   m_ObjectHideFlags: 0
@@ -1028,7 +1032,7 @@ GameObject:
   - component: {fileID: 4613014746194242314}
   - component: {fileID: 4081969228772373994}
   m_Layer: 5
-  m_Name: InfoLabel
+  m_Name: LockOwnerLabel
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1302,7 +1306,7 @@ GameObject:
   - component: {fileID: 8297445656389899787}
   - component: {fileID: 7092389657206197140}
   m_Layer: 5
-  m_Name: NameLabel
+  m_Name: StateLabel
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1325,7 +1329,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 450, y: 60}
+  m_SizeDelta: {x: 200, y: 60}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &8297445656389899787
 CanvasRenderer:

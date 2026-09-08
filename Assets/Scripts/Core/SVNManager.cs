@@ -454,11 +454,6 @@ namespace SVN.Core
                 key: svnUI.CheckoutPrivateKeyInput.text);
         }
 
-        private void UpdateCurrentProjectData()
-        {
-            UpdateCurrentProjectDataImmediate();
-        }
-
         public async Task<string> AutoDetectSvnUser()
         {
             currentUserName = "Detecting...";
@@ -950,6 +945,53 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
+        /// <summary>
+        /// Lock-aware refresh przy focusie: JEDNO svn status -u → lock cache
+        /// (ReplaceAll + drzewo) → RaiseRepositoryStateChanged → ProtectedPanel
+        /// i LockPanel odświeżają się same (skip-if-equal = cisza gdy nic się
+        /// nie zmieniło). Czysty ODCZYT — nie anuluje akcji usera.
+        /// Uwaga: poll rewizji (SVNPollingService) NIE widzi locków —
+        /// lock nie bumpuje HEAD — dlatego ta metoda istnieje.
+        /// </summary>
+        public async Task PollRepositoryStateAsync()
+        {
+            if (string.IsNullOrEmpty(WorkingDir)) return;
+            if (!Directory.Exists(WorkingDir)) return;
+            if (IsProcessing || IsUpdateRunning) return;
+            if (mainUIPanel != null && !mainUIPanel.activeInHierarchy) return;
+
+            try
+            {
+                var lockModule = GetModule<SVNLock>();
+                if (lockModule != null)
+                    await lockModule.RefreshLockCacheAsync(true).ConfigureAwait(false);
+
+                RaiseRepositoryStateChanged();
+            }
+            catch { /* cichy — sieć/serwer chwilowo; następny focus złapie */ }
+        }
+
+        private async Task FocusRefreshAsync()
+        {
+            // NOWE: okno narzędzia zamknięte → ZERO pracy na focusie.
+            // Panele same robią pełny refresh przy otwarciu (OnEnable),
+            // więc nic nie tracimy — zyskujemy ciszę svn, gdy UI niewidoczne:
+            if (mainUIPanel != null && !mainUIPanel.activeInHierarchy) return;
+
+            // Focus podczas operacji usera → odłóż (commits-check robi
+            // CancelBackgroundTasksAsync — nie tego chcemy w trakcie update):
+            if (IsProcessing || IsUpdateRunning) return;
+
+            if (_cachedPoller != null)
+                await _cachedPoller.CheckForRemoteCommitsAsync();
+
+            // Locki + protection przy powrocie do okna:
+            await PollRepositoryStateAsync();
+
+            if (!string.IsNullOrEmpty(WorkingDir))
+                await RefreshStatus(force: false);
+        }
+
         private void OnApplicationFocus(bool hasFocus)
         {
             if (!hasFocus) return;
@@ -967,19 +1009,6 @@ namespace SVN.Core
                 if (t.IsFaulted)
                     SVNLogBridge.LogError($"Focus refresh failed: {t.Exception?.InnerException?.Message}");
             }, TaskScheduler.Default);
-        }
-
-        private async Task FocusRefreshAsync()
-        {
-            if (_cachedPoller != null)
-            {
-                await _cachedPoller.CheckForRemoteCommitsAsync();
-            }
-
-            if (!string.IsNullOrEmpty(WorkingDir))
-            {
-                await RefreshStatus(force: false);
-            }
         }
 
         public async Task<string> RunSvn(string args)

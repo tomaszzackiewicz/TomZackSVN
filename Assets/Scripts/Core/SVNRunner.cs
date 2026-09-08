@@ -29,7 +29,7 @@ namespace SVN.Core
         private static readonly TimeSpan InfoCacheDuration = TimeSpan.FromSeconds(2);
         private static readonly object _infoCacheLock = new();
 
-        public static string SshOptions { get; set; } = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
+        public static string SshOptions { get; set; } = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput -o ConnectionAttempts=3";
 
         public static string KeyPath
         {
@@ -227,7 +227,7 @@ namespace SVN.Core
         #region Core Execution Engines
 
         private static async Task<(string output, string error, int exitCode)> ExecuteRawProcessAsync(
-            List<string> args, string workingDir, Action<string> stdoutCb, Action<string> stderrCb, CancellationToken token)
+    List<string> args, string workingDir, Action<string> stdoutCb, Action<string> stderrCb, CancellationToken token)
         {
             var psi = new ProcessStartInfo
             {
@@ -270,6 +270,12 @@ namespace SVN.Core
             {
                 if (e.Data != null)
                 {
+                    // === NEW (FIX): banner SSH wycinany u źRÓDŁA — nie trafia do
+                    // error string, exception message ("SVN Error (Code 1): ***...")
+                    // ani logu "svn warning". Realne błędy (svn: Exxxxx, client_loop)
+                    // przechodzą normalnie.
+                    if (IsSshBannerNoise(e.Data)) return;
+
                     stderrQueue.Enqueue(e.Data);
                     try { stderrCb?.Invoke(e.Data); }
                     catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Callback error: {ex.Message}"); }
@@ -314,6 +320,7 @@ namespace SVN.Core
             SVNLogBridge.LogToOutput($"[SVN QUEUE]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Waiting: svn {safeArgs}");
 
             bool write = IsWriteCommand(argList);
+            bool networkRetrySafe = IsNetworkRetrySafe(argList);          // === NEW
 
             if (write) await _svnLock.EnterWriteAsync(token).ConfigureAwait(false);
             else await _svnLock.EnterReadAsync(token).ConfigureAwait(false);
@@ -329,9 +336,13 @@ namespace SVN.Core
                 if (!finalArgs.Contains("--non-interactive")) finalArgs.Add("--non-interactive");
                 if (!finalArgs.Contains("--trust-server-cert")) finalArgs.Add("--trust-server-cert");
 
-                int maxAttempts = retryOnLock ? 2 : 1;
+                // === RETRY: lock (semantyka jak dotychczas — max 1x, tylko retryOnLock)
+                //          + NEW: przejściowe błędy sieci (max 2x, tylko komendy bezpieczne)
+                const int MaxNetworkRetries = 2;
+                bool lockRetryUsed = false;
+                int netRetries = 0;
 
-                for (int attempt = 0; attempt < maxAttempts; attempt++)
+                while (true)
                 {
                     token.ThrowIfCancellationRequested();
 
@@ -341,53 +352,88 @@ namespace SVN.Core
                         // === FIX (display): '\'→'/' — inaczej "\trunk" w warningu renderuje się jako TAB
                         SVNLogBridge.LogToOutput($"[SvnRunner]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} svn warning: {NormalizeForLog(error.Trim())}");
 
-                    if (exitCode != 0)
+                    if (exitCode == 0)
                     {
-                        bool isLockError = error.Contains("E155004") || error.Contains("is locked");
+                        SVNLogBridge.LogToOutput($"[SvnRunner]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Completed (exit code {exitCode}).");
+                        return (output, error, exitCode);
+                    }
 
-                        if (attempt == 0 && retryOnLock && isLockError)
+                    // ---------------- failure handling ----------------
+
+                    bool isLockError = error.Contains("E155004") || error.Contains("is locked");
+
+                    // 1) Lock-retry — jak w oryginale: tylko raz, tylko gdy retryOnLock
+                    if (isLockError && retryOnLock && !lockRetryUsed)
+                    {
+                        lockRetryUsed = true;
+                        if (write)
                         {
-                            if (write)
+                            SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
+                            var cleanupArgs = new List<string> { "cleanup", "--non-interactive", "--trust-server-cert" };
+                            await ExecuteRawProcessAsync(cleanupArgs, workingDir, null, null, token).ConfigureAwait(false);
+                            SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
+                        }
+                        else
+                        {
+                            SVNLogBridge.LogToOutput("[SvnRunner] Lock detected on read-only op. Waiting 500ms before retry...");
+                            await Task.Delay(500, token).ConfigureAwait(false);
+                        }
+                        continue;
+                    }
+
+                    // 2) === NEW: retry po przejściowym błędzie sieci (E210002 / reset / timeout).
+                    //    Update/switch są wznawialne — svn kontynuuje od miejsca awarii.
+                    if (networkRetrySafe && netRetries < MaxNetworkRetries &&
+                        !token.IsCancellationRequested && IsTransientNetworkError(error))
+                    {
+                        netRetries++;
+                        int delayMs = 2000 * netRetries;   // 2s, potem 4s
+
+                        SVNLogBridge.LogToOutput(
+                            $"<color=yellow><b>[SvnRunner]</b> Connection dropped — retry {netRetries}/{MaxNetworkRetries} in {delayMs / 1000}s" +
+                            (write ? " (svn resumes where it stopped)." : ".") + "</color>");
+
+                        await Task.Delay(delayMs, token).ConfigureAwait(false);
+
+                        // przerwany update/switch potrafi zostawić blokadę WC —
+                        // cleanup przed wznowieniem (best-effort; nie blokuje retry)
+                        if (write)
+                        {
+                            try
                             {
-                                SVNLogBridge.LogErrorToOutput("[SvnRunner] Lock detected. Running Cleanup...");
                                 var cleanupArgs = new List<string> { "cleanup", "--non-interactive", "--trust-server-cert" };
-
                                 await ExecuteRawProcessAsync(cleanupArgs, workingDir, null, null, token).ConfigureAwait(false);
-
-                                SVNLogBridge.LogToOutput("<color=green>[SVN]</color> Cleanup completed. Retrying...");
                             }
-                            else
-                            {
-                                SVNLogBridge.LogToOutput("[SvnRunner] Lock detected on read-only op. Waiting 500ms before retry...");
-                                await Task.Delay(500, token).ConfigureAwait(false);
-                            }
-                            continue;
+                            catch { /* best-effort */ }
                         }
+                        continue;
+                    }
 
-                        if (throwOnError)
-                        {
-                            // Diagnostyka liczona na surowym errorze (kody/słowa bez '\' — kolejność neutralna)
-                            string diagnostic = error.Contains("E170013") || error.Contains("can't connect") ? " [Connection/URL issue]" : error.Contains("E215004") ? " [Authorization/Password error]" : "";
+                    // 3) Błąd twardy — ścieżka jak dotychczas (error już bez banneru — Krok 2)
+                    if (throwOnError)
+                    {
+                        // Diagnostyka liczona na surowym errorze (kody/słowa bez '\' — kolejność neutralna)
+                        string diagnostic = error.Contains("E170013") || error.Contains("can't connect") ? " [Connection/URL issue]" : error.Contains("E215004") ? " [Authorization/Password error]" : "";
 
-                            // === FIX (display): '\'→'/' w exception message — to stąd pochodzi
-                            // komunikat "Error: ..." w resolverach; normalizacja u źródła czyści
-                            // WSZYSTKIE miejsca wyświetlania (labels, GetShortError, result.error).
-                            string fullError = $"SVN Error (Code {exitCode}): {NormalizeForLog(error)}{diagnostic}";
+                        // === NEW: zabezpieczenie przed pustym message (po filtrze banneru)
+                        string errText = string.IsNullOrWhiteSpace(error) ? "(no error output)" : error;
 
-                            SVNLogBridge.LogErrorToOutput(fullError);
+                        // === FIX (display): '\'→'/' w exception message — to stąd pochodzi
+                        // komunikat "Error: ..." w resolverach; normalizacja u źródła czyści
+                        // WSZYSTKIE miejsca wyświetlania (labels, GetShortError, result.error).
+                        string fullError = $"SVN Error (Code {exitCode}): {NormalizeForLog(errText)}{diagnostic}";
 
-                            try { OnOperationError?.Invoke(fullError); }
-                            catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] OnOperationError handler error: {ex.Message}"); }
+                        SVNLogBridge.LogErrorToOutput(fullError);
 
-                            throw new Exception(fullError);
-                        }
+                        try { OnOperationError?.Invoke(fullError); }
+                        catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] OnOperationError handler error: {ex.Message}"); }
+
+                        throw new Exception(fullError);
                     }
 
                     SVNLogBridge.LogToOutput($"[SvnRunner]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Completed (exit code {exitCode}).");
                     return (output, error, exitCode);
                 }
-
-                return (string.Empty, "SVN retry loop exhausted.", 1);
             }
             catch (OperationCanceledException)
             {
@@ -581,6 +627,82 @@ namespace SVN.Core
             "version",
             "shelf-list", "shelf-diff", "shelf-log"
         };
+
+        #region === NEW: Network resilience (transient errors + SSH banner noise) ===
+
+        // Markery błędów przejściowych (transport/SSH). Świadomie BEZ E170013 —
+        // to zwykle trwały błąd konfiguracji URL, retry tylko opóźniłby komunikat.
+        private static readonly string[] TransientNetworkMarkers =
+        {
+    "E210002",                          // network connection closed unexpectedly
+    "E175002",                          // connection timed out
+    "E175012",                          // unable to connect to a repository
+    "connection reset",
+    "connection closed unexpectedly",
+    "connection timed out",
+    "client_loop: send disconnect",
+    "broken pipe"
+};
+
+        public static bool IsTransientNetworkError(string errorText)
+        {
+            if (string.IsNullOrWhiteSpace(errorText)) return false;
+            foreach (var marker in TransientNetworkMarkers)
+                if (errorText.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            return false;
+        }
+
+        // Frazy banneru SSH serwera — czysty szum w stderr, wycinany u źRÓDŁA,
+        // żeby nie trafiały do error string, exception message ani logów.
+        private static readonly string[] BannerPhrases =
+        {
+    "restricted access system",
+    "unauthorized access is strictly prohibited",
+    "subject to prosecution",
+    "you consent to monitoring",
+    "recording of all activity"
+};
+
+        private static bool IsSshBannerNoise(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return false;
+
+            string t = line.Trim();
+
+            // ściany '****' / '@@@@' — delimiter banneru (pojawia się też przy sukcesie)
+            string compact = t.Replace(" ", "");
+            if (compact.Length >= 8 && compact.All(c => c == '*' || c == '@'))
+                return true;
+
+            foreach (var phrase in BannerPhrases)
+                if (t.IndexOf(phrase, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+
+            return false;
+        }
+
+        // Komendy bezpieczne do auto-retry po błędzie sieci:
+        // - read-only (restart nic nie psuje)
+        // - update/switch — svn WZNAWIA od miejsca awarii (pliki już pobrane
+        //   nie wracają, nie są wypisywane ponownie)
+        // Świadomie BEZ "commit" — zerwane połączenie w trakcie commitu zostawia
+        // niepewność, czy rewizja weszła; retry mógłby stworzyć DUPLIKAT rewizji.
+        // (Jeśli używacie checkout — można dopisać "checkout", "co" — svn checkout
+        // do istniejącego katalogu kontynuuje jak update.)
+        private static readonly HashSet<string> NetworkRetrySafeCommands = new(StringComparer.OrdinalIgnoreCase)
+{
+    "update", "up", "switch", "sw", "checkout"
+};
+
+        private static bool IsNetworkRetrySafe(List<string> argList)
+        {
+            string command = argList?.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith("-"));
+            if (string.IsNullOrEmpty(command)) return false;
+            return NetworkRetrySafeCommands.Contains(command) || ReadCommands.Contains(command);
+        }
+
+        #endregion
 
         public static string ForceCleanPath(string path) => string.IsNullOrEmpty(path) ? string.Empty : new string(path.Where(c => !char.IsControl(c) || c == ' ').ToArray()).Trim();
 
@@ -1047,7 +1169,7 @@ namespace SVN.Core
         }
 
         private static async Task<(int exitCode, string error)> ExecuteRawProcessToFileAsync(
-            List<string> args, string workingDir, string destFilePath, CancellationToken token)
+    List<string> args, string workingDir, string destFilePath, CancellationToken token)
         {
             var psi = new ProcessStartInfo
             {
@@ -1069,8 +1191,12 @@ namespace SVN.Core
 
             process.ErrorDataReceived += (s, e) =>
             {
-                if (e.Data != null) stderrSb.AppendLine(e.Data);
-                else stderrTcs.TrySetResult(true);
+                if (e.Data == null) { stderrTcs.TrySetResult(true); return; }
+
+                // === NEW (FIX): banner SSH wycinany — nie trafia do zwracanego error
+                if (IsSshBannerNoise(e.Data)) return;
+
+                stderrSb.AppendLine(e.Data);
             };
 
             try

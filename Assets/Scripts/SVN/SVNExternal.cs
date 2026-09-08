@@ -14,6 +14,8 @@ namespace SVN.Core
     {
         private readonly SemaphoreSlim _processingLock = new SemaphoreSlim(1, 1);
         private int _disposed;
+        private volatile bool _lastExportSucceeded;
+        public bool LastExportSucceeded => _lastExportSucceeded;
 
         public SVNExternal(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
@@ -940,6 +942,10 @@ namespace SVN.Core
             });
         }
 
+        // === NEW (FIX): wynik ostatniego exportu — SVNRevision.ExportRevisionButton
+        // monitoruje zakończenie operacji; bez tej flagi raportował sukces ZAWSZE,
+        // także gdy svn export padł (np. E210002 po zerwaniu połączenia).
+
         public async void ExportRevision(string revision, string relativePath = "")
         {
             try
@@ -976,26 +982,40 @@ namespace SVN.Core
                 return;
             }
 
-            string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select Export Destination Directory", root, false);
-            if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0]))
+            // === NEW (FIX): cała operacja (dialog + svn) pod IsProcessing — monitor
+            // w SVNRevision widzi ją od początku, także gdyby kiedyś dialog przestał
+            // blokować wątek główny (dzisiaj chroni nas tylko szczęśliwy akcident).
+            if (!await _processingLock.WaitAsync(0))
             {
-                SVNLogBridge.LogLine("Export revision canceled.");
+                SVNLogBridge.LogLine("<color=#FFAA00>Export:</color> another SVNExternal operation is running. Please wait.");
                 return;
             }
 
-            string exportFolder = NormalizePath(paths[0]);
-            string sourcePath = string.IsNullOrEmpty(relativePath)
-                ? root
-                : NormalizePath(Path.Combine(root, relativePath));
+            IsProcessing = true;                 // === NEW
+            _lastExportSucceeded = false;        // === NEW
 
             try
             {
+                string[] paths = StandaloneFileBrowser.OpenFolderPanel("Select Export Destination Directory", root, false);
+                if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0]))
+                {
+                    SVNLogBridge.LogLine("Export revision canceled.");
+                    return;
+                }
+
+                string exportFolder = NormalizePath(paths[0]);
+                string sourcePath = string.IsNullOrEmpty(relativePath)
+                    ? root
+                    : NormalizePath(Path.Combine(root, relativePath));
+
                 SVNLogBridge.LogLine($"<color=green>Exporting</color> revision r{rev} to: {exportFolder}...");
 
                 string cmd =
                     $"export -r {rev} \"{EscapeSvnArg(sourcePath)}\" \"{EscapeSvnArg(exportFolder)}\" --force";
 
                 await SvnRunner.RunAsync(cmd, root);
+
+                _lastExportSucceeded = true;     // === NEW: sukces dopiero TU
 
                 SVNLogBridge.LogLine(
                     $"<color=green>Export Success:</color> Revision r{rev} exported successfully to {exportFolder}");
@@ -1004,7 +1024,15 @@ namespace SVN.Core
             }
             catch (Exception ex)
             {
+                // === NEW: flaga zostaje false → monitor w SVNRevision zgłosi porażkę,
+                // nie fałszywy sukces.
                 SVNLogBridge.LogLine($"<color=#FFAA00>Export Error:</color> {ex.Message}");
+            }
+            finally
+            {
+                IsProcessing = false;            // === NEW
+                try { _processingLock.Release(); }
+                catch (SemaphoreFullException) { }
             }
         }
 

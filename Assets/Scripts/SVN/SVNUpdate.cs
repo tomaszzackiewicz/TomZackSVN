@@ -407,6 +407,16 @@ namespace SVN.Core
                         if (trimmed.Length > 0 && trimmed.All(c => c == '@' || c == '*' || c == ' ')) return;
                         if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@")) return;
 
+                        // === NEW (FIX): linie błędów svn/ssh (stderr przychodzi jako
+                        // "[SVN ERROR] svn: E210002..." / "client_loop...") NIE są plikami.
+                        // Wcześniej nabijały licznik processed, pasek postępu i wyświetlały
+                        // się jako "plik" na liście. Krytyczne przy retry z SvnRunner:
+                        // w trakcie wznawiania update'u błąd sieci pojawia się pomiędzy
+                        // liniami plików i nie może zafałszować statystyk.
+                        if (trimmed.StartsWith("[SVN ERROR]", StringComparison.Ordinal)) return;
+                        if (trimmed.StartsWith("svn: ", StringComparison.Ordinal)) return;
+                        if (trimmed.StartsWith("client_loop", StringComparison.Ordinal)) return;
+
                         string cleanLine = trimmed.Replace("[SVN ERROR]", "").Trim();
                         if (cleanLine.Length > 0 && cleanLine.All(c => c == '@' || c == '*')) return;
 
@@ -441,10 +451,10 @@ namespace SVN.Core
                             switch (status)
                             {
                                 case 'U': uCount++; break;
-                                case 'G': gCount++; break;
                                 case 'A': aCount++; break;
                                 case 'D': dCount++; break;
                                 case 'C': cCount++; break;
+                                case 'G': gCount++; break;
                                 case 'R': rCount++; break;
                             }
 
@@ -675,6 +685,36 @@ namespace SVN.Core
             }
             finally
             {
+                // === FIX BAR: gwarantowane wyjście paska ze stanu Updating.
+                // EndUpdate (sukces) i EndUpdateFailed (cancel przed komendą) kończą bar
+                // jawnie — ale trzy ścieżki tego NIE robiły: porażka update'u, cancel po
+                // ukończeniu komendy (svnCommandCompleted=true), exception w post-processing.
+                // Bar w Updating blokuje ShowProjectInfo/RenderSnapshot/BeginCheckout
+                // (guard _state != Idle), więc raz zablokowany NIE odblokowuje się sam.
+                //
+                // KOLEJNOŚĆ istotna: finalizacja bara PRZED IsProcessing=false — inaczej
+                // nowy Update mógłby wejść, ustawić Updating, a TEN guard zdjąłby mu
+                // pasek w locie (race). Dzięki tej kolejności MonitorUpdateCompletionAsync
+                // (panel Revision) też odczyta finalne LastUpdateSucceeded, nie przedwczesne.
+                try
+                {
+                    if (svnBar != null && svnBar.CurrentState == BarState.Updating)
+                    {
+                        if (svnCommandCompleted)
+                        {
+                            // komenda svn OK → świeży snapshot (lokalne svn info/status —
+                            // działa nawet offline; przy porażce sam użyje fallbacku)
+                            await svnBar.EndUpdate(oldSnapshot).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            // przerwane / porażka → przywróć stan sprzed update
+                            svnBar.EndUpdateFailed(oldSnapshot);
+                        }
+                    }
+                }
+                catch { /* pasek nie może zablokować zamknięcia operacji */ }
+
                 svnManager.IsUpdateRunning = false;
                 IsProcessing = false;
 
