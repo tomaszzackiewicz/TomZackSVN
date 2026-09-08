@@ -9,6 +9,23 @@ using UnityEngine.UI;
 
 namespace SVN.Core
 {
+    /// <summary>
+    /// Repo Browser — drzewo katalogów z SERWERA (svn list).
+    ///
+    /// === LAZY-LOAD (optymalizacja startu aplikacji):
+    /// Drzewo NIE ładuje się przy starcie (wcześniej 'svn list' na serwerze
+    /// startował zawsze i konkurował z RefreshStatus o semafor SvnRunner).
+    /// Ładowanie następuje przy PIERWSZYM otwarciu panelu browsera:
+    ///   PanelHandler.Button_OpenRepoBrowser → EnsureLoadedAsync()
+    /// Kolejne wywołania = no-op (dopóki drzewo żyje).
+    /// Fallback: SVNManager.preloadRepoBrowserAtStartup = true przywraca
+    /// zachowanie startowe (Init wywoła LoadInitialTreeAsync).
+    ///
+    /// === FIX K1 (zachowany): atomiczne IsLoading + generation-check — koniec
+    /// równoległych fetchów tego samego node'a (double-click rozwidlał drzewo).
+    /// === FIX K2 (zachowany): koniec duplikatów wierszy przy filtrze.
+    /// === FIX Ś2 (zachowany): delayed dispose CTS.
+    /// </summary>
     public class SVNRepoBrowser : SVNBase, IDisposable
     {
         private CancellationTokenSource _cts;
@@ -16,6 +33,10 @@ namespace SVN.Core
         private RepoNode _rootNode;
         private int _fetchGeneration;
         private int _disposed;
+
+        // === LAZY-LOAD: single-flight dla EnsureLoadedAsync (double-click na
+        // przycisku otwarcia panelu = jeden fetch, nie dwa):
+        private int _ensureLoadingFlag;
 
         public SVNRepoBrowser(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -31,6 +52,36 @@ namespace SVN.Core
             RefreshUI();
         }
 
+        // ================= LAZY-LOAD API =================
+
+        /// <summary>Czy drzewo jest już dociągnięte z serwera.</summary>
+        public bool IsTreeLoaded => _rootNode != null && _rootNode.IsLoaded;
+
+        /// <summary>
+        /// Lazy-load: wołaj przy PIERWSZYM otwarciu panelu browsera
+        /// (PanelHandler → przycisk otwarcia). Kolejne wywołania = no-op.
+        /// </summary>
+        public async Task EnsureLoadedAsync()
+        {
+            if (IsTreeLoaded) return;
+
+            // single-flight: drugi równoległy call czeka... nie — wychodzi
+            // cicho (pierwszy dokończy i drzewo będzie):
+            if (Interlocked.CompareExchange(ref _ensureLoadingFlag, 1, 0) == 1)
+                return;
+
+            try
+            {
+                if (IsTreeLoaded) return;   // double-check po zdobyciu flagi
+                await LoadInitialTreeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _ensureLoadingFlag, 0);
+            }
+        }
+
+        /// <summary>Pełne przeładowanie drzewa (jawne — Refresh/Init z flagą preload).</summary>
         public async Task LoadInitialTreeAsync()
         {
             CancelOperations();
@@ -101,9 +152,6 @@ namespace SVN.Core
             // === FIX K1: atomiczne IsLoading — zwykły bool przy double-click
             // przechodził dwa razy (check-then-set między wątkami/kontynuacjami),
             // dwa fetche tego samego node'a rosły równolegle i rozwidlały drzewo.
-            // RepoNode.IsLoading typu int (0/1) — zachęcam do zmiany w modelu;
-            // poniżej zakładam int. Jeśli zostawiasz bool — wymień na Interlocked
-            // na osobnym polu-wieku per node (dictionary) — mniej czytelne.
             if (Interlocked.CompareExchange(ref parentNode._isLoadingFlag, 1, 0) != 0) return;
 
             if (parentNode.Children == null)
@@ -138,8 +186,8 @@ namespace SVN.Core
                 if (generation != Volatile.Read(ref _fetchGeneration))
                     return;
 
-                // Budujemy NOWĄ listę lokalnie; podmieniamy atomowo (jedna ref-count
-                // przypisań) — render czyta albo starą, albo nową, nigdy w trakcie.
+                // Budujemy NOWĄ listę lokalnie; podmieniamy atomowo — render
+                // czyta albo starą, albo nową, nigdy w trakcie.
                 var newChildren = new List<RepoNode>();
 
                 if (!string.IsNullOrWhiteSpace(output))
@@ -276,11 +324,8 @@ namespace SVN.Core
             return result;
         }
 
-        // === FIX K2: koniec duplikatów. Zasada: REKURSJA wypełnia 'out' listę
-        // (children z dopasowania poniżej), a node dodaje się do NADRZĘDNEJ listy
-        // dokładnie raz — albo przez własny Add (gdy rodzic też matchuje:
-        // AddRange), albo nigdy. Wcześniej dziecko-match lądowało w result dwa
-        // razy (własny Add + AddRange ojca) → zdublowane wiersze UI przy filtrze.
+        // === FIX K2: koniec duplikatów. REKURSJA wypełnia 'out' listę, node
+        // dodaje się dokładnie raz (AddRange ojca LUB własny Add — nigdy oba).
         private static bool CollectFilteredNodes(
             RepoNode node, string filter, bool parentMatched, List<RepoNode> result)
         {

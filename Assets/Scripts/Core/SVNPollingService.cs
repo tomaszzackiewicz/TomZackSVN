@@ -8,10 +8,26 @@ namespace SVN.Core
 {
     /// <summary>
     /// Polling SVN — FOCUS + ON-DEMAND (commity/rewizje).
-    /// Bez timera: akcje lokalne są event-driven, a locki/protection
-    /// przy focusie odświeża SVNManager.FocusRefreshAsync →
-    /// PollRepositoryStateAsync (poll rewizji jest na locki ślepy —
-    /// lock nie bumpuje HEAD).
+    ///
+    /// === ARCHITEKTURA:
+    ///  - Zero timerów/pętli: w spoczynku zero CPU i zero alokacji — budzi
+    ///    się wyłącznie na focus (cooldown) i na żądanie (manager/Repair).
+    ///  - Akcje lokalne są event-driven; locki/protection przy focusie
+    ///    odświeża SVNManager.FocusRefreshAsync → PollRepositoryStateAsync
+    ///    (poll rewizji jest na locki ślepy — lock nie bumpuje HEAD).
+    ///
+    /// === PUBLIC API (callery: SVNCheckout, SVNTerminal, SVNRepoRepair):
+    ///  - ResetRevisionTracking() — po nowym checkoucie/reparacji (świeża
+    ///    kopia = nieznany baseline; bez resetu pierwszy check mógłby
+    ///    odpalić false notyfikację "committed changes").
+    ///  - CancelCurrentCheck() — anuluje biegnący check (np. RepoRepair
+    ///    przed przebudową WC).
+    ///  - IsPaused — pauza usługi.
+    ///
+    /// === LEKKOŚĆ (względem oryginału):
+    ///  - per-check CTS bez delayed-dispose (teoretyczny race z Dispose
+    ///    łapie ObjectDisposedException — okno mikrosekundowe).
+    ///  - Delayed-dispose tylko w OnDestroy (raz na życie obiektu).
     /// </summary>
     public class SVNPollingService : MonoBehaviour
     {
@@ -42,7 +58,7 @@ namespace SVN.Core
 
             SVNManager manager = SVNManager.Instance;
 
-            // NOWE: okno narzędzia zamknięte → nie pytamy serwera (nic nie widać):
+            // Okno narzędzia zamknięte → nie pytamy serwera (nic nie widać):
             if (manager != null && manager.MainUIPanel != null &&
                 !manager.MainUIPanel.activeInHierarchy)
                 return;
@@ -57,7 +73,7 @@ namespace SVN.Core
                 return;
 
             _lastFocusCheckTime = currentTime;
-            _ = CheckForRemoteCommitsAsync(_lifetimeCts.Token);
+            _ = CheckForRemoteCommitsAsync(_lifetimeCts?.Token ?? CancellationToken.None);
         }
 
         private void OnDestroy()
@@ -76,12 +92,22 @@ namespace SVN.Core
             }
         }
 
+        // ================= PUBLIC API (dla modułów) =================
+
+        /// <summary>
+        /// Reset baseline'u rewizji — wołaj po nowym checkoucie/reparacji.
+        /// Koszt: dwa przypisania pól, zero alokacji.
+        /// </summary>
         public void ResetRevisionTracking()
         {
             _lastKnownRemoteRevision = -1;
             _lastValidWorkingDir = "";
         }
 
+        /// <summary>
+        /// Anuluje biegnący check. Uproszczone: bez delayed-dispose —
+        /// teoretyczny race z Dispose łapie ObjectDisposedException.
+        /// </summary>
         public void CancelCurrentCheck()
         {
             var current = Volatile.Read(ref _currentCheckCts);
@@ -91,6 +117,8 @@ namespace SVN.Core
             }
         }
 
+        // === single-flight + lifetime + token zewnętrzny + per-check CTS ===
+
         public async Task CheckForRemoteCommitsAsync(CancellationToken token = default)
         {
             if (IsPaused) return;
@@ -99,11 +127,13 @@ namespace SVN.Core
                 return;
 
             var localCts = new CancellationTokenSource();
+
+            // Widoczne dla CancelCurrentCheck; poprzedni (jeśli wisiał) — anuluj:
             var prevCts = Interlocked.Exchange(ref _currentCheckCts, localCts);
             if (prevCts != null)
             {
                 try { prevCts.Cancel(); } catch { }
-                _ = Task.Delay(500).ContinueWith(_ => { try { prevCts.Dispose(); } catch { } });
+                try { prevCts.Dispose(); } catch { }
             }
 
             try
@@ -116,10 +146,16 @@ namespace SVN.Core
             finally
             {
                 Interlocked.CompareExchange(ref _currentCheckCts, null, localCts);
-                _ = Task.Delay(500).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
                 Interlocked.Exchange(ref _isCheckingFlag, 0);
+
+                // 'linked' jest już dispose'nięty (koniec bloku using następuje
+                // PRZED finally → odrejestrował się z localCts) → bezpośredni
+                // dispose bezpieczny; race z CancelCurrentCheck łapie ODE-tam:
+                try { localCts.Dispose(); } catch { }
             }
         }
+
+        // ================= CORE =================
 
         private async Task CheckForRemoteCommitsCoreAsync(CancellationToken token)
         {
@@ -138,6 +174,7 @@ namespace SVN.Core
                     return;
                 }
 
+                // Zmiana projektu = nowy baseline (auto-reset):
                 if (!string.Equals(wd, _lastValidWorkingDir, StringComparison.OrdinalIgnoreCase))
                 {
                     _lastKnownRemoteRevision = -1;
@@ -154,7 +191,7 @@ namespace SVN.Core
 
                 if (_lastKnownRemoteRevision == -1)
                 {
-                    _lastKnownRemoteRevision = remoteRev;
+                    _lastKnownRemoteRevision = remoteRev;   // baseline bez powiadomienia
                     return;
                 }
 
@@ -214,11 +251,14 @@ namespace SVN.Core
             }
         }
 
+        // ================= POMOCNICZE =================
+
         private async Task<string> FetchAuthor(string wd, CancellationToken token)
         {
             try
             {
-                string output = await SvnRunner.RunAsync("info -r HEAD --show-item last-changed-author", wd, false, token).ConfigureAwait(false);
+                string output = await SvnRunner.RunAsync(
+                    "info -r HEAD --show-item last-changed-author", wd, false, token).ConfigureAwait(false);
                 return string.IsNullOrWhiteSpace(output) ? "Someone" : output.Trim();
             }
             catch { return "Someone"; }
@@ -228,11 +268,15 @@ namespace SVN.Core
         {
             try
             {
-                string logOutput = await SvnRunner.RunAsync($"log -r {rev} --incremental", wd, false, token).ConfigureAwait(false);
+                string logOutput = await SvnRunner.RunAsync(
+                    $"log -r {rev} --incremental", wd, false, token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(logOutput)) return "No message.";
 
-                string[] lines = logOutput.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries);
-                string cleanMsg = (lines.Length > 1) ? string.Join(" ", lines, 1, lines.Length - 1).Trim() : lines[0].Trim();
+                string[] lines = logOutput.Split(
+                    new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries);
+                string cleanMsg = (lines.Length > 1)
+                    ? string.Join(" ", lines, 1, lines.Length - 1).Trim()
+                    : lines[0].Trim();
                 return cleanMsg.Length > 120 ? cleanMsg.Substring(0, 117) + "..." : cleanMsg;
             }
             catch { return "No message."; }

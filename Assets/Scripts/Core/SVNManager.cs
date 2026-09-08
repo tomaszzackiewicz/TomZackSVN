@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Rendering;
+
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -37,7 +39,10 @@ namespace SVN.Core
         [Header("Project Load Safety")]
         [SerializeField] private bool autoSwitchRootCheckoutToTrunk = false;
 
-		public event Action OnRepositoryStateChanged;
+        [Header("Focus Refreash")]
+        [SerializeField] private float focusRefreshCooldownSeconds = 10f;
+
+        public event Action OnRepositoryStateChanged;
 
 		private static readonly AsyncReaderWriterLock _managerLock = new();
 
@@ -56,12 +61,16 @@ namespace SVN.Core
         private FileSystemWatcher _folderWatcher;
         private int _isUpdatingSize = 0;
         private int _diskChangesDetectedFlag = 0;
+        private SVNBar _cachedBar;
         private string sshOptions = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
 
         private long _lastDiskEventTimestamp = 0;
         private const int DiskDebounceMs = 1500;
 
         private SVNPollingService _cachedPoller;
+        /// <summary>RepoBrowser: preload drzewa przy starcie (svn list na
+        /// SERWERZE). Default false — lazy przy pierwszym otwarciu panelu.</summary>
+        public bool preloadRepoBrowserAtStartup = false;
 
         private CancellationTokenSource _refreshStatusCts;
         private CancellationTokenSource _projectSwitchDebounceCts;
@@ -188,12 +197,14 @@ namespace SVN.Core
             SVN.Core.SvnRunner.OnProcessingStateChanged += OnSvnProcessingChanged;
 
             _cachedPoller = GetComponent<SVNPollingService>();
+
+            _cachedBar = GetModule<SVNBar>();
         }
 
         private void Update()
         {
-            var bar = GetModule<SVNBar>();
-            bar?.Tick();
+            // FIX zasobów: lookup co klatkę → cache z Awake:
+            _cachedBar?.Tick();
 
             if (DiskChangesDetected)
             {
@@ -204,7 +215,10 @@ namespace SVN.Core
                 if (elapsedMs >= DiskDebounceMs)
                 {
                     DiskChangesDetected = false;
-                    if (!IsUpdateRunning && !IsProcessing && !string.IsNullOrEmpty(WorkingDir) && gameObject.activeInHierarchy)
+
+                    if (!IsUpdateRunning && !IsProcessing &&
+                        !string.IsNullOrEmpty(WorkingDir) &&
+                        gameObject.activeInHierarchy)
                     {
                         _ = RefreshStatus(force: false);
                     }
@@ -295,6 +309,11 @@ namespace SVN.Core
 
         private void Start()
         {
+            QualitySettings.vSyncCount = 0;
+            //Application.targetFrameRate = 4;
+            Application.runInBackground = true;
+            OnDemandRendering.renderFrameInterval = 60;
+
             _ = StartAsync().ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -616,7 +635,20 @@ namespace SVN.Core
                 if (this == null) return;
             }
 
-            await RefreshRepositoryInfo();
+            // === OPTYMALIZACJA: URL już jest w snapshotcie (BuildSnapshotAsync
+            // sparsował go z tego samego 'svn info'). Wcześniej RefreshRepository-
+            // Info robił KOLEJNY spawn 'svn info --show-item url' o te same dane:
+            string snapshotUrl = CurrentSnapshot?.Url;
+            if (!string.IsNullOrWhiteSpace(snapshotUrl) && snapshotUrl != "unknown")
+            {
+                RepositoryUrl = snapshotUrl.Trim();
+                UnityMainThreadDispatcher.Enqueue(() =>
+                    SynchronizeConnectionSettings(SettingsSource.None, url: RepositoryUrl));
+            }
+            else
+            {
+                await RefreshRepositoryInfo();
+            }
             if (this == null) return;
 
             await TryAutoSwitchToTrunkAsync();
@@ -660,8 +692,11 @@ namespace SVN.Core
                 }
             });
 
+            // === OPTYMALIZACJA: RepoBrowser LAZY — 'svn list' (serwer) przy
+            // starcie konkurował z RefreshStatus o semafor SvnRunner. Teraz
+            // drzewo dociąga się przy pierwszym otwarciu panelu browsera:
             var repoBrowser = GetModule<SVNRepoBrowser>();
-            if (repoBrowser != null)
+            if (repoBrowser != null && preloadRepoBrowserAtStartup)
             {
                 _ = repoBrowser.LoadInitialTreeAsync().ContinueWith(t =>
                 {
@@ -945,14 +980,6 @@ namespace SVN.Core
             await RefreshLocksSafe();
         }
 
-        /// <summary>
-        /// Lock-aware refresh przy focusie: JEDNO svn status -u → lock cache
-        /// (ReplaceAll + drzewo) → RaiseRepositoryStateChanged → ProtectedPanel
-        /// i LockPanel odświeżają się same (skip-if-equal = cisza gdy nic się
-        /// nie zmieniło). Czysty ODCZYT — nie anuluje akcji usera.
-        /// Uwaga: poll rewizji (SVNPollingService) NIE widzi locków —
-        /// lock nie bumpuje HEAD — dlatego ta metoda istnieje.
-        /// </summary>
         public async Task PollRepositoryStateAsync()
         {
             if (string.IsNullOrEmpty(WorkingDir)) return;
@@ -973,34 +1000,40 @@ namespace SVN.Core
 
         private async Task FocusRefreshAsync()
         {
-            // NOWE: okno narzędzia zamknięte → ZERO pracy na focusie.
-            // Panele same robią pełny refresh przy otwarciu (OnEnable),
-            // więc nic nie tracimy — zyskujemy ciszę svn, gdy UI niewidoczne:
+            // Jeśli trwa jakakolwiek operacja SVN, od razu przerywamy – bez czekania.
             if (mainUIPanel != null && !mainUIPanel.activeInHierarchy) return;
-
-            // Focus podczas operacji usera → odłóż (commits-check robi
-            // CancelBackgroundTasksAsync — nie tego chcemy w trakcie update):
             if (IsProcessing || IsUpdateRunning) return;
 
-            if (_cachedPoller != null)
-                await _cachedPoller.CheckForRemoteCommitsAsync();
+            try
+            {
+                // Sprawdź zdalne commity (jeśli poller istnieje)
+                if (_cachedPoller != null)
+                    await _cachedPoller.CheckForRemoteCommitsAsync();
 
-            // Locki + protection przy powrocie do okna:
-            await PollRepositoryStateAsync();
+                // Odśwież locki i protection (szybkie, lokalne)
+                await PollRepositoryStateAsync();
 
-            if (!string.IsNullOrEmpty(WorkingDir))
-                await RefreshStatus(force: false);
+                // Zwykłe odświeżenie statusu – bez wymuszania.
+                if (!string.IsNullOrEmpty(WorkingDir))
+                    await RefreshStatus(force: false);
+            }
+            catch (OperationCanceledException)
+            {
+                // ciche – anulowanie nie jest błędem
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError($"[FocusRefresh] Unexpected error: {ex.Message}");
+            }
         }
 
         private void OnApplicationFocus(bool hasFocus)
         {
             if (!hasFocus) return;
-            if (_focusRefreshRunning) return;
 
-            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 10f)
-                return;
+            // FIX: jeśli okno główne jest nieaktywne, nie rób nic
+            if (mainUIPanel != null && !mainUIPanel.activeInHierarchy) return;
 
-            _lastFocusRefreshTime = Time.realtimeSinceStartup;
             _focusRefreshRunning = true;
 
             _ = FocusRefreshAsync().ContinueWith(t =>

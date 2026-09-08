@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using TMPro;
@@ -8,30 +9,42 @@ namespace SVN.Core
 {
     public abstract class SVNBase
     {
-        // === FIX (drobiazg): limit linii konsoli modułu (merge loguje blokami;
-        // terminal ma własny trim — tu brakowało jakiegokolwiek).
         private const int MaxConsoleLines = 400;
+
+        // === FIX A: '*' i '?' NIE są w Path.GetInvalidPathChars (nielegalne
+        // tylko w nazwach plików) — przechodziły przez walidację i wybuchały
+        // dopiero w Directory.CreateDirectory/Process.Start.
+        private static readonly char[] ExtraInvalidPathChars = { '*', '?' };
+
+        // === OPT: wzorzec jako statyczne pole.
+        private static readonly Regex BannerRegex =
+            new Regex(@"\*+\s*WARNING![\s\S]*?@{5,}", RegexOptions.IgnoreCase);
+
+        // === FIX D: bufor koaleskujący — wcześniej każdy Append = odczyt CAŁEGO
+        // text + konkatenacja + set + Trim → pełny re-layout TMP per LINIĘ
+        // (merge loguje blokami → dziesiątki re-layoutów na operację).
+        // Teraz: linie kumulowane pod lockiem, JEDEN flush na tick dispatchera.
+        private readonly object _consoleLock = new object();
+        private readonly StringBuilder _consoleBuffer = new StringBuilder(1024);
+        private int _consoleFlushQueued; // 0 = nie, 1 = flush już w kolejce
 
         public SVNManager svnManager;
         public SVNUI svnUI;
 
-        private int _isProcessing = 0; // 0 = false, 1 = true
+        private int _isProcessing; // 0 = false, 1 = true
 
         public bool IsProcessing
         {
             get => Interlocked.CompareExchange(ref _isProcessing, 0, 0) == 1;
+            // Setter celowo zostaje publiczny — nie widzę pozostałych modułów
+            // (Checkout/Merge/BranchTag) i nie chcę zepsuć ich kompilacji.
+            // Preferuj TryStart()/End().
             set => Interlocked.Exchange(ref _isProcessing, value ? 1 : 0);
         }
 
-        public bool TryStart()
-        {
-            return Interlocked.CompareExchange(ref _isProcessing, 1, 0) == 0;
-        }
+        public bool TryStart() => Interlocked.CompareExchange(ref _isProcessing, 1, 0) == 0;
 
-        public void End()
-        {
-            Interlocked.Exchange(ref _isProcessing, 0);
-        }
+        public void End() => Interlocked.Exchange(ref _isProcessing, 0);
 
         protected SVNBase(SVNUI ui, SVNManager manager)
         {
@@ -48,8 +61,7 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(text)) return text;
 
-            string pattern = @"\*+\s*WARNING![\s\S]*?@{5,}";
-            string cleaned = Regex.Replace(text, pattern, "", RegexOptions.IgnoreCase);
+            string cleaned = BannerRegex.Replace(text, "");
 
             string[] lines = cleaned.Split(
                 new[] { "\r\n", "\n", "\r" },
@@ -63,9 +75,7 @@ namespace SVN.Core
 
                 if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@") ||
                     trimmed.EndsWith("*****") || trimmed.EndsWith("@@@@@"))
-                {
                     continue;
-                }
 
                 finalLines.Add(line);
             }
@@ -75,21 +85,47 @@ namespace SVN.Core
 
         protected virtual TMP_Text GetConsole() => null;
 
-        // === FIX K1: Append przez dispatcher. LogInfo/LogSuccess/LogWarning/
-        // LogErrorLocal wołane są m.in. z SVNMerge/SVNBranchTag PO ConfigureAwait(false)
-        // (thread pool) — 'console.text +=' poza main thread to niezdefiniowane
-        // zachowanie Unity. Naprawione RAZ, tutaj, dla wszystkich modułów.
-        // (Efekt uboczny: log pojawia się o klatkę później — nieszkodliwe.)
+        // === FIX K1 (zachowany) + FIX D: append kumulowany. Thread-safe (lock) —
+        // wołane także z puli wątków po ConfigureAwait(false).
+        // Notka: linie zalogowane MIĘDZY queue'owaniem flusha a jego
+        // wykonaniem dołączą do tego samego chunka (mikro-reordering
+        // względem innych akcji w kolejce — kosmetyka).
         protected void Append(string msg, string color)
         {
-            PostToMainThread(() =>
+            lock (_consoleLock)
             {
-                var console = GetConsole();
-                if (console == null) return;
+                _consoleBuffer.Append("<color=").Append(color).Append('>')
+                              .Append(msg).AppendLine("</color>");
+            }
 
-                console.text += $"<color={color}>{msg}</color>\n";
+            if (Interlocked.CompareExchange(ref _consoleFlushQueued, 1, 0) == 0)
+                PostToMainThread(FlushConsoleBuffer);
+        }
+
+        private void FlushConsoleBuffer()
+        {
+            string chunk;
+            lock (_consoleLock)
+            {
+                if (_consoleBuffer.Length == 0)
+                {
+                    _consoleFlushQueued = 0;
+                    return;
+                }
+                chunk = _consoleBuffer.ToString();
+                _consoleBuffer.Clear();
+                _consoleFlushQueued = 0; // appendy po tym punkcie zaqueue'ują nowy flush
+            }
+
+            var console = GetConsole();
+            if (console == null) return; // paritet: moduł bez konsoli → brak UI (plik loguje wołający)
+
+            try
+            {
+                console.text += chunk;
                 TrimConsole(console);
-            });
+            }
+            catch { /* UI zniszczone w teardown — ignorujemy */ }
         }
 
         private static void TrimConsole(TMP_Text console)
@@ -131,6 +167,9 @@ namespace SVN.Core
             SVNLogBridge.LogToFile(msg, "MODULE");
         }
 
+        // UWAGA (sink, do decyzji): LogInfo NIE trafia do pliku, podczas gdy
+        // Success/Warning/Error tak. Jeśli to zamierzone (chatter tylko do UI)
+        // — zostaw; jeśli nie — dodaj SVNLogBridge.LogToFile(msg, "MODULE").
         public void LogInfo(string msg) => Append(msg, "#0400ff");
 
         public void LogErrorLocal(string msg)
@@ -151,7 +190,11 @@ namespace SVN.Core
 
             if (string.IsNullOrWhiteSpace(keyPath)) return null;
 
-            keyPath = keyPath.Replace("\"", string.Empty).Trim();
+            // === FIX E: Trim('"') zamiast Replace("\"", "") — tamten wycinał
+            // WSZYSTKIE cudzysłowy (cicha mutacja ścieżki). Cudzysłów w środku
+            // ścieżki i tak spadnie na File.Exists z czytelnym błędem.
+            keyPath = keyPath.Trim().Trim('"').Trim();
+
             if (keyPath.StartsWith("~"))
             {
                 string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -187,10 +230,8 @@ namespace SVN.Core
             return keyPath;
         }
 
-        // === Ś3: DEPRECATED — SvnRunner ustawia env SVN_SSH (z aktualnym kluczem)
-        // per-proces; ten --config-option jest redundantny i konkurujący. Już
-        // wycięty z Merge/BranchTag — JEDYNE żywe użycie: SVNCheckout (do wycięcia
-        // jako follow-up; wtedy usunąć tę metodę).
+        // === Ś3: DEPRECATED — bez zmian (ostatnie żywe użycie: SVNCheckout;
+        // po jego oczyszczeniu usunąć całą metodę).
         protected string BuildSshConfigOption(string keyPath)
         {
             if (string.IsNullOrWhiteSpace(keyPath)) return string.Empty;
@@ -202,24 +243,28 @@ namespace SVN.Core
 
         protected void HandleOperationException(Exception ex)
         {
-            // === FIX (drobiazg): End() zamiast IsProcessing=false — symetria
-            // z TryStart() (oba atomowe).
+            // UWAGA: End() bezwarunkowo zeruje flagę — wywołane spoza własnego
+            // finally może zgasić flagę równoległej operacji na tej instancji.
+            // Zachowane dla paritetu z SVNCheckout; docelowo wołaj End() w
+            // finally operacji, a tu tylko loguj.
             End();
             SVNLogBridge.LogErrorToOutput($"[SVN] Unhandled operation exception:\n{ex}");
             ShowError(ex.Message);
         }
 
-        // === FIX K2: pole UI wyłącznie przez dispatcher — HandleOperationException
-        // bywa wołane z thread poolu (catch w async void po ConfigureAwait(false),
-        // np. SVNCheckout.StartCheckout).
+        // === FIX C: pole statusu było zahardkodowane do CheckoutStatusInfoText —
+        // błędy z merge/blame/branch lądowały w panelu checkoutu. Wirtualny
+        // target; domyślne zachowanie bez zmian (moduły mogą nadpisać).
+        protected virtual TMP_Text GetStatusText() => svnUI?.CheckoutStatusInfoText;
+
+        // === FIX K2: pole UI wyłącznie przez dispatcher.
         protected void ShowError(string message)
         {
             PostToMainThread(() =>
-                SVNLogBridge.UpdateUIField(svnUI.CheckoutStatusInfoText,
+                SVNLogBridge.UpdateUIField(GetStatusText(),
                     $"<color=#FFAA00>Error:</color> {message}", "Checkout"));
         }
 
-        // === FIX Ś1: guard na null (kiedyś NRE).
         protected bool IsValidSvnUrl(string url)
         {
             if (string.IsNullOrWhiteSpace(url)) return false;
@@ -234,12 +279,14 @@ namespace SVN.Core
         {
             fullPath = null;
 
-            // === FIX Ś2: na nowoczesnym .NET (Unity) Path.GetFullPath NIE waliduje
-            // nielegalnych znaków ścieżki ('|', '<', '*', ...?) — GetFullPath przechodzi,
-            // a Directory.CreateDirectory/Process.Start rzucają głęboko w operacji.
-            // Jawny filtr znaków jako pierwsza linia obrony.
+            bool isWindows = Environment.OSVersion.Platform == PlatformID.Win32NT;
+
+            // === FIX Ś2 + A: jawny filtr znaków (GetFullPath nie waliduje na
+            // .NET Core/Unity) — teraz także '*' i '?' (tylko Windows; na
+            // unixach to legalne znaki nazw plików).
             if (string.IsNullOrWhiteSpace(inputPath) ||
-                inputPath.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+                inputPath.IndexOfAny(Path.GetInvalidPathChars()) >= 0 ||
+                (isWindows && inputPath.IndexOfAny(ExtraInvalidPathChars) >= 0))
             {
                 ShowError("Invalid destination path (empty or contains illegal characters).");
                 return false;
@@ -248,6 +295,20 @@ namespace SVN.Core
             try { fullPath = Path.GetFullPath(inputPath); }
             catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return false; }
 
+            // === FIX A: nazwy zarezerwowane Windows (CON, PRN, AUX, NUL,
+            // COM1-9, LPT1-9 — także z "rozszerzeniem", np. "CON.txt") oraz
+            // końcowe kropki/spacje przechodzą przez GetFullPath, a potem
+            // Win32 cicho obcina kropki/spacje (powstaje INNA ścieżka niż
+            // pokazana) albo CreateDirectory failuje enigmatycznie.
+            if (isWindows && HasReservedOrMalformedSegment(fullPath))
+            {
+                ShowError("Invalid destination path (reserved device name or trailing dot/space).");
+                return false;
+            }
+
+            // UWAGA (Windows-centryzm, paritet z oryginałem): DriveInfo na
+            // unixowym rootzie ("/") może rzucać → catch odrzuca POPRAWNĄ
+            // ścieżkę. Przy wsparciu unix trzeba tu ifa na OS.
             try
             {
                 string root = Path.GetPathRoot(fullPath);
@@ -264,6 +325,54 @@ namespace SVN.Core
             catch (Exception ex) { ShowError($"Cannot access destination drive: {ex.Message}"); return false; }
 
             return true;
+        }
+
+        private static bool HasReservedOrMalformedSegment(string fullPath)
+        {
+            string[] segments = fullPath.Replace('/', '\\').Split('\\');
+            foreach (string segment in segments)
+            {
+                if (segment.Length == 0) continue;
+
+                if (segment.EndsWith(" ") || segment.EndsWith("."))
+                    return true;
+
+                // zarezerwowana jest część przed pierwszą kropką ("CON.txt" = CON)
+                string name = segment;
+                int dot = segment.IndexOf('.');
+                if (dot >= 0) name = segment.Substring(0, dot);
+
+                if (name.Length == 3 || name.Length == 4)
+                {
+                    switch (name.ToUpperInvariant())
+                    {
+                        case "CON":
+                        case "PRN":
+                        case "AUX":
+                        case "NUL":
+                        case "COM1":
+                        case "COM2":
+                        case "COM3":
+                        case "COM4":
+                        case "COM5":
+                        case "COM6":
+                        case "COM7":
+                        case "COM8":
+                        case "COM9":
+                        case "LPT1":
+                        case "LPT2":
+                        case "LPT3":
+                        case "LPT4":
+                        case "LPT5":
+                        case "LPT6":
+                        case "LPT7":
+                        case "LPT8":
+                        case "LPT9":
+                            return true;
+                    }
+                }
+            }
+            return false;
         }
 
         protected void PostToMainThread(Action action)

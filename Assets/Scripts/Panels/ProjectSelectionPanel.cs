@@ -39,14 +39,21 @@ public class ProjectSelectionPanel : MonoBehaviour
     private int _isRelocating = 0;
     private int _isRenaming = 0;
 
-    // === FIX (precyzyjny unsubscribe): delegaty w polach — RemoveListener(lambda)
-    // nie działa (każda lambda to inna delegacja); tak usuwamy DOKŁADNIE to,
-    // co dodaliśmy w Start.
+    // === OPTYMALIZACJA: cache danych w pamięci + dirty flag.
+    // Dysk/JSON czytany TYLKO przy realnej zmianie danych — search/sort
+    // renderują z cache (zero I/O per literka).
+    private List<SVNProject> _allProjects = new List<SVNProject>();
+    private bool _dataDirty = true;
+
+    // === OPTYMALIZACJA: fingerprint widoku — identyczna lista = zero
+    // churnu GameObjectów (np. OnProjectLoaded, gdy nic się nie zmieniło).
+    private string _renderFingerprint;
+
+    // === FIX (precyzyjny unsubscribe): delegaty w polach.
     private UnityAction<string> _onSearchChanged;
     private UnityAction<int> _onSortChanged;
 
-    // === S1: serializacja JSON przez atomowe API ProjectSettings (koniec
-    // lost-update przy równoległych zapisach z innych modułów).
+    // === S1: serializacja JSON przez atomowe API ProjectSettings.
     private static readonly SemaphoreSlim _jsonLock = new SemaphoreSlim(1, 1);
 
     private static readonly HashSet<string> SvnKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -66,8 +73,10 @@ public class ProjectSelectionPanel : MonoBehaviour
             sortDropdown.value = 0;
         }
 
-        _onSearchChanged = _ => RefreshList();
-        _onSortChanged = _ => RefreshList();
+        // === OPTYMALIZACJA: search/sort → RenderList (cache), NIE RefreshList
+        // (który wcześniej per literkę robił: dysk + JSON + rebuild):
+        _onSearchChanged = _ => RenderList();
+        _onSortChanged = _ => RenderList();
 
         if (searchInput != null)
             searchInput.onValueChanged.AddListener(_onSearchChanged);
@@ -77,19 +86,12 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (svnManager != null)
             svnManager.OnProjectChanged += OnProjectLoaded;
 
-        RefreshList();
-    }
-
-    // === FIX: event OnProjectChanged przychodzi NA MAIN (RaiseProjectChanged
-    // dispatchuje), ale historycznie bywało różnie — dispatch defensywnie.
-    // RefreshList = Destroy/Instantiate GameObjects = main-only (crash-fix).
-    private void OnProjectLoaded(SVNProject project)
-    {
-        UnityMainThreadDispatcher.Enqueue(() =>
+        // OnEnable zrobił pierwszy render; tu tylko gdyby coś było brudne:
+        if (_dataDirty)
         {
-            if (this != null)
-                RefreshList();
-        });
+            ReloadData();
+            RenderList();
+        }
     }
 
     private void OnEnable()
@@ -97,10 +99,22 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (svnManager == null) svnManager = SVNManager.Instance;
         if (svnUI == null) svnUI = SVNUI.Instance;
 
-        // Start już robi pełny RefreshList — w OnEnable tylko przy PONOWNYM
-        // otwarciu panelu (unikamy podwójnego pełnego refreshu na starcie).
-        if (container != null && container.childCount > 0)
-            RefreshList();
+        // === OPTYMALIZACJA: ukryty panel mógł zgubić dane (dirty z eventów) —
+        // przeładuj; render zawsze (tani — cache, zero dysku przy czystych danych):
+        if (_dataDirty)
+            ReloadData();
+
+        RenderList();
+    }
+
+    // === FIX: event OnProjectChanged — dispatch defensywnie (main-only render).
+    private void OnProjectLoaded(SVNProject project)
+    {
+        UnityMainThreadDispatcher.Enqueue(() =>
+        {
+            if (this != null)
+                RefreshList();   // gates w środku: nieaktywny panel → tylko dirty
+        });
     }
 
     private void OnDestroy()
@@ -108,11 +122,9 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (svnUI?.AddProjectRepoUrlInput != null)
             svnUI.AddProjectRepoUrlInput.onEndEdit.RemoveListener(OnUrlInputEndEdit);
 
-        // === FIX: klucz-popup listener też sprzątany.
         if (svnUI?.AddProjectKeyPathInput != null)
             svnUI.AddProjectKeyPathInput.onEndEdit.RemoveListener(OnAddProjectKeyEndEdit);
 
-        // === FIX (precyzyjny unsubscribe — pola-delegaty, nie lambdy).
         if (searchInput != null && _onSearchChanged != null)
             searchInput.onValueChanged.RemoveListener(_onSearchChanged);
         if (sortDropdown != null && _onSortChanged != null)
@@ -122,14 +134,25 @@ public class ProjectSelectionPanel : MonoBehaviour
             svnManager.OnProjectChanged -= OnProjectLoaded;
     }
 
-    public void RefreshList()
-    {
-        if (svnUI == null) svnUI = SVNUI.Instance;
+    // ===================================================================
+    //  DANE vs RENDER — rozdzielone (optymalizacja)
+    // ===================================================================
 
-        // UWAGA: main-thread-only (Destroy/Instantiate). Jeśli kiedykolwiek
-        // potrzeba z puli — Enqueue z zewnątrz, nie wołać bezpośrednio.
+    /// <summary>
+    /// Przeładowanie danych z dysku. Ukryty panel → tylko dirty flag
+    /// (przeładujemy przy otwarciu — zero pracy teraz).
+    /// </summary>
+    private void ReloadData()
+    {
+        if (!isActiveAndEnabled)
+        {
+            _dataDirty = true;
+            return;
+        }
+
         var allProjects = ProjectSettings.LoadProjects();
 
+        // Migracja lastOpened (patrz oryginał):
         bool needsMigrationSave = false;
         int i = 0;
         foreach (var p in allProjects)
@@ -148,20 +171,42 @@ public class ProjectSelectionPanel : MonoBehaviour
             catch { }
         }
 
+        _allProjects = allProjects;
+        _dataDirty = false;
+    }
+
+    /// <summary>
+    /// Render z CACHE (zero dysku). Fingerprint → rebuild wierszy TYLKO gdy
+    /// widoczna lista realnie inna (nazwa/data = to, co wiersz pokazuje).
+    /// </summary>
+    private void RenderList()
+    {
+        if (container == null) return;
+        if (!isActiveAndEnabled) return;   // ukryty → OnEnable dorenderuje
+
         bool sortByDate = sortDropdown != null && sortDropdown.value == 1;
-        if (sortByDate)
-            allProjects = allProjects.OrderByDescending(p => p.lastOpened).ToList();
-        else
-            allProjects = allProjects.OrderBy(p => p.projectName).ToList();
+
+        IEnumerable<SVNProject> source = _allProjects;
+        source = sortByDate
+            ? source.OrderByDescending(p => p.lastOpened)
+            : source.OrderBy(p => p.projectName);
 
         string filter = searchInput?.text?.Trim() ?? "";
         if (!string.IsNullOrEmpty(filter))
-            allProjects = allProjects.Where(p => p.projectName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+            source = source.Where(p => p.projectName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
 
-        projects = allProjects;
+        projects = source.ToList();
 
-        if (container == null) return;
+        // === FINGERPRINT: identyczny widok → nic nie robimy:
+        string fingerprint = string.Join("|",
+            projects.Select(p => $"{p.projectName}|{p.lastOpened.Ticks}"));
 
+        if (fingerprint == _renderFingerprint && container.childCount > 0)
+            return;
+
+        _renderFingerprint = fingerprint;
+
+        // Rebuild wierszy:
         var toDestroy = new List<GameObject>(container.childCount);
         foreach (Transform child in container)
             toDestroy.Add(child.gameObject);
@@ -180,9 +225,7 @@ public class ProjectSelectionPanel : MonoBehaviour
                 uiItem.projectNameText.text = project.projectName;
 
                 if (uiItem.dateText != null)
-                {
                     uiItem.dateText.text = project.lastOpened.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
-                }
 
                 uiItem.selectButton.onClick.AddListener(() => OnProjectSelected(project));
                 uiItem.deleteButton.onClick.AddListener(() => Button_DeleteProject(project));
@@ -194,6 +237,17 @@ public class ProjectSelectionPanel : MonoBehaviour
                     uiItem.renameButton.onClick.AddListener(() => Button_OpenRenamePanel(project));
             }
         }
+    }
+
+    /// <summary>
+    /// Pełny refresh (dane + render) — KOMPATYBILNOŚĆ: to wołają SVNManager,
+    /// SVNLoad, SVNTerminal, SVNRepoRepair. Aktywny panel = reload+render;
+    /// ukryty = dirty flag (przeładuje się przy otwarciu).
+    /// </summary>
+    public void RefreshList()
+    {
+        ReloadData();
+        RenderList();
     }
 
     #region Rename
@@ -249,7 +303,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (renameProjectSubPanel != null) renameProjectSubPanel.SetActive(false);
     }
 
-    // === S1: atomowo przez ProjectSettings.UpdateProject (koniec lost-update).
     private async Task ExecuteRenameAsync(SVNProject project, string newName)
     {
         try
@@ -294,8 +347,9 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
         finally
         {
-            // === FIX (crash): RefreshList TYLKO przez dispatcher — Destroy/
-            // Instantiate z puli = crash + pusta lista projektów.
+            // Rename zmienił dane → dirty → reload przy refreshu:
+            _dataDirty = true;
+
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (this != null)
@@ -393,7 +447,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             await SvnRunner.RunAsync($"relocate \"{newUrl}\"", project.workingDir).ConfigureAwait(false);
             SVNLogBridge.LogLine($"<color=green>Relocated successfully to {newUrl}</color>");
 
-            // === S1: atomowo.
             await _jsonLock.WaitAsync().ConfigureAwait(false);
             try
             {
@@ -419,7 +472,8 @@ public class ProjectSelectionPanel : MonoBehaviour
                 svnManager.RepositoryUrl = newUrl;
             }
 
-            // === FIX (crash): dispatch.
+            _dataDirty = true;   // dane na dysku zmienione
+
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (this != null)
@@ -456,19 +510,12 @@ public class ProjectSelectionPanel : MonoBehaviour
         }, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
     }
 
-    // === CRASH-FIX (rdzeń): OnProjectSelectedAsync biegnie na PULI wątków
-    // (ContinueWith + ConfigureAwait(false)). Poprzednio:
-    //  - RefreshList() wołane z puli → Destroy/Instantiate GameObject off-main
-    //    → crash aplikacji + WSZYSTKIE projekty znikały z listy;
-    //  - ClearGraph/ClearCurrentData/ClearSVNTreeView też z puli (UI/main-only).
-    // Teraz: każdy dotyk UI przez dispatcher; zapis JSON atomowy bez UI.
     private async Task OnProjectSelectedAsync(SVNProject project)
     {
         await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
         svnManager.CurrentSnapshot = null;
         svnManager.IsUpdateRunning = false;
 
-        // UI-cleanup przez dispatcher.
         UnityMainThreadDispatcher.Enqueue(() =>
         {
             if (svnUI == null) return;
@@ -483,8 +530,8 @@ public class ProjectSelectionPanel : MonoBehaviour
             statusModule?.ClearSVNTreeView();
         });
 
-        // Zapis lastOpened — atomowy, BEZ RefreshList (crash-fix).
         ProjectSettings.UpdateProject(project.workingDir, p => p.lastOpened = DateTime.UtcNow);
+        _dataDirty = true;   // lastOpened się zmienił
 
         try
         {
@@ -499,7 +546,6 @@ public class ProjectSelectionPanel : MonoBehaviour
                 SVNLogBridge.LogError(
                     $"[ProjectSelection] '{project.projectName}' could not be loaded — working copy missing/invalid at: {project.workingDir}");
 
-                // Panel ZOSTAJE z listą (dispatch — main-only refresh).
                 UnityMainThreadDispatcher.Enqueue(() =>
                 {
                     if (this != null)
@@ -536,8 +582,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             var ui = SVNUI.Instance;
             if (ui == null) return;
 
-            // SetTextWithoutNotify — czyszczenie popupu NIE propaguje pustki
-            // do centrum synchronizacji.
             ui.AddProjectNameInput.SetTextWithoutNotify("");
             ui.AddProjectRepoUrlInput.SetTextWithoutNotify("");
             ui.AddProjectFolderPathInput.SetTextWithoutNotify("");
@@ -546,8 +590,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             ui.AddProjectRepoUrlInput.onEndEdit.RemoveListener(OnUrlInputEndEdit);
             ui.AddProjectRepoUrlInput.onEndEdit.AddListener(OnUrlInputEndEdit);
 
-            // === Klucz popupu → globalna synchronizacja (onEndEdit = po Enter,
-            // nie per-znak przy wypełnianiu danych NOWEGO projektu).
             ui.AddProjectKeyPathInput.onEndEdit.RemoveListener(OnAddProjectKeyEndEdit);
             ui.AddProjectKeyPathInput.onEndEdit.AddListener(OnAddProjectKeyEndEdit);
         }
@@ -555,10 +597,9 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private void OnAddProjectKeyEndEdit(string key)
     {
-        if (string.IsNullOrWhiteSpace(key)) return;   // puste = nie ruszaj zapisanego
+        if (string.IsNullOrWhiteSpace(key)) return;
         if (svnManager == null) return;
 
-        // Przez centrum — wypełni Settings/Checkout/Load + SvnRunner.KeyPath.
         svnManager.SynchronizeConnectionSettings(SVNManager.SettingsSource.None, key: key);
     }
 
@@ -624,7 +665,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         return "New Project";
     }
 
-    // === S1: atomowe AddOrUpdate (koniec duplikatów przy case-only różnicy).
     private void AddNewProject(string name, string url, string path, string key)
     {
         string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
@@ -637,6 +677,7 @@ public class ProjectSelectionPanel : MonoBehaviour
             p.lastOpened = DateTime.UtcNow;
         });
 
+        _dataDirty = true;   // nowy projekt na dysku
         RefreshList();
         Button_CloseAddProjectPanel();
 
@@ -663,6 +704,7 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (PlayerPrefs.GetString("SVN_LastOpenedProjectPath") == project.workingDir)
             PlayerPrefs.DeleteKey("SVN_LastOpenedProjectPath");
 
+        _dataDirty = true;
         RefreshList();
     }
 

@@ -109,8 +109,10 @@ namespace SVN.Core
 
         public static void LogLine(string message, bool append = true, string level = "INFO")
         {
-            // === FIX (display): normalizacja na wejściu — centralny punkt dla
-            // głównej konsoli (kolejka, bufor, flush, plik logu). Idempotentne.
+            // === FIX: pomijamy puste/białe wiadomości – bez timestampów bez tekstu.
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
             message = NormalizeForDisplay(message);
 
             string timestamp = DateTime.Now.ToString("HH:mm:ss");
@@ -125,9 +127,6 @@ namespace SVN.Core
                 return;
             }
 
-            // === FIX drobiazg: porównanie OrdinalIgnoreCase — literówka
-            // "UNobserved_TASK" sprawiała, że unobserved task exceptions nigdy
-            // nie force-flushowały.
             bool forceFlush = level.Equals("ERROR", StringComparison.OrdinalIgnoreCase) ||
                               level.Equals("EXCEPTION", StringComparison.OrdinalIgnoreCase) ||
                               level.Equals("UNHANDLED_DOMAIN", StringComparison.OrdinalIgnoreCase) ||
@@ -190,17 +189,20 @@ namespace SVN.Core
 
         public static void UpdateUIField(TextMeshProUGUI uiField, string content, string logLabel = "UI", bool append = false)
         {
-            if (uiField == null) return;
+            if (uiField == null)
+                return;
 
-            // === FIX (display): normalizacja treści (idempotentna — LogLine mógł
-            // już znormalizować; podwójne przejście to no-op).
+            // === FIX: pomijamy puste treści – brak pustych wpisów w pliku i UI.
+            if (string.IsNullOrWhiteSpace(content))
+                return;
+
             content = NormalizeForDisplay(content);
 
             string cleanContent = StripRichText(content);
             if (!string.IsNullOrEmpty(cleanContent))
                 _ = Task.Run(() => SVNLogger.LogToFile(cleanContent, logLabel));
 
-            string uiContent = content;   // snapshot po normalizacji — stabilny w closure
+            string uiContent = content;
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 if (uiField == null) return;

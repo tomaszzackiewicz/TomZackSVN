@@ -23,6 +23,36 @@ namespace SVN.Core
         private Task _runningTask;
         private Guid _sessionId = Guid.Empty;
         private int _disposed;
+        // === FIX (długi update) — konfiguracja pre-flightu (przełączasz w kodzie;
+        // SVNBase nie serializuje się w Inspectorze):
+        /// <summary>
+        /// Wagi bajtowe paska = 'svn list -R' na CAŁYM repo (minuty na dużym
+        /// projekcie, niezależnie od liczby zmian). false (default) → pasek
+        /// per plik (x/y). true → pasek bajtowy z cache 10 min.
+        /// </summary>
+        public bool fetchByteWeights = true;
+        /// <summary>
+        /// Estymacja x/y paska = pełne 'svn status -u' PRZED update — DRUGI
+        /// przebieg po tej samej sieci, którą update i tak wykonuje wewnętrznie
+        /// (~podwaja fazę sieciową na wolnych łączach).
+        /// true  → pasek (x/y) + koszt pełnego odpytania przed startem.
+        /// false → update startuje NATYCHMIAST; pasek bez (x/y).
+        /// Raport końcowy NIE traci nic (liczniki z realnych linii update'u).
+        /// </summary>
+        public bool progressEstimation = true;
+
+        /// <summary>
+        /// Cleanup WC przed każdym update (pełny przebieg). false (default) —
+        /// na realny 'locked' (E155004) ratuje ścieżka błędu w catch.
+        /// </summary>
+        public bool preUpdateCleanup = false;
+
+        // === Cache wag bajtowych (rozmiary w repo zmieniają się rzadko):
+        private static Dictionary<string, long> _sizesCache =
+            new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        private static string _sizesCacheUrl = "";
+        private static DateTime _sizesCacheTime = DateTime.MinValue;
+        private static readonly TimeSpan SizesCacheTtl = TimeSpan.FromMinutes(10);
 
         // === PROGRESS UI: dwie linie odświeżane in-place w polu plików
         // (pasek+% / aktualny plik na niebiesko + (done/remaining))
@@ -185,10 +215,6 @@ namespace SVN.Core
             catch (ObjectDisposedException) { }
         }
 
-        // ===================================================================
-        //  Core update logic
-        // ===================================================================
-
         private async Task ExecuteUpdateCoreAsync(string targetPath, string targetRevision, Guid session)
         {
             if (session != _sessionId) return;
@@ -273,63 +299,82 @@ namespace SVN.Core
                 int processed = 0;
                 int totalUpdates = 0;
 
-                // === NEW (diagnostyka): widać wprost, kiedy update czeka na kolejkę SVN.
+                // === FIX #1 (długi update): anuluj tło ZANIM wejdziemy do kolejki —
+                // bez tego update czekał za focus-refresh (status -u z RefreshLock-
+                // CacheAsync) albo skanem dyskowym siedzącymi w semaforze:
+                await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
+
                 SVNLogBridge.LogToOutput("<b>[SVN]</b> Waiting for free SVN command queue...");
                 await SvnRunner.WaitForSemaphoreFreeAsync(token);
                 token.ThrowIfCancellationRequested();
                 if (session != _sessionId) throw new OperationCanceledException(token);
                 SVNLogBridge.LogToOutput("<b>[SVN]</b> Queue free - proceeding with update.");
 
-                SVNLogBridge.LogToOutput("<b>[SVN]</b> Pre-update cleanup...");
-                await SVNClean.CleanupAsync(targetPath, token);
-                SVNLogBridge.LogToOutput("<b>[SVN]</b> Cleanup completed.");
-
-                // === Progress estimation (pliki + ścieżki): 'svn status -u' — pozycje '*'.
-                // ŚCIEŻKI są potrzebne jako klucze do wag bajtowych (svn list).
-                var outOfDatePaths = new List<string>();
-                try
+                // === FIX #2 (długi update): pre-cleanup TYLKO na życzenie.
+                // Goły 'svn update' sam dokańcza przerwane operacje; na realny
+                // 'locked' (E155004) ratuje nas catch niżej (cleanup już tam jest).
+                if (preUpdateCleanup)
                 {
-                    string statusOutput = await SvnRunner.RunAsync("status -u", targetPath, token: token);
-                    token.ThrowIfCancellationRequested();
+                    SVNLogBridge.LogToOutput("<b>[SVN]</b> Pre-update cleanup...");
+                    await SVNClean.CleanupAsync(targetPath, token);
+                    SVNLogBridge.LogToOutput("<b>[SVN]</b> Cleanup completed.");
+                }
 
-                    if (!string.IsNullOrWhiteSpace(statusOutput))
+                // === FIX #5 (długi update): estymacja x/y = pełne 'svn status -u'
+                // — DRUGI przebieg po tej samej sieci, którą update i tak wykonuje
+                // wewnętrznie (~podwaja fazę sieciową na wolnych łączach).
+                // progressEstimation=false → update startuje natychmiast,
+                // pasek bez (x/y); raport końcowy nic nie traci:
+                var outOfDatePaths = new List<string>();
+                if (progressEstimation)
+                {
+                    try
                     {
-                        using var reader = new StringReader(statusOutput);
-                        string line;
-                        while ((line = reader.ReadLine()) != null)
+                        string statusOutput = await SvnRunner.RunAsync("status -u", targetPath, token: token);
+                        token.ThrowIfCancellationRequested();
+
+                        if (!string.IsNullOrWhiteSpace(statusOutput))
                         {
-                            if (line.Length > 8 && line[8] == '*')
+                            using var reader = new StringReader(statusOutput);
+                            string line;
+                            while ((line = reader.ReadLine()) != null)
                             {
-                                totalUpdates++;
+                                if (line.Length > 8 && line[8] == '*')
+                                {
+                                    totalUpdates++;
 
-                                // po '*': remote revision + ścieżka (jak w ParseStatusOutput)
-                                string rest = line.Substring(9).TrimStart();
-                                Match revMatch = RemoteRevPrefixRegex.Match(rest);
-                                if (revMatch.Success)
-                                    rest = rest.Substring(revMatch.Length).TrimStart();
+                                    string rest = line.Substring(9).TrimStart();
+                                    Match revMatch = RemoteRevPrefixRegex.Match(rest);
+                                    if (revMatch.Success)
+                                        rest = rest.Substring(revMatch.Length).TrimStart();
 
-                                string cleanPath = SvnRunner.NormalizeRepositoryPath(rest.TrimEnd());
-                                if (cleanPath.Length > 0)
-                                    outOfDatePaths.Add(cleanPath);
+                                    string cleanPath = SvnRunner.NormalizeRepositoryPath(rest.TrimEnd());
+                                    if (cleanPath.Length > 0)
+                                        outOfDatePaths.Add(cleanPath);
+                                }
                             }
                         }
                     }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Progress estimation unavailable: {ex.Message}</color>");
+                    }
                 }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
+                else
                 {
-                    SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Progress estimation unavailable: {ex.Message}</color>");
+                    SVNLogBridge.LogToOutput(
+                        "<b>[SVN]</b> Progress estimation skipped — update starts immediately.");
                 }
 
-                // === FIX (GB): URL do 'svn list' brany z 'svn info' WORKING COPY,
-                // nie z svnManager.RepositoryUrl — to pole bywa ROOT-em repo (np. dla
-                // projektów ładowanych z roota), a wtedy klucze listu ("trunk/Proj/...")
-                // nie trafiały w ścieżki status -u ("Content/...") → totalBytes = 0
-                // → pasek spadał na tryb "tylko procent". URL z svn info = dokładnie
-                // katalog WC → klucze WC-relative, identyczne jak status -u (jak checkout).
+                // === FIX #3 (długi update): wagi bajtowe TYLKO na życzenie —
+                // 'svn list -R' listuje CAŁE repo (minuty na dużym projekcie)
+                // niezależnie od wielkości update. Default off → pasek per plik.
+                // (Przy progressEstimation=false lista ścieżek jest pusta → blok
+                // nie odpali nawet z fetchByteWeights=true — spójne.)
                 Dictionary<string, long> incomingSizes = null;
                 long totalBytes = 0;
-                if (outOfDatePaths.Count > 0)
+                if (fetchByteWeights && outOfDatePaths.Count > 0)
                 {
                     try
                     {
@@ -354,10 +399,7 @@ namespace SVN.Core
                                 if (incomingSizes.TryGetValue(p, out long s))
                                     totalBytes += s;
 
-                            // === FIX (GB): rescue — gdy klucze NADAL nie trafiają (list
-                            // pobrany po innym URL niż katalog WC), dopasowanie po sufiksie
-                            // i przemapowanie słownika na ścieżki status -u. Ochrona rozmiaru:
-                            // przy gigantycznych zbiorach pomijamy (pętla paths×keys).
+                            // === FIX (GB): rescue — dopasowanie po sufiksie:
                             if (totalBytes == 0 && incomingSizes.Count > 0 &&
                                 (long)outOfDatePaths.Count * incomingSizes.Count <= 2_000_000)
                             {
@@ -390,8 +432,7 @@ namespace SVN.Core
                     ? $"update --accept postpone -r {targetRevision}"
                     : "update --accept postpone";
 
-                // === PROGRESS UI: pasek ważony BAJTAMI (linia 1) + pliki (linia 2),
-                // podmieniane in-place w OutputText.
+                // === PROGRESS UI: pasek (linia 1) + pliki (linia 2):
                 _progress = new SvnUpdateProgressUI(svnUI?.OutputText);
                 _progress.SetTotal(totalUpdates, totalBytes, incomingSizes);
 
@@ -407,12 +448,7 @@ namespace SVN.Core
                         if (trimmed.Length > 0 && trimmed.All(c => c == '@' || c == '*' || c == ' ')) return;
                         if (trimmed.StartsWith("*****") || trimmed.StartsWith("@@@@@")) return;
 
-                        // === NEW (FIX): linie błędów svn/ssh (stderr przychodzi jako
-                        // "[SVN ERROR] svn: E210002..." / "client_loop...") NIE są plikami.
-                        // Wcześniej nabijały licznik processed, pasek postępu i wyświetlały
-                        // się jako "plik" na liście. Krytyczne przy retry z SvnRunner:
-                        // w trakcie wznawiania update'u błąd sieci pojawia się pomiędzy
-                        // liniami plików i nie może zafałszować statystyk.
+                        // === FIX: linie błędów svn/ssh NIE są plikami:
                         if (trimmed.StartsWith("[SVN ERROR]", StringComparison.Ordinal)) return;
                         if (trimmed.StartsWith("svn: ", StringComparison.Ordinal)) return;
                         if (trimmed.StartsWith("client_loop", StringComparison.Ordinal)) return;
@@ -423,7 +459,7 @@ namespace SVN.Core
                         if (token.IsCancellationRequested) return;
                         if (session != _sessionId) return;
 
-                        // === FIX (progress counter): liczone TYLKO linie reprezentujące plik.
+                        // === Liczone TYLKO linie reprezentujące plik:
                         if (trimmed.StartsWith("Updating", StringComparison.Ordinal)) return;
                         if (trimmed.StartsWith("At revision", StringComparison.Ordinal)) return;
                         if (trimmed.StartsWith("Checked out revision", StringComparison.Ordinal)) return;
@@ -437,7 +473,7 @@ namespace SVN.Core
                         processed++;
 
                         string displayLine;
-                        string itemPath = null;   // do wagi bajtowej (klucz = znormalizowana ścieżka)
+                        string itemPath = null;
                         char contentStatus = trimmed.Length > 0 ? trimmed[0] : ' ';
                         char propStatus = trimmed.Length > 1 ? trimmed[1] : ' ';
                         char activeStatus = contentStatus != ' ' ? contentStatus : propStatus;
@@ -446,7 +482,7 @@ namespace SVN.Core
                         {
                             char status = activeStatus;
                             string path = SvnRunner.NormalizeRepositoryPath(trimmed.Substring(2).TrimStart());
-                            itemPath = path;   // <<< waga bajtowa: ta sama normalizacja co status -u
+                            itemPath = path;
 
                             switch (status)
                             {
@@ -476,7 +512,6 @@ namespace SVN.Core
                             displayLine = trimmed;
                         }
 
-                        // === ORYGINALNY format (x/y) plików — linia 2, bez zmian
                         string progressStr;
                         if (totalUpdates > 0)
                         {
@@ -491,7 +526,6 @@ namespace SVN.Core
                             progressStr = "";
                         }
 
-                        // === PROGRESS UI: OnItem z ścieżką (waga bajtowa paska)
                         bool isConflictLine = trimmed.Length > 2 && trimmed[1] == ' ' && activeStatus == 'C';
                         _progress?.OnItem(itemPath, displayLine, progressStr, isConflictLine);
                     },
@@ -500,7 +534,7 @@ namespace SVN.Core
 
                 token.ThrowIfCancellationRequested();
                 svnCommandCompleted = true;
-                _progress?.Finish();      // === sukces: snap do 100% (pliki i bajty)
+                _progress?.Finish();
 
                 if (session != _sessionId || result == "Canceled")
                     throw new OperationCanceledException(token);
@@ -645,7 +679,7 @@ namespace SVN.Core
                     SVNLogBridge.LogLine(cancelReport.ToString(), false);
                 }
 
-                _progress?.Clear();   // === cancel: dwie linie postępu znikają
+                _progress?.Clear();
             }
             catch (Exception ex)
             {
@@ -681,34 +715,22 @@ namespace SVN.Core
                 failureReport.AppendLine("<color=#B22222><b>=========================================</b></color>");
                 SVNLogBridge.LogLine(failureReport.ToString(), false);
 
-                _progress?.Clear();   // === błąd: jw.
+                _progress?.Clear();
             }
             finally
             {
-                // === FIX BAR: gwarantowane wyjście paska ze stanu Updating.
-                // EndUpdate (sukces) i EndUpdateFailed (cancel przed komendą) kończą bar
-                // jawnie — ale trzy ścieżki tego NIE robiły: porażka update'u, cancel po
-                // ukończeniu komendy (svnCommandCompleted=true), exception w post-processing.
-                // Bar w Updating blokuje ShowProjectInfo/RenderSnapshot/BeginCheckout
-                // (guard _state != Idle), więc raz zablokowany NIE odblokowuje się sam.
-                //
-                // KOLEJNOŚĆ istotna: finalizacja bara PRZED IsProcessing=false — inaczej
-                // nowy Update mógłby wejść, ustawić Updating, a TEN guard zdjąłby mu
-                // pasek w locie (race). Dzięki tej kolejności MonitorUpdateCompletionAsync
-                // (panel Revision) też odczyta finalne LastUpdateSucceeded, nie przedwczesne.
+                // === FIX BAR: gwarantowane wyjście paska ze stanu Updating
+                // (kolejność: finalizacja bara PRZED IsProcessing=false):
                 try
                 {
                     if (svnBar != null && svnBar.CurrentState == BarState.Updating)
                     {
                         if (svnCommandCompleted)
                         {
-                            // komenda svn OK → świeży snapshot (lokalne svn info/status —
-                            // działa nawet offline; przy porażce sam użyje fallbacku)
                             await svnBar.EndUpdate(oldSnapshot).ConfigureAwait(false);
                         }
                         else
                         {
-                            // przerwane / porażka → przywróć stan sprzed update
                             svnBar.EndUpdateFailed(oldSnapshot);
                         }
                     }
@@ -726,19 +748,25 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Rozmiary plików z HEAD (wagi bajtowe paska postępu) — svn list --xml -R
-        /// na URL projektu. Klucze = ścieżki względne projektu (ten sam format co
-        /// status -u i wyjście svn update). Porażka = pusty słownik (fallback na
-        /// liczenie per plik w trackerze).
-        /// </summary>
         private async Task<Dictionary<string, long>> FetchIncomingSizesAsync(
-            string workingDir, string repoUrl, CancellationToken token)
+    string workingDir, string repoUrl, CancellationToken token)
         {
             var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrWhiteSpace(repoUrl)) return sizes;
 
             string url = repoUrl.Trim().TrimEnd('/');
+
+            // === FIX (długi update) #4 — CACHE: rozmiary w repo zmieniają się
+            // rzadko; pasek postępu nie potrzebuje świeżości per-rewizja.
+            // 10 min TTL → 'svn list -R' (minuty!) płaci tylko pierwszy update:
+            if (_sizesCache.Count > 0 &&
+                string.Equals(url, _sizesCacheUrl, StringComparison.OrdinalIgnoreCase) &&
+                DateTime.UtcNow - _sizesCacheTime < SizesCacheTtl)
+            {
+                SVNLogBridge.LogToOutput("<b>[SVN]</b> Byte weights from cache.");
+                return new Dictionary<string, long>(_sizesCache, StringComparer.OrdinalIgnoreCase);
+            }
+
             string xml = await SvnRunner.RunAsync($"list --xml -R \"{url}\"", workingDir, token: token);
             token.ThrowIfCancellationRequested();
 
@@ -746,7 +774,6 @@ namespace SVN.Core
 
             try
             {
-                // odporność na ewentualne śmieci przed/za XML (jak w FetchPathSizesAsync)
                 int start = xml.IndexOf('<');
                 int end = xml.LastIndexOf('>');
                 if (start < 0 || end <= start) return sizes;
@@ -762,7 +789,6 @@ namespace SVN.Core
                     string listPath = (listNode.Attributes?["path"]?.Value ?? "")
                         .Trim().Replace('\\', '/').TrimEnd('/');
 
-                    // list path może być pełnym URL-em — zdejmij prefiks
                     int idx = listPath.IndexOf(url, StringComparison.OrdinalIgnoreCase);
                     if (idx >= 0) listPath = listPath.Substring(idx + url.Length);
                     listPath = listPath.Trim('/');
@@ -788,8 +814,13 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Size weights parse failed: {ex.Message}</color>");
-                return new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                return new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);   // porażka → BEZ cache
             }
+
+            // === zapis do cache (tylko po udanym parsowaniu):
+            _sizesCache = sizes;
+            _sizesCacheUrl = url;
+            _sizesCacheTime = DateTime.UtcNow;
 
             return sizes;
         }

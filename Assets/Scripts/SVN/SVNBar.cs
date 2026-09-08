@@ -15,6 +15,25 @@ namespace SVN.Core
         PostUpdate
     }
 
+    /// <summary>
+    /// Pasek statusu projektu.
+    ///
+    /// === ARCHITEKTURA ROZMIARÓW (fix kropek po restarcie):
+    ///   BuildSnapshotAsync = LEKKI (lokalny svn info, natychmiast) + w tle
+    ///   FillHeavySnapshotDataAsync (skan dysku, status '!', HEAD z serwera).
+    ///
+    ///   ŹRÓDŁA rozmiarów przy budowie snapshotu (priorytetem):
+    ///     1. cache 10 s w pamięci (świeże),
+    ///     2. OBIEKT projektu (start aplikacji — svnProject przyszedł prosto
+    ///        z JSON-a: zero I/O, zero ryzyka mismatchu ścieżki),
+    ///     3. lookup w ProjectSettings (gdy brak obiektu — np. EndUpdate),
+    ///     4. "..." (pierwsze uruchomienie ever).
+    ///
+    ///   PERSIST: świeży pomiar zapisywany jest do pól SVNProject
+    ///   (cachedWorkingSize / cachedTotalSize) — klucz = CurrentProject.
+    ///   workingDir (FORMAT ZAPISU — po nim UpdateProject matchuje lastOpened
+    ///   od zawsze; nasza normalizacja tylko jako fallback).
+    /// </summary>
     public class SVNBar : SVNBase
     {
         private string _svnVersionCached = "";
@@ -22,13 +41,10 @@ namespace SVN.Core
         private readonly Dictionary<string, (DateTime time, string working, string total)> _sizeCache = new();
         private readonly object _sizeCacheLock = new object();
 
-        // === FIX NESTED: cache korzenia working copy (klucz = ścieżka wejściowa,
-        // więc zmiana projektu sama unieważnia wpis)
+        // === FIX NESTED: cache korzenia working copy (klucz = ścieżka wejściowa)
         private (string path, string root) _wcRootCache;
 
-        // === CHECKOUT NIEKOMPLETNY: true, gdy wc ma pozycje '!' (missing —
-        // przerwany checkout). Czyszczone po udanym update (nowy snapshot
-        // i tak przelicza flagę).
+        // === CHECKOUT NIEKOMPLETNY: true, gdy wc ma pozycje '!' (missing).
         private volatile bool _checkoutIncomplete;
 
         private CancellationTokenSource _snapshotCts;
@@ -111,7 +127,6 @@ namespace SVN.Core
             try
             {
                 var snapshot = await BuildSnapshotAsync(svnProject, path, localToken);
-
                 if (localToken.IsCancellationRequested) return;
                 if (_state != BarState.Idle) return;
 
@@ -136,6 +151,19 @@ namespace SVN.Core
         {
             if (_state != BarState.Idle) return;
             if (snapshot == null || !snapshot.IsValid) return;
+
+            // === FIX: jeśli nowy snapshot nie ma RemoteRevision, a stary ma,
+            // przenosimy stare dane HEAD, aby nie zniknął czerwony wskaźnik.
+            var current = svnManager.CurrentSnapshot;
+            if (current != null
+                && !string.IsNullOrEmpty(current.RemoteRevision)
+                && string.IsNullOrEmpty(snapshot.RemoteRevision)
+                && string.Equals(current.ProjectName, snapshot.ProjectName, StringComparison.OrdinalIgnoreCase))
+            {
+                snapshot.RemoteRevision = current.RemoteRevision;
+                snapshot.IsOutdated = current.IsOutdated;
+                snapshot.CheckoutIncomplete = current.CheckoutIncomplete;
+            }
 
             SetContent(BuildNormalContent(snapshot, isRefreshing), "RenderSnapshot");
         }
@@ -167,37 +195,44 @@ namespace SVN.Core
             _monitorCts?.Cancel();
             _monitorCts?.Dispose();
             _monitorCts = new CancellationTokenSource();
-
             _ = RunSizeMonitor(svnManager.WorkingDir, _monitorCts.Token);
         }
 
         public async Task EndUpdate(SVNProjectInfoSnapshot fallbackSnapshot)
         {
             _monitorCts?.Cancel();
-
             _state = BarState.Idle;
 
-            // Rozmiary na dysku mogły się zmienić po update — wymuś świeży pomiar
-            // (bez tego cache 10s zwróciłby stare wartości).
+            // Rozmiary na dysku mogły się zmienić po update — wymuś świeży pomiar.
             ClearSizeCache();
 
-            // === CHECKOUT NIEKOMPLETNY: update doszedł do końca — reset flagi
-            // (nowy snapshot poniżej i tak przeliczy ją z 'svn status').
+            // === CHECKOUT NIEKOMPLETNY: update doszedł do końca — reset flagi.
             _checkoutIncomplete = false;
 
             bool renderedFresh = false;
             try
             {
                 var freshSnapshot = await BuildSnapshotAsync(null, svnManager.WorkingDir);
-
                 if (freshSnapshot != null && freshSnapshot.IsValid)
                 {
                     // === FIX: nazwa projektu z fallbacku ZAWSZE, nie warunkowo.
                     if (fallbackSnapshot != null && !string.IsNullOrEmpty(fallbackSnapshot.ProjectName))
                         freshSnapshot.ProjectName = fallbackSnapshot.ProjectName;
 
-                    svnManager.CurrentSnapshot = freshSnapshot;
+                    // Po udanym update lokalna rev = HEAD (do czasu FillHeavy).
+                    // Nie pokazuj starego czerwonego HEAD z fallbacku.
+                    if (fallbackSnapshot != null && !string.IsNullOrEmpty(fallbackSnapshot.Revision))
+                    {
+                        // Preferuj rev z fallbacku (już po update), jeśli fresh jeszcze nie ma.
+                        if (string.IsNullOrEmpty(freshSnapshot.Revision) || freshSnapshot.Revision == "unknown")
+                            freshSnapshot.Revision = fallbackSnapshot.Revision;
 
+                        freshSnapshot.IsOutdated = false;
+                        if (string.IsNullOrEmpty(freshSnapshot.RemoteRevision))
+                            freshSnapshot.RemoteRevision = freshSnapshot.Revision;
+                    }
+
+                    svnManager.CurrentSnapshot = freshSnapshot;
                     _lastRenderedContent = "";
                     SetContent(BuildNormalContent(freshSnapshot, isRefreshing: false), "EndUpdate-Fresh");
                     renderedFresh = true;
@@ -211,6 +246,15 @@ namespace SVN.Core
             if (!renderedFresh && fallbackSnapshot != null)
             {
                 fallbackSnapshot.IsValid = true;
+
+                // Po udanym update nie trzymaj starego IsOutdated / starego HEAD.
+                if (!string.IsNullOrEmpty(fallbackSnapshot.Revision))
+                {
+                    fallbackSnapshot.IsOutdated = false;
+                    if (string.IsNullOrEmpty(fallbackSnapshot.RemoteRevision))
+                        fallbackSnapshot.RemoteRevision = fallbackSnapshot.Revision;
+                }
+
                 svnManager.CurrentSnapshot = fallbackSnapshot;
                 try
                 {
@@ -245,8 +289,6 @@ namespace SVN.Core
             {
                 await Task.Delay(400, token);
 
-                // === FIX NESTED: total liczymy z korzenia WC (cache wewnętrzny
-                // GetWorkingCopyRootAsync — tylko pierwsze wywołanie spawnuje proces svn)
                 string wcRoot = await GetWorkingCopyRootAsync(path, token);
 
                 while (!token.IsCancellationRequested && _state == BarState.Updating)
@@ -254,7 +296,6 @@ namespace SVN.Core
                     try
                     {
                         var sizes = await GetSizesForNestedAsync(path, wcRoot, token);
-
                         if (token.IsCancellationRequested || _state != BarState.Updating) break;
 
                         var snapshot = svnManager.CurrentSnapshot;
@@ -370,7 +411,7 @@ namespace SVN.Core
         /// <summary>
         /// Liczy oba rozmiary w JEDNYM przebiegu po dysku:
         /// - WorkingSize: pliki projektu (bez katalogów .svn)
-        /// - TotalSize:   całość na dysku (razem z .svn/pristine — zwykle ~2x więcej)
+        /// - TotalSize:   całość na dysku (razem z .svn/pristine)
         /// </summary>
         public async Task<(string WorkingSize, string TotalSize)> GetFolderSizesAsync(
             string path, CancellationToken token = default)
@@ -381,8 +422,8 @@ namespace SVN.Core
                 {
                     if (!Directory.Exists(path)) return ("0 MB", "0 MB");
 
-                    long workingBytes = 0; // pliki projektu (bez .svn)
-                    long totalBytes = 0;   // całość na dysku (razem z .svn)
+                    long workingBytes = 0;
+                    long totalBytes = 0;
                     int fileCount = 0;
 
                     var options = new EnumerationOptions
@@ -413,7 +454,6 @@ namespace SVN.Core
             }, token);
         }
 
-        // Zachowana stara sygnatura — includeSvnTemp teraz faktycznie działa
         public async Task<string> GetFolderSizeAsync(string path, CancellationToken token = default, bool includeSvnTemp = false)
         {
             var sizes = await GetFolderSizesAsync(path, token);
@@ -421,9 +461,8 @@ namespace SVN.Core
         }
 
         /// <summary>
-        /// Korzeń working copy (svn info --show-item wc-root, wymaga SVN 1.8+).
-        /// Fallback dla starszych SVN: szukanie .svn w górę drzewa.
-        /// Cache per ścieżka wejściowa (pojedynczy wpis).
+        /// Korzeń working copy (svn info --show-item wc-root; fallback: szukanie
+        /// .svn w górę). Cache per ścieżka wejściowa.
         /// </summary>
         public async Task<string> GetWorkingCopyRootAsync(string path, CancellationToken token = default)
         {
@@ -450,10 +489,7 @@ namespace SVN.Core
         }
 
         /// <summary>
-        /// Rozmiary dla projektu ZAGNIEŻDŻONEGO w większym checkoucie:
-        /// - WorkingSize: pliki folderu projektu
-        /// - TotalSize:   cały korzeń WC (koszt dyskowy repo — obejmuje też
-        ///                inne projekty z tego checkoutu — zamierzone)
+        /// Rozmiary dla projektu ZAGNIEŻDŻONEGO w większym checkoucie.
         /// Projekt == korzeń: jeden skan zwraca oba.
         /// </summary>
         public async Task<(string WorkingSize, string TotalSize)> GetSizesForNestedAsync(
@@ -465,12 +501,11 @@ namespace SVN.Core
                 return await GetFolderSizesAsync(projectPath, token);
             }
 
-            // Skany równoległe — dysk i tak jest wąskim gardłem
             var workingTask = GetFolderSizesAsync(projectPath, token);
             var totalTask = GetFolderSizesAsync(wcRoot, token);
 
             try { await Task.WhenAll(workingTask, totalTask); }
-            catch { /* OCE — poniżej degradujemy do "Size unknown" */ }
+            catch { }
 
             string working = workingTask.Status == TaskStatus.RanToCompletion
                 ? workingTask.Result.WorkingSize : "Size unknown";
@@ -480,10 +515,6 @@ namespace SVN.Core
             return (working, total);
         }
 
-        /// <summary>
-        /// Rozmiary z cache (10 s) — dla wywołań zewnętrznych (SVNManager.RefreshStatus),
-        /// które wcześniej robiły pełny skan bez cache i aktualizowały tylko WorkingCopySize.
-        /// </summary>
         public async Task<(string WorkingSize, string TotalSize)> GetSizesWithCacheAsync(
             string path, CancellationToken token = default)
         {
@@ -502,16 +533,27 @@ namespace SVN.Core
             var sizes = await GetSizesForNestedAsync(path, wcRoot, token);
 
             if (sizes.WorkingSize != "Size unknown")
-                lock (_sizeCacheLock) { _sizeCache[cacheKey] = (DateTime.UtcNow, sizes.WorkingSize, sizes.TotalSize); }
+            {
+                lock (_sizeCacheLock)
+                {
+                    _sizeCache[cacheKey] = (DateTime.UtcNow, sizes.WorkingSize, sizes.TotalSize);
+                }
+
+                string persistKey = svnManager?.CurrentProject?.workingDir ?? cacheKey;
+                try
+                {
+                    ProjectSettings.UpdateProject(persistKey, p =>
+                    {
+                        p.cachedWorkingSize = sizes.WorkingSize;
+                        p.cachedTotalSize = sizes.TotalSize;
+                    });
+                }
+                catch { }
+            }
 
             return sizes;
         }
 
-        // Format na pasek: "Project: 12.3 GB / Repo: 24.9 GB" — obie wartości w tym
-        // samym kolorze (etykiety turkusowe, wartości standardowe).
-        // Project = pliki projektu (bez ukrytego .svn); Repo = całość zajmowana
-        // lokalnie przez checkout (pliki + cache SVN, przy zagnieżdżeniu: cały
-        // korzeń checkoutu — stąd Repo > Project).
         private static string FormatSizeDisplay(string workingSize, string totalSize)
         {
             string working = string.IsNullOrWhiteSpace(workingSize) ? "..." : workingSize;
@@ -524,12 +566,6 @@ namespace SVN.Core
                    $"/ <color=#00E5FF>Repo:</color> {totalSize}";
         }
 
-        // ==================== CHECKOUT NIEKOMPLETNY ====================
-
-        /// <summary>
-        /// Czy working copy ma pozycje '!' (missing) — czyli przerwany/nieukończony
-        /// checkout. Tani, LOKALNY svn status (bez -u, bez sieci).
-        /// </summary>
         private async Task<bool> CheckCheckoutIncompleteAsync(string path, CancellationToken token = default)
         {
             try
@@ -542,7 +578,6 @@ namespace SVN.Core
                     string line = rawLine.TrimEnd('\r');
                     if (string.IsNullOrEmpty(line)) continue;
 
-                    // format: "!      path" — status w kolumnie 0
                     if (line.Length > 0 && line[0] == '!') return true;
                 }
             }
@@ -551,8 +586,6 @@ namespace SVN.Core
 
             return false;
         }
-
-        // ==================================================
 
         private string ExtractValue(string info, string key)
         {
@@ -581,27 +614,22 @@ namespace SVN.Core
             _svnVersionCached = await _svnVersionTask;
         }
 
+        // ==================== SNAPSHOT ====================
+
         public async Task<SVNProjectInfoSnapshot> BuildSnapshotAsync(SVNProject svnProject, string path, CancellationToken token = default)
         {
             var snapshot = new SVNProjectInfoSnapshot();
             try
             {
                 if (string.IsNullOrEmpty(path)) return snapshot;
-
-                // === FIX NESTED: .svn istnieje TYLKO w korzeniu working copy (SVN 1.7+).
-                // Wcześniej projekt w podfolderze większego checkoutu dawał false
-                // "No working copy" mimo poprawnego WC.
                 if (!SvnPathUtils.IsInsideWorkingCopy(path)) return snapshot;
 
                 string projectName = svnProject != null && !string.IsNullOrEmpty(svnProject.projectName)
                     ? svnProject.projectName : Path.GetFileName(path);
 
-                var infoTask = SvnRunner.GetInfoAsync(path, token);
-                var remoteRevTask = SvnRunner.RunAsync("info -r HEAD --show-item last-changed-revision", path, token: token);
-
                 string cacheKey = path.Replace("\\", "/").TrimEnd('/');
-                string cachedWorking = null;
-                string cachedTotal = null;
+                string cachedWorking = null, cachedTotal = null;
+                string sizesSource = "none";
 
                 lock (_sizeCacheLock)
                 {
@@ -613,52 +641,64 @@ namespace SVN.Core
                     {
                         cachedWorking = entry.working;
                         cachedTotal = entry.total;
+                        sizesSource = "mem-cache";
                     }
                 }
 
-                Task<(string WorkingSize, string TotalSize)> sizeTask;
-                if (cachedWorking != null)
+                if (cachedWorking == null &&
+                    svnProject != null &&
+                    !string.IsNullOrWhiteSpace(svnProject.cachedWorkingSize))
                 {
-                    sizeTask = Task.FromResult((cachedWorking, cachedTotal));
-                }
-                else
-                {
-                    // === FIX NESTED: total liczony z KORZENIA working copy,
-                    // nie z folderu projektu
-                    string wcRoot = await GetWorkingCopyRootAsync(path, token);
-                    sizeTask = GetSizesForNestedAsync(path, wcRoot, token);
+                    cachedWorking = svnProject.cachedWorkingSize;
+                    cachedTotal = string.IsNullOrWhiteSpace(svnProject.cachedTotalSize)
+                        ? "..." : svnProject.cachedTotalSize;
+                    sizesSource = "project-object";
                 }
 
-                string rawInfo = await infoTask;
-                var sizes = await sizeTask;
+                if (cachedWorking == null)
+                {
+                    try
+                    {
+                        var persisted = ProjectSettings.LoadProjects().FirstOrDefault(p =>
+                            !string.IsNullOrEmpty(p.workingDir) &&
+                            string.Equals(p.workingDir.Replace("\\", "/").TrimEnd('/'),
+                                cacheKey, StringComparison.OrdinalIgnoreCase));
 
-                string remoteRevRaw = null;
-                try { remoteRevRaw = await remoteRevTask; } catch { }
+                        if (persisted != null && !string.IsNullOrWhiteSpace(persisted.cachedWorkingSize))
+                        {
+                            cachedWorking = persisted.cachedWorkingSize;
+                            cachedTotal = string.IsNullOrWhiteSpace(persisted.cachedTotalSize)
+                                ? "..." : persisted.cachedTotalSize;
+                            sizesSource = "persisted-lookup";
+                        }
+                        else
+                        {
+                            sizesSource = persisted == null ? "no-project-entry" : "fields-empty";
+                        }
+                    }
+                    catch { sizesSource = "lookup-threw"; }
+                }
 
-                if (!string.IsNullOrEmpty(sizes.WorkingSize) && cachedWorking == null)
-                    lock (_sizeCacheLock) { _sizeCache[cacheKey] = (DateTime.UtcNow, sizes.WorkingSize, sizes.TotalSize); }
+                Debug.Log($"[SVNBar] Sizes: source={sizesSource}, key='{cacheKey}', " +
+                          $"working='{cachedWorking ?? "null"}', total='{cachedTotal ?? "null"}'");
 
-                if (string.IsNullOrWhiteSpace(rawInfo) || rawInfo == "unknown") return snapshot;
+                bool fromMemCache = sizesSource == "mem-cache";
+
+                string rawInfo = await SvnRunner.GetInfoAsync(path, token);
+                await EnsureVersionCached();
+
+                if (string.IsNullOrWhiteSpace(rawInfo) || rawInfo == "unknown")
+                    return snapshot;
 
                 snapshot.ProjectName = projectName;
-                snapshot.WorkingCopySize = sizes.WorkingSize;
-                snapshot.RepoTotalSize = sizes.TotalSize;
+                snapshot.WorkingCopySize = cachedWorking ?? "...";
+                snapshot.RepoTotalSize = cachedTotal ?? "...";
                 snapshot.Revision = ExtractValue(rawInfo, "Revision:");
                 snapshot.Author = ExtractValue(rawInfo, "Last Changed Author:");
                 snapshot.Date = ExtractValue(rawInfo, "Last Changed Date:");
-
-                if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
-                    snapshot.RemoteRevision = remoteRevRaw.Trim();
-
                 snapshot.RelativeUrl = ExtractValue(rawInfo, "Relative URL:");
                 snapshot.Url = ExtractValue(rawInfo, "URL:");
                 snapshot.RepoRoot = ExtractValue(rawInfo, "Repository Root:");
-
-                snapshot.IsOutdated = false;
-                if (int.TryParse(snapshot.Revision, out int localRev) && int.TryParse(snapshot.RemoteRevision, out int remoteRev))
-                {
-                    snapshot.IsOutdated = remoteRev > localRev;
-                }
 
                 string source = snapshot.RelativeUrl != "unknown" ? snapshot.RelativeUrl : snapshot.Url;
                 snapshot.Branch = "trunk";
@@ -674,16 +714,25 @@ namespace SVN.Core
                 { try { snapshot.Server = new Uri(snapshot.Url).Host; } catch { } }
 
                 snapshot.AppVersion = Application.version;
-                await EnsureVersionCached();
                 snapshot.SvnVersion = _svnVersionCached;
                 snapshot.CurrentUser = svnManager.CurrentUserName ?? "Unknown";
 
-                // === CHECKOUT NIEKOMPLETNY: pozycje '!' w svn status → pasek pokaże
-                // badge. Po udanym update EndUpdate resetuje, a TEN check przelicza.
-                _checkoutIncomplete = await CheckCheckoutIncompleteAsync(path, token);
-                snapshot.CheckoutIncomplete = _checkoutIncomplete;
+                // === FIX: nie gub czerwonego HEAD przy lekkim odświeżeniu.
+                var prev = svnManager.CurrentSnapshot;
+                if (prev != null && prev.IsValid
+                    && !string.IsNullOrEmpty(prev.RemoteRevision)
+                    && string.Equals(prev.ProjectName, snapshot.ProjectName, StringComparison.OrdinalIgnoreCase))
+                {
+                    snapshot.RemoteRevision = prev.RemoteRevision;
+                    snapshot.IsOutdated = prev.IsOutdated;
+                    snapshot.CheckoutIncomplete = prev.CheckoutIncomplete;
+                }
 
                 snapshot.IsValid = true;
+
+                if (!fromMemCache)
+                    _ = FillHeavySnapshotDataAsync(snapshot, path, cacheKey);
+
                 return snapshot;
             }
             catch (OperationCanceledException) { throw; }
@@ -695,14 +744,79 @@ namespace SVN.Core
         }
 
         /// <summary>
-        /// Checkout w toku — dolny pasek wchodzi w stan Updating: monitor rozmiarów
-        /// odświeża (x GB / y GB) co ~5 s, jak przy update. Minimalny snapshot
-        /// jak w BeginUpdate. Po sukcesie EndCheckout buduje świeży snapshot
-        /// (resetuje też badge incomplete-checkout).
+        /// Ciężkie dane snapshotu, RÓWNOLEGLE: HEAD z serwera + skan dysku
+        /// (rozmiary) + pełny status (check '!'). Wynik doklejany do snapshotu
+        /// i UTRWALANY w settings. Pasek re-renderuje się przez Tick TYLKO gdy
+        /// bar w Idle i snapshot nadal aktualny.
         /// </summary>
+        private async Task FillHeavySnapshotDataAsync(
+            SVNProjectInfoSnapshot snapshot, string path, string cacheKey)
+        {
+            try
+            {
+                var remoteTask = SvnRunner.RunAsync(
+                    "info -r HEAD --show-item last-changed-revision", path);
+
+                string wcRoot = await GetWorkingCopyRootAsync(path).ConfigureAwait(false);
+                var sizeTask = GetSizesForNestedAsync(path, wcRoot);
+                var incompleteTask = CheckCheckoutIncompleteAsync(path);
+
+                string remoteRevRaw = null;
+                try { remoteRevRaw = await remoteTask.ConfigureAwait(false); }
+                catch { }
+
+                var sizes = await sizeTask.ConfigureAwait(false);
+                bool incomplete = await incompleteTask.ConfigureAwait(false);
+
+                bool changed = false;
+
+                if (!string.IsNullOrEmpty(sizes.WorkingSize) && sizes.WorkingSize != "Size unknown")
+                {
+                    snapshot.WorkingCopySize = sizes.WorkingSize;
+                    snapshot.RepoTotalSize = sizes.TotalSize;
+                    lock (_sizeCacheLock)
+                        _sizeCache[cacheKey] = (DateTime.UtcNow, sizes.WorkingSize, sizes.TotalSize);
+                    changed = true;
+
+                    string persistKey = svnManager?.CurrentProject?.workingDir ?? cacheKey;
+                    try
+                    {
+                        ProjectSettings.UpdateProject(persistKey, p =>
+                        {
+                            p.cachedWorkingSize = sizes.WorkingSize;
+                            p.cachedTotalSize = sizes.TotalSize;
+                        });
+                    }
+                    catch { }
+                }
+
+                if (!string.IsNullOrWhiteSpace(remoteRevRaw) && !remoteRevRaw.Contains("Error"))
+                {
+                    snapshot.RemoteRevision = remoteRevRaw.Trim();
+                    if (int.TryParse(snapshot.Revision, out int localRev) &&
+                        int.TryParse(snapshot.RemoteRevision, out int remoteRev))
+                        snapshot.IsOutdated = remoteRev > localRev;
+                    changed = true;
+                }
+
+                _checkoutIncomplete = incomplete;
+                snapshot.CheckoutIncomplete = incomplete;
+                if (incomplete) changed = true;
+
+                if (changed && _state == BarState.Idle &&
+                    ReferenceEquals(svnManager.CurrentSnapshot, snapshot))
+                {
+                    SetContent(BuildNormalContent(snapshot, isRefreshing: false), "FillHeavy");
+                }
+            }
+            catch { /* cichy */ }
+        }
+
+        // ==================== CHECKOUT ====================
+
         public void BeginCheckout(string projectName, string workingDir)
         {
-            if (_state != BarState.Idle) return;   // update/checkout już leci — nie psuj
+            if (_state != BarState.Idle) return;
 
             if (svnManager.CurrentSnapshot == null ||
                 !string.Equals(svnManager.CurrentSnapshot.ProjectName, projectName, StringComparison.Ordinal))
@@ -728,10 +842,6 @@ namespace SVN.Core
             _ = RunSizeMonitor(workingDir, _monitorCts.Token);
         }
 
-        /// <summary>
-        /// Koniec checkoutu (sukces) — jak EndUpdate: świeży snapshot z dysku,
-        /// reset incomplete-badge, czysty cache rozmiarów, fallback nazwy.
-        /// </summary>
         public async Task EndCheckout(SVNProjectInfoSnapshot fallbackSnapshot)
         {
             await EndUpdate(fallbackSnapshot).ConfigureAwait(false);

@@ -17,6 +17,8 @@ namespace SVN.Core
         public string diffToolPath;
         public string blameToolPath;
         public string sshOptions;
+        public string cachedWorkingSize;   // ostatnio zmierzony rozmiar projektu
+        public string cachedTotalSize;     // ostatnio zmierzony rozmiar repo (całość WC)
 
         [SerializeField]
         private string lastOpenedString;
