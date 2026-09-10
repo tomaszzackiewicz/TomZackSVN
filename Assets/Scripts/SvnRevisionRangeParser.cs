@@ -53,7 +53,9 @@ namespace SVN.Core
                         // === FIX K3: rewizje >= 1.
                         if (start < 1) start = 1;
 
-                        if (end - start > MaxRangeSpan)
+                        // === FIX (off-by-one): span end-start == limit przechodził
+                        // i iterował limit+1 razy. Sprawdzamy LICZBĘ elementów.
+                        if (end - start + 1 > MaxRangeSpan)
                         {
                             SVNLogBridge.LogWarning(
                                 $"[RevisionParser] Range r{start}:r{end} exceeds limit ({MaxRangeSpan}) — token ignored.");
@@ -66,7 +68,6 @@ namespace SVN.Core
                 }
                 else if (long.TryParse(token, out long rev))
                 {
-                    // === FIX K3.
                     if (rev >= 1)
                         revisions.Add(rev);
                 }

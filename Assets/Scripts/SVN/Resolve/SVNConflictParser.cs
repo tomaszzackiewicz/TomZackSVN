@@ -86,7 +86,12 @@ namespace SVN.Core
                                 {
                                     try
                                     {
-                                        string content = await reader.ReadElementContentAsStringAsync().ConfigureAwait(false);
+                                        // === FIX (skip-node): ReadContentAsStringAsync czyta ZAWARTOŚĆ
+                                        // i zatrzymuje reader na EndElement — outer ReadAsync() przejdzie
+                                        // dalej o jeden węzeł. ReadElementContentAsStringAsync dodatkowo
+                                        // zjada EndElement i PRZESUWA na następny — outer loop wtedy
+                                        // przeskakiwał KOLEJNY element (np. <action>).
+                                        string content = await reader.ReadContentAsStringAsync().ConfigureAwait(false);
                                         if (!string.IsNullOrWhiteSpace(content)) tcReason = content.Trim();
                                     }
                                     catch { }

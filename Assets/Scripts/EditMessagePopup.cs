@@ -18,10 +18,11 @@ public class EditMessagePopup : MonoBehaviour
     private SVNManager currentManager;
     private Action<string> onSuccess;
 
-    // === FIX K2: guard operacji (double-Enter = dwa równoległe propsety
-    // — rewrite race na repo) + delayed-dispose CTS.
     private int _saveInProgress;
     private CancellationTokenSource _saveCts;
+
+    // === FIX (listener leak): trzymaj delegat w polu, żeby móc go usunąć.
+    private UnityEngine.Events.UnityAction<string> _onSubmitHandler;
 
     private void Awake()
     {
@@ -31,14 +32,23 @@ public class EditMessagePopup : MonoBehaviour
 
     private void Start()
     {
-        inputField.onSubmit.AddListener(_ => SaveAndClose());
+        if (inputField == null) return;
+
+        // === FIX (listener leak): jednorazowe podpięcie w Start, usunięcie w
+        // OnDestroy. Wcześniej lambda w AddListener zostawała na zawsze i przy
+        // re-instancjonowaniu popupu (change scene / reload) odpalała się 2x.
+        _onSubmitHandler = _ => SaveAndClose();
+        inputField.onSubmit.RemoveListener(_onSubmitHandler);
+        inputField.onSubmit.AddListener(_onSubmitHandler);
     }
 
     private void OnDestroy()
     {
-        // === FIX Ś1: czyszczenie singletonu.
         if (Instance == this)
             Instance = null;
+
+        if (inputField != null && _onSubmitHandler != null)
+            inputField.onSubmit.RemoveListener(_onSubmitHandler);
 
         _saveCts?.Cancel();
     }
@@ -67,13 +77,26 @@ public class EditMessagePopup : MonoBehaviour
         // === FIX K2: pojedynczość operacji.
         if (Interlocked.Exchange(ref _saveInProgress, 1) == 1) return;
 
+        // === FIX (NRE): Show() może nie zostać wywołane (ktoś otworzył popup
+        // z innego miejsca) — bez tego GetRepoUrlAsync rzuca NRE w głębi.
+        if (currentManager == null)
+        {
+            SVNLogBridge.LogError("[EditMessagePopup] Manager not set — cannot save.");
+            Interlocked.Exchange(ref _saveInProgress, 0);
+            return;
+        }
+
         var cts = new CancellationTokenSource();
         _saveCts = cts;
         var token = cts.Token;
 
+        bool succeeded = false;
+        string newMessage = null;
+        Action<string> callbackToFire = null;
+
         try
         {
-            string newMessage = inputField.text.Trim();
+            newMessage = inputField.text.Trim();
             if (string.IsNullOrEmpty(newMessage)) return;
 
             // === FIX K1: sanityzacja — control chars (poza tabem) odrzucone;
@@ -106,9 +129,9 @@ public class EditMessagePopup : MonoBehaviour
                 try { if (File.Exists(msgFile)) File.Delete(msgFile); } catch { }
             }
 
-            // Brak wyjątku = sukces (RunAsync ma throwOnError=true).
-            onSuccess?.Invoke(newMessage);
-            CloseInternal();
+            // Brak wyjątku = sukces.
+            succeeded = true;
+            callbackToFire = onSuccess;
         }
         catch (OperationCanceledException)
         {
@@ -128,6 +151,22 @@ public class EditMessagePopup : MonoBehaviour
             Interlocked.Exchange(ref _saveInProgress, 0);
             _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
         }
+
+        if (!succeeded) return;
+
+        // === FIX (callback w try): callback użytkownika POZA try/catch własnej
+        // operacji. Wyjątek z callbacku (a to kod wołającego) NIE może być
+        // mylony z błędem propset → osobny try/catch i osobny komunikat.
+        try
+        {
+            callbackToFire?.Invoke(newMessage);
+        }
+        catch (Exception cbEx)
+        {
+            SVNLogBridge.LogError($"[EditMessagePopup] onSuccess threw: {cbEx.Message}");
+        }
+
+        CloseInternal();
     }
 
     public void Cancel()

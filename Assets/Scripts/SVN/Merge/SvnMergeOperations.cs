@@ -1100,14 +1100,21 @@ namespace SVN.Core
             }
         }
 
-        // === FIX (preview): obcinanie prefiksu WYLICZONEGO ze źródła, nie hardcoded
-        // "/trunk/". Cherry-pick z brancha pokazywał pełne ścieżki "/branches/x/Assets/..."
-        // zamiast relatywnych. Dotyczy wyłącznie preview UI — merge operuje na URL-ach
-        // i nie czyta nic z tego parsera.
-        private static SVNMerge.MergeFileResult ParseCherryPickLogXml(string xmlOutput, string sourcePathPrefix, out string message)
+        /// <summary>
+        /// Parsowanie XML z 'svn log -v --xml' dla cherry-picka.
+        ///
+        /// === FIX (redundancja): usunięte 'result.Files = new List<...>()' — pole
+        /// jest już zainicjalizowane w konstruktorze klasy MergeFileResult.
+        ///
+        /// === FIX (preview): obcinanie prefiksu WYLICZONEGO ze źródła, nie
+        /// hardcoded "/trunk/". Cherry-pick z brancha pokazywał pełne ścieżki
+        /// "/branches/x/Assets/..." zamiast relatywnych. Dotyczy wyłącznie
+        /// preview UI — merge operuje na URL-ach i nie czyta nic z tego parsera.
+        /// </summary>
+        private static SVNMerge.MergeFileResult ParseCherryPickLogXml(
+            string xmlOutput, string sourcePathPrefix, out string message)
         {
             var result = new SVNMerge.MergeFileResult();
-            result.Files = new List<SVNMerge.MergeFileInfo>();
             message = "N/A";
 
             if (string.IsNullOrWhiteSpace(xmlOutput)) return result;

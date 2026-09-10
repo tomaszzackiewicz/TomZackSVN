@@ -59,7 +59,9 @@ namespace SVN.Core
                     if (stillConflicted)
                         return (false, path, "Conflict still present after base resolve (possible tree/obstruction)");
 
-                    _cache.Remove(path);
+                    // === FIX (spójność): reszta pliku używa NormalizePath przy Remove.
+                    // Bez tego zmiana TryGetRelativePath w przyszłości cicho zgubiłaby klucze.
+                    _cache.Remove(SVNPathUtilities.NormalizePath(path));
                     return (true, path, null);
                 }
                 catch (OperationCanceledException) { throw; }

@@ -59,15 +59,11 @@ public class SvnLineController : MonoBehaviour
     private SvnTreeElement _element;
     private SVNStatus _svnStatus;
     private Image _rowBackground;
-    // === FIX K4: -10f — Time.time≈0 na starcie + 0 czyniło PIERWSZY klik pełnym
-    // "double-clickiem" (external diff zamiast podglądu). Wzorzec SVNFileItem/SVNRevert.
     private float _lastClickTime = -10f;
     private const float DoubleClickThreshold = 0.3f;
     private CancellationTokenSource _destroyCts;
-    // === FIX K2: guard pojedynczości commitu (podwójny szybki klik = dwa commity).
     private int _commitBusy;
 
-    // === FIX drobiazg: cache CanvasGroup dla ApplyFilter (GetComponent per keystroke).
     private CanvasGroup _canvasGroup;
 
     private UnityAction _onFoldClickDelegate;
@@ -99,6 +95,9 @@ public class SvnLineController : MonoBehaviour
 
         _canvasGroup = GetComponent<CanvasGroup>();
 
+        // === FIX (perf): najpierw spróbuj wziąć komponenty z prefabu (jeśli są
+        // tam w edytorze), AddComponent tylko jako fallback. Pozwala uniknąć
+        // setek runtime AddComponent przy dużej liście.
         _hoverHandlersCache = new Dictionary<Button, SVNHoverHandler>();
         Button[] allButtons = GetComponentsInChildren<Button>(true);
         foreach (var btn in allButtons)
@@ -160,9 +159,6 @@ public class SvnLineController : MonoBehaviour
         SetButtonActive(blameBtn, false);
         SetButtonActive(explorerBtn, false);
         SetButtonActive(resolveBtn, false);
-        // === FIX K1: ResetAllButtons zdejmował też listener commitu — wcześniej
-        // Setup nie robił Remove przed Add → recykling itemu akumulował delegaty
-        // (klik = N commitów po N odświeżeniach listy).
         if (commitBtn != null)
         {
             commitBtn.gameObject.SetActive(false);
@@ -172,28 +168,38 @@ public class SvnLineController : MonoBehaviour
         SetButtonActive(extractToRevBtn, false);
     }
 
+    /// <summary>
+    /// === FIX (perf): cache indent-stringów per głębokość — bez tego rebuild
+    /// drzewa (setki itemów) alokuje StringBuilder + string per item.
+    /// Klucz: int depth. Wartość: niemutowalny string.
+    ///
+    /// UWAGA: pole to _element (SvnTreeElement) — klasa pracuje na elementach
+    /// drzewa statusu, nie na RepoNode (to RepoBrowserItemUI ma _node).
+    /// </summary>
     private void RenderIndent()
     {
         if (indentText == null) return;
 
         int depth = _element.Depth;
+        float targetWidth = depth <= 0 ? 0f : depth * 30f;
+        indentText.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, targetWidth);
+
         if (depth <= 0)
         {
             indentText.text = string.Empty;
             return;
         }
 
-        if (!IndentCache.TryGetValue(depth, out string cachedIndent))
+        if (!IndentCache.TryGetValue(depth, out string cached))
         {
-            var sb = new StringBuilder(depth * 4);
+            var sb = new System.Text.StringBuilder(depth * 4);
             for (int i = 0; i < depth; i++)
                 sb.Append(i == depth - 1 ? "└─ " : " |  ");
-
-            cachedIndent = sb.ToString();
-            IndentCache[depth] = cachedIndent;
+            cached = sb.ToString();
+            IndentCache[depth] = cached;
         }
 
-        indentText.text = cachedIndent;
+        indentText.text = cached;
     }
 
     private void RenderStatusAndName()
@@ -203,13 +209,9 @@ public class SvnLineController : MonoBehaviour
             ? ""
             : $" [{_element.Status}]";
 
-        // === [P]: tag ochrony doklejany do STATUSU (nie nazwy) — ta sama
-        // czcionka i rozmiar co [M]; bez spacji po tagu (ciasno przy [M]).
-        // Tylko pliki (foldery nie mają svn:needs-lock).
         string protTag =
-    _element.IsProtectionRemovalPending ? "<color=#FFA500><b>[P-]</b></color>" :
-    _element.IsProtected ? "<color=#FFA500><b>[P]</b></color>" : "";
-        // statusText.text = "<color=#ADD8E6>[FILE]</color> " + statusClean + protTag;
+            _element.IsProtectionRemovalPending ? "<color=#FFA500><b>[P-]</b></color>" :
+            _element.IsProtected ? "<color=#FFA500><b>[P]</b></color>" : "";
 
         if (nameText != null)
         {
@@ -342,7 +344,7 @@ public class SvnLineController : MonoBehaviour
             if (!string.IsNullOrEmpty(_element.Size)) tooltip.Append($" | Size: {_element.Size}");
             if (_element.LockedByMe) tooltip.Append(" | Locked by you");
             else if (_element.LockedByOther) tooltip.Append(" | Locked by another user");
-            if (_element.IsProtected) tooltip.Append(" | Protected (svn:needs-lock)");   // === [P]
+            if (_element.IsProtected) tooltip.Append(" | Protected (svn:needs-lock)");
             if (_element.DiffStatsLoaded) tooltip.Append($" | Diff: +{_element.AddedLines} -{_element.RemovedLines}");
             tooltip.Append(" | Click: Preview | Double-Click: External Diff");
 
@@ -389,8 +391,6 @@ public class SvnLineController : MonoBehaviour
         if (!isUnversioned && status != "!" && status != "C" && commitBtn != null)
         {
             commitBtn.gameObject.SetActive(true);
-            // === FIX K1: Remove przed Add — listener zdejmowany też w ResetAllButtons,
-            // podwójne zabezpieczenie na wypadek przyszłych edycji.
             commitBtn.onClick.RemoveListener(_onCommitClickDelegate);
             commitBtn.onClick.AddListener(_onCommitClickDelegate);
             BindHover(commitBtn, "Commit only this file.");
@@ -471,7 +471,6 @@ public class SvnLineController : MonoBehaviour
             lockBtnText.text = "<color=#E6E6E6>U</color>";
             lockBtn.interactable = true;
 
-            // === [P]: plik chroniony jest read-only do czasu wzięcia locka:
             BindHover(lockBtn, _element.IsProtected
                 ? "Click to lock. File is protected (svn:needs-lock) — read-only until you hold the lock."
                 : "Click to lock.");
@@ -547,9 +546,13 @@ public class SvnLineController : MonoBehaviour
 
     private async Task OnCommitClickAsync()
     {
-        if (_destroyCts == null || _destroyCts.IsCancellationRequested) return;
+        // === FIX (NRE po await): snapshot CTS PRZED jakimkolwiek await. Wcześniej
+        // po pierwszym await (File.WriteAllTextAsync) kolejne await używało
+        // _destroyCts, które OnDestroy mógł już ustawić na null → NRE w głębi.
+        var cts = _destroyCts;
+        if (cts == null || cts.IsCancellationRequested) return;
+        var token = cts.Token;
 
-        // Guard pojedynczości.
         if (Interlocked.Exchange(ref _commitBusy, 1) == 1) return;
 
         string msgFile = null;
@@ -558,7 +561,6 @@ public class SvnLineController : MonoBehaviour
             var manager = SVNManager.Instance;
             if (manager == null) return;
 
-            // Sanityzacja nazwy (znaki kontrolne + cudzysłowy) — jak SVNCommit.
             string safeName = (_element.Name ?? "file").Replace("\"", "'");
             var sb = new System.Text.StringBuilder(safeName.Length);
             foreach (char c in $"Commit {safeName}")
@@ -566,19 +568,14 @@ public class SvnLineController : MonoBehaviour
             string message = sb.ToString().Trim();
             if (string.IsNullOrWhiteSpace(message)) message = "Commit single file";
 
-            // Wiadomość przez plik -F (UTF-8 bez BOM) — wzorzec SVNCommit.
             msgFile = Path.Combine(Path.GetTempPath(), $"svn_line_msg_{Guid.NewGuid():N}.txt");
-            await File.WriteAllTextAsync(msgFile, message, new System.Text.UTF8Encoding(false), _destroyCts.Token);
+            await File.WriteAllTextAsync(msgFile, message, new UTF8Encoding(false), token);
 
-            // === FIX: usunięty martwy warunek '($"...") == null ? "" : ...' —
-            // interpolated string nigdy nie jest null, więc ternary zawsze
-            // zwracał BuildSingleCommitCommand (kod "działał przez przypadek",
-            // pozostałość uszkodzonej edycji).
             string result = await SvnRunner.RunAsync(
                 BuildSingleCommitCommand(msgFile),
                 manager.WorkingDir,
                 false,
-                _destroyCts.Token);
+                token);
 
             if (this == null) return;
 
@@ -586,7 +583,6 @@ public class SvnLineController : MonoBehaviour
             {
                 SVNLogBridge.LogLine($"<color=green>Committed:</color> {_element.Name}");
 
-                // Stan po commicie — spójnie z SVNCommit.
                 SVNStatus.ClearLockCache();
                 manager.DiskChangesDetected = true;
 
@@ -610,9 +606,6 @@ public class SvnLineController : MonoBehaviour
         }
     }
 
-    // Komenda commitu: message przez -F, ścieżka przez --targets (plik targets
-    // odpada przy pojedynczej ścieżce ze względu na nadmiar — escapujemy jak
-    // SvnRunner.EscapeSingleArgument bycie: cudzysłowy wewnątrz bezpieczne).
     private string BuildSingleCommitCommand(string msgFilePath)
     {
         string escapedPath = _element.FullPath.Replace("\"", "\\\"");
@@ -621,7 +614,9 @@ public class SvnLineController : MonoBehaviour
 
     private async Task OnLockClickAsync()
     {
-        if (_destroyCts == null || _destroyCts.IsCancellationRequested) return;
+        // === FIX (spójność z OnCommitClickAsync): snapshot CTS przed await.
+        var cts = _destroyCts;
+        if (cts == null || cts.IsCancellationRequested) return;
 
         var lockModule = SVNManager.Instance?.GetModule<SVNLock>();
         if (lockModule == null) return;
@@ -766,7 +761,11 @@ public class SvnLineController : MonoBehaviour
     {
         foldButton?.onClick.RemoveListener(_onFoldClickDelegate);
         selectionToggle?.onValueChanged.RemoveListener(_onToggleChangedDelegate);
+        // === FIX (higiena): zdejmij OBA delegaty z fullRowButton — SetupFullRowButton
+        // dodaje _onFoldClickDelegate dla folderów i _onFullRowClickDelegate dla
+        // plików; wcześniej tylko drugi był tu zdejmowany.
         fullRowButton?.onClick.RemoveListener(_onFullRowClickDelegate);
+        fullRowButton?.onClick.RemoveListener(_onFoldClickDelegate);
         commitBtn?.onClick.RemoveListener(_onCommitClickDelegate);
         lockBtn?.onClick.RemoveListener(_onLockClickDelegate);
     }

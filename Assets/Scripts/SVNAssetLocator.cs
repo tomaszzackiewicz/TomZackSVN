@@ -13,19 +13,12 @@ namespace SVN.Core
             return path.Replace("\\", "/").Trim();
         }
 
-        // UWAGA semantyczna: sprawdza, czy ścieżka jest KORZENIEM working copy
-        // (katalog .svn bezpośrednio w niej). Podkatalog checkoutu (bez własnego
-        // .svn) zwraca false — svn operuje tam poprawnie, ale projekt powinien
-        // wskazywać korzeń (tak rejestrują go Checkout/Load).
         public static bool IsWorkingCopy(string path)
         {
             if (string.IsNullOrEmpty(path)) return false;
             return Directory.Exists(Path.Combine(path, ".svn"));
         }
 
-        // === NOWE: czy ścieżka NALEŻY do working copy (.svn tu lub u dowolnego
-        // przodka) — dla pytań typu "czy można tu wykonać svn" (zamiast "czy to
-        // korzeń"). Wzorzec z SVNClean.ValidatePath.
         public static bool IsInsideWorkingCopy(string path)
         {
             if (string.IsNullOrEmpty(path)) return false;
@@ -48,12 +41,6 @@ namespace SVN.Core
             return false;
         }
 
-        // === FIX K1: najpłytsze wystąpienie markera struktury (z granicą
-        // segmentu). Wcześniej EndsWith("/trunk") + LastIndexOf("/branches/")
-        // liczyły korzeń OD DOŁU: repo/branches/foo/branches/bar → "korzeń"
-        // repo/branches/foo (zamiast repo); repo/branches/foo/trunk →
-        // repo/branches/foo. Wszystkie URL-e budowane z repoRoot (BranchTag,
-        // Merge, Revision, Repair) wskazywały wtedy złe miejsce.
         public static string GetRepoRoot(string url)
         {
             if (string.IsNullOrEmpty(url)) return string.Empty;
@@ -71,15 +58,11 @@ namespace SVN.Core
             int tagsIdx = IndexOfStructureMarker(url, "/tags");
             if (tagsIdx >= 0 && tagsIdx < cut) cut = tagsIdx;
 
-            // Brak markerów → URL bez zmian (jak dotychczas).
             if (cut == int.MaxValue) return url;
 
             return url.Substring(0, cut);
         }
 
-        // Pierwsze wystąpienie markera będące PEŁNYM segmentem ścieżki
-        // (zakończonym końcem URL-a albo '/'). Chroni przed fałszywymi
-        // trafieniami typu "/tagsArchive" czy "/trunking".
         private static int IndexOfStructureMarker(string url, string marker)
         {
             int searchFrom = 0;
@@ -92,17 +75,29 @@ namespace SVN.Core
                 if (after >= url.Length || url[after] == '/')
                     return idx;
 
-                searchFrom = idx + 1;   // marker w środku słowa — szukaj dalej
+                searchFrom = idx + 1;
             }
         }
 
-        // === FIX K2: tolerancja separatora — "Revision: 123" (dwukropek) też
-        // parsowane; wcześniej '\s+' wymagało wyłącznie białych znaków.
+        /// <summary>
+        /// === FIX (cichy pusty string): wcześniej regex wymagał prefiksu
+        /// "revision". Jeśli caller wrzucał sam numer ("123"), dostawał "" bez
+        /// ostrzeżenia. Teraz akceptujemy oba warianty. Priorytet ma jawny
+        /// prefiks — "abc revision 5 2024" → "5", nie "2024".
+        /// </summary>
         public static string ParseRevision(string input)
         {
             if (string.IsNullOrEmpty(input)) return string.Empty;
-            var match = Regex.Match(input, @"revision\s*[:=]?\s*(\d+)", RegexOptions.IgnoreCase);
-            return match.Success ? match.Groups[1].Value : string.Empty;
+
+            // 1. Preferuj "revision 5" / "revision: 5" / "revision=5".
+            var prefixed = Regex.Match(input, @"revision\s*[:=]?\s*(\d+)", RegexOptions.IgnoreCase);
+            if (prefixed.Success) return prefixed.Groups[1].Value;
+
+            // 2. Fallback: sam numer (np. wpisany w pole input).
+            var plain = Regex.Match(input, @"^\s*(\d+)\s*$");
+            if (plain.Success) return plain.Groups[1].Value;
+
+            return string.Empty;
         }
 
         public static string ExtractUserFromUrl(string xmlOutput)

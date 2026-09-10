@@ -16,18 +16,19 @@ namespace SVN.Core
     ///    odświeża SVNManager.FocusRefreshAsync → PollRepositoryStateAsync
     ///    (poll rewizji jest na locki ślepy — lock nie bumpuje HEAD).
     ///
-    /// === PUBLIC API (callery: SVNCheckout, SVNTerminal, SVNRepoRepair):
-    ///  - ResetRevisionTracking() — po nowym checkoucie/reparacji (świeża
-    ///    kopia = nieznany baseline; bez resetu pierwszy check mógłby
-    ///    odpalić false notyfikację "committed changes").
-    ///  - CancelCurrentCheck() — anuluje biegnący check (np. RepoRepair
-    ///    przed przebudową WC).
-    ///  - IsPaused — pauza usługi.
+    /// === FIX (double focus handler): usunięty OnApplicationFocus z tej klasy.
+    /// Wcześniej DWA MonoBehaviour'y reagowały na powrót do okna:
+    ///   - SVNManager.OnApplicationFocus → FocusRefreshAsync → CheckForRemoteCommitsAsync
+    ///   - SVNPollingService.OnApplicationFocus → CheckForRemoteCommitsAsync (bezpośrednio)
+    /// Oba odpalały w tej samej klatce, każdy z własnym cooldownem (10s vs 180s).
+    /// Single-flight w CheckForRemoteCommitsAsync ratował przed duplikatem, ale drugie
+    /// wywołanie CICHO się kończyło — jeśli pierwsze padło na IsPaused, drugie też.
+    /// Teraz jedyna ścieżka: SVNManager.OnApplicationFocus → FocusRefreshAsync.
     ///
-    /// === LEKKOŚĆ (względem oryginału):
-    ///  - per-check CTS bez delayed-dispose (teoretyczny race z Dispose
-    ///    łapie ObjectDisposedException — okno mikrosekundowe).
-    ///  - Delayed-dispose tylko w OnDestroy (raz na życie obiektu).
+    /// === PUBLIC API (callery: SVNCheckout, SVNTerminal, SVNRepoRepair):
+    ///  - ResetRevisionTracking() — po nowym checkoucie/reparacji.
+    ///  - CancelCurrentCheck() — anuluje biegnący check.
+    ///  - IsPaused — pauza usługi.
     /// </summary>
     public class SVNPollingService : MonoBehaviour
     {
@@ -39,10 +40,6 @@ namespace SVN.Core
 
         public bool IsPaused { get; set; } = false;
 
-        [Header("Focus Settings")]
-        public float focusCheckCooldownSeconds = 180f;
-        private float _lastFocusCheckTime = -100f;
-
         [Header("Logging")]
         [Tooltip("Log debug info to file (not UI console)")]
         public bool showDebugLogs = false;
@@ -50,30 +47,6 @@ namespace SVN.Core
         private void Awake()
         {
             _lifetimeCts = new CancellationTokenSource();
-        }
-
-        private void OnApplicationFocus(bool hasFocus)
-        {
-            if (!hasFocus || IsPaused) return;
-
-            SVNManager manager = SVNManager.Instance;
-
-            // Okno narzędzia zamknięte → nie pytamy serwera (nic nie widać):
-            if (manager != null && manager.MainUIPanel != null &&
-                !manager.MainUIPanel.activeInHierarchy)
-                return;
-
-            // Nie canceluj niczego w trakcie operacji usera
-            // (CheckForRemoteCommits robi CancelBackgroundTasksAsync):
-            if (manager != null && (manager.IsProcessing || manager.IsUpdateRunning))
-                return;
-
-            float currentTime = Time.realtimeSinceStartup;
-            if (currentTime - _lastFocusCheckTime < focusCheckCooldownSeconds)
-                return;
-
-            _lastFocusCheckTime = currentTime;
-            _ = CheckForRemoteCommitsAsync(_lifetimeCts?.Token ?? CancellationToken.None);
         }
 
         private void OnDestroy()
@@ -94,20 +67,12 @@ namespace SVN.Core
 
         // ================= PUBLIC API (dla modułów) =================
 
-        /// <summary>
-        /// Reset baseline'u rewizji — wołaj po nowym checkoucie/reparacji.
-        /// Koszt: dwa przypisania pól, zero alokacji.
-        /// </summary>
         public void ResetRevisionTracking()
         {
             _lastKnownRemoteRevision = -1;
             _lastValidWorkingDir = "";
         }
 
-        /// <summary>
-        /// Anuluje biegnący check. Uproszczone: bez delayed-dispose —
-        /// teoretyczny race z Dispose łapie ObjectDisposedException.
-        /// </summary>
         public void CancelCurrentCheck()
         {
             var current = Volatile.Read(ref _currentCheckCts);
@@ -128,7 +93,6 @@ namespace SVN.Core
 
             var localCts = new CancellationTokenSource();
 
-            // Widoczne dla CancelCurrentCheck; poprzedni (jeśli wisiał) — anuluj:
             var prevCts = Interlocked.Exchange(ref _currentCheckCts, localCts);
             if (prevCts != null)
             {
@@ -148,9 +112,6 @@ namespace SVN.Core
                 Interlocked.CompareExchange(ref _currentCheckCts, null, localCts);
                 Interlocked.Exchange(ref _isCheckingFlag, 0);
 
-                // 'linked' jest już dispose'nięty (koniec bloku using następuje
-                // PRZED finally → odrejestrował się z localCts) → bezpośredni
-                // dispose bezpieczny; race z CancelCurrentCheck łapie ODE-tam:
                 try { localCts.Dispose(); } catch { }
             }
         }
@@ -174,7 +135,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Zmiana projektu = nowy baseline (auto-reset):
                 if (!string.Equals(wd, _lastValidWorkingDir, StringComparison.OrdinalIgnoreCase))
                 {
                     _lastKnownRemoteRevision = -1;
@@ -191,7 +151,7 @@ namespace SVN.Core
 
                 if (_lastKnownRemoteRevision == -1)
                 {
-                    _lastKnownRemoteRevision = remoteRev;   // baseline bez powiadomienia
+                    _lastKnownRemoteRevision = remoteRev;
                     return;
                 }
 

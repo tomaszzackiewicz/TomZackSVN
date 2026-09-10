@@ -24,11 +24,6 @@ namespace SVN.Core
 
             try
             {
-                // Jesteśmy w sekcji — inkrementacja i ewentualne wzięcie write-locka.
-                // UWAGA: pierwszy czytelnik TRZYMA readSemaphore przez czas oczekiwania
-                // na writeSemaphore — kolejni czytelnicy czekają na readSemaphore.
-                // To zamierzone: gwarantuje, że _readers nie zmieni się między
-                // checkem a wzięciem write-locka.
                 _readers++;
 
                 try
@@ -38,7 +33,6 @@ namespace SVN.Core
                 }
                 catch
                 {
-                    // Wyjątek w oczekiwaniu na write-lock — cofamy inkrementację.
                     _readers--;
                     throw;
                 }
@@ -49,6 +43,11 @@ namespace SVN.Core
             }
         }
 
+        /// <summary>
+        /// Wersja synchroniczna — WYŁĄCZNIE dla kodu, który na 100% NIE jest na
+        /// main thread Unity (np. wewnątrz Task.Run). Na main thread może
+        /// zablokować się w nieskończoność, gdy writer czeka na main thread.
+        /// </summary>
         public void ExitRead()
         {
             ThrowIfDisposed();
@@ -95,13 +94,18 @@ namespace SVN.Core
             _writeSemaphore.Release();
         }
 
+        /// <summary>
+        /// === FIX (shutdown race): ŚWIADOMIE nie disposujemy semaforów.
+        /// SemaphoreSlim.Dispose() zwalnia natywne zasoby tylko wtedy, gdy
+        /// użyto AvailableWaitHandle — my nie używamy, więc nie ma czego
+        /// zwalniać poza managed pamięcią (GC i tak to zrobi).
+        /// Disposal w trakcie in-flight operacji (ExitWrite / ExitReadAsync
+        /// po Dispose) rzucałby ObjectDisposedException w losowym miejscu
+        /// aplikacji. Bezpieczniej zostawić semafory żywe do końca procesu.
+        /// </summary>
         public void Dispose()
         {
-            if (_disposed) return;
             _disposed = true;
-
-            _readSemaphore?.Dispose();
-            _writeSemaphore?.Dispose();
         }
 
         private void ThrowIfDisposed()

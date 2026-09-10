@@ -1,5 +1,6 @@
 using System.Linq;
 using UnityEngine;
+using TMPro;
 
 namespace SVN.Core
 {
@@ -10,6 +11,9 @@ namespace SVN.Core
         private SVNTerminal terminal;
 
         private bool isExpanded = false;
+
+        // === FIX (listener leak): trzymaj delegat w polu, żeby móc usunąć.
+        private UnityEngine.Events.UnityAction<string> _terminalSubmitHandler;
 
         private void OnEnable()
         {
@@ -24,26 +28,31 @@ namespace SVN.Core
 
             if (svnUI?.TerminalInputField != null)
             {
-                svnUI.TerminalInputField.onEndEdit.RemoveAllListeners();
-
                 // === FIX K1: JEDNO źródło prawdy dla Enter. Wcześniej onEndEdit
                 // (z kruchym Input.GetKeyDown w środku — onEndEdit odpala po Input
                 // w tej samej klatce, GetKeyDown często już false) + Update() z
                 // isFocused (focus znika dopiero następną klatkę) = komenda
                 // wykonywana PODWÓJNIE w jednej klatce (2× svn add/commit!).
                 // TMP ma onSubmit — wołane TYLKO przy Enter, bez Input-API.
-                svnUI.TerminalInputField.onSubmit.AddListener(_ => ExecuteTerminalCommand());
+                _terminalSubmitHandler = _ => ExecuteTerminalCommand();
+                svnUI.TerminalInputField.onEndEdit.RemoveAllListeners();
+                svnUI.TerminalInputField.onSubmit.RemoveListener(_terminalSubmitHandler);
+                svnUI.TerminalInputField.onSubmit.AddListener(_terminalSubmitHandler);
             }
+        }
+
+        private void OnDestroy()
+        {
+            // === FIX (listener leak): poprzednio onSubmit.AddListener w Start
+            // nigdy nie było sprzątane → przy SetActive(false)/(true) MainWindow
+            // (albo przeładowaniu sceny) listenery się mnożyły i komenda leciała
+            // N razy.
+            if (svnUI?.TerminalInputField != null && _terminalSubmitHandler != null)
+                svnUI.TerminalInputField.onSubmit.RemoveListener(_terminalSubmitHandler);
         }
 
         public void ExecuteCommand() => ExecuteTerminalCommand();
 
-        // === FIX K3: Update usunięte —jego rolę (Enter) przejął onSubmit;
-        // dodatkowo legacy Input.GetKeyDown rzucał InvalidOperationException
-        // co klatkę na projektach z nowym Input System.
-
-        // === FIX K2: null-safe routingi — GetModule zwraca null przy częściowej
-        // porażce InitializeAllModules; wcześniej NRE na klik.
         private T Module<T>() where T : SVNBase
         {
             if (svnManager == null) svnManager = SVNManager.Instance;

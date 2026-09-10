@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
@@ -29,76 +31,80 @@ public class LockUIItem : MonoBehaviour
 
     private const float ConfirmationTimeout = 3f;
 
-	public void Setup(string path, string owner, string date, string comment, bool isMe, Action onStealAction, Action onBreakAction = null, TMP_Text panelConsole = null)
-	{
-		_path = path;
-		_stealAction = onStealAction;
-		_breakAction = onBreakAction;
-		_panelConsole = panelConsole;
+    // === FIX (O(n²) append): współdzielony bufor per-panel. Wcześniej
+    // `_panelConsole.text += msg` realokowało cały string przy każdej linii —
+    // przy 50 lockach × 20 linii = tysiące alokacji.
+    private static readonly ConditionalWeakTable<TMP_Text, System.Text.StringBuilder> _panelBuffers = new();
 
-		// === NAJPIERW zapisz oryginalne kolory (przed Reset!)
-		if (stealButton != null)
-		{
-			var stealColors = stealButton.colors;
-			_originalStealColor = stealColors.normalColor;
-			_originalStealColor.a = 1f;
-			stealColors.normalColor = _originalStealColor;
-			stealButton.colors = stealColors;
-		}
+    public void Setup(string path, string owner, string date, string comment, bool isMe, Action onStealAction, Action onBreakAction = null, TMP_Text panelConsole = null)
+    {
+        _path = path;
+        _stealAction = onStealAction;
+        _breakAction = onBreakAction;
+        _panelConsole = panelConsole;
 
-		if (breakButton != null)
-		{
-			var breakColors = breakButton.colors;
-			_originalBreakColor = breakColors.normalColor;
-			_originalBreakColor.a = 1f;
-			breakColors.normalColor = _originalBreakColor;
-			breakButton.colors = breakColors;
-		}
+        // === NAJPIERW zapisz oryginalne kolory (przed Reset!)
+        if (stealButton != null)
+        {
+            var stealColors = stealButton.colors;
+            _originalStealColor = stealColors.normalColor;
+            _originalStealColor.a = 1f;
+            stealColors.normalColor = _originalStealColor;
+            stealButton.colors = stealColors;
+        }
 
-		// Dopiero teraz resetuj stany (użyją poprawnych oryginalnych kolorów)
-		ResetStealState();
-		ResetBreakState();
+        if (breakButton != null)
+        {
+            var breakColors = breakButton.colors;
+            _originalBreakColor = breakColors.normalColor;
+            _originalBreakColor.a = 1f;
+            breakColors.normalColor = _originalBreakColor;
+            breakButton.colors = breakColors;
+        }
 
-		if (fileText == null || infoText == null || stealButton == null)
-		{
-			Debug.LogError("[LockUIItem] Missing UI references in Inspector!", this);
-			return;
-		}
+        ResetStealState();
+        ResetBreakState();
 
-		string safePath = SanitizeRichText(path);
-		string safeOwner = SanitizeRichText(owner);
-		string safeComment = SanitizeRichText(comment);
+        if (fileText == null || infoText == null || stealButton == null)
+        {
+            Debug.LogError("[LockUIItem] Missing UI references in Inspector!", this);
+            return;
+        }
 
-		fileText.text = $"<b>Path:</b> {safePath}";
+        string safePath = SanitizeRichText(path);
+        string safeOwner = SanitizeRichText(owner);
+        string safeComment = SanitizeRichText(comment);
 
-		string formattedDate = date;
-		if (DateTime.TryParse(date, out DateTime parsedDate))
-			formattedDate = parsedDate.ToString("yyyy-MM-dd HH:mm");
+        fileText.text = $"<b>Path:</b> {safePath}";
 
-		infoText.text = $"<b>Owner:</b> {(isMe ? "<color=green>YOU</color>" : safeOwner)}\n" +
-						$"<size=90%><color=#E6E6E6>Date: {formattedDate}</color></size>";
+        string formattedDate = date;
+        if (DateTime.TryParse(date, out DateTime parsedDate))
+            formattedDate = parsedDate.ToString("yyyy-MM-dd HH:mm");
 
-		if (commentText != null)
-			commentText.text = string.IsNullOrEmpty(safeComment) ? "" : $"<i>\"{safeComment}\"</i>";
+        infoText.text = $"<b>Owner:</b> {(isMe ? "<color=green>YOU</color>" : safeOwner)}\n" +
+                        $"<size=90%><color=#E6E6E6>Date: {formattedDate}</color></size>";
 
-		stealButton.gameObject.SetActive(!isMe);
-		if (breakButton != null) breakButton.gameObject.SetActive(!isMe);
+        if (commentText != null)
+            commentText.text = string.IsNullOrEmpty(safeComment) ? "" : $"<i>\"{safeComment}\"</i>";
 
-		stealButton.onClick.RemoveAllListeners();
-		stealButton.onClick.AddListener(OnStealClick);
+        stealButton.gameObject.SetActive(!isMe);
+        if (breakButton != null) breakButton.gameObject.SetActive(!isMe);
 
-		if (breakButton != null)
-		{
-			breakButton.onClick.RemoveAllListeners();
-			breakButton.onClick.AddListener(OnBreakClick);
-		}
+        stealButton.onClick.RemoveAllListeners();
+        stealButton.onClick.AddListener(OnStealClick);
 
-		enabled = false;
-	}
+        if (breakButton != null)
+        {
+            breakButton.onClick.RemoveAllListeners();
+            breakButton.onClick.AddListener(OnBreakClick);
+        }
 
-	// === FIX K1: całe ciało Update wykonywane tylko gdy component enabled
-	// (ustawiane w OnStealClick/OnBreakClick; reset wyłącza gdy oba stany nieaktywne).
-	private void Update()
+        enabled = false;
+    }
+
+    // === FIX K1: całe ciało Update wykonywane tylko gdy component enabled
+    // (ustawiane w OnStealClick/OnBreakClick; reset wyłącza gdy oba stany nieaktywne).
+    private void Update()
     {
         if (_awaitingStealConfirmation)
         {
@@ -120,7 +126,7 @@ public class LockUIItem : MonoBehaviour
             _awaitingStealConfirmation = true;
             _stealTimer = ConfirmationTimeout;
             ResetBreakState();
-            enabled = true;   // === FIX K1
+            enabled = true;
 
             if (stealButtonText != null) stealButtonText.text = "SURE?";
             var colors = stealButton.colors;
@@ -144,7 +150,7 @@ public class LockUIItem : MonoBehaviour
             _awaitingBreakConfirmation = true;
             _breakTimer = ConfirmationTimeout;
             ResetStealState();
-            enabled = true;   // === FIX K1
+            enabled = true;
 
             if (breakButtonText != null) breakButtonText.text = "SURE?";
             var colors = breakButton.colors;
@@ -173,7 +179,6 @@ public class LockUIItem : MonoBehaviour
             stealButton.colors = colors;
         }
 
-        // === FIX K1: gdy oba stany nieaktywne — wyłącz Update (timery niepotrzebne).
         if (!_awaitingBreakConfirmation)
             enabled = false;
     }
@@ -190,20 +195,41 @@ public class LockUIItem : MonoBehaviour
             breakButton.colors = colors;
         }
 
-        // === FIX K1: jw.
         if (!_awaitingStealConfirmation)
             enabled = false;
     }
 
+    // === FIX (O(n²) append): ConditionalWeakTable kluczowana instancją panelu —
+    // wiele LockUIItem dzielących ten sam TMP_Text ma JEDEN StringBuilder.
+    // Gdy panel zostanie wyczyszczony z zewnątrz (np. refresh locków), bufor
+    // sam się zsynchronizuje: pusty TMP_Text + niepusty sb → sb.Clear().
     private void LogToPanel(string msg)
     {
-        if (_panelConsole != null)
-            _panelConsole.text += msg + "\n";
+        if (_panelConsole == null) return;
+
+        var sb = _panelBuffers.GetOrCreateValue(_panelConsole);
+
+        if (sb.Length > 0 && string.IsNullOrEmpty(_panelConsole.text))
+            sb.Clear();
+
+        sb.Append(msg).Append('\n');
+        _panelConsole.text = sb.ToString();
     }
 
     private string SanitizeRichText(string input)
     {
         if (string.IsNullOrEmpty(input)) return input;
         return input.Replace("<", "").Replace(">", "");
+    }
+
+    /// <summary>
+    /// Wywołać, gdy panel konsoli jest świadomie czyszczony (np. przy pełnym
+    /// refreshu locków) — zwalnia bufor i zapobiega dorastaniu nieaktualnych linii.
+    /// </summary>
+    public static void ResetPanelBuffer(TMP_Text panel)
+    {
+        if (panel == null) return;
+        if (_panelBuffers.TryGetValue(panel, out var sb))
+            sb.Clear();
     }
 }

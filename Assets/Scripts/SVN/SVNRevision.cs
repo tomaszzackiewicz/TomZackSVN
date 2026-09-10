@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -22,7 +23,6 @@ namespace SVN.Core
         private float _lastRevertClickTime;
         private string _pendingRevertInput;
 
-        // Double-click confirmation for REVERT PATH in rollback mode (with a revision)
         private float _lastRevertPathClickTime;
         private string _pendingRevertPathKey;
 
@@ -48,32 +48,54 @@ namespace SVN.Core
         }
 
         // ========== LOGGING HELPERS ==========
+
+        /// <summary>
+        /// === FIX (UI off main): publiczne entry pointy są `async void`, kontynuacje
+        /// po `await ConfigureAwait(false)` (SvnRunner) lecą na pulę wątków — a ta
+        /// metoda pisze bezpośrednio do `svnUI.RevisionDisplayArea.text` (main-only).
+        /// Wcześniej: cichy no-op w edytorze, UnityException w buildzie.
+        ///
+        /// Teraz: synchronicznie na main, dispatch gdy z puli. FIFO dispatchera
+        /// zachowuje kolejność zapisów (ClearLogPanel → LogHeader → LogStep ...).
+        /// </summary>
         private void LogToRevisionPanel(string message, bool clearBefore = false)
         {
-            if (svnUI?.RevisionDisplayArea != null)
+            if (UnityMainThreadDispatcher.IsMainThread)
             {
-                if (clearBefore)
-                    svnUI.RevisionDisplayArea.text = string.Empty;
-
-                string current = svnUI.RevisionDisplayArea.text;
-                var lines = new List<string>(current.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
-                lines.Add(message);
-
-                if (lines.Count > MaxLogLines)
-                    lines = lines.Skip(lines.Count - MaxLogLines).ToList();
-
-                svnUI.RevisionDisplayArea.text = string.Join("\n", lines) + "\n";
+                WriteRevisionPanel(message, clearBefore);
+                return;
             }
-            else
-            {
-                SVNLogBridge.LogLine(message, true);
-            }
+
+            UnityMainThreadDispatcher.Enqueue(() => WriteRevisionPanel(message, clearBefore));
         }
 
-        private void ClearLogPanel()
+        private void WriteRevisionPanel(string message, bool clearBefore)
         {
-            LogToRevisionPanel(string.Empty, clearBefore: true);
+            try
+            {
+                if (svnUI?.RevisionDisplayArea != null)
+                {
+                    if (clearBefore)
+                        svnUI.RevisionDisplayArea.text = string.Empty;
+
+                    string current = svnUI.RevisionDisplayArea.text;
+                    var lines = new List<string>(current.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
+                    lines.Add(message);
+
+                    if (lines.Count > MaxLogLines)
+                        lines = lines.Skip(lines.Count - MaxLogLines).ToList();
+
+                    svnUI.RevisionDisplayArea.text = string.Join("\n", lines) + "\n";
+                }
+                else
+                {
+                    SVNLogBridge.LogLine(message, true);
+                }
+            }
+            catch { /* UI zniszczone w teardown — cichy */ }
         }
+
+        private void ClearLogPanel() => LogToRevisionPanel(string.Empty, clearBefore: true);
 
         private void StartOperationTimer()
         {
@@ -81,15 +103,9 @@ namespace SVN.Core
             _operationStopwatch.Start();
         }
 
-        private void StopOperationTimer()
-        {
-            _operationStopwatch.Stop();
-        }
+        private void StopOperationTimer() => _operationStopwatch.Stop();
 
-        private string GetElapsedTime()
-        {
-            return _operationStopwatch.Elapsed.ToString(@"hh\:mm\:ss");
-        }
+        private string GetElapsedTime() => _operationStopwatch.Elapsed.ToString(@"hh\:mm\:ss");
 
         private void LogHeader(string title)
         {
@@ -99,52 +115,26 @@ namespace SVN.Core
             LogToRevisionPanel("---------------------------------------------");
         }
 
-        private void LogStep(int step, int total, string msg)
-        {
-            LogToRevisionPanel($"[{step}/{total}] {msg}");
-        }
-
-        private void LogDetail(string msg)
-        {
-            LogToRevisionPanel($"    >> {msg}");
-        }
-
-        private void LogSuccess(string msg)
-        {
-            LogToRevisionPanel($"[OK] {msg}");
-        }
-
-        private void LogWarning(string msg)
-        {
-            LogToRevisionPanel($"[WARN] {msg}");
-        }
-
-        private void LogError(string msg)
-        {
-            LogToRevisionPanel($"[ERROR] {msg}");
-        }
+        private void LogStep(int step, int total, string msg) => LogToRevisionPanel($"[{step}/{total}] {msg}");
+        private void LogDetail(string msg) => LogToRevisionPanel($"    >> {msg}");
+        private void LogSuccess(string msg) => LogToRevisionPanel($"[OK] {msg}");
+        private void LogWarning(string msg) => LogToRevisionPanel($"[WARN] {msg}");
+        private void LogError(string msg) => LogToRevisionPanel($"[ERROR] {msg}");
 
         private void LogInfoBox(string[] lines)
         {
             LogToRevisionPanel("---------------------------------------------");
-            foreach (var line in lines)
-                LogToRevisionPanel($"  {line}");
+            foreach (var line in lines) LogToRevisionPanel($"  {line}");
             LogToRevisionPanel("---------------------------------------------");
         }
 
-        private void LogCmd(string cmd)
-        {
-            LogToRevisionPanel($"    $ svn {cmd}");
-        }
+        private void LogCmd(string cmd) => LogToRevisionPanel($"    $ svn {cmd}");
 
         private void LogEnd(bool success = true)
         {
             LogToRevisionPanel("");
             LogToRevisionPanel("---------------------------------------------");
-            if (success)
-                LogToRevisionPanel("  OPERATION COMPLETED SUCCESSFULLY");
-            else
-                LogToRevisionPanel("  OPERATION FAILED");
+            LogToRevisionPanel(success ? "  OPERATION COMPLETED SUCCESSFULLY" : "  OPERATION FAILED");
             LogToRevisionPanel("---------------------------------------------");
             LogToRevisionPanel("");
         }
@@ -156,25 +146,15 @@ namespace SVN.Core
             return path.Replace('\\', '/').TrimEnd('/');
         }
 
-        /// <summary>
-        /// A single Browse button handling both target types:
-        /// 1) the FILE dialog (the title informs: Cancel = pick a folder),
-        /// 2) after cancelling - the FOLDER dialog.
-        /// Always stores a RELATIVE path into RevisionFilePathInput.
-        /// Selecting the working copy root stores ".".
-        /// </summary>
         public void BrowsePath()
         {
-            // Stage 1: FILE dialog. Cancelling it falls through to the FOLDER dialog.
             if (TryBrowseRelative(folder: false, "Select File (Cancel to pick a Folder)", out string fileRel))
             {
                 if (fileRel != null)
                     SetRevisionPathInput(fileRel, "file");
-                // fileRel == null => path outside WorkingDir - error already logged in TryBrowseRelative
                 return;
             }
 
-            // File dialog cancelled -> open the Folder dialog
             LogToRevisionPanel("[Browse] File dialog cancelled - opening Folder dialog...");
 
             if (TryBrowseRelative(folder: true, "Select Folder", out string folderRel))
@@ -188,10 +168,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Returns false ONLY when the dialog was cancelled (the caller can then try a folder).
-        /// Returns true + relPath == null when the path is outside the WorkingDir (error already logged).
-        /// </summary>
         private bool TryBrowseRelative(bool folder, string title, out string relPath)
         {
             relPath = null;
@@ -203,7 +179,7 @@ namespace SVN.Core
                 : StandaloneFileBrowser.OpenFilePanel(title, root, new[] { new ExtensionFilter("All Files", "*") }, false);
 
             if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0]))
-                return false; // cancelled
+                return false;
 
             string sel = NormalizePath(paths[0]);
             string normRoot = NormalizePath(root);
@@ -217,8 +193,6 @@ namespace SVN.Core
 
             if (sel.Equals(normRoot, StringComparison.OrdinalIgnoreCase))
             {
-                // The working copy ROOT was selected: store "." (visible in the input,
-                // semantically correct: Revert = whole WC, Extract Folder = repo root)
                 relPath = ".";
                 return true;
             }
@@ -230,7 +204,7 @@ namespace SVN.Core
             }
 
             LogError("Selected path is outside the Working Directory - path NOT stored.");
-            return true; // handled (error) - do not chain further
+            return true;
         }
 
         private void SetRevisionPathInput(string relPath, string type)
@@ -247,11 +221,6 @@ namespace SVN.Core
         }
 
         // ========== PATH RESOLUTION ==========
-        /// <summary>
-        /// Converts input (absolute or relative) into a path RELATIVE to WorkingDir ('/' as separator).
-        /// Returns "" when the input points at the working copy root ("." also maps to "").
-        /// Returns null when the path is outside the working copy or invalid.
-        /// </summary>
         private string ResolveRelativeInsideWorkingDir(string pathFromInput)
         {
             if (string.IsNullOrWhiteSpace(pathFromInput)) return null;
@@ -266,24 +235,18 @@ namespace SVN.Core
             if (!Path.IsPathRooted(p))
                 return p.TrimStart('/');
 
-            // Absolute path - must point inside the working copy
             string root = Path.GetFullPath(workingDir).Replace('\\', '/').TrimEnd('/');
             string abs = Path.GetFullPath(p).Replace('\\', '/').TrimEnd('/');
 
             if (abs.Equals(root, StringComparison.OrdinalIgnoreCase))
-                return ""; // working copy root
+                return "";
 
             if (abs.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
                 return abs.Substring(root.Length + 1);
 
-            return null; // outside the working copy
+            return null;
         }
 
-        /// <summary>
-        /// Checks whether an 'svn status' line refers to the specific target.
-        /// SVN may print the path as absolute (when we passed an absolute one) or as
-        /// relative (relative to the process cwd = workingDir) - both forms are compared.
-        /// </summary>
         private static bool StatusLineRefersToPath(string line, string absPath, string relPath)
         {
             if (string.IsNullOrWhiteSpace(line) || line.Length < 9) return false;
@@ -299,8 +262,6 @@ namespace SVN.Core
         // ========== HELPERS ==========
         private async Task<string> GetBranchUrlAsync(string workingDir, CancellationToken token)
         {
-            // RunDetailedAsync - full result; an error (e.g. E155007) lands in the exception
-            // message instead of being lost in a generic "SVN Error (Code 1)".
             var (output, error, exitCode) = await SvnRunner.RunDetailedAsync(
                 "info --show-item url", workingDir, retryOnLock: true, throwOnError: false, token);
 
@@ -464,9 +425,6 @@ namespace SVN.Core
                     }
                 }
 
-                // === NEW (FIX): sprawdzamy WYNIK operacji, nie tylko koniec aktywności.
-                // LastUpdateSucceeded jest ustawiany przez SVNUpdate ZAWSZE (sukces/cancel/
-                // błąd) przed zdjęciem IsProcessing — gdy pętla wyjdzie, wartość jest finalna.
                 bool success = svnManager?.LastUpdateSucceeded ?? false;
 
                 LogToRevisionPanel("");
@@ -614,7 +572,6 @@ namespace SVN.Core
                         revArgs.Append($"-c -{item.Start} ");
                 }
 
-                // RunDetailedAsync - no exception, explicit exit code + stderr.
                 LogStep(2, 4, "Bringing working copy to a uniform revision (svn update)...");
                 var (updOut, updErr, updExit) = await SvnRunner.RunDetailedAsync(
                     "update", workingDir, retryOnLock: true);
@@ -784,10 +741,6 @@ namespace SVN.Core
 
                 LogStep(2, 2, "Export process finished.");
 
-                // === NEW (FIX): wynik z modułu — wcześniej monitor raportował sukces
-                // ZAWSZE, także gdy svn export padł (SVNExternal łapie błąd wewnętrznie
-                // i nic nie komunikuje na zewnątrz). Panel drukował "COMPLETED
-                // SUCCESSFULLY" mimo porażki (np. E210002 po zerwaniu połączenia).
                 if (externalModule.LastExportSucceeded)
                 {
                     LogSuccess($"Export operation for r{rev} completed.");
@@ -825,7 +778,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Path resolution (absolute or relative input, "." = root)
             string cleanPath = ResolveRelativeInsideWorkingDir(relativeFilePath);
             if (cleanPath == null)
             {
@@ -846,7 +798,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Type guard: svn cat works on files only
             string wdEarly = svnManager?.WorkingDir;
             if (!string.IsNullOrEmpty(wdEarly))
             {
@@ -953,7 +904,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Path resolution (absolute or relative input, "." = root)
             string cleanPath = ResolveRelativeInsideWorkingDir(relativeFilePath);
             if (cleanPath == null)
             {
@@ -974,7 +924,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Type guard: svn cat works on files only
             string wdEarly = svnManager?.WorkingDir;
             if (!string.IsNullOrEmpty(wdEarly))
             {
@@ -1071,7 +1020,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Path resolution (absolute or relative input; "" = root - allowed)
             string cleanPath = ResolveRelativeInsideWorkingDir(relativeFolderPath);
             if (cleanPath == null)
             {
@@ -1084,7 +1032,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Type guard: svn export -r on a file would yield a single file, not a folder
             string wdEarly = svnManager?.WorkingDir;
             if (!string.IsNullOrEmpty(wdEarly) && cleanPath.Length > 0)
             {
@@ -1112,7 +1059,6 @@ namespace SVN.Core
 
             try
             {
-                // STEP 1: folder URL
                 LogStep(1, 3, "Resolving remote folder URL...");
 
                 string folderUrl = null;
@@ -1145,7 +1091,6 @@ namespace SVN.Core
                 LogDetail($"Source URL: {folderUrl}");
                 LogDetail($"Target Disk Path: {targetLocalPath}");
 
-                // STEP 2 (pre-check): does the folder exist at this revision?
                 LogStep(2, 3, $"Verifying folder exists at {revDisplay}...");
                 var (lsOut, lsErr, lsExit) = await SvnRunner.RunDetailedAsync(
                     $"ls -r {rev} \"{folderUrl}\"",
@@ -1161,7 +1106,6 @@ namespace SVN.Core
                         LogDetail("SVN URLs are not stable over time - the folder may have been");
                         LogDetail("added later, or moved/renamed after this revision.");
 
-                        // Find the earliest revision in which this path has history:
                         long? earliest = null;
                         try
                         {
@@ -1171,7 +1115,7 @@ namespace SVN.Core
                             if (logExit2 == 0 && !string.IsNullOrWhiteSpace(logOut))
                                 earliest = TryGetFirstRevisionFromLog(logOut);
                         }
-                        catch { /* non-blocking */ }
+                        catch { }
 
                         if (earliest.HasValue)
                         {
@@ -1205,7 +1149,6 @@ namespace SVN.Core
 
                 LogDetail("Folder found - proceeding with export.");
 
-                // STEP 3: export
                 LogStep(3, 3, $"Exporting folder structure for {revDisplay} (svn export)...");
                 string command = $"export -r {rev} \"{folderUrl}\" \"{targetLocalPath}\" --force";
                 LogCmd(command);
@@ -1253,10 +1196,7 @@ namespace SVN.Core
             }
         }
 
-        // ========== REVERT PATH (dispatcher: revision optional) ==========
-        // svn revert does NOT accept a revision (no -r option). The revision field changes the MODE:
-        //   empty   -> classic revert of local changes to BASE (svn revert)
-        //   filled  -> roll the FILE back to that revision's state (svn cat -r + Commit)
+        // ========== REVERT PATH ==========
         public async Task RevertPathAsync(string pathFromInput)
         {
             if (string.IsNullOrWhiteSpace(pathFromInput))
@@ -1271,7 +1211,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Optional revision number from UpdateRevisionInput
             string revRaw = svnUI?.UpdateRevisionInput?.text?.Trim();
             string rev = revRaw?.TrimStart('r', 'R');
             bool hasRevision = !string.IsNullOrWhiteSpace(revRaw);
@@ -1286,10 +1225,8 @@ namespace SVN.Core
                 return;
             }
 
-            // === MODE 2: ROLL FILE BACK TO A REVISION (revision field filled) ===
             if (hasRevision)
             {
-                // Double-click confirmation (separate key so it does not clash with Revert Commits)
                 string key = $"REVERT|{pathFromInput}|r{rev}";
                 float timeSinceLastClick = Time.time - _lastRevertPathClickTime;
 
@@ -1354,12 +1291,10 @@ namespace SVN.Core
                     return;
                 }
 
-                // Delegation to the proven svn cat implementation (-> overwrite -> M -> Commit)
                 await RestoreSingleFileAsync(cleanRel, rev);
                 return;
             }
 
-            // === MODE 1: CLASSIC REVERT OF LOCAL CHANGES (revision field empty) ===
             if (!TryEnterProcessing()) return;
 
             ClearLogPanel();
@@ -1386,8 +1321,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // Absolute path for SVN commands (independent of the process cwd);
-                // cleanRel == "" (root / ".") -> revert the whole working copy
                 string absPath = cleanRel.Length == 0
                     ? Path.GetFullPath(workingDir)
                     : Path.GetFullPath(Path.Combine(workingDir, cleanRel.Replace('/', Path.DirectorySeparatorChar)));
@@ -1395,7 +1328,6 @@ namespace SVN.Core
                 bool isDir = Directory.Exists(absPath) && !File.Exists(absPath);
                 string typeDesc = isDir ? "folder (recursive)" : "file";
 
-                // Status pre-check - full result (no exception)
                 LogStep(1, 3, $"Checking uncommitted changes on {typeDesc}...");
                 var (stOut, stErr, stExit) = await SvnRunner.RunDetailedAsync(
                     $"status \"{absPath}\"", workingDir, retryOnLock: false, throwOnError: false);
@@ -1426,7 +1358,7 @@ namespace SVN.Core
                     });
                     StopOperationTimer();
                     LogDetail($"Elapsed time: {GetElapsedTime()}");
-                    LogEnd(true);   // a no-op is NOT an error
+                    LogEnd(true);
                     return;
                 }
 
@@ -1452,7 +1384,6 @@ namespace SVN.Core
 
                 LogDetail($"{changeCount} uncommitted change(s) will be discarded.");
 
-                // Revert with an absolute path - full result (stderr lands in the panel)
                 LogStep(2, 3, $"Reverting {typeDesc}...");
                 string depthFlag = isDir ? "--depth infinity " : "";
                 string revertArgs = $"revert {depthFlag}\"{absPath}\"";
@@ -1495,11 +1426,6 @@ namespace SVN.Core
         }
 
         // ========== ERROR PARSING HELPERS ==========
-        /// <summary>
-        /// Extracts the actual SVN message from raw stderr - strips the SSH banner
-        /// ("WARNING! You are entering a restricted access system..." etc.) that the
-        /// server prepends to every connection.
-        /// </summary>
         private static string ExtractSvnError(string rawError)
         {
             if (string.IsNullOrWhiteSpace(rawError)) return "";
@@ -1507,9 +1433,6 @@ namespace SVN.Core
             return (idx >= 0 ? rawError.Substring(idx) : rawError).Trim();
         }
 
-        /// <summary>
-        /// Parses the first revision from 'svn log' output (header line "rNNN | author | date").
-        /// </summary>
         private static long? TryGetFirstRevisionFromLog(string logOutput)
         {
             foreach (var raw in logOutput.Split('\n'))

@@ -23,23 +23,33 @@ namespace SVN.Core
         private Task _runningTask;
         private Guid _sessionId = Guid.Empty;
         private int _disposed;
-        // === FIX (długi update) — konfiguracja pre-flightu (przełączasz w kodzie;
-        // SVNBase nie serializuje się w Inspectorze):
+
+        // === FIX (spójność komentarz↔wartość): poprzednio 'fetchByteWeights = true'
+        // i 'progressEstimation = true' — wbrew komentarzom opisującym wydajne
+        // defaulty. Na dużym repo oba naraz:
+        //   * 'svn status -u' PRZED update (drugi przebieg po tej samej sieci,
+        //     którą update i tak wykonuje),
+        //   * 'svn list -R' na CAŁYM repo (minuty na średnim projekcie),
+        // opóźniały start update'u o minuty — mimo że realne zmiany bywają
+        // kilku plików. Teraz: domyślnie OFF (pasek per plik x/y), opt-in
+        // przez ustawienie pola na true (np. z bootstrape'a / debugu).
+
         /// <summary>
         /// Wagi bajtowe paska = 'svn list -R' na CAŁYM repo (minuty na dużym
-        /// projekcie, niezależnie od liczby zmian). false (default) → pasek
-        /// per plik (x/y). true → pasek bajtowy z cache 10 min.
+        /// projekcie, niezależnie od liczby zmian). true → pasek bajtowy z cache
+        /// 10 min. false (default) → pasek per plik (x/y) — tani start.
         /// </summary>
-        public bool fetchByteWeights = true;
+        public bool fetchByteWeights = false;
+
         /// <summary>
         /// Estymacja x/y paska = pełne 'svn status -u' PRZED update — DRUGI
         /// przebieg po tej samej sieci, którą update i tak wykonuje wewnętrznie
         /// (~podwaja fazę sieciową na wolnych łączach).
         /// true  → pasek (x/y) + koszt pełnego odpytania przed startem.
-        /// false → update startuje NATYCHMIAST; pasek bez (x/y).
+        /// false (default) → update startuje NATYCHMIAST; pasek bez (x/y).
         /// Raport końcowy NIE traci nic (liczniki z realnych linii update'u).
         /// </summary>
-        public bool progressEstimation = true;
+        public bool progressEstimation = false;
 
         /// <summary>
         /// Cleanup WC przed każdym update (pełny przebieg). false (default) —

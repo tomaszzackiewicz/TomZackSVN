@@ -7,7 +7,10 @@ namespace SVN.Core
 {
     public class UnityMainThreadDispatcher : MonoBehaviour
     {
-        private static readonly Queue<Action> ExecutionQueue = new Queue<Action>();
+        // === FIX (allocation): LinkedList zamiast Queue. Re-queue "reszty" przy
+        // przekroczeniu budżetu klatki wcześniej alokował 2 kolekcje + 2 iteracje.
+        // LinkedList pozwala AddFirst w O(1) bez realokacji.
+        private static readonly LinkedList<Action> ExecutionQueue = new LinkedList<Action>();
         private static UnityMainThreadDispatcher _instance;
 
         // === ID wątku głównego złapane w bootstrap — dla IsMainThread.
@@ -44,7 +47,7 @@ namespace SVN.Core
             if (action == null) return;
             lock (ExecutionQueue)
             {
-                ExecutionQueue.Enqueue(action);
+                ExecutionQueue.AddLast(action);
             }
         }
 
@@ -52,7 +55,6 @@ namespace SVN.Core
         {
             if (ExecutionQueue.Count == 0)
             {
-                // === Domknięcie epizodu backlogu — tylko do pliku logu.
                 if (_backlogReported)
                 {
                     _backlogReported = false;
@@ -70,13 +72,16 @@ namespace SVN.Core
                 int count = Math.Min(ExecutionQueue.Count, 512);
                 for (int i = 0; i < count; i++)
                 {
-                    actionsToExecute.Add(ExecutionQueue.Dequeue());
+                    var node = ExecutionQueue.First;
+                    if (node == null) break;
+
+                    actionsToExecute.Add(node.Value);
+                    ExecutionQueue.RemoveFirst();
                 }
 
                 pendingTotal = actionsToExecute.Count + ExecutionQueue.Count;
             }
 
-            // === Edge-triggered — jeden komunikat na epizod, TYLKO do pliku logu.
             if (pendingTotal > BacklogThreshold && !_backlogReported)
             {
                 _backlogReported = true;
@@ -92,15 +97,13 @@ namespace SVN.Core
                 // (FIFO zachowane, brak utraty akcji).
                 if (executed > 0 && stopwatch.ElapsedMilliseconds > MaxProcessingMsPerFrame)
                 {
+                    // === FIX (allocation): AddFirst w odwrotnej kolejności — bez
+                    // budowania pośredniej listy ani nowej Queue. O(rest.Count) zamiast
+                    // O(rest.Count + ExecutionQueue.Count).
                     lock (ExecutionQueue)
                     {
-                        var rest = actionsToExecute.GetRange(executed, actionsToExecute.Count - executed);
-                        var combined = new Queue<Action>(rest.Count + ExecutionQueue.Count);
-                        foreach (var a in rest) combined.Enqueue(a);
-                        while (ExecutionQueue.Count > 0)
-                            combined.Enqueue(ExecutionQueue.Dequeue());
-                        ExecutionQueue.Clear();
-                        foreach (var a in combined) ExecutionQueue.Enqueue(a);
+                        for (int i = actionsToExecute.Count - 1; i >= executed; i--)
+                            ExecutionQueue.AddFirst(actionsToExecute[i]);
                     }
                     break;
                 }
@@ -162,11 +165,6 @@ namespace SVN.Core
             {
                 _instance = null;
 
-                // === Przy wyłączonym domain reload statyczna kolejka przeżywa
-                // sesje — akcje z poprzedniego play (pump umarł z obiektem, więc
-                // nigdy się nie wykonały) odpaliłyby się na starcie NASTĘPNEJ sesji,
-                // uderzając w zniszczone obiekty. Obiekt jest DontDestroyOnLoad,
-                // więc OnDestroy = koniec sesji/aplikacji — nic wartościowego nie tracimy.
                 lock (ExecutionQueue)
                 {
                     ExecutionQueue.Clear();

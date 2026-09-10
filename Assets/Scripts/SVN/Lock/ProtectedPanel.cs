@@ -20,10 +20,7 @@ using SVN.Core;
 ///
 /// === ZMIANA PROJEKTU (fix — stare wiersze nie przeżywają przełączenia):
 ///  OnProjectChanged: statyczny cache unieważniany ZAWSZE (także gdy panel
-///  nieaktywny — wcześniejszy handler w tym wypadku nie robił NIC); panel
-///  aktywny czyści wiersze natychmiast; refresh po 0.75 s (kaskada: anulo-
-///  wania, przełączenie WorkingDir — musi się uspokoić, by snapshot czytał
-///  NOWY katalog). OnEnable przy nieważnym cache dodatkowo czyści wiersze.
+///  nieaktywny); panel aktywny czyści wiersze natychmiast; refresh po 0.75 s.
 ///
 /// === ŚWIEŻOŚĆ LOCK CACHE — trzy poziomy:
 ///  1. Eventy/notify: cache aktualizuje NADAWCA zdarzenia przed sygnałem.
@@ -146,28 +143,23 @@ public class ProtectedPanel : MonoBehaviour
         {
             if (this == null) return;
 
-            // 1. ZAWSZE unieważnij statyczny cache — także gdy panel NIEAKTYWNY
-            //    (wtedy przy otwarciu OnEnable nie użyje starego snapshotu):
+            // 1. ZAWSZE unieważnij statyczny cache — także gdy panel NIEAKTYWNY:
             _lastSnapshot = null;
             _cacheRoot = null;
             _lastUpdateTimeUtc = DateTime.MinValue;
 
             if (!isActiveAndEnabled) return;
 
-            // 2. Aktywny: natychmiast czyścimy stary widok — zero wiszących
-            //    prefabów z poprzedniego projektu:
+            // 2. Aktywny: natychmiast czyścimy stary widok:
             ClearRows();
             ShowPlaceholder("Loading protected files…");
             UpdateMetaLabels();
 
-            // 3. Refresh ODROCZONY — kaskada zmiany projektu (anulowania,
-            //    przełączenie WorkingDir, kolejne eventy) ma 0.75 s na
-            //    ustatkowanie; snapshot czyta NOWY katalog:
+            // 3. Refresh ODROCZONY — kaskada zmiany projektu ma 0.75 s:
             _ = RefreshAfterProjectSwitchAsync(TimeSpan.FromSeconds(0.75));
         });
     }
 
-    /// <summary>Refresh po zmianie projektu — po czasie, gdy kaskada się uspokoi.</summary>
     private async Task RefreshAfterProjectSwitchAsync(TimeSpan delay)
     {
         try
@@ -179,15 +171,12 @@ public class ProtectedPanel : MonoBehaviour
         UnityMainThreadDispatcher.Enqueue(() =>
         {
             if (this == null || !isActiveAndEnabled) return;
-
-            // WorkingDir czytane TERAZ, nie w momencie eventu:
             RefreshProtectedAsync(ensureFreshLockCache: true);
         });
     }
 
     private void OnRepositoryStateChangedHandler()
     {
-        // Nadawca zdarzenia zaktualizował lock cache PRZED sygnałem:
         UnityMainThreadDispatcher.Enqueue(() =>
         {
             if (this == null || !isActiveAndEnabled) return;
@@ -197,11 +186,9 @@ public class ProtectedPanel : MonoBehaviour
 
     // ================= PUBLIC API =================
 
-    /// <summary>Ręczny Refresh — pełna deterministyka (rebuild + świeży cache).</summary>
     public void Button_Refresh()
         => RefreshProtectedAsync(forceRebuild: true, ensureFreshLockCache: true);
 
-    /// <summary>Wywołuj po akcjach z zewnątrz (np. LocksPanel). Thread-safe.</summary>
     public void NotifyProtectionChanged()
     {
         UnityMainThreadDispatcher.Enqueue(() => RefreshProtectedAsync());
@@ -209,6 +196,16 @@ public class ProtectedPanel : MonoBehaviour
 
     // ================= REFRESH =================
 
+    /// <summary>
+    /// === FIX (async void): całe ciało po utworzeniu CTS w try/catch.
+    /// Poprzednio `token.ThrowIfCancellationRequested()` po `RefreshLockCacheAsync`
+    /// było POZA try — przy cancel (drugi refresh w trakcie) leciał
+    /// OperationCanceledException z async void jako UNHANDLED (czerwony błąd
+    /// w konsoli + potencjalne przerwanie łańcucha OnRowActionCompleted).
+    ///
+    /// === FIX (CTS): CancelAndDisposeLater zamiast immediate Dispose —
+    /// spójność z resztą kodu.
+    /// </summary>
     private async void RefreshProtectedAsync(bool forceRebuild = false, bool ensureFreshLockCache = false)
     {
         if (svnManager == null)
@@ -224,38 +221,36 @@ public class ProtectedPanel : MonoBehaviour
             return;
         }
 
-        // Tylko najnowszy refresh wygrywa — CTS na samym starcie:
-        _refreshCts?.Cancel();
-        _refreshCts?.Dispose();
-        _refreshCts = new CancellationTokenSource();
-        CancellationTokenSource cts = _refreshCts;
-        CancellationToken token = cts.Token;
+        // === FIX (CTS): CancelAndDisposeLater zamiast Cancel+Dispose ===
+        SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _refreshCts, null));
+
+        var newCts = new CancellationTokenSource();
+        _refreshCts = newCts;
+        CancellationToken token = newCts.Token;
 
         if (_rowObjects.Count == 0)
             ShowPlaceholder("Loading protected files…");
 
-        // Poziom 2: wymuszony świeży lock cache (otwarcie/ręczny/projekt).
-        // Guard w module może zwrócić natychmiast, gdy inny refresh leci —
-        // na ten przypadek działa safety-net niżej:
-        if (ensureFreshLockCache)
-        {
-            var lockModule = svnManager.GetModule<SVNLock>();
-            if (lockModule != null)
-            {
-                try
-                {
-                    await lockModule.RefreshLockCacheAsync(true).ConfigureAwait(false);
-                }
-                catch { /* nie przerywamy — snapshot może być starszy */ }
-
-                token.ThrowIfCancellationRequested();
-            }
-        }
-
-        string root = svnManager.WorkingDir ?? "";
-
         try
         {
+            // Poziom 2: wymuszony świeży lock cache (otwarcie/ręczny/projekt).
+            if (ensureFreshLockCache)
+            {
+                var lockModule = svnManager.GetModule<SVNLock>();
+                if (lockModule != null)
+                {
+                    try
+                    {
+                        await lockModule.RefreshLockCacheAsync(true).ConfigureAwait(false);
+                    }
+                    catch { /* nie przerywamy — snapshot może być starszy */ }
+
+                    token.ThrowIfCancellationRequested();   // ← teraz w try
+                }
+            }
+
+            string root = svnManager.WorkingDir ?? "";
+
             List<SVNFileProtection.ProtectionInfo> snapshot =
                 await FetchSnapshotWithTimeoutAsync(protection, TimeSpan.FromSeconds(30))
                     .ConfigureAwait(false);
@@ -270,8 +265,7 @@ public class ProtectedPanel : MonoBehaviour
                 .OrderBy(i => i.Path ?? "", StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // Poziom 3: SAFETY-NET — wyścig na guard-flag (cache pusty +
-            // Protected bez właściciela → ktoś inny właśnie odświeża cache):
+            // Poziom 3: SAFETY-NET — wyścig na guard-flag:
             bool lockCacheEmpty = svnManager.LockCache != null &&
                                   svnManager.LockCache.Locks.Count == 0;
 
@@ -297,7 +291,6 @@ public class ProtectedPanel : MonoBehaviour
             {
                 if (token.IsCancellationRequested || this == null) return;
 
-                // Diagnoza pipeline (wykomentuj po stabilizacji):
                 Debug.Log($"[ProtectedPanel] Refreshed: {snapshot.Count} item(s), " +
                           $"changed={contentChanged}, forced={forceRebuild}");
 
@@ -348,9 +341,7 @@ public class ProtectedPanel : MonoBehaviour
 
     private void CancelRefresh()
     {
-        _refreshCts?.Cancel();
-        _refreshCts?.Dispose();
-        _refreshCts = null;
+        SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _refreshCts, null));
     }
 
     private static async Task<List<SVNFileProtection.ProtectionInfo>> FetchSnapshotWithTimeoutAsync(
@@ -367,7 +358,6 @@ public class ProtectedPanel : MonoBehaviour
         return await task.ConfigureAwait(false);
     }
 
-    /// <summary>Safety-net: re-sync, gdy snapshot wyszedł z pustym lock cache.</summary>
     private async Task ResyncAfterDelayAsync(TimeSpan delay)
     {
         try
@@ -408,7 +398,6 @@ public class ProtectedPanel : MonoBehaviour
 
     private void SetupRow(GameObject rowObject, SVNFileProtection.ProtectionInfo info)
     {
-        // Kontroler może siedzieć na korzeniu LUB na dziecku prefabu:
         var row = rowObject.GetComponent<ProtectedRowController>();
 
         if (row == null)
@@ -416,7 +405,6 @@ public class ProtectedPanel : MonoBehaviour
 
         if (row != null)
         {
-            // 4. akcja = revertAction (svn revert — Cancel/Restore):
             row.Setup(
                 info,
                 OnRowUnlock,
@@ -497,12 +485,6 @@ public class ProtectedPanel : MonoBehaviour
         UnityMainThreadDispatcher.Enqueue(() => RefreshProtectedAsync());
     }
 
-    /// <summary>
-    /// Unprotect/Publish/Finish — stan odzyskujemy ze snapshotu:
-    ///   PendingAdd → Publish = ProtectFiles (retry commitu),
-    ///   PendingRemoval → Finish = UnprotectFiles (retry usunięcia),
-    ///   Protected → Unprotect.
-    /// </summary>
     private async void OnRowUnprotect(string path, string lockOwner)
     {
         var protection = svnManager?.GetModule<SVNFileProtection>();
@@ -523,7 +505,6 @@ public class ProtectedPanel : MonoBehaviour
             () => protection.UnprotectFiles(new List<string> { abs }), path);
     }
 
-    /// <summary>Cancel (PendingAdd) / Restore (PendingRemoval) — svn revert.</summary>
     private void OnRowRevert(string path, string lockOwner)
     {
         _ = RunRowCommandAsync(

@@ -25,6 +25,7 @@ namespace SVN.Core
 
         private Transform _poolContainer;
         private Coroutine _renderCoroutine;
+        private Coroutine _enableLayoutCoroutine;
 
         private float _renderYPosition;
         private float _renderItemHeight = -1f;
@@ -78,10 +79,18 @@ namespace SVN.Core
                 return;
             }
 
+            // === FIX: zatrzymaj OBA — główny render i wiszący EnableLayoutSafely
+            // z poprzedniego renderu. Bez tego handler z poprzedniego renderu mógł
+            // włączyć layout w środku nowego renderu (glitch).
             if (_renderCoroutine != null)
             {
                 svnUI.StopCoroutine(_renderCoroutine);
                 _renderCoroutine = null;
+            }
+            if (_enableLayoutCoroutine != null)
+            {
+                svnUI.StopCoroutine(_enableLayoutCoroutine);
+                _enableLayoutCoroutine = null;
             }
 
             InitPoolContainer();
@@ -176,7 +185,7 @@ namespace SVN.Core
                 containerRect.sizeDelta = new Vector2(containerRect.sizeDelta.x, _renderYPosition);
             }
 
-            svnUI.StartCoroutine(EnableLayoutSafely());
+            _enableLayoutCoroutine = svnUI.StartCoroutine(EnableLayoutSafely());
 
             SVNLogBridge.LogToOutput($"[SVN] Render complete. {_instantiatedItems.Count} revisions, {_graphData.ColumnCount} branches tracked.");
             _renderCoroutine = null;
@@ -244,6 +253,7 @@ namespace SVN.Core
         {
             yield return null;
             EnableAutoLayout();
+            _enableLayoutCoroutine = null;
         }
 
         private void InstantiateGraphItem(
@@ -326,9 +336,11 @@ namespace SVN.Core
 
                 var go = child.gameObject;
 
+                // === FIX: kasuj TYLKO item-prefab bez SVNGraphItem (uszkodzony); obce
+                // dzieci (spacer/label spoza pipeline'u graf) ZOSTAW w spokoju.
                 if (!go.TryGetComponent<SVNGraphItem>(out _))
                 {
-                    UnityEngine.Object.Destroy(go);
+                    // nie ruszamy — to nie nasze dziecko, mogło być dodane przez inny system
                     continue;
                 }
 
@@ -352,10 +364,18 @@ namespace SVN.Core
                 _renderCoroutine = null;
             }
 
+            if (_enableLayoutCoroutine != null)
+            {
+                svnUI.StopCoroutine(_enableLayoutCoroutine);
+                _enableLayoutCoroutine = null;
+            }
+
             ReleaseActiveItemsToPool();
             _instantiatedItems.Clear();
             _cachedGraphItems.Clear();
             _graphData = null;
+
+            EnableAutoLayout();   // === FIX: po Clear graf jest pusty — bezpiecznie włączamy layout
         }
 
         public void CollapseAll() => ToggleAll(false);

@@ -21,7 +21,11 @@ namespace SVN.Core
 
         // === FIX K1: atomowe IsLoading (Interlocked) — zwykły bool przy szybkim
         // double-click przechodził check-then-set dwa razy → równoległe fetche
-        // tego samego węzła rozwidlały drzewo. Pole publiczne (konwencja SVNStatus.SVNStatusElement).
+        // tego samego węzła rozwidlały drzewo.
+        // === FIX: [NonSerialized] — jeśli RepoNode kiedykolwiek trafi do
+        // JsonUtility (np. cache drzewa), pole NIE ma iść do pliku: to runtime
+        // flaga, nie dana modelu.
+        [NonSerialized]
         public int _isLoadingFlag;   // 0 = false, 1 = true
 
         public bool IsLoading

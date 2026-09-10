@@ -1231,6 +1231,13 @@ namespace SVN.Core
             return size;
         }
 
+        /// <summary>
+        /// === FIX (KRYTYCZNY): PlayerPrefs.SetString/Save są main-thread-only.
+        /// Ta metoda jest wołana z ExecuteSvnOperationAsync PO awaitach (pula wątków) —
+        /// wcześniej pisała PlayerPrefs z wątku w tle (niezdefiniowane zachowanie,
+        /// w praktyce cichy no-op lub crash w buildzie). Teraz: SVNPrefs.SetString,
+        /// który sam dispatchuje na main gdy trzeba.
+        /// </summary>
         private void RegisterProjectInList(string path, string url, string keyPath)
         {
             if (string.IsNullOrWhiteSpace(path)) return;
@@ -1247,8 +1254,9 @@ namespace SVN.Core
             });
 
             string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
-            PlayerPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
-            PlayerPrefs.Save();
+
+            // === FIX: thread-safe zapis (main thread dispatchowany wewnątrz SVNPrefs)
+            SVNPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
         }
 
         private string GetRepoNameFromUrl(string url)
@@ -1279,8 +1287,11 @@ namespace SVN.Core
 
         private bool TryRestorePausedState(string currentPath, string currentUrl)
         {
-            string savedPath = PlayerPrefs.GetString("SVN_CheckoutPaused_Path", "");
-            string savedUrl = PlayerPrefs.GetString("SVN_CheckoutPaused_Url", "");
+            // === FIX: SVNPrefs.GetString zamiast bezpośredniego PlayerPrefs.
+            // Dziś metoda jest wołana z main thread przed pierwszym await, ale to
+            // niejawny kontrakt — SVNPrefs jest odporny na zmianę kontekstu.
+            string savedPath = SVNPrefs.GetString("SVN_CheckoutPaused_Path", "");
+            string savedUrl = SVNPrefs.GetString("SVN_CheckoutPaused_Url", "");
 
             if (string.IsNullOrEmpty(savedPath) || string.IsNullOrEmpty(savedUrl))
                 return false;

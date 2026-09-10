@@ -47,7 +47,10 @@ public class ProjectSelectionPanel : MonoBehaviour
     private UnityAction<string> _onSearchChanged;
     private UnityAction<int> _onSortChanged;
 
-    private static readonly SemaphoreSlim _jsonLock = new SemaphoreSlim(1, 1);
+    // === FIX (lost-update): _jsonLock usunięty — ProjectSettings ma własny
+    // lock i oferuje atomowe AddOrUpdateProject/UpdateProject. Mieszanie
+    // LoadProjects→mutacja→SaveProjects z atomowym API prowadziło do
+    // wyścigu (rename + relocate + debounce save → jedno z nadpisań ginęło).
 
     private static readonly HashSet<string> SvnKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -274,39 +277,31 @@ public class ProjectSelectionPanel : MonoBehaviour
     {
         try
         {
-            await _jsonLock.WaitAsync().ConfigureAwait(false);
-            try
+            await Task.Run(() =>
             {
-                var projectsList = ProjectSettings.LoadProjects();
-                string normalizedDir = project.workingDir.Replace("\\", "/").TrimEnd('/');
-                var existing = projectsList.Find(p =>
-                    !string.IsNullOrEmpty(p.workingDir) &&
-                    string.Equals(p.workingDir.Replace("\\", "/").TrimEnd('/'), normalizedDir, StringComparison.OrdinalIgnoreCase));
+                // === FIX (lost-update): atomowy UpdateProject — ProjectSettings
+                // trzyma własny lock przez cały read-modify-write. Bez tego
+                // równoległy debounce save z SVNManager (albo relocate) mógł
+                // nadpisać zmianę nazwy.
+                bool updated = ProjectSettings.UpdateProject(project.workingDir, p => p.projectName = newName);
 
-                if (existing != null)
+                if (updated)
                 {
-                    existing.projectName = newName;
-                    ProjectSettings.SaveProjects(projectsList);
                     SVNLogBridge.LogLine($"<color=green>Project renamed to:</color> {newName}");
 
                     if (svnManager != null && svnManager.CurrentProject != null)
                     {
-                        string currentNormalizedDir = svnManager.CurrentProject.workingDir.Replace("\\", "/").TrimEnd('/');
-                        if (string.Equals(currentNormalizedDir, normalizedDir, StringComparison.OrdinalIgnoreCase))
-                        {
+                        string a = (svnManager.CurrentProject.workingDir ?? "").Replace("\\", "/").TrimEnd('/');
+                        string b = (project.workingDir ?? "").Replace("\\", "/").TrimEnd('/');
+                        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
                             svnManager.CurrentProject.projectName = newName;
-                        }
                     }
                 }
                 else
                 {
                     SVNLogBridge.LogError("Project not found in list.");
                 }
-            }
-            finally
-            {
-                _jsonLock.Release();
-            }
+            }).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -413,36 +408,21 @@ public class ProjectSelectionPanel : MonoBehaviour
             await SvnRunner.RunAsync($"relocate \"{newUrl}\"", project.workingDir).ConfigureAwait(false);
             SVNLogBridge.LogLine($"<color=green>Relocated successfully to {newUrl}</color>");
 
-            await _jsonLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var projectsList = ProjectSettings.LoadProjects();
-                string normalizedDir = project.workingDir.Replace("\\", "/").TrimEnd('/');
-                var existing = projectsList.Find(p =>
-                    !string.IsNullOrEmpty(p.workingDir) &&
-                    string.Equals(p.workingDir.Replace("\\", "/").TrimEnd('/'), normalizedDir, StringComparison.OrdinalIgnoreCase));
+            // === FIX (lost-update): atomowy UpdateProject zamiast
+            // LoadProjects→Find→SaveProjects.
+            ProjectSettings.UpdateProject(project.workingDir, p => p.repoUrl = newUrl);
 
-                if (existing != null)
-                {
-                    existing.repoUrl = newUrl;
-                    ProjectSettings.SaveProjects(projectsList);
-                }
-            }
-            finally
-            {
-                _jsonLock.Release();
-            }
-
-            // === FIX: przez centrum — unieważnia cache filtrów RepoBrowsera
-            // i syncuje wszystkie pola UI (Settings / Checkout / Load).
             if (svnManager != null &&
                 svnManager.CurrentProject != null &&
                 string.Equals(
-                    svnManager.CurrentProject.workingDir.Replace("\\", "/").TrimEnd('/'),
-                    project.workingDir.Replace("\\", "/").TrimEnd('/'),
+                    (svnManager.CurrentProject.workingDir ?? "").Replace("\\", "/").TrimEnd('/'),
+                    (project.workingDir ?? "").Replace("\\", "/").TrimEnd('/'),
                     StringComparison.OrdinalIgnoreCase))
             {
                 svnManager.CurrentProject.repoUrl = newUrl;
+
+                // === FIX: przez centrum — unieważnia cache filtrów RepoBrowsera
+                // i syncuje wszystkie pola UI (Settings / Checkout / Load).
                 UnityMainThreadDispatcher.Enqueue(() =>
                     svnManager.SynchronizeConnectionSettings(SVNManager.SettingsSource.None, url: newUrl));
             }
@@ -515,9 +495,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         {
             var settingsModule = svnManager.GetModule<SVNSettings>();
 
-            // === FIX: NIE czyścimy ręcznie CurrentKey. LoadProjectCore robi
-            // to poprawnie — gdy projekt ma pusty privateKeyPath, zachowuje
-            // poprzednio zapisany klucz z SvnRunner.KeyPath.
             bool loaded = await svnManager.LoadProject(project).ConfigureAwait(false);
             if (!loaded)
             {
@@ -573,9 +550,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             var ui = SVNUI.Instance;
             if (ui == null) return;
 
-            // === FIX: przy otwieraniu panelu wypełnij go AKTUALNYM stanem
-            // managera — nie zostawiaj pustych pól ani starych wartości po
-            // poprzednim projekcie.
             string currentUrl = svnManager?.RepositoryUrl ?? "";
             string currentKey = svnManager?.CurrentKey ?? "";
 

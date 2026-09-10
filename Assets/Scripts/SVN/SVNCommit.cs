@@ -13,7 +13,6 @@ namespace SVN.Core
     public class SVNCommit : SVNBase, IDisposable
     {
         private CancellationTokenSource _commitCTS;
-        private List<SVNStatusElement> _items = new();
         private int _processingFlag;
         private int _disposed;
 
@@ -367,7 +366,7 @@ namespace SVN.Core
 
             var items = statusDict
                 .Where(x => DisplayStatuses.Contains(x.Value.Status ?? ""))
-                .Select(x => new SVNStatusElement
+                .Select(x => new SvnTreeElement
                 {
                     FullPath = x.Key?.Replace('\\', '/'),
                     Status = x.Value.Status,
@@ -375,8 +374,6 @@ namespace SVN.Core
                 })
                 .Where(x => !string.IsNullOrWhiteSpace(x.FullPath))
                 .ToList();
-
-            _items = items;
 
             long totalSize = await Task.Run(() =>
             {
@@ -413,7 +410,7 @@ namespace SVN.Core
             RenderCommitList(items, totalSize);
         }
 
-        public void RenderCommitList(List<SVNStatusElement> items, long totalSize)
+        public void RenderCommitList(List<SvnTreeElement> items, long totalSize)
         {
             string uiOutput;
 
@@ -446,14 +443,6 @@ namespace SVN.Core
             }
 
             PostToMainThread(() => SVNLogBridge.UpdateUIField(svnUI.CommitConsoleContent, uiOutput, append: false));
-        }
-
-        // === LEGACY: prawdopodobnie nieużywane (ExecuteCommitSelected czyta
-        // bezpośrednio z SVNStatus.GetCurrentData). Usuń po grep'ie.
-        public List<SvnTreeElement> GetSelectedFiles()
-        {
-            var status = svnManager.GetModule<SVNStatus>();
-            return status?.GetCurrentData().Where(e => e.IsChecked).ToList() ?? new List<SvnTreeElement>();
         }
 
         #endregion
@@ -597,7 +586,7 @@ namespace SVN.Core
                     return;
                 }
 
-                using var localCts = new CancellationTokenSource();
+                var localCts = new CancellationTokenSource();
                 // === FIX: SVNShared zamiast natychmiastowego Dispose starego CTS
                 SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _commitCTS, localCts));
 
@@ -826,7 +815,7 @@ namespace SVN.Core
                     return;
                 }
 
-                using var localCts = new CancellationTokenSource();
+                var localCts = new CancellationTokenSource();
                 // === FIX: SVNShared zamiast natychmiastowego Dispose starego CTS
                 SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _commitCTS, localCts));
 
@@ -1186,8 +1175,6 @@ namespace SVN.Core
                     int spaceIndex = line.IndexOf(' ');
                     if (spaceIndex < 0) continue;
 
-                    // (po .Trim() filePath nie może zaczynać się od spacji —
-                    //  martwa pętla usunięta)
                     string filePath = line[(spaceIndex + 1)..].Trim();
 
                     if (filePath.StartsWith("("))
@@ -1404,17 +1391,5 @@ namespace SVN.Core
         }
 
         #endregion
-
-        // === LEGACY: sprawdź grep'em ("SVNStatusElement", "GetSelectedFiles",
-        // "_items") — jeśli zero trafień poza tą klasą, usuń całą trójkę.
-        public class SVNStatusElement
-        {
-            public string FullPath;
-            public string Status;
-            public bool IsChecked;
-            public bool IsExpanded;
-            public bool IsFolder;
-            public List<SVNStatusElement> Children;
-        }
     }
 }

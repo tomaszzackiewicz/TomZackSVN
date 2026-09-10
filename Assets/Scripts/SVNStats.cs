@@ -1,4 +1,3 @@
-
 namespace SVN.Core
 {
     public struct SvnStats
@@ -7,7 +6,12 @@ namespace SVN.Core
         public int FileCount;
         public int ModifiedCount;
         public int AddedCount;
-        public int NewFilesCount; // ?
+        /// <summary>
+        /// === UWAGA (nazwa myląca): to liczba plików UNVERSIONED ('?'), nie
+        /// "nowo dodanych". Historyczna nazwa — przy refaktorze zmień na
+        /// UnversionedCount, ale to breaking dla serializacji JSON.
+        /// </summary>
+        public int NewFilesCount;
         public int DeletedCount;  // D, !
         public int ConflictsCount; // C
         public int IgnoredCount;

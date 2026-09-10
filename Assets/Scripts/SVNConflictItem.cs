@@ -73,7 +73,6 @@ public class SVNConflictItem : MonoBehaviour
             Show(theirsButton);
             Show(openButton);
 
-            // === FIX (UX): tooltipy wyjaśniające strategie
             SetTooltip(mineButton, "Keep YOUR local version (mine-full).\nDiscards all server changes for this file.");
             SetTooltip(theirsButton, "Take the SERVER version (theirs-full).\nDiscards all your local changes for this file.");
             SetTooltip(openButton, "Open in external 3-way merge tool.\nManually combine both versions.");
@@ -101,7 +100,6 @@ public class SVNConflictItem : MonoBehaviour
             Show(openButton);
             Show(resolvedButton);
 
-            // === FIX (UX): tooltipy
             SetTooltip(openButton, "Open in external 3-way merge tool.\nManually resolve conflicts.");
             SetTooltip(resolvedButton, "Mark as manually resolved.\nFile must NOT contain conflict markers.");
 
@@ -128,7 +126,6 @@ public class SVNConflictItem : MonoBehaviour
             Show(treeTheirsForceButton);
             Show(treeBaseForceButton);
 
-            // === FIX (UX): tooltipy dokumentujące asymetrię Mine vs Theirs
             SetTooltip(treeMineButton,
                 "Keep YOUR local directory/file.\nIf missing on disk, reverts to base.\nDoes NOT delete anything from repository.");
 
@@ -194,12 +191,21 @@ public class SVNConflictItem : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// === FIX: jeśli prefab nie ma SVNHoverHandler na przycisku, dodaj go
+    /// runtime'owo (spójnie z SvnLineController.Awake). Bez tego tooltipy
+    /// Mine/Theirs/Tree były CICHO ignorowane i użytkownik nie widział
+    /// ostrzeżeń o strategiach (destructive theirs-force!).
+    /// </summary>
     private static void SetTooltip(Button btn, string tooltip)
     {
         if (btn == null) return;
+
         var handler = btn.GetComponent<SVNHoverHandler>();
-        if (handler != null)
-            handler.TooltipText = tooltip;
+        if (handler == null)
+            handler = btn.gameObject.AddComponent<SVNHoverHandler>();
+
+        handler.TooltipText = tooltip;
     }
 
     private void ClearAndHide(Button button)

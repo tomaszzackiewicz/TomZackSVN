@@ -20,9 +20,18 @@ namespace SVN.Core
 
         public Dictionary<string, SVNLockDetails> Locks => _locks;
 
-        // DateTime (8B) — teoretycznie rozrywany na 32-bit; w praktyce Unity
-        // player 64-bit, akceptowalne. Ustawiany wyłącznie w ReplaceAll/Clear.
-        public DateTime LastRefreshUtc { get; private set; }
+        // === FIX (spójność): DateTime nie jest atomowe na wszystkich platformach
+        // i nie ma volatile dla value-type. Trzymamy pod lockiem, żeby odczyt
+        // IsValid() nigdy nie zobaczył nowego _locks ze starym LastRefreshUtc
+        // (albo odwrotnie).
+        private DateTime _lastRefreshUtc;
+        private readonly object _refreshLock = new();
+
+        public DateTime LastRefreshUtc
+        {
+            get { lock (_refreshLock) return _lastRefreshUtc; }
+            private set { lock (_refreshLock) _lastRefreshUtc = value; }
+        }
 
         public bool IsValid(double maxSeconds = 60.0)
         {

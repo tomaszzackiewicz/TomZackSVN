@@ -34,7 +34,7 @@ namespace SVN.Core
     ///   workingDir (FORMAT ZAPISU — po nim UpdateProject matchuje lastOpened
     ///   od zawsze; nasza normalizacja tylko jako fallback).
     /// </summary>
-    public class SVNBar : SVNBase
+    public class SVNBar : SVNBase, IDisposable
     {
         private string _svnVersionCached = "";
         private Task<string> _svnVersionTask;
@@ -52,7 +52,7 @@ namespace SVN.Core
         private volatile BarState _state = BarState.Idle;
         private volatile string _desiredContent = "";
         private volatile string _lastRenderedContent = "";
-        private readonly object _contentLock = new object();
+        
         private CancellationTokenSource _monitorCts;
 
         public BarState CurrentState => _state;
@@ -65,11 +65,7 @@ namespace SVN.Core
         {
             if (svnUI?.StatusInfoText == null) return;
 
-            string content;
-            lock (_contentLock)
-            {
-                content = _desiredContent;
-            }
+            string content = _desiredContent;
 
             if (content != _lastRenderedContent)
             {
@@ -80,12 +76,9 @@ namespace SVN.Core
 
         private void SetContent(string content, string source)
         {
-            lock (_contentLock)
+            if (_desiredContent != content)
             {
-                if (_desiredContent != content)
-                {
-                    _desiredContent = content;
-                }
+                _desiredContent = content;
             }
         }
 
@@ -119,10 +112,13 @@ namespace SVN.Core
         {
             if (_state != BarState.Idle) return;
 
-            _snapshotCts?.Cancel();
-            _snapshotCts?.Dispose();
-            _snapshotCts = new CancellationTokenSource();
-            var localToken = _snapshotCts.Token;
+            // === FIX (CTS): CancelAndDisposeLater zamiast natychmiastowego Dispose.
+            // Natychmiastowy Dispose mógł rzucić ObjectDisposedException w trwającym
+            // BuildSnapshotAsync, który sprawdzał token. Wzorzec spójny z resztą kodu.
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _snapshotCts, null));
+            var newCts = new CancellationTokenSource();
+            _snapshotCts = newCts;
+            var localToken = newCts.Token;
 
             try
             {
@@ -152,8 +148,6 @@ namespace SVN.Core
             if (_state != BarState.Idle) return;
             if (snapshot == null || !snapshot.IsValid) return;
 
-            // === FIX: jeśli nowy snapshot nie ma RemoteRevision, a stary ma,
-            // przenosimy stare dane HEAD, aby nie zniknął czerwony wskaźnik.
             var current = svnManager.CurrentSnapshot;
             if (current != null
                 && !string.IsNullOrEmpty(current.RemoteRevision)
@@ -192,21 +186,20 @@ namespace SVN.Core
             string total = svnManager.CurrentSnapshot?.RepoTotalSize ?? "...";
             SetContent(BuildUpdatingContent(projectName, size, total), "BeginUpdate");
 
-            _monitorCts?.Cancel();
-            _monitorCts?.Dispose();
-            _monitorCts = new CancellationTokenSource();
-            _ = RunSizeMonitor(svnManager.WorkingDir, _monitorCts.Token);
+            // === FIX (CTS): CancelAndDisposeLater zamiast immediate dispose.
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
+            var newMonitorCts = new CancellationTokenSource();
+            _monitorCts = newMonitorCts;
+            _ = RunSizeMonitor(svnManager.WorkingDir, newMonitorCts.Token);
         }
 
         public async Task EndUpdate(SVNProjectInfoSnapshot fallbackSnapshot)
         {
-            _monitorCts?.Cancel();
+            // === FIX (CTS): shared helper.
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
             _state = BarState.Idle;
 
-            // Rozmiary na dysku mogły się zmienić po update — wymuś świeży pomiar.
             ClearSizeCache();
-
-            // === CHECKOUT NIEKOMPLETNY: update doszedł do końca — reset flagi.
             _checkoutIncomplete = false;
 
             bool renderedFresh = false;
@@ -215,15 +208,11 @@ namespace SVN.Core
                 var freshSnapshot = await BuildSnapshotAsync(null, svnManager.WorkingDir);
                 if (freshSnapshot != null && freshSnapshot.IsValid)
                 {
-                    // === FIX: nazwa projektu z fallbacku ZAWSZE, nie warunkowo.
                     if (fallbackSnapshot != null && !string.IsNullOrEmpty(fallbackSnapshot.ProjectName))
                         freshSnapshot.ProjectName = fallbackSnapshot.ProjectName;
 
-                    // Po udanym update lokalna rev = HEAD (do czasu FillHeavy).
-                    // Nie pokazuj starego czerwonego HEAD z fallbacku.
                     if (fallbackSnapshot != null && !string.IsNullOrEmpty(fallbackSnapshot.Revision))
                     {
-                        // Preferuj rev z fallbacku (już po update), jeśli fresh jeszcze nie ma.
                         if (string.IsNullOrEmpty(freshSnapshot.Revision) || freshSnapshot.Revision == "unknown")
                             freshSnapshot.Revision = fallbackSnapshot.Revision;
 
@@ -247,7 +236,6 @@ namespace SVN.Core
             {
                 fallbackSnapshot.IsValid = true;
 
-                // Po udanym update nie trzymaj starego IsOutdated / starego HEAD.
                 if (!string.IsNullOrEmpty(fallbackSnapshot.Revision))
                 {
                     fallbackSnapshot.IsOutdated = false;
@@ -272,7 +260,8 @@ namespace SVN.Core
 
         public void EndUpdateFailed(SVNProjectInfoSnapshot oldSnapshot)
         {
-            _monitorCts?.Cancel();
+            // === FIX (CTS): shared helper.
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
             _state = BarState.Idle;
 
             if (oldSnapshot != null)
@@ -408,11 +397,6 @@ namespace SVN.Core
 
         // ==================== ROZMIARY ====================
 
-        /// <summary>
-        /// Liczy oba rozmiary w JEDNYM przebiegu po dysku:
-        /// - WorkingSize: pliki projektu (bez katalogów .svn)
-        /// - TotalSize:   całość na dysku (razem z .svn/pristine)
-        /// </summary>
         public async Task<(string WorkingSize, string TotalSize)> GetFolderSizesAsync(
             string path, CancellationToken token = default)
         {
@@ -460,10 +444,6 @@ namespace SVN.Core
             return includeSvnTemp ? sizes.TotalSize : sizes.WorkingSize;
         }
 
-        /// <summary>
-        /// Korzeń working copy (svn info --show-item wc-root; fallback: szukanie
-        /// .svn w górę). Cache per ścieżka wejściowa.
-        /// </summary>
         public async Task<string> GetWorkingCopyRootAsync(string path, CancellationToken token = default)
         {
             if (!string.IsNullOrEmpty(_wcRootCache.path) &&
@@ -488,10 +468,6 @@ namespace SVN.Core
             return root;
         }
 
-        /// <summary>
-        /// Rozmiary dla projektu ZAGNIEŻDŻONEGO w większym checkoucie.
-        /// Projekt == korzeń: jeden skan zwraca oba.
-        /// </summary>
         public async Task<(string WorkingSize, string TotalSize)> GetSizesForNestedAsync(
             string projectPath, string wcRoot, CancellationToken token = default)
         {
@@ -717,7 +693,6 @@ namespace SVN.Core
                 snapshot.SvnVersion = _svnVersionCached;
                 snapshot.CurrentUser = svnManager.CurrentUserName ?? "Unknown";
 
-                // === FIX: nie gub czerwonego HEAD przy lekkim odświeżeniu.
                 var prev = svnManager.CurrentSnapshot;
                 if (prev != null && prev.IsValid
                     && !string.IsNullOrEmpty(prev.RemoteRevision)
@@ -743,12 +718,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Ciężkie dane snapshotu, RÓWNOLEGLE: HEAD z serwera + skan dysku
-        /// (rozmiary) + pełny status (check '!'). Wynik doklejany do snapshotu
-        /// i UTRWALANY w settings. Pasek re-renderuje się przez Tick TYLKO gdy
-        /// bar w Idle i snapshot nadal aktualny.
-        /// </summary>
         private async Task FillHeavySnapshotDataAsync(
             SVNProjectInfoSnapshot snapshot, string path, string cacheKey)
         {
@@ -835,11 +804,12 @@ namespace SVN.Core
                 svnManager.CurrentSnapshot.WorkingCopySize,
                 svnManager.CurrentSnapshot.RepoTotalSize), "BeginCheckout");
 
-            _monitorCts?.Cancel();
-            _monitorCts?.Dispose();
-            _monitorCts = new CancellationTokenSource();
+            // === FIX (CTS): CancelAndDisposeLater.
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
+            var newMonitorCts = new CancellationTokenSource();
+            _monitorCts = newMonitorCts;
 
-            _ = RunSizeMonitor(workingDir, _monitorCts.Token);
+            _ = RunSizeMonitor(workingDir, newMonitorCts.Token);
         }
 
         public async Task EndCheckout(SVNProjectInfoSnapshot fallbackSnapshot)
@@ -849,10 +819,9 @@ namespace SVN.Core
 
         public void Dispose()
         {
-            _monitorCts?.Cancel();
-            _monitorCts?.Dispose();
-            _snapshotCts?.Cancel();
-            _snapshotCts?.Dispose();
+            // === FIX (CTS): CancelAndDisposeLater (spójnie z resztą kodu).
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _snapshotCts, null));
         }
     }
 }

@@ -62,15 +62,28 @@ namespace SVN.Core
             }
         }
 
+        /// <summary>
+        /// Escape argumentu SVN: '\' → '/', escape '"'.
+        ///
+        /// === FIX (spójność): usunięty TrimEnd('/') — poprzednio cicho obcinał
+        /// końcowe slashe z URL-i, co zmieniało intencję wywołań typu "svn ls url/"
+        /// (zmieniał na "svn ls url"). Do tego niespójne z 4 lokalnymi kopiami w
+        /// SVNLog/SVNRepoBrowser/SVNExternal/SvnMergeUrlResolver, które NIE trimowały
+        /// — ten sam input dawał różne wyniki zależnie od tego, kto wołał.
+        ///
+        /// Caller który chce trim (np. buduje repoRoot), robi to sam przed wołaniem.
+        /// </summary>
         public static string EscapeSvnArg(string arg)
         {
-            if (string.IsNullOrWhiteSpace(arg)) return arg;
-            return arg.Replace("\"", "\\\"");
+            if (string.IsNullOrEmpty(arg)) return arg;
+            return arg.Replace('\\', '/').Replace("\"", "\\\"");
         }
 
         /// Bezpieczny start procesu — Process.Start w lambdach dispatcherowych
         /// wykonuje się na main threadzie PO zakończeniu try/catch na puli:
         /// Win32Exception (brak skojarzenia/pliku) uciekał poza wszystkie catche.
+        /// === FIX: opcjonalny out Process — caller, który chce trackować proces
+        /// (SvnProcessTracker.Register), nie może tego zrobić z 'using var'.
         public static bool TryStartProcess(ProcessStartInfo psi, Action<Exception> onError = null)
         {
             try
@@ -82,6 +95,22 @@ namespace SVN.Core
             {
                 onError?.Invoke(ex);
                 return false;
+            }
+        }
+
+        /// Wariant zwracający Process (dla callerów, którzy chcą go śledzić).
+        /// NIE disposuje procesu — odpowiedzialność przenosi się na callera
+        /// (np. SvnProcessTracker.Register + Dispose po Exited).
+        public static Process TryStartProcessTracked(ProcessStartInfo psi, Action<Exception> onError = null)
+        {
+            try
+            {
+                return Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(ex);
+                return null;
             }
         }
 

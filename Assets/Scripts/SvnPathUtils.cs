@@ -11,12 +11,18 @@ namespace SVN.Core
         /// <summary>
         /// Czy ścieżka leży wewnątrz katalogu administracyjnego SVN (.svn).
         /// Bezpieczniejsze niż Contains(".svn") — nie łapie plików typu "foo.svn".
+        ///
+        /// === FIX (relatywne ścieżki): doklejamy wiodący "/", żeby ".svn/foo"
+        /// (bez wiodącego separatora) też było poprawnie rozpoznane.
         /// </summary>
         public static bool IsInsideSvnAdminDir(string fullPath)
         {
             if (string.IsNullOrEmpty(fullPath)) return false;
 
             string n = fullPath.Replace('\\', '/');
+            if (n.Length == 0 || n[0] != '/')
+                n = "/" + n;
+
             int idx = 0;
             while ((idx = n.IndexOf("/.svn", idx, System.StringComparison.OrdinalIgnoreCase)) >= 0)
             {

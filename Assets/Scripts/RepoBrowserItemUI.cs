@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.UI;
 
 namespace SVN.Core
@@ -31,7 +32,39 @@ namespace SVN.Core
         private static readonly Color DirNameColor = new(0f, 0.2f, 0.4f);
         private static readonly Color FileNameColor = new(0.7f, 0.85f, 1f);
 
+        // === FIX (perf): cache indent-stringów per głębokość — bez tego rebuild
+        // 198 itemów alokuje 198 StringBuilder + 198 string per filtr change.
+        // Klucz: int depth. Wartość: niemutowalny string.
+        private static readonly System.Collections.Generic.Dictionary<int, string> IndentCache = new();
+
+        // === FIX (perf, dispatcher): cache UnityAction per przycisk — eliminuje
+        // ~1200 closures per rebuild. Wcześniej każdy ActivateButton robił
+        // `onClick.AddListener(() => action())` (nowy closure) + sam action
+        // (kolejny closure dla export). Rebuild 198 itemów × 6 buttonów = ~1200
+        // closures → GC pressure, alokacje w hot path zmiany filtra.
+        // Teraz: delegaty tworzone RAZ w Awake (method-group assignment, bez
+        // closures), Setup tylko podmienia listener.
+        private UnityAction _onCopyUrlClick;
+        private UnityAction _onCopyRelPathClick;
+        private UnityAction _onLogClick;
+        private UnityAction _onExportClick;
+        private UnityAction _onBlameClick;
+        private UnityAction _onCheckoutFolderClick;
+
         public RepoNode Node => _node;
+
+        private void Awake()
+        {
+            // Method-group assignment — brak closures, delegate instances stałe
+            // na całe życie instancji. RemoveListener porównuje target+method,
+            // więc zadziała poprawnie przy każdym Setup.
+            _onCopyUrlClick = CopyUrlToClipboard;
+            _onCopyRelPathClick = CopyRelativePath;
+            _onLogClick = ShowLog;
+            _onExportClick = OnExportClick;
+            _onBlameClick = ShowBlame;
+            _onCheckoutFolderClick = CheckoutFolderAction;
+        }
 
         public void Initialize(RepoNode node, SVNRepoBrowser browser)
         {
@@ -60,11 +93,17 @@ namespace SVN.Core
                 return;
             }
 
-            var sb = new System.Text.StringBuilder(depth * 4);
-            for (int i = 0; i < depth; i++)
-                sb.Append(i == depth - 1 ? "└─ " : " |  ");
+            if (!IndentCache.TryGetValue(depth, out string cachedIndent))
+            {
+                var sb = new System.Text.StringBuilder(depth * 4);
+                for (int i = 0; i < depth; i++)
+                    sb.Append(i == depth - 1 ? "└─ " : " |  ");
 
-            indentText.text = sb.ToString();
+                cachedIndent = sb.ToString();
+                IndentCache[depth] = cachedIndent;
+            }
+
+            indentText.text = cachedIndent;
         }
 
         private void RenderName()
@@ -117,19 +156,22 @@ namespace SVN.Core
             SetButtonActive(exportBtn, false); SetButtonActive(copyPathBtn, false);
             SetButtonActive(checkoutFolderBtn, false); SetButtonActive(copyRelPathBtn, false);
 
-            if (copyPathBtn != null) ActivateButton(copyPathBtn, CopyUrlToClipboard, "Copy full URL.");
-            if (copyRelPathBtn != null) ActivateButton(copyRelPathBtn, CopyRelativePath, "Copy relative path (without server URL).");
-            if (logBtn != null) ActivateButton(logBtn, ShowLog, "View Log.");
-
-            if (exportBtn != null) ActivateButton(exportBtn, () => SafeFireAndForget(ExportItemAsync), "Export file or folder to disk.");
+            // === FIX: ActivateButton przyjmuje UnityAction — bez `() => action()`
+            // wrappowania. Delegaty są cache'owane w polach, więc RemoveListener
+            // usuwa KONKRETNY delegat (nie wszystkich), a AddListener nie tworzy
+            // nowej closure.
+            if (copyPathBtn != null) ActivateButton(copyPathBtn, _onCopyUrlClick, "Copy full URL.");
+            if (copyRelPathBtn != null) ActivateButton(copyRelPathBtn, _onCopyRelPathClick, "Copy relative path (without server URL).");
+            if (logBtn != null) ActivateButton(logBtn, _onLogClick, "View Log.");
+            if (exportBtn != null) ActivateButton(exportBtn, _onExportClick, "Export file or folder to disk.");
 
             if (_node.IsDirectory)
             {
-                if (checkoutFolderBtn != null) ActivateButton(checkoutFolderBtn, CheckoutFolderAction, "Checkout this specific folder to disk.");
+                if (checkoutFolderBtn != null) ActivateButton(checkoutFolderBtn, _onCheckoutFolderClick, "Checkout this specific folder to disk.");
             }
             else
             {
-                if (blameBtn != null) ActivateButton(blameBtn, ShowBlame, "Blame.");
+                if (blameBtn != null) ActivateButton(blameBtn, _onBlameClick, "Blame.");
             }
         }
 
@@ -146,6 +188,11 @@ namespace SVN.Core
         private void ShowLog() => SVNManager.Instance?.GetModule<SVNLog>()?.ShowLogForPath(_node.FullUrl);
         private void ShowBlame() => SVNManager.Instance?.GetModule<SVNBlame>()?.ShowBlameInMainConsole(_node.FullUrl);
         private void CopyUrlToClipboard() { GUIUtility.systemCopyBuffer = _node.FullUrl; }
+
+        // === FIX (perf): method-group wrapper dla exportu — poprzednio
+        // `() => SafeFireAndForget(ExportItemAsync)` alokowało closure per
+        // Setup call. Teraz delegate jest przypisany raz w Awake.
+        private void OnExportClick() => SafeFireAndForget(ExportItemAsync);
 
         private async Task ExportItemAsync()
         {
@@ -244,12 +291,18 @@ namespace SVN.Core
             if (btn != null) btn.gameObject.SetActive(active);
         }
 
-        private static void ActivateButton(Button btn, Action action, string tooltip)
+        /// <summary>
+        /// === FIX (perf): przyjmuje UnityAction bezpośrednio — brak wrappowania
+        /// w `() => action()`. RemoveListener usuwa konkretny delegat (nie
+        /// wszystkich), co jest bezpieczniejsze przy ewentualnych innych
+        /// listener'ach na tym samym przycisku.
+        /// </summary>
+        private static void ActivateButton(Button btn, UnityAction action, string tooltip)
         {
             if (btn == null || action == null) return;
             btn.gameObject.SetActive(true);
-            btn.onClick.RemoveAllListeners();
-            btn.onClick.AddListener(() => action());
+            btn.onClick.RemoveListener(action);
+            btn.onClick.AddListener(action);
             BindHoverStatic(btn, tooltip);
         }
 

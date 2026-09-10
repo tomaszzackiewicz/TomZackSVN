@@ -38,6 +38,14 @@ namespace SVN.Core
         private static readonly Dictionary<TextMeshProUGUI, StringBuilder> _fieldBuffers = new();
         private static int _fieldFlushQueued;           // 0/1
 
+        // === FIX (dispatcher flood): dedup masowych OnDisable → ClearTooltip.
+        // RepoBrowser/SVNStatus teardown niszczy N itemów × M buttonów, każdy
+        // SVNHoverHandler.OnDisable woła ClearTooltip. Rebuild 198-itemowy z 6
+        // buttonami = 1188 identycznych akcji w dispatcherze ("ustaw pusty
+        // tekst na pusty tekst"). Backlog 1191 w logu diagnostycznym.
+        // Flaga 0/1 koaleskuje wszystkie wywołania w jednej klatce w 1 akcję.
+        private static int _clearTooltipQueued;         // 0/1
+
         // Guard rekurencji handlerów globalnych (LogLine → logger → Debug.Log
         // → logMessageReceivedThreaded → LogLine → ...).
         [ThreadStatic] private static bool _inGlobalHandler;
@@ -141,10 +149,14 @@ namespace SVN.Core
                 return;
             }
 
-            bool forceFlush = level.Equals("ERROR", StringComparison.OrdinalIgnoreCase) ||
-                              level.Equals("EXCEPTION", StringComparison.OrdinalIgnoreCase) ||
-                              level.Equals("UNHANDLED_DOMAIN", StringComparison.OrdinalIgnoreCase) ||
-                              level.Equals("UNOBSERVED_TASK", StringComparison.OrdinalIgnoreCase);
+            // === FIX (null-safe): `level.Equals(...)` rzucał NRE gdy level == null
+            // (parametr publicznego API — caller zewnętrzny mógł przekazać null).
+            // string.Equals(string, string, StringComparison) jest null-safe.
+            bool forceFlush =
+                string.Equals(level, "ERROR", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(level, "EXCEPTION", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(level, "UNHANDLED_DOMAIN", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(level, "UNOBSERVED_TASK", StringComparison.OrdinalIgnoreCase);
 
             int count;
             lock (_bufferLock)
@@ -459,10 +471,31 @@ namespace SVN.Core
             });
         }
 
+        /// <summary>
+        /// === FIX (dispatcher flood): dedup — jedno zakolejkowane czyszczenie
+        /// na tick. Masowe teardowny UI (RepoBrowser rebuild: 198 itemów × 6
+        /// buttonów = 1188 OnDisable → ClearTooltip; drzewo statusów, drzewo
+        /// commitów podobnie) zalewały dispatcher setkami IDENTYCZNYCH akcji
+        /// typu "ustaw pusty tekst na pusty tekst". Wizualny efekt identyczny,
+        /// a dispatcher nie ma backlogu 1191 akcji.
+        ///
+        /// Bezpieczeństwo dedup:
+        ///  - dwa ClearTooltip w tej samej klatce → drugie pomijane, oba
+        ///    chciały to samo (pusty tekst).
+        ///  - LogTooltip (hover-in) NIE jest dedupowany — kolejność FIFO w
+        ///    dispatcherze zachowuje intencję (set → clear → set = set).
+        ///  - flaga zwalniana na main thread PRZED wykonaniem akcji, więc
+        ///    kolejne ClearTooltip w następnej klatce zadziała normalnie.
+        /// </summary>
         public static void ClearTooltip()
         {
+            if (Interlocked.CompareExchange(ref _clearTooltipQueued, 1, 0) == 1)
+                return;
+
             UnityMainThreadDispatcher.Enqueue(() =>
             {
+                Interlocked.Exchange(ref _clearTooltipQueued, 0);
+
                 if (SVNUI.Instance == null || SVNUI.Instance.TooltipText == null) return;
                 SVNUI.Instance.TooltipText.text = "";
             });
@@ -505,6 +538,11 @@ namespace SVN.Core
 
             lock (_fieldLock) _fieldBuffers.Clear();
             Interlocked.Exchange(ref _fieldFlushQueued, 0);
+
+            // === FIX: reset dedup flagi tooltipa — inaczej kolejna sesja Play
+            // (edytor z wył. Domain Reload) zaczynałaby z _clearTooltipQueued == 1
+            // i ClearTooltip byłby nieaktywny do pierwszej akcji main thread.
+            Interlocked.Exchange(ref _clearTooltipQueued, 0);
 
             SVNLogger.Shutdown();
 

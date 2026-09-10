@@ -30,11 +30,16 @@ namespace SVN.Core
             return sb.ToString();
         }
 
+        /// <summary>
+        /// === FIX (edge case): '> 0' zwracało CAŁY wielolinijkowy komunikat,
+        /// gdy wiadomość zaczynała się od '\n' (IndexOf == 0). Teraz każdy
+        /// znaleziony '\n' (także na pozycji 0) ucina — spójne z intencją.
+        /// </summary>
         public static string GetShortError(Exception ex)
         {
             string msg = GetFullExceptionMessage(ex);
             int idx = msg.IndexOf('\n');
-            return idx > 0 ? msg.Substring(0, idx).Trim() : msg.Trim();
+            return idx >= 0 ? msg.Substring(0, idx).Trim() : msg.Trim();
         }
     }
 }

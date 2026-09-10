@@ -18,7 +18,7 @@ namespace SVN.Core
     /// więcej o tym nie myśli. Podpinamy się pod istniejący event
     /// SVNManager.OnProjectChanged (zero zmian w managerze).
     /// </summary>
-    public class SVNAutoLock : SVNBase
+    public class SVNAutoLock : SVNBase, IDisposable
     {
         // ================== KONFIGURACJA ==================
         private const int FlagCheckMs = 500;             // check flagi dysku
@@ -31,6 +31,7 @@ namespace SVN.Core
         private int _enabledFlag;
         private int _loopRunning;
         private CancellationTokenSource _loopCts;
+        private int _disposed;   // === FIX: guard dla Dispose (Interlocked)
 
         private DateTime _lastPollUtc = DateTime.MinValue;
         private DateTime _lastOtherLockLogUtc = DateTime.MinValue;
@@ -81,10 +82,11 @@ namespace SVN.Core
             get => Interlocked.CompareExchange(ref _enabledFlag, 0, 0) == 1;
             set
             {
-                // Jedyna rzecz na wątku UI: flip flagi + start/stop pętli w tle.
+                // === FIX (CTS lifecycle): shared helper zamiast surowego Cancel.
+                // Cykl ON→OFF→ON... bez tego gubił CTS-y (bez Dispose).
                 Interlocked.Exchange(ref _enabledFlag, value ? 1 : 0);
                 if (value) StartLoop();
-                else _loopCts?.Cancel();
+                else SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _loopCts, null));
 
                 Persist(value);   // === zapamiętanie per project
             }
@@ -135,15 +137,18 @@ namespace SVN.Core
             }
         }
 
-        // ================== PĘTLA (bez zmian względem działającej wersji) ==================
+        // ================== PĘTLA ==================
 
         private void StartLoop()
         {
             if (Interlocked.Exchange(ref _loopRunning, 1) == 1) return;
 
-            _loopCts?.Cancel();
-            _loopCts = new CancellationTokenSource();
-            var token = _loopCts.Token;
+            // === FIX (CTS lifecycle): shared helper zamiast surowego Cancel.
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _loopCts, null));
+
+            var newCts = new CancellationTokenSource();
+            _loopCts = newCts;
+            var token = newCts.Token;
 
             _ = Task.Run(() => LoopAsync(token));
         }
@@ -213,7 +218,7 @@ namespace SVN.Core
             return true;
         }
 
-        // ================== POLL (= rdzeń "Lock All Modified", bez zmian) ==================
+        // ================== POLL (= rdzeń "Lock All Modified") ==================
 
         private async Task PollOnceAsync(CancellationToken token)
         {
@@ -319,6 +324,24 @@ namespace SVN.Core
                 else
                     SVNLogBridge.LogLine(message, append);
             });
+        }
+
+        // ================== DISPOSE ==================
+
+        /// <summary>
+        /// === FIX: brakowało pełnego Dispose (moduł nie był IDisposable).
+        /// Cykl ON→OFF→ON gubił CTS-y, a przy wyłączonym Domain Reload
+        /// w edytorze handler OnProjectChanged zostawał na starym managerze.
+        /// </summary>
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+            Interlocked.Exchange(ref _enabledFlag, 0);
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _loopCts, null));
+
+            if (svnManager != null)
+                svnManager.OnProjectChanged -= OnProjectChangedHandler;
         }
     }
 }

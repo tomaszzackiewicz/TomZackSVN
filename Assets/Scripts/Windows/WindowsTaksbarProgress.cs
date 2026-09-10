@@ -17,23 +17,30 @@ public static class WindowsTaskbarProgress
 
 #if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
 
+    // === FIX (sygnatury HRESULT): native metody ITaskbarList3 zwracają HRESULT
+    // (int, S_OK == 0). [PreserveSig] + void było technicznie działające
+    // (marshaller ignorował wynik), ale formalnie nadużyciem — teraz wszystkie
+    // zwracają int i sprawdzamy HrInit. Vtable kolejności bez zmian:
+    //   ITaskbarList → ITaskbarList2 → ITaskbarList3.
+    // Metody poniżej SetProgressState istnieją w interfejsie, ale nie są
+    // używane — pominięte legalnie (nie wołamy ich).
     [ComImport, Guid("ea1afb91-9e28-4b86-90e9-9e9f8a5eefaf"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface ITaskbarList3
     {
-        // UWAGA: kolejność vtable krytyczna (ITaskbarList → ITaskbarList2 → ITaskbarList3);
-        // metody poniżej SetProgressState istnieją, ale nieużywane — pominięte legalnie.
-        [PreserveSig] void HrInit();
-        [PreserveSig] void AddTab(IntPtr hwnd);
-        [PreserveSig] void DeleteTab(IntPtr hwnd);
-        [PreserveSig] void ActivateTab(IntPtr hwnd);
-        [PreserveSig] void SetActiveAlt(IntPtr hwnd);
-        [PreserveSig] void MarkFullscreenWindow(IntPtr hwnd, [MarshalAs(UnmanagedType.Bool)] bool fFullscreen);
-        [PreserveSig] void SetProgressValue(IntPtr hwnd, ulong ullCompleted, ulong ullTotal);
-        [PreserveSig] void SetProgressState(IntPtr hwnd, TaskbarState tbpFlags);
+        [PreserveSig] int HrInit();
+        [PreserveSig] int AddTab(IntPtr hwnd);
+        [PreserveSig] int DeleteTab(IntPtr hwnd);
+        [PreserveSig] int ActivateTab(IntPtr hwnd);
+        [PreserveSig] int SetActiveAlt(IntPtr hwnd);
+        [PreserveSig] int MarkFullscreenWindow(IntPtr hwnd, [MarshalAs(UnmanagedType.Bool)] bool fFullscreen);
+        [PreserveSig] int SetProgressValue(IntPtr hwnd, ulong ullCompleted, ulong ullTotal);
+        [PreserveSig] int SetProgressState(IntPtr hwnd, TaskbarState tbpFlags);
     }
 
     [ComImport, Guid("56fdf344-fd6d-11d0-958a-006097c9a090"), ClassInterface(ClassInterfaceType.None)]
     private class CTaskbarList { }
+
+    private const int S_OK = 0;
 
     private static ITaskbarList3 _taskbarList;
     private static IntPtr _mainWindowHandle;
@@ -52,7 +59,17 @@ public static class WindowsTaskbarProgress
                 return false;
 
             _taskbarList = (ITaskbarList3)new CTaskbarList();
-            _taskbarList.HrInit();
+
+            int hr = _taskbarList.HrInit();
+            if (hr != S_OK)
+            {
+                // HrInit nie powiodło się — interfejs niedostępny na tym systemie.
+                // Zwolnij referencję, żeby kolejne SetState próbowały od nowa.
+                _taskbarList = null;
+                _mainWindowHandle = IntPtr.Zero;
+                return false;
+            }
+
             return true;
         }
         catch
@@ -81,6 +98,14 @@ public static class WindowsTaskbarProgress
         try
         {
             if (total <= 0) return;
+
+            // === Defensywnie: klamp przed rzutowaniem na ulong. Ujemne wartości
+            // po rzutowaniu na ulong stają się ogromne → pasek dostawał
+            // nonsensowne "current > total" (wizualny glitch). Caller i tak
+            // powinien podawać poprawne, ale to jednolinijkowa ochrona.
+            if (current < 0) current = 0;
+            if (current > total) current = total;
+
             _taskbarList.SetProgressValue(_mainWindowHandle, (ulong)current, (ulong)total);
         }
         catch { }

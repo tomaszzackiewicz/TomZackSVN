@@ -49,8 +49,6 @@ namespace SVN.Core
         private string mergeToolPath = string.Empty;
         private bool _focusRefreshRunning;
         public SVNOperationInfo OperationInfo;
-        public static string MainThreadWorkingDir;
-        public static string CachedUserName;
         private bool _isApplyingSnapshot;
         public SVNLockCache LockCache = new SVNLockCache();
         private FileSystemWatcher _folderWatcher;
@@ -169,9 +167,6 @@ namespace SVN.Core
             Instance = this;
 
             _lifetimeCts = new CancellationTokenSource();
-
-            MainThreadWorkingDir = this.WorkingDir;
-            CachedUserName = this.CurrentUserName;
 
             SVNLogger.Initialize();
 
@@ -617,7 +612,10 @@ namespace SVN.Core
                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
             });
 
-            _ = RefreshStatusAsync().ContinueWith(t =>
+            // === FIX (kosmetyka): usunięty wrapper RefreshStatusAsync() —
+            // bezpośrednie wywołanie RefreshStatus() (wrapper robił tylko
+            // `await RefreshStatus()` i nic więcej).
+            _ = RefreshStatus().ContinueWith(t =>
             {
                 if (t.IsFaulted)
                     SVNLogBridge.LogError($"[Init] Background refresh failed: {t.Exception?.InnerException?.Message}");
@@ -709,11 +707,6 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogErrorToOutput($"[SVN Init] Auto-switch to /trunk failed: {ex.Message}");
             }
-        }
-
-        private async Task RefreshStatusAsync()
-        {
-            await RefreshStatus();
         }
 
         public void SetActiveProject(SVNProject project)
@@ -1531,7 +1524,12 @@ namespace SVN.Core
 
             _modules.Clear();
 
-            _managerLock?.Dispose();
+            // === FIX: NIE disposuj _managerLock — jest STATYCZNY i musi przetrwać
+            // kolejne sesje Play (edytor z wyłączonym Domain Reload). Dispose ustawia
+            // _disposed = true nieodwracalnie → pierwszy EnterWriteAsync w następnej
+            // sesji rzuca ObjectDisposedException → LoadProject nie działa.
+            // Semafor wewnątrz AsyncReaderWriterLock nie wymaga jawnego dispose
+            // (zwalniany przez GC razem ze static-iem).
         }
 
 #if UNITY_EDITOR

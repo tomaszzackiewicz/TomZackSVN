@@ -25,11 +25,16 @@ public class SvnTreeView : MonoBehaviour
 
     public void RefreshUI(List<SvnTreeElement> elements, SVNStatus manager)
     {
-        // === FIX K1: SYNCHRONICZNE wyłączenie nadmiaru PRZED startem nowej
-        // korutyny. Wcześniej StopCoroutine w połowie renderu zostawiał w puli
-        // AKTYWNE wiersze ze starymi danymi i DZIAŁAJĄCYMI przyciskami (Commit/
-        // Revert na elementach poprzedniego projektu!) przez setki ms, aż nowy
-        // refresh dojdzie do ich poolIndex. Teraz: natychmiast czysty stan bazowy.
+        // === FIX (kolejność): najpierw StopCoroutine, potem deaktywacja puli.
+        // Wcześniej deaktywacja biegła PRZED Stop, co przy re-entrant wywołaniu
+        // z innego wątku (dziś nie, ale kontrakt jest niejasny) mogło dopuścić
+        // korutynę do ponownego Setup na nieaktywnych kontrolerach.
+        if (_refreshCoroutine != null)
+        {
+            StopCoroutine(_refreshCoroutine);
+            _refreshCoroutine = null;
+        }
+
         for (int i = 0; i < _pool.Count; i++)
         {
             var ctrl = _pool[i];
@@ -38,13 +43,6 @@ public class SvnTreeView : MonoBehaviour
         }
         _currentVisibleCount = 0;
 
-        if (_refreshCoroutine != null)
-        {
-            StopCoroutine(_refreshCoroutine);
-            _refreshCoroutine = null;
-        }
-
-        // === FIX K2: guard prefabu.
         if (linePrefab == null)
         {
             SVNLogBridge.LogError("[SvnTreeView] linePrefab is not assigned in Inspector!");

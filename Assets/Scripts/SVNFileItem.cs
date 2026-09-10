@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using System.Threading.Tasks;
 
 public class SVNFileItem : MonoBehaviour
 {
@@ -21,7 +22,6 @@ public class SVNFileItem : MonoBehaviour
         this.revision = rev;
         this.svnManager = mgr;
 
-        // === FIX K2: guard jak w pozostałych itemach UI.
         if (fileText == null)
         {
             Debug.LogError("[SVNFileItem] fileText is not assigned in Inspector!", this);
@@ -33,10 +33,15 @@ public class SVNFileItem : MonoBehaviour
 
     public void Button_OpenFile()
     {
-        OpenFile();
+        // === FIX (async void): przejście na Task + fire-and-forget. Wcześniej
+        // async void OpenFile() — każde rozszerzenie o await przed try/catch
+        // mogło uciszyć wyjątek (UnobservedTaskException pattern).
+        _ = OpenFileAsync();
     }
 
-    public async void OpenFile()
+    public void OpenFile() => Button_OpenFile();
+
+    private async Task OpenFileAsync()
     {
         float timeSinceLastClick = Time.time - lastClickTime;
 

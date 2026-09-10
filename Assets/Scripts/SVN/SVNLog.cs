@@ -206,6 +206,8 @@ namespace SVN.Core
             }
         }
 
+        private static string EscapeSvnArg(string arg) => SVNShared.EscapeSvnArg(arg);
+
         // === FIX Ś-drobne: wspólny rendering (deduplikacja z dwóch metod).
         private async Task RenderLogOutputAsync(string output)
         {
@@ -231,15 +233,6 @@ namespace SVN.Core
             }
 
             return newCts.Token;
-        }
-
-        // === UWAGA: 3. lokalna kopia w kodzie (MergeUrlResolver, RepoBrowser, Log)
-        // — docelowo przenieść do SVNShared.
-        private static string EscapeSvnArg(string arg)
-        {
-            if (string.IsNullOrWhiteSpace(arg)) return arg;
-            string normalized = arg.Replace('\\', '/');
-            return normalized.Replace("\"", "\\\"");
         }
 
         public static Task<string> LogAsync(string workingDir, int lastN = 10, CancellationToken token = default)

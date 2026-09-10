@@ -13,10 +13,28 @@ namespace SVN.Core
     public class SVNRepoRepair : SVNBase, IDisposable
     {
         private readonly object _repairSync = new();
+
+        // === FIX (atomowość): '_disposedFlag' to JEDYNE źródło prawdy dla Dispose().
+        // Poprzednio check-then-set na 'volatile bool _isDisposed' — dwie
+        // równoległe ścieżki (OnDestroy + SVNManager.Dispose) mogły wejść
+        // w ciało jednocześnie.
+        private int _disposedFlag;                    // 0/1 — atomowy zapis przez Interlocked
+
         private CancellationTokenSource _repairCTS;
-        private volatile bool _isDisposed;
         private volatile bool _repairRunning;
         private volatile bool _metadataRemoved;
+
+        /// <summary>
+        /// Zgodność wsteczna z odczytami w kodzie — reprezentuje tę samą flagę
+        /// co <see cref="_disposedFlag"/>, tylko przez Volatile.Read/Write.
+        /// Wszystkie miejsca w klasie (TryBeginRepair, ForceRepairWorkingCopyAsync,
+        /// PostRepairStatus) używają tej property bez zmian.
+        /// </summary>
+        private bool _isDisposed
+        {
+            get => Volatile.Read(ref _disposedFlag) == 1;
+            set => Volatile.Write(ref _disposedFlag, value ? 1 : 0);
+        }
 
         public SVNRepoRepair(SVNUI svnUI, SVNManager manager) : base(svnUI, manager)
         {
@@ -177,16 +195,33 @@ namespace SVN.Core
             catch (ObjectDisposedException) { }
         }
 
+        /// <summary>
+        /// === FIX (atomowość): poprzednio check-then-set na 'volatile bool _isDisposed'
+        /// — dwie równoległe ścieżki Dispose (np. OnDestroy + SVNManager.Dispose)
+        /// mogły wejść w ciało jednocześnie; zamiana na 'Interlocked.Exchange'
+        /// daje twardy single-shot guard, spójny z resztą modułów
+        /// (SVNAdd/SVNCommit/SVNDiff/SVNRevert/SVNStatus/SVNTerminal).
+        /// </summary>
         public void Dispose()
         {
-            if (_isDisposed) return;
-            _isDisposed = true;
+            if (Interlocked.Exchange(ref _disposedFlag, 1) == 1) return;
+
             CancellationTokenSource cts;
-            lock (_repairSync) { cts = _repairCTS; _repairCTS = null; }
+            lock (_repairSync)
+            {
+                cts = _repairCTS;
+                _repairCTS = null;
+            }
+
             if (cts != null)
             {
-                try { cts.Cancel(); } catch (ObjectDisposedException) { }
-                _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
+                try { cts.Cancel(); }
+                catch (ObjectDisposedException) { }
+
+                _ = Task.Delay(1000).ContinueWith(_ =>
+                {
+                    try { cts.Dispose(); } catch { }
+                });
             }
         }
 

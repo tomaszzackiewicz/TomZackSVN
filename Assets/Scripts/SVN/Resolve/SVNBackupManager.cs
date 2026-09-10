@@ -291,15 +291,27 @@ namespace SVN.Core
         {
             if (!AutoCleanEnabled) return Task.CompletedTask;
 
+            // === FIX: odczyt/zapis prefs POZA lockiem. SVNPrefs z puli czeka do
+            // 100 ms na dispatcher; trzymanie AutoCleanLock przez ten czas było
+            // niepotrzebną serializacją dwóch niezależnych wywołań.
+            long lastTicks = 0;
+            long.TryParse(SVNPrefs.GetString(KEY_LAST_AUTOCLEAN, "0"), out lastTicks);
+            var last = new DateTime(lastTicks, DateTimeKind.Utc);
+            if (DateTime.UtcNow - last < AutoCleanInterval)
+                return Task.CompletedTask;
+
             lock (AutoCleanLock)
             {
-                long lastTicks = 0;
-                long.TryParse(SVNPrefs.GetString(KEY_LAST_AUTOCLEAN, "0"), out lastTicks);
-                var last = new DateTime(lastTicks, DateTimeKind.Utc);
-                if (DateTime.UtcNow - last < AutoCleanInterval)
+                // Re-check pod lockiem — dwa równoległe wywołania mogły już minąć
+                // pierwszy check.
+                long recheckTicks = 0;
+                long.TryParse(SVNPrefs.GetString(KEY_LAST_AUTOCLEAN, "0"), out recheckTicks);
+                var recheckLast = new DateTime(recheckTicks, DateTimeKind.Utc);
+                if (DateTime.UtcNow - recheckLast < AutoCleanInterval)
                     return Task.CompletedTask;
 
-                SVNPrefs.SetString(KEY_LAST_AUTOCLEAN, DateTime.UtcNow.Ticks.ToString(CultureInfo.InvariantCulture));
+                SVNPrefs.SetString(KEY_LAST_AUTOCLEAN,
+                    DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
 
             return Task.Run(() => CleanupCore(token), token);
@@ -798,7 +810,11 @@ namespace SVN.Core
             string dir = Path.GetDirectoryName(path) ?? "";
             string name = Path.GetFileNameWithoutExtension(path);
             string ext = Path.GetExtension(path);
-            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+            // === FIX: InvariantCulture — bez tego timestamp w kulturach z własnymi
+            // cyframi (np. arabska) dawał nazwy z innych zakresów Unicode.
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss",
+                System.Globalization.CultureInfo.InvariantCulture);
 
             string candidate = Path.Combine(dir, $"{name}_{timestamp}{ext}");
             int counter = 1;

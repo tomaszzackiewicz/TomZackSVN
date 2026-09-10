@@ -431,11 +431,12 @@ namespace SVN.Core
 
                         SVNLogBridge.LogErrorToOutput(fullError);
 
-                        // (jeśli wdrożyłeś InvokeOnOperationError z poprzedniej rundy —
-                        //  tu woła InvokeOnOperationError(fullError); w przeciwnym razie
-                        //  blok poniżej zostaje jak był)
-                        try { OnOperationError?.Invoke(fullError); }
-                        catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] OnOperationError handler error: {ex.Message}"); }
+                        // === FIX (spójność): InvokeOnOperationError obsługuje
+                        // wielokrotnych subskrybentów z osobnym try/catch per handler
+                        // (GetInvocationList + iteracja). Inline `OnOperationError?.Invoke(...)`
+                        // przerywa łańcuch na PIERWSZYM rzucającym handlerze — reszta
+                        // subskrybentów nie dostaje powiadomienia o błędzie operacji SVN.
+                        InvokeOnOperationError(fullError);
 
                         throw new Exception(fullError);
                     }
@@ -566,6 +567,22 @@ namespace SVN.Core
 
             lock (_infoCacheLock)
             {
+                // === FIX (memory leak): przy przekroczeniu progu robimy lazy cleanup
+                // wygasłych wpisów. Wcześniej wpis po 2s wygasał, ale NIE był usuwany —
+                // nadpisywany tylko przy następnym GetInfoAsync na TYM SAMYM kluczu.
+                // Przełączenie 50 projektów = 50 wpisów * (kilka KB) trzymanych do końca
+                // procesu. Próg 32 = wystarczająco dla aktywnego projektu + sąsiadów.
+                if (_infoCache.Count > 32)
+                {
+                    var expired = _infoCache
+                        .Where(kv => DateTime.UtcNow - kv.Value.time >= InfoCacheDuration)
+                        .Select(kv => kv.Key)
+                        .ToList();
+
+                    foreach (var key in expired)
+                        _infoCache.Remove(key);
+                }
+
                 if (_infoCache.TryGetValue(cleanWd, out var cached) && DateTime.UtcNow - cached.time < InfoCacheDuration)
                 {
                     SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);

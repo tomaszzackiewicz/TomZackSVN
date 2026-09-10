@@ -181,8 +181,6 @@ namespace SVN.Core
 
             if (string.IsNullOrWhiteSpace(keyPath)) return null;
 
-            // Trim('"') — Replace("\"","") wycinał WSZYSTKIE cudzysłowy (cicha
-            // mutacja ścieżki); cudzysłów w środku i tak spadnie na File.Exists.
             keyPath = keyPath.Trim().Trim('"').Trim();
 
             if (keyPath.StartsWith("~"))

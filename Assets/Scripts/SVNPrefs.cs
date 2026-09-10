@@ -9,7 +9,7 @@ namespace SVN.Core
     /// Thread-safe dostęp do main-only API Unity (PlayerPrefs, ścieżki Application).
     ///
     /// ZASADY PROJEKTOWE (nauczone kosztem regression-bugów):
-    ///  1. Ścieżki Application.* — cache w zwykłych statycznych polach, JWNE metody
+    ///  1. Ścieżki Application.* — cache w zwykłych statycznych polach, jawne metody
     ///     resolve per ścieżka. Żadnych generycznych helperów z 'ref' + lambda
     ///     (lambda nie widzi ref-aktualizacji → rekursja → StackOverflow).
     ///  2. PlayerPrefs — odczyt z puli: Enqueue + KRÓTKI grace (100 ms).
@@ -88,7 +88,7 @@ namespace SVN.Core
 
         // ===================================================================
         //  Ścieżki Application — cached przy pierwszym użyciu, potem zero kosztu.
-        //  JWNE resolve per ścieżka; lambda (tylko w resolverze) woła WYŁĄCZNIE
+        //  Jawne resolve per ścieżka; lambda (tylko w resolverze) woła WYŁĄCZNIE
         //  surowe Application.* — nigdy te property → brak rekursji.
         // ===================================================================
 
@@ -138,9 +138,9 @@ namespace SVN.Core
 
         /// <summary>
         /// Odczyt main-only property przez dispatcher (blokująco z limitem —
-        /// Ścieżki resolve'ują się RAZ w życiu procesu i wyłącznie z fallbacku
+        /// ścieżki resolve'ują się RAZ w życiu procesu i wyłącznie z fallbacku
         /// bootstrapowego, nigdy w cyklu z managerLock; grace 100 ms nie
-        //  wystarczyłby na pierwszą klatkę). Switch po NAZWIE — jawnie, bez
+        /// wystarczyłby na pierwszą klatkę). Switch po NAZWIE — jawnie, bez
         /// delegat-generyki; każda gałąź woła surowe API i NIC więcej.
         /// </summary>
         private static string ResolveViaDispatcher(string propertyName)

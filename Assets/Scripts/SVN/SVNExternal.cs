@@ -926,6 +926,8 @@ namespace SVN.Core
             ShowReport(report.ToString());
         }
 
+        private static string EscapeSvnArg(string arg) => SVNShared.EscapeSvnArg(arg);
+
         private void ShowReport(string reportText)
         {
             UnityMainThreadDispatcher.Enqueue(() =>
@@ -1056,12 +1058,6 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(path)) return path;
             return path.Replace('\\', '/').TrimEnd('/');
-        }
-
-        private static string EscapeSvnArg(string arg)
-        {
-            if (string.IsNullOrEmpty(arg)) return arg;
-            return arg.Replace('\\', '/').Replace("\"", "\\\"");
         }
 
         public void Dispose()

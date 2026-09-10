@@ -231,6 +231,8 @@ namespace SVN.Core
             }
         }
 
+        private static string EscapeSvnArg(string arg) => SVNShared.EscapeSvnArg(arg);
+
         // ================= STATUS LABEL =================
 
         private void UpdateStatusLabel(string status)
@@ -838,12 +840,6 @@ namespace SVN.Core
                 GUIUtility.systemCopyBuffer = node.Name;
                 SVNLogBridge.LogLine($"<color=yellow>[RepoBrowser]</color> Copied name: {node.Name}");
             }
-        }
-
-        private static string EscapeSvnArg(string arg)
-        {
-            if (string.IsNullOrEmpty(arg)) return arg;
-            return arg.Replace('\\', '/').Replace("\"", "\\\"");
         }
 
         private void RunOnMainThread(Action action)

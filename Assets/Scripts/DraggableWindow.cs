@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
 
+[RequireComponent(typeof(RectTransform))]
 public class DraggableWindow : MonoBehaviour, IBeginDragHandler, IDragHandler
 {
     private RectTransform _window;
@@ -8,8 +9,11 @@ public class DraggableWindow : MonoBehaviour, IBeginDragHandler, IDragHandler
 
     private void Awake()
     {
+        // === FIX (crash bez RequireComponent): wcześniej rzutowanie
+        // (RectTransform)transform wybuchało InvalidCastException w Awake,
+        // gdy GameObject nie ma RectTransform (np. przestawiony na UI → 3D).
+        // [RequireComponent] daje Unity-error w edytorze zanim odpalisz grę.
         _window = (RectTransform)transform;
-
     }
 
     public void OnBeginDrag(PointerEventData eventData)
