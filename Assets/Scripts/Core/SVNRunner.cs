@@ -320,7 +320,7 @@ namespace SVN.Core
             SVNLogBridge.LogToOutput($"[SVN QUEUE]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Waiting: svn {safeArgs}");
 
             bool write = IsWriteCommand(argList);
-            bool networkRetrySafe = IsNetworkRetrySafe(argList);          // === NEW
+            bool networkRetrySafe = IsNetworkRetrySafe(argList);
 
             if (write) await _svnLock.EnterWriteAsync(token).ConfigureAwait(false);
             else await _svnLock.EnterReadAsync(token).ConfigureAwait(false);
@@ -330,14 +330,22 @@ namespace SVN.Core
                 IncrementOperations();
                 SVNLogBridge.LogToOutput($"[SVN QUEUE]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} Acquired: svn {safeArgs}");
 
-                if (string.IsNullOrEmpty(workingDir)) throw new Exception("Working Directory is null!");
+                // === FIX: było "throw new Exception("Working Directory is null!")" —
+                // blokowało operacje na URL-ach bez załadowanego projektu (np. blame
+                // po URL z listy rewizji przy braku working copy). svn z absolutnym
+                // URL działa z dowolnego CWD — fallback na katalog tymczasowy.
+                // IsNullOrWhiteSpace (zamiast IsNullOrEmpty) łapie też same-spacje,
+                // które przeszłyby przez stary check i wywaliły się dopiero głębiej
+                // w Path.GetFullPath.
+                if (string.IsNullOrWhiteSpace(workingDir))
+                    workingDir = Path.GetTempPath();
 
                 var finalArgs = new List<string>(argList);
                 if (!finalArgs.Contains("--non-interactive")) finalArgs.Add("--non-interactive");
                 if (!finalArgs.Contains("--trust-server-cert")) finalArgs.Add("--trust-server-cert");
 
-                // === RETRY: lock (semantyka jak dotychczas — max 1x, tylko retryOnLock)
-                //          + NEW: przejściowe błędy sieci (max 2x, tylko komendy bezpieczne)
+                // === RETRY: lock (max 1x, tylko retryOnLock)
+                //          + przejściowe błędy sieci (max 2x, tylko komendy bezpieczne)
                 const int MaxNetworkRetries = 2;
                 bool lockRetryUsed = false;
                 int netRetries = 0;
@@ -349,7 +357,7 @@ namespace SVN.Core
                     var (output, error, exitCode) = await ExecuteRawProcessAsync(finalArgs, workingDir, stdoutCb, stderrCb, token).ConfigureAwait(false);
 
                     if (exitCode == 0 && !string.IsNullOrWhiteSpace(error))
-                        // === FIX (display): '\'→'/' — inaczej "\trunk" w warningu renderuje się jako TAB
+                        // '\'→'/' — inaczej "\trunk" w warningu renderuje się jako TAB
                         SVNLogBridge.LogToOutput($"[SvnRunner]{(!string.IsNullOrEmpty(logPrefix) ? " " + logPrefix : "")} svn warning: {NormalizeForLog(error.Trim())}");
 
                     if (exitCode == 0)
@@ -362,7 +370,7 @@ namespace SVN.Core
 
                     bool isLockError = error.Contains("E155004") || error.Contains("is locked");
 
-                    // 1) Lock-retry — jak w oryginale: tylko raz, tylko gdy retryOnLock
+                    // 1) Lock-retry — tylko raz, tylko gdy retryOnLock
                     if (isLockError && retryOnLock && !lockRetryUsed)
                     {
                         lockRetryUsed = true;
@@ -381,7 +389,7 @@ namespace SVN.Core
                         continue;
                     }
 
-                    // 2) === NEW: retry po przejściowym błędzie sieci (E210002 / reset / timeout).
+                    // 2) Retry po przejściowym błędzie sieci (E210002 / reset / timeout).
                     //    Update/switch są wznawialne — svn kontynuuje od miejsca awarii.
                     if (networkRetrySafe && netRetries < MaxNetworkRetries &&
                         !token.IsCancellationRequested && IsTransientNetworkError(error))
@@ -409,22 +417,23 @@ namespace SVN.Core
                         continue;
                     }
 
-                    // 3) Błąd twardy — ścieżka jak dotychczas (error już bez banneru — Krok 2)
+                    // 3) Błąd twardy — error już bez banneru (filtrowany u źródła)
                     if (throwOnError)
                     {
-                        // Diagnostyka liczona na surowym errorze (kody/słowa bez '\' — kolejność neutralna)
                         string diagnostic = error.Contains("E170013") || error.Contains("can't connect") ? " [Connection/URL issue]" : error.Contains("E215004") ? " [Authorization/Password error]" : "";
 
-                        // === NEW: zabezpieczenie przed pustym message (po filtrze banneru)
+                        // zabezpieczenie przed pustym message (po filtrze banneru)
                         string errText = string.IsNullOrWhiteSpace(error) ? "(no error output)" : error;
 
-                        // === FIX (display): '\'→'/' w exception message — to stąd pochodzi
-                        // komunikat "Error: ..." w resolverach; normalizacja u źródła czyści
-                        // WSZYSTKIE miejsca wyświetlania (labels, GetShortError, result.error).
+                        // '\'→'/' w exception message — normalizacja u źródła czyści
+                        // wszystkie miejsca wyświetlania (labels, GetShortError, result.error)
                         string fullError = $"SVN Error (Code {exitCode}): {NormalizeForLog(errText)}{diagnostic}";
 
                         SVNLogBridge.LogErrorToOutput(fullError);
 
+                        // (jeśli wdrożyłeś InvokeOnOperationError z poprzedniej rundy —
+                        //  tu woła InvokeOnOperationError(fullError); w przeciwnym razie
+                        //  blok poniżej zostaje jak był)
                         try { OnOperationError?.Invoke(fullError); }
                         catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] OnOperationError handler error: {ex.Message}"); }
 
@@ -1168,6 +1177,17 @@ namespace SVN.Core
             }
         }
 
+        private static void InvokeOnOperationError(string message)
+        {
+            var handlers = OnOperationError?.GetInvocationList();
+            if (handlers == null) return;
+            foreach (var h in handlers)
+            {
+                try { ((Action<string>)h).Invoke(message); }
+                catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] OnOperationError handler error: {ex.Message}"); }
+            }
+        }
+
         private static async Task<(int exitCode, string error)> ExecuteRawProcessToFileAsync(
     List<string> args, string workingDir, string destFilePath, CancellationToken token)
         {
@@ -1235,6 +1255,22 @@ namespace SVN.Core
             lock (_infoCacheLock)
             {
                 _infoCache.Clear();
+            }
+
+            // === FIX (editor / brak domain reload): operacja przerwana mid-flight
+            // (kontynuacja nie dobiegła do DecrementOperations) zostawiała
+            // _activeOperationsCount > 0 → OnProcessingStateChanged(true) wisi →
+            // manager.IsProcessing = true → watcher i focus-refresh zablokowane
+            // do końca sesji. Reset liczników; spóźnione Decrementy wbiją w -1,
+            // co jest clampowane na 0 — bez efektu ubocznego.
+            lock (_processingLock)
+            {
+                _activeOperationsCount = 0;
+                if (_processingState)
+                {
+                    _processingState = false;
+                    InvokeProcessingStateChanged(false);
+                }
             }
         }
 #endif

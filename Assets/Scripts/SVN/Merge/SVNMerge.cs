@@ -32,6 +32,7 @@ namespace SVN.Core
         internal bool _tagsCacheValid;
         internal string[] _cachedTags;
         internal int _isFetchingTagsFlag;
+        private int _disposed;   // nowe pole
 
         // === FIX P1: _isMergingFlag/TryEnterMerging/ExitMerging pozostają jako
         // legacy (nieużywane przez operacje) — jedynym guardem merge jest teraz
@@ -67,11 +68,23 @@ namespace SVN.Core
 
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
             if (svnManager != null)
                 svnManager.OnProjectChanged -= OnProjectChangedHandler;
-            _mergeCts?.Cancel();
-            _mergeCts?.Dispose();
-            _mergeCts = null;
+
+            // === FIX: natychmiastowy Cancel+Dispose rzucał ObjectDisposedException
+            // w locie operacji (wzorzec usunięty już wszędzie indziej)
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _mergeCts, null));
+        }
+
+        public Task CancelMerge()
+        {
+            // === FIX: race z disposem z 'using' operacji → ODE prosto do przycisku UI
+            try { _mergeCts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+            LogWarning("[Merge] Cancel requested by user.");
+            return Task.CompletedTask;
         }
 
         protected override TMP_Text GetConsole() => svnUI?.MergeConsoleText;
@@ -239,6 +252,7 @@ namespace SVN.Core
                 }
                 return false;
             }
+            catch (OperationCanceledException) { throw; }   // === FIX: cancel ≠ "brudna kopia" — NIE połykaj
             catch { return true; }
         }
 
@@ -309,16 +323,11 @@ namespace SVN.Core
         {
             LogWarning("====================================");
             LogWarning($"[{title}]");
-            foreach (var line in message.Split('\n'))
-                LogWarning(line);
+            // === FIX: gward — LogInfoBlock/LogSuccessBlock go mają, tu brakowało (NRE przy null)
+            if (!string.IsNullOrEmpty(message))
+                foreach (var line in message.Split('\n'))
+                    LogWarning(line);
             LogWarning("====================================");
-        }
-
-        public Task CancelMerge()
-        {
-            _mergeCts?.Cancel();
-            LogWarning("[Merge] Cancel requested by user.");
-            return Task.CompletedTask;
         }
 
         public Task ExecuteMerge(string sourceInput, bool isDryRun)

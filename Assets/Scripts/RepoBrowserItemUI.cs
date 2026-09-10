@@ -88,7 +88,14 @@ namespace SVN.Core
         {
             if (foldButton == null) return;
 
-            if (!_node.IsDirectory)
+            // W filtrach (flat) węzeł nie ma Parent ani Children — rozwijanie
+            // nie ma sensu i tylko miga bez efektu. Ukryj strzałkę.
+            bool isFlatFilterResult =
+                _node.IsDirectory &&
+                _node.Parent == null &&
+                _node.Depth >= 0;
+
+            if (!_node.IsDirectory || isFlatFilterResult)
             {
                 foldButton.gameObject.SetActive(false);
                 return;

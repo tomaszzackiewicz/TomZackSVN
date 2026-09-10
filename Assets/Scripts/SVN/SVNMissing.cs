@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace SVN.Core
 {
@@ -41,8 +42,22 @@ namespace SVN.Core
 
         public async void FixMissingFiles()
         {
-            if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
+            // === FIX: double-click confirmation (analogicznie do Revert)
+            // Operacja jest destrukcyjna (usuwa ścieżki z indeksu SVN).
+            float clickTime = Time.unscaledTime;
+            if (!ConfirmFixMissing(clickTime))
                 return;
+
+            if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
+            {
+                // === FIX: było CICHE return — user potwierdził dwuklikiem destrukcyjną
+                // operację i nic się nie stało bez słowa (rodzina buga z SVNRevert).
+                // (Jeśli _processingFlag i _operationLock strzegą tego samego i flaga
+                // nie jest używana przez inne metody klasy — rozważ usunięcie flagi
+                // i zostawienie samego semafora z komunikatem, wzorzec SVNRevert.)
+                LogToConsole("<color=#FFAA00><b>[Missing Files]</b> Another operation is already in progress.</color>");
+                return;
+            }
 
             bool hasLock = false;
             CancellationTokenSource localCts = null;
@@ -50,7 +65,21 @@ namespace SVN.Core
             try
             {
                 hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
-                if (!hasLock) return;
+                if (!hasLock)
+                {
+                    LogToConsole("<color=#FFAA00><b>[Missing Files]</b> Another operation is already in progress.</color>");
+                    return;
+                }
+
+                // === FIX: walidacja katalogu na wejściu (wzorzec z reszty modułów) —
+                // wcześniej pusty WorkingDir leciał aż do svn-komend i kończył się
+                // enigmatycznym "FixMissing Error"
+                string root = svnManager?.WorkingDir;
+                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                {
+                    LogToConsole("<color=#FFAA00>Error:</color> Working directory does not exist.");
+                    return;
+                }
 
                 IsProcessing = true;
 
@@ -73,16 +102,9 @@ namespace SVN.Core
 
                     await statusModule.ExecuteRefreshWithAutoExpand(force: true).ConfigureAwait(false);
 
-                    PostToMainThread(() =>
-                    {
-                        if (statusModule.GetCurrentData().Count == 0)
-                        {
-                            if (svnUI.TreeDisplay != null)
-                                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>No changes detected.</i>", "TREE", append: false);
-                            if (svnUI.CommitTreeDisplay != null)
-                                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "<i>Nothing to commit.</i>", "COMMIT_TREE", append: false);
-                        }
-                    });
+                    // === trivia: ten blok jest redundantny — pusta ścieżka refreshu
+                    // (ShowEmptyState) sama pisze "No changes detected." — zostawiam
+                    // jako no-op bezpieczny, do usunięcia przy okazji
                 }
 
                 if (removedCount > 0)
@@ -108,9 +130,6 @@ namespace SVN.Core
 
                 if (localCts != null)
                 {
-                    // === FIX D1: pole zdejmowane pod CompareExchange (jak było — to
-                    // poprawnie odcina Cancel), a dispose ODRACZONY — token może być
-                    // jeszcze zarejestrowany w umierającym Task.Delay/SvnRunner.
                     Interlocked.CompareExchange(ref _cts, null, localCts);
                     _ = Task.Delay(1000).ContinueWith(_ => { try { localCts.Dispose(); } catch { } });
                 }
@@ -124,6 +143,36 @@ namespace SVN.Core
 
                 Interlocked.Exchange(ref _processingFlag, 0);
             }
+        }
+
+        // === NOWE: potwierdzenie (pola klasy)
+        private float _lastFixMissingClickTime = -10f;
+
+        private bool ConfirmFixMissing(float currentTime)
+        {
+            const float ConfirmationWindow = 5f;
+            const float MinDoubleClickDelay = 0.30f;
+
+            float elapsed = currentTime - _lastFixMissingClickTime;
+
+            if (elapsed > ConfirmationWindow || _lastFixMissingClickTime < 0f)
+            {
+                _lastFixMissingClickTime = currentTime;
+                LogToConsole(
+                    "<color=#FFAA00><b>[Missing Files]</b></color> This will permanently remove missing items from the SVN index!\n" +
+                    "Press the button again within <b>5 seconds</b> to confirm.");
+                return false;
+            }
+
+            if (elapsed < MinDoubleClickDelay)
+            {
+                _lastFixMissingClickTime = currentTime;
+                LogToConsole("<color=#FFAA00><b>[Missing Files]</b></color> Confirmation too fast — press once again.");
+                return false;
+            }
+
+            _lastFixMissingClickTime = -10f;
+            return true;
         }
 
         public async Task<int> FixMissingLogicAsync(CancellationToken token = default)

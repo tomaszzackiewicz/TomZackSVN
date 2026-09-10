@@ -39,21 +39,14 @@ public class ProjectSelectionPanel : MonoBehaviour
     private int _isRelocating = 0;
     private int _isRenaming = 0;
 
-    // === OPTYMALIZACJA: cache danych w pamięci + dirty flag.
-    // Dysk/JSON czytany TYLKO przy realnej zmianie danych — search/sort
-    // renderują z cache (zero I/O per literka).
     private List<SVNProject> _allProjects = new List<SVNProject>();
     private bool _dataDirty = true;
 
-    // === OPTYMALIZACJA: fingerprint widoku — identyczna lista = zero
-    // churnu GameObjectów (np. OnProjectLoaded, gdy nic się nie zmieniło).
     private string _renderFingerprint;
 
-    // === FIX (precyzyjny unsubscribe): delegaty w polach.
     private UnityAction<string> _onSearchChanged;
     private UnityAction<int> _onSortChanged;
 
-    // === S1: serializacja JSON przez atomowe API ProjectSettings.
     private static readonly SemaphoreSlim _jsonLock = new SemaphoreSlim(1, 1);
 
     private static readonly HashSet<string> SvnKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -73,8 +66,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             sortDropdown.value = 0;
         }
 
-        // === OPTYMALIZACJA: search/sort → RenderList (cache), NIE RefreshList
-        // (który wcześniej per literkę robił: dysk + JSON + rebuild):
         _onSearchChanged = _ => RenderList();
         _onSortChanged = _ => RenderList();
 
@@ -86,7 +77,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (svnManager != null)
             svnManager.OnProjectChanged += OnProjectLoaded;
 
-        // OnEnable zrobił pierwszy render; tu tylko gdyby coś było brudne:
         if (_dataDirty)
         {
             ReloadData();
@@ -99,21 +89,18 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (svnManager == null) svnManager = SVNManager.Instance;
         if (svnUI == null) svnUI = SVNUI.Instance;
 
-        // === OPTYMALIZACJA: ukryty panel mógł zgubić dane (dirty z eventów) —
-        // przeładuj; render zawsze (tani — cache, zero dysku przy czystych danych):
         if (_dataDirty)
             ReloadData();
 
         RenderList();
     }
 
-    // === FIX: event OnProjectChanged — dispatch defensywnie (main-only render).
     private void OnProjectLoaded(SVNProject project)
     {
         UnityMainThreadDispatcher.Enqueue(() =>
         {
             if (this != null)
-                RefreshList();   // gates w środku: nieaktywny panel → tylko dirty
+                RefreshList();
         });
     }
 
@@ -134,14 +121,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             svnManager.OnProjectChanged -= OnProjectLoaded;
     }
 
-    // ===================================================================
-    //  DANE vs RENDER — rozdzielone (optymalizacja)
-    // ===================================================================
-
-    /// <summary>
-    /// Przeładowanie danych z dysku. Ukryty panel → tylko dirty flag
-    /// (przeładujemy przy otwarciu — zero pracy teraz).
-    /// </summary>
     private void ReloadData()
     {
         if (!isActiveAndEnabled)
@@ -152,7 +131,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         var allProjects = ProjectSettings.LoadProjects();
 
-        // Migracja lastOpened (patrz oryginał):
         bool needsMigrationSave = false;
         int i = 0;
         foreach (var p in allProjects)
@@ -175,14 +153,10 @@ public class ProjectSelectionPanel : MonoBehaviour
         _dataDirty = false;
     }
 
-    /// <summary>
-    /// Render z CACHE (zero dysku). Fingerprint → rebuild wierszy TYLKO gdy
-    /// widoczna lista realnie inna (nazwa/data = to, co wiersz pokazuje).
-    /// </summary>
     private void RenderList()
     {
         if (container == null) return;
-        if (!isActiveAndEnabled) return;   // ukryty → OnEnable dorenderuje
+        if (!isActiveAndEnabled) return;
 
         bool sortByDate = sortDropdown != null && sortDropdown.value == 1;
 
@@ -197,7 +171,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         projects = source.ToList();
 
-        // === FINGERPRINT: identyczny widok → nic nie robimy:
         string fingerprint = string.Join("|",
             projects.Select(p => $"{p.projectName}|{p.lastOpened.Ticks}"));
 
@@ -206,7 +179,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
         _renderFingerprint = fingerprint;
 
-        // Rebuild wierszy:
         var toDestroy = new List<GameObject>(container.childCount);
         foreach (Transform child in container)
             toDestroy.Add(child.gameObject);
@@ -239,11 +211,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Pełny refresh (dane + render) — KOMPATYBILNOŚĆ: to wołają SVNManager,
-    /// SVNLoad, SVNTerminal, SVNRepoRepair. Aktywny panel = reload+render;
-    /// ukryty = dirty flag (przeładuje się przy otwarciu).
-    /// </summary>
     public void RefreshList()
     {
         ReloadData();
@@ -347,7 +314,6 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
         finally
         {
-            // Rename zmienił dane → dirty → reload przy refreshu:
             _dataDirty = true;
 
             UnityMainThreadDispatcher.Enqueue(() =>
@@ -467,12 +433,21 @@ public class ProjectSelectionPanel : MonoBehaviour
                 _jsonLock.Release();
             }
 
-            if (svnManager?.CurrentProject?.workingDir == project.workingDir)
+            // === FIX: przez centrum — unieważnia cache filtrów RepoBrowsera
+            // i syncuje wszystkie pola UI (Settings / Checkout / Load).
+            if (svnManager != null &&
+                svnManager.CurrentProject != null &&
+                string.Equals(
+                    svnManager.CurrentProject.workingDir.Replace("\\", "/").TrimEnd('/'),
+                    project.workingDir.Replace("\\", "/").TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase))
             {
-                svnManager.RepositoryUrl = newUrl;
+                svnManager.CurrentProject.repoUrl = newUrl;
+                UnityMainThreadDispatcher.Enqueue(() =>
+                    svnManager.SynchronizeConnectionSettings(SVNManager.SettingsSource.None, url: newUrl));
             }
 
-            _dataDirty = true;   // dane na dysku zmienione
+            _dataDirty = true;
 
             UnityMainThreadDispatcher.Enqueue(() =>
             {
@@ -528,18 +503,21 @@ public class ProjectSelectionPanel : MonoBehaviour
             var statusModule = svnManager?.GetModule<SVNStatus>();
             statusModule?.ClearCurrentData();
             statusModule?.ClearSVNTreeView();
+
+            if (svnUI.TreeDisplay != null)
+                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
         });
 
         ProjectSettings.UpdateProject(project.workingDir, p => p.lastOpened = DateTime.UtcNow);
-        _dataDirty = true;   // lastOpened się zmienił
+        _dataDirty = true;
 
         try
         {
             var settingsModule = svnManager.GetModule<SVNSettings>();
 
-            svnManager.CurrentKey = string.IsNullOrWhiteSpace(project.privateKeyPath)
-                ? "" : project.privateKeyPath;
-
+            // === FIX: NIE czyścimy ręcznie CurrentKey. LoadProjectCore robi
+            // to poprawnie — gdy projekt ma pusty privateKeyPath, zachowuje
+            // poprzednio zapisany klucz z SvnRunner.KeyPath.
             bool loaded = await svnManager.LoadProject(project).ConfigureAwait(false);
             if (!loaded)
             {
@@ -563,6 +541,19 @@ public class ProjectSelectionPanel : MonoBehaviour
             });
 
             settingsModule?.UpdateUIFromManager();
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(250).ConfigureAwait(false);
+                    await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
+                }
+                catch (Exception refreshEx)
+                {
+                    SVNLogBridge.LogError($"[ProjectSelection] Post-load refresh failed: {refreshEx.Message}");
+                }
+            });
         }
         catch (Exception ex)
         {
@@ -582,10 +573,16 @@ public class ProjectSelectionPanel : MonoBehaviour
             var ui = SVNUI.Instance;
             if (ui == null) return;
 
+            // === FIX: przy otwieraniu panelu wypełnij go AKTUALNYM stanem
+            // managera — nie zostawiaj pustych pól ani starych wartości po
+            // poprzednim projekcie.
+            string currentUrl = svnManager?.RepositoryUrl ?? "";
+            string currentKey = svnManager?.CurrentKey ?? "";
+
             ui.AddProjectNameInput.SetTextWithoutNotify("");
-            ui.AddProjectRepoUrlInput.SetTextWithoutNotify("");
+            ui.AddProjectRepoUrlInput.SetTextWithoutNotify(currentUrl);
             ui.AddProjectFolderPathInput.SetTextWithoutNotify("");
-            ui.AddProjectKeyPathInput.SetTextWithoutNotify("");
+            ui.AddProjectKeyPathInput.SetTextWithoutNotify(currentKey);
 
             ui.AddProjectRepoUrlInput.onEndEdit.RemoveListener(OnUrlInputEndEdit);
             ui.AddProjectRepoUrlInput.onEndEdit.AddListener(OnUrlInputEndEdit);
@@ -677,7 +674,7 @@ public class ProjectSelectionPanel : MonoBehaviour
             p.lastOpened = DateTime.UtcNow;
         });
 
-        _dataDirty = true;   // nowy projekt na dysku
+        _dataDirty = true;
         RefreshList();
         Button_CloseAddProjectPanel();
 

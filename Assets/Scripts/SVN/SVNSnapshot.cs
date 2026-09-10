@@ -23,9 +23,8 @@ namespace SVN.Core
         public SVNSnapshot(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             _mainThreadContext = SynchronizationContext.Current;
-            // === FIX K2: katalog GŁÓWNY — snapshoty trzymają się w podfolderach
-            // per-projekt (patrz GetProjectFolder), żeby restore projektu A nie
-            // mógł trafić na working copy projektu B.
+            // === FIX K2: podfoldery per-projekt (restore projektu A nie może
+            // trafić na working copy projektu B)
             _rootFolder = Path.Combine(SVNPrefs.PersistentDataPath, "SVN_Snapshots");
             Directory.CreateDirectory(_rootFolder);
         }
@@ -34,12 +33,10 @@ namespace SVN.Core
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
-            var cts = Interlocked.Exchange(ref _cts, null);
-            if (cts != null)
-            {
-                try { cts.Cancel(); } catch { }
-                try { cts.Dispose(); } catch { }
-            }
+            // === FIX: delayed dispose — natychmiastowy Cancel+Dispose rzucał
+            // ODE (nie-OCE) w locie operacji → fałszywy "FAILED" zamiast
+            // "Cancelled" (wzorzec D1 z SVNRevert)
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _cts, null));
         }
 
         public void Cancel()
@@ -89,19 +86,15 @@ namespace SVN.Core
             }
         }
 
-        // === FIX K2: podfolder per-projekt. Kombinacja czytelnej nazwy projektu
-        // i krótkiego hasha pełnej ścieżki (ścieżki bywają zbyt długie na nazwę
-        // folderu, a same nazwy projektów mogą się powtarzać).
+        // === FIX K2: podfolder per-projekt (nazwa + krótki hash ścieżki)
         private string GetProjectFolder()
         {
             string wd = svnManager?.WorkingDir;
             if (string.IsNullOrWhiteSpace(wd))
-                return _rootFolder; // fallback (przed załadowaniem projektu) — zachowanie legacy
+                return _rootFolder; // fallback — restore z niego odmówi (K2)
 
             string normalized = wd.Replace('\\', '/').Trim().TrimEnd('/');
 
-            // === FIX kompilacji: Convert.ToHexString wymaga .NET 5+ (Unity go nie ma)
-            // — klasyczny BitConverter.ToString + Replace("-", "").
             string hash;
             using (var md5 = MD5.Create())
             {
@@ -123,10 +116,7 @@ namespace SVN.Core
 
         public void ExecuteCreateSnapshot()
         {
-            // === FIX K3: odczyt toggle'a NA MAIN THREAD (tu jesteśmy — przycisk),
-            // PRZED fire-and-forget. Wcześniej czytano go przez PostUI (asynchroniczne
-            // Post!) i wartość była prawie zawsze fałszywa — tryb unversioned-only
-            // praktycznie nie działał.
+            // === FIX K3: toggle czytany NA MAIN (tu jesteśmy — przycisk)
             bool unversionedOnly = svnUI?.SnapshotUnversionedOnlyToggle?.isOn ?? false;
 
             SafeFireAndForget(async () =>
@@ -143,8 +133,7 @@ namespace SVN.Core
             });
         }
 
-        // === FIX Ś2: guard — delete w trakcie tworzenia/odtwarzania snapshotu
-        // mógł skasować pliki pod nogami operacji.
+        // === FIX Ś2: guard na delete (nie kasuje pod nogami operacji)
         public void ExecuteDeleteSnapshot()
         {
             if (!TryEnterProcessing())
@@ -215,7 +204,6 @@ namespace SVN.Core
                 }
                 else
                 {
-                    // === FIX: RemoveEmptyEntries (liczyło pustą końcówkę — +1).
                     int statusLineCount = statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
                     PostUI(() => SVNLogBridge.LogLine($"[Snapshot] Detected {statusLineCount} changed/untracked items."));
                 }
@@ -232,11 +220,7 @@ namespace SVN.Core
                     diff = await SvnRunner.RunAsync("diff", root, false, token).ConfigureAwait(false);
                     hasTrackedChanges = !string.IsNullOrWhiteSpace(diff);
 
-                    // === FIX K1: 'svn diff' NIE zawiera treści plików binarnych
-                    // ("Cannot display: file marked as binary") — bez tego snapshot
-                    // udawał kompletny backup, a sceny/prefaby/tekstury nie były
-                    // zapisywane i restore ich NIE przywracał. Teraz binaria idą
-                    // do _Files, a restore (CopyDirectory) zwraca je automatycznie.
+                    // === FIX K1: binaria nie są w patchu — idą do _Files
                     binaryModified = ParseBinaryModifiedFromDiff(diff, root);
                     if (binaryModified.Count > 0)
                         PostUI(() => SVNLogBridge.LogLine(
@@ -256,7 +240,7 @@ namespace SVN.Core
                 string normalizedDiff = hasTrackedChanges ? diff.Replace("\r\n", "\n") : string.Empty;
                 await File.WriteAllTextAsync(patchPath, normalizedDiff, new UTF8Encoding(false), token).ConfigureAwait(false);
 
-                // === FIX K1: preserve-set = unversioned + zmodyfikowane binaria.
+                // === FIX K1: preserve-set = unversioned + zmodyfikowane binaria
                 var copySet = unversionedFiles
                     .Concat(binaryModified)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -302,7 +286,8 @@ namespace SVN.Core
             finally
             {
                 Interlocked.CompareExchange(ref _cts, null, cts);
-                try { cts.Dispose(); } catch { }
+                // === FIX: delayed dispose (ODE pattern)
+                SVNShared.CancelAndDisposeLater(cts);
                 ExitProcessing();
             }
         }
@@ -335,9 +320,7 @@ namespace SVN.Core
                     return false;
                 }
 
-                // === FIX K2: snapshot w fallbackowym katalogu głównym (legacy /
-                // brak WorkingDir) — odmawiamy restore, bo nie możemy zweryfikować
-                // przynależności do projektu.
+                // === FIX K2: legacy/fallback folder — odmowa (brak weryfikacji projektu)
                 if (string.IsNullOrWhiteSpace(root) || projectFolder == _rootFolder)
                 {
                     PostUI(() => SVNLogBridge.LogLine("<color=#FF9900>[Snapshot] Cannot verify project ownership — load a project first.</color>"));
@@ -362,7 +345,7 @@ namespace SVN.Core
                     catch { }
                 }
 
-                // === FIX K2 (weryfikacja): snapshot z INNEGO projektu = hard stop.
+                // === FIX K2 (weryfikacja): snapshot z INNEGO projektu = hard stop
                 if (!string.IsNullOrWhiteSpace(snapshotWorkingDir))
                 {
                     string currentNorm = root.Replace('\\', '/').Trim().TrimEnd('/');
@@ -394,10 +377,7 @@ namespace SVN.Core
                 {
                     PostUI(() => SVNLogBridge.LogLine("[Snapshot] Full snapshot detected. Pre-flight check: Verifying working copy..."));
 
-                    // === FIX Ś1: blokujemy TYLKO wersjonowane zmiany. Pełny status
-                    // blokował też na '?' (nieversioned — w Unity wszędzie) i 'X'
-                    // (externals — nieodwracalne), przez co restore był praktycznie
-                    // zawsze zablokowany. '--ignore-externals' + filtr kolumn.
+                    // === FIX Ś1: blokujemy TYLKO wersjonowane zmiany (?/I/X nie przeszkadzają)
                     string currentStatus = await SvnRunner.RunAsync("status --ignore-externals", root, false, token).ConfigureAwait(false);
                     bool hasVersionedChanges = false;
 
@@ -406,7 +386,7 @@ namespace SVN.Core
                         if (rawLine.Length < 1) continue;
                         char col0 = rawLine[0];
                         char col1 = rawLine.Length > 1 ? rawLine[1] : ' ';
-                        if (col0 == '?' || col0 == 'I' || col0 == 'X') continue;      // nieversioned/ignored/externals — nie przeszkadzają patchowi
+                        if (col0 == '?' || col0 == 'I' || col0 == 'X') continue;
                         if (col0 != ' ' || col1 != ' ') { hasVersionedChanges = true; break; }
                     }
 
@@ -447,8 +427,7 @@ namespace SVN.Core
                     if (Directory.Exists(addedFilesPath))
                     {
                         PostUI(() => SVNLogBridge.LogLine("[Snapshot] Restoring unversioned/binary files..."));
-                        // === FIX K1: binaria wracają tutaj (CopyDirectory nadpisuje
-                        // wersjonowane pliki zmodyfikowanymi kopiami ze snapshotu).
+                        // === FIX K1: binaria wracają (CopyDirectory nadpisuje patchowane wersje)
                         CopyDirectory(addedFilesPath, root);
                     }
                 }
@@ -477,7 +456,8 @@ namespace SVN.Core
             finally
             {
                 Interlocked.CompareExchange(ref _cts, null, cts);
-                try { cts.Dispose(); } catch { }
+                // === FIX: delayed dispose (ODE pattern)
+                SVNShared.CancelAndDisposeLater(cts);
                 ExitProcessing();
             }
         }
@@ -502,8 +482,6 @@ namespace SVN.Core
             {
                 try
                 {
-                    // === FIX: jeden przebieg (dwa GetFiles AllDirectories = podwójny
-                    // pełny skan folderu).
                     var files = Directory.GetFiles(filesFolder, "*", SearchOption.AllDirectories);
                     info.UnversionedFileCount = files.Length;
                     foreach (string f in files)
@@ -569,8 +547,12 @@ namespace SVN.Core
             return result.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        // === FIX K1: te same reguły co w SVNShelve — ścieżka z "Index: ", treść
-        // "Cannot display: file marked as binary" → plik do backupu bezpośredniego.
+        // === FIX (KRYTYCZNY): marker "Cannot display: file marked as binary"
+        // NIE dopasowywał rzeczywistego komunikatu svn — "Cannot display: file
+        // marked as a binary type." (pełną, działającą formę używa Wasz SVNDiff).
+        // Detekcja binariów była MARTWA → FIX K1 (backup binariów) nie działał.
+        // Match tolerancyjny: "Cannot display" + "binary" (odporny na warianty
+        // komunikatu między wersjami svn); linie treści diffu (+/-) wykluczone.
         private static List<string> ParseBinaryModifiedFromDiff(string diff, string root)
         {
             var result = new List<string>();
@@ -580,6 +562,7 @@ namespace SVN.Core
             foreach (string rawLine in diff.Split('\n'))
             {
                 string line = rawLine.TrimEnd('\r');
+                if (line.Length == 0) continue;
 
                 if (line.StartsWith("Index: ", StringComparison.Ordinal))
                 {
@@ -587,8 +570,11 @@ namespace SVN.Core
                     continue;
                 }
 
-                if (pendingIndex != null &&
-                    line.IndexOf("Cannot display: file marked as binary", StringComparison.OrdinalIgnoreCase) >= 0)
+                bool isDiffContentLine = line[0] == '+' || line[0] == '-';
+
+                if (pendingIndex != null && !isDiffContentLine &&
+                    line.IndexOf("Cannot display", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    line.IndexOf("binary", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     string fullPath = Path.GetFullPath(Path.Combine(root, pendingIndex.Replace('/', Path.DirectorySeparatorChar)));
                     if (File.Exists(fullPath))
@@ -597,14 +583,13 @@ namespace SVN.Core
                     continue;
                 }
 
-                if (line.Length > 0 && (line[0] == '+' || line[0] == '-'))
-                    pendingIndex = null;
+                if (isDiffContentLine)
+                    pendingIndex = null; // treść tekstowa → to nie binarium
             }
 
             return result;
         }
 
-        // === FIX K2: metadane zapisują WorkingDir — weryfikacja przy restorze.
         private void WriteMetadata(string reason, bool hasTracked, int unversionedCount, bool unversionedOnly = false)
         {
             try

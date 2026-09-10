@@ -29,12 +29,10 @@ namespace SVN.Core
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
-            var cts = Interlocked.Exchange(ref _cts, null);
-            if (cts != null)
-            {
-                try { cts.Cancel(); } catch { }
-                try { cts.Dispose(); } catch { }
-            }
+            // === FIX: delayed dispose — natychmiastowy Cancel+Dispose rzucał
+            // ODE (nie-OCE) w locie operacji → fałszywy "FAILED" zamiast
+            // "Cancelled" (wzorzec D1 z SVNRevert)
+            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _cts, null));
         }
 
         public void Cancel()
@@ -88,7 +86,7 @@ namespace SVN.Core
         {
             SafeFireAndForget(async () =>
             {
-                string name = svnUI?.ShelfNameInput?.text;
+                string name = svnUI?.ShelfNameInput?.text;   // przed pierwszym await → main ✓
                 if (string.IsNullOrWhiteSpace(name))
                     name = "Stash_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
@@ -104,7 +102,7 @@ namespace SVN.Core
             });
         }
 
-        // === FIX S2: usuwamy też folder _Files shelfa (wcześniej zostawał orphanem).
+        // === FIX S2: usuwamy też folder _Files shelfa
         public void ExecuteDeleteShelf(string shelfName)
         {
             SafeFireAndForget(async () =>
@@ -186,13 +184,10 @@ namespace SVN.Core
                     return true;
                 }
 
-                // === FIX (licznik): RemoveEmptyEntries — bez tego liczyło pustą końcówkę.
                 int statusLineCount = statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
                 PostUI(() => SVNLogBridge.LogLine($"[Stash] Detected {statusLineCount} changed/untracked items."));
 
-                // === FIX K2: rozbity parsing statusu — osobno '?' (unversioned),
-                // osobno 'A' (scheduled adds; revert zdejmie scheduling i zostawi
-                // je jako '?' — musimy je zapisać i posprzątać sami).
+                // === FIX K2: rozbity parsing — '?' osobno, 'A' osobno
                 var unversionedFiles = new List<string>();
                 var addedFiles = new List<string>();
                 var addedDirs = new List<string>();
@@ -202,12 +197,7 @@ namespace SVN.Core
                 string diff = await SvnRunner.RunAsync("diff", root, false, token).ConfigureAwait(false);
                 bool hasTrackedChanges = !string.IsNullOrWhiteSpace(diff);
 
-                // === FIX K1 (krytyczny): 'svn diff' NIE zawiera treści plików
-                // binarnych ("Cannot display: file marked as binary"). Bez tego
-                // revert -R niszczył zmiany binarne (sceny/prefaby/tekstury)
-                // BEZPOWROTNIE — patch ich nie przywracał. Teraz binaria idą do
-                // folderu _Files shelfa, a Unshelve (CopyDirectory _Files → root)
-                // przywraca je automatycznie.
+                // === FIX K1 (krytyczny): binaria nie są w patchu → do _Files
                 List<string> binaryModified = ParseBinaryModifiedFromDiff(diff, root);
                 if (binaryModified.Count > 0)
                 {
@@ -230,7 +220,7 @@ namespace SVN.Core
                     await File.WriteAllTextAsync(patchPath, string.Empty, token).ConfigureAwait(false);
                 }
 
-                // === FIX K1+K2: preserve-set = unversioned + scheduled-adds + binaria.
+                // === FIX K1+K2: preserve-set = unversioned + scheduled-adds + binaria
                 var copySet = unversionedFiles
                     .Concat(addedFiles)
                     .Concat(binaryModified)
@@ -263,8 +253,7 @@ namespace SVN.Core
                 await SvnRunner.RunAsync("revert -R .", root, true, token).ConfigureAwait(false);
                 PostUI(() => SVNLogBridge.LogLine("[Stash] Revert completed."));
 
-                // === FIX K2: po revercie pliki 'A' stają się '?' na dysku — usuwamy
-                // je RAZEM z unversioned (zawartość bezpiecznie w _Files / w patchu).
+                // === FIX K2: po revercie pliki 'A' stają się '?' — usuwamy razem
                 var deleteFromDisk = unversionedFiles
                     .Concat(addedFiles)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -353,24 +342,18 @@ namespace SVN.Core
                 }
 
                 // === FIX K2: sprzątanie pustych katalogów po plikach 'A'
-                // (inaczej '?'-katalogi psułyby finalny check czystości).
                 foreach (string dir in addedDirs.OrderByDescending(d => d.Length))
                 {
                     try { if (Directory.Exists(dir)) Directory.Delete(dir, false); } catch { }
                 }
 
-                // === FIX S1: finalny check z --ignore-externals (linie 'X' są
-                // nieodwracalne przez revert — wcześniej przy projekcie z
-                // externals KAŻDY shelve z requireCleanWorkingCopy kończył się
-                // "porażką" po wykonaniu destrukcyjnej części).
+                // === FIX S1: finalny check z --ignore-externals
                 string finalStatus = await SvnRunner.RunAsync("status --ignore-externals", root, false, token).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(finalStatus))
                 {
                     int dirtyLines = finalStatus.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
                     if (requireCleanWorkingCopy)
                     {
-                        // === FIX (komunikat): dane SĄ już zashelfowane i zrevertowane —
-                        // stary tekst sugerował totalną porażkę operacji.
                         PostUI(() => SVNLogBridge.LogLine(
                             $"<color=#FF9900>[Stash] Shelf saved, but {dirtyLines} item(s) still remain in working copy — check for leftovers (e.g. locked/ignored files).</color>"));
                         return false;
@@ -401,12 +384,12 @@ namespace SVN.Core
             finally
             {
                 Interlocked.CompareExchange(ref _cts, null, cts);
-                try { cts.Dispose(); } catch { }
+                // === FIX: delayed dispose (ODE pattern)
+                SVNShared.CancelAndDisposeLater(cts);
                 ExitProcessing();
             }
         }
 
-        // === FIX K2: jeden przebieg po statusie -> trzy zestawy ścieżek.
         private static void ParseShelveSets(
             string statusOutput,
             string rootPath,
@@ -441,15 +424,17 @@ namespace SVN.Core
                         addedDirs.Add(fullPath);
                     else if (File.Exists(fullPath))
                         addedFiles.Add(fullPath);
-                    // nieistniejące 'A' (np. po częściowym revert) ignorujemy
                 }
             }
         }
 
-        // === FIX K1: wyciąga ścieżki plików binarnych z diffu. Format svn:
-        //   Index: Assets/path/file.png
-        //   ===================================================================
-        //   Cannot display: file marked as binary ...
+        // === FIX (KRYTYCZNY): marker "Cannot display: file marked as binary"
+        // NIE dopasowywał rzeczywistego komunikatu svn — "Cannot display: file
+        // marked as a binary type." (pełną, działającą formę używa Wasz SVNDiff).
+        // Detekcja binariów była MARTWA → FIX K1 (backup binariów przed
+        // revert -R) nie działał → shelve niszczył binaria NIEODWRACALNIE.
+        // Match tolerancyjny: "Cannot display" + "binary" (odporny na warianty
+        // komunikatu między wersjami svn); linie treści diffu (+/-) wykluczone.
         private static List<string> ParseBinaryModifiedFromDiff(string diff, string root)
         {
             var result = new List<string>();
@@ -459,6 +444,7 @@ namespace SVN.Core
             foreach (string rawLine in diff.Split('\n'))
             {
                 string line = rawLine.TrimEnd('\r');
+                if (line.Length == 0) continue;
 
                 if (line.StartsWith("Index: ", StringComparison.Ordinal))
                 {
@@ -466,8 +452,11 @@ namespace SVN.Core
                     continue;
                 }
 
-                if (pendingIndex != null &&
-                    line.IndexOf("Cannot display: file marked as binary", StringComparison.OrdinalIgnoreCase) >= 0)
+                bool isDiffContentLine = line[0] == '+' || line[0] == '-';
+
+                if (pendingIndex != null && !isDiffContentLine &&
+                    line.IndexOf("Cannot display", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    line.IndexOf("binary", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     string fullPath = Path.GetFullPath(Path.Combine(root, pendingIndex.Replace('/', Path.DirectorySeparatorChar)));
                     if (File.Exists(fullPath))
@@ -476,7 +465,7 @@ namespace SVN.Core
                     continue;
                 }
 
-                if (line.Length > 0 && (line[0] == '+' || line[0] == '-'))
+                if (isDiffContentLine)
                     pendingIndex = null; // treść tekstowa → to nie binarium
             }
 
@@ -517,8 +506,7 @@ namespace SVN.Core
                     return false;
                 }
 
-                // === FIX S3: ostrzeżenie przy brudnej kopii — patch na zmienionych
-                // plikach prawie na pewno da rejecty; user powinien wiedzieć DLACZEGO.
+                // === FIX S3: ostrzeżenie przy brudnej kopii
                 try
                 {
                     string preStatus = await SvnRunner.RunAsync("status --ignore-externals", root, false, token).ConfigureAwait(false);
@@ -547,7 +535,7 @@ namespace SVN.Core
                 if (Directory.Exists(addedFilesPath))
                 {
                     PostUI(() => SVNLogBridge.LogLine("[Stash] Restoring unversioned/binary files..."));
-                    // === FIX K1: binaria wracają tutaj tym samym CopyDirectory.
+                    // === FIX K1: binaria wracają tym samym CopyDirectory
                     CopyDirectory(addedFilesPath, root);
                 }
 
@@ -578,7 +566,8 @@ namespace SVN.Core
             finally
             {
                 Interlocked.CompareExchange(ref _cts, null, cts);
-                try { cts.Dispose(); } catch { }
+                // === FIX: delayed dispose (ODE pattern)
+                SVNShared.CancelAndDisposeLater(cts);
                 ExitProcessing();
             }
         }

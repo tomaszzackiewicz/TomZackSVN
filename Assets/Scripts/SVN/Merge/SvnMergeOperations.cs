@@ -10,12 +10,12 @@ namespace SVN.Core
 {
     public static class SvnMergeOperations
     {
+
+        // cap listy undo (-c -N per rewizja) — limit długości linii komendy
+        private const int MaxUndoListRevisions = 1000;
+
         public static async Task ExecuteMergeAsync(SVNMerge merge, string sourceInput, bool isDryRun)
         {
-            // === FIX P1: null-check PRZED guardem (guard na null = NRE), pojedynczy
-            // guard TryStart, try NATYCHMIAST po guardzie — cała walidacja i awaity
-            // WEWNĄTRZ try. Wcześniej praca między guardami a try zostawiała
-            // semafory zajęte na zawsze po wyjątku (martwy moduł do restartu).
             if (merge == null) return;
             if (merge.SVNManager == null || merge.SVNUI == null)
             {
@@ -32,6 +32,7 @@ namespace SVN.Core
             using var cts = new CancellationTokenSource();
             merge._mergeCts = cts;
             CancellationToken token = cts.Token;
+            bool snapshotSessionStarted = false;   // lifecycle: czy sesja doszła do etapu snapshotu
 
             try
             {
@@ -41,7 +42,7 @@ namespace SVN.Core
                     return;
                 }
 
-                merge._hadLocalChangesBeforeMerge = await merge.HasPendingMergeChanges().ConfigureAwait(false);
+                merge._hadLocalChangesBeforeMerge = await merge.HasPendingMergeChanges(token).ConfigureAwait(false);
                 if (merge._hadLocalChangesBeforeMerge)
                 {
                     merge.LogWarningBlock("MERGE BLOCKED", "Working copy contains uncommitted changes.\nCommit, revert or cleanup before merging again.");
@@ -70,6 +71,13 @@ namespace SVN.Core
                         $"mergeinfo {SvnMergeUrlResolver.EscapeSvnArg($"{repoRoot}/trunk")} {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --show-revs eligible",
                         merge.SVNManager.WorkingDir, false, token, "Checking Reintegrate Sync").ConfigureAwait(false);
 
+                    // === FIX (fail-closed): awaria mergeinfo wyglądała jak "zsynchronizowany"
+                    if (IsSvnErrorOutput(eligible))
+                    {
+                        merge.LogErrorLocal("[Merge] Reintegrate sync check FAILED — aborting (fail-closed). Check connection.");
+                        return;
+                    }
+
                     int missing = CountRevisions(eligible);
                     if (missing > 0)
                     {
@@ -87,6 +95,13 @@ namespace SVN.Core
                     string eligible = await RunWithHeartbeatAsync(merge,
                         $"mergeinfo {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} . --show-revs eligible",
                         merge.SVNManager.WorkingDir, false, token, "Checking Sync Merge").ConfigureAwait(false);
+
+                    // === FIX (fail-closed): jw.
+                    if (IsSvnErrorOutput(eligible))
+                    {
+                        merge.LogErrorLocal("[Merge] Sync check FAILED — aborting (fail-closed). Check connection.");
+                        return;
+                    }
 
                     if (CountRevisions(eligible) == 0)
                     {
@@ -110,14 +125,18 @@ namespace SVN.Core
                     return;
                 }
 
-                // === FIX P5: snapshot PRZED update. Wcześniej BASE czytany był PO
-                // update (inna rewizja!) i jako revBefore zapisywano BASE całej
-                // kopii zamiast pierwszej eligible — Undo robiło wtedy revert
-                // SZERSZEGO zakresu niż mergował. Teraz snapshot = dokładny zakres
-                // eligible (First→Last), niezależny od update.
                 if (!isDryRun)
                 {
-                    await TryCaptureMergeSnapshotAsync(merge, sourceUrl, token).ConfigureAwait(false);
+                    // === FIX (lifecycle A): unieważnia punkt undo POPRZEDNIEJ sesji
+                    merge._snapshotManager.ClearRollbackSnapshot();
+                    snapshotSessionStarted = true;
+
+                    // === FIX (fail-closed + switch): currentUrl trafia do snapshotu
+                    if (!await TryCaptureMergeSnapshotAsync(merge, sourceUrl, currentUrl, token).ConfigureAwait(false))
+                    {
+                        merge.LogErrorLocal("[Merge] Aborted — could not determine merge range (mergeinfo failed).");
+                        return;
+                    }
                 }
 
                 await RunWithHeartbeatAsync(merge, "update", merge.SVNManager.WorkingDir, true, token, "Updating Working Copy").ConfigureAwait(false);
@@ -136,10 +155,16 @@ namespace SVN.Core
             {
                 merge.LogWarning("[Merge] Cancelled by user.");
                 await merge.SafeCleanupAfterCancel().ConfigureAwait(false);
+                // === FIX (lifecycle C): revert cofnął merge — snapshot wisi
+                if (snapshotSessionStarted) merge._snapshotManager.ClearRollbackSnapshot();
             }
             catch (Exception ex)
             {
                 merge.LogErrorLocal($"[Merge Error] {ex.Message}");
+                // === FIX (lifecycle B): merge nie doszedł do skutku — snapshot wisi.
+                // Trade-off świadomy: wyjątek PO udanym merge też skasuje punkt —
+                // strata undo < odwracanie niezmierzganych rewizji.
+                if (snapshotSessionStarted) merge._snapshotManager.ClearRollbackSnapshot();
             }
             finally
             {
@@ -241,8 +266,8 @@ namespace SVN.Core
                 return;
             }
 
-            if (!merge._snapshotManager.HasRollbackPoint)
-                merge._snapshotManager.LoadRollbackSnapshot();
+            // === FIX: LoadFromFile — pool-safe (PlayerPrefs tylko z main/konstruktora)
+            merge._snapshotManager.LoadFromFile();
 
             if (!merge._snapshotManager.HasRollbackPoint ||
                 string.IsNullOrWhiteSpace(merge._snapshotManager.LastMergeSource) ||
@@ -256,9 +281,30 @@ namespace SVN.Core
             string source = merge._snapshotManager.LastMergeSource;
             string revBefore = merge._snapshotManager.LastMergeRevisionBefore;
             string revAfter = merge._snapshotManager.LastMergeRevisionAfter;
+            string revisionList = merge._snapshotManager.LastMergeRevisionList;   // null dla starych snapshotów
 
             merge.LogInfo($"[{opName}] Source : {source}");
             merge.LogInfo($"[{opName}] Range  : r{revBefore} → r{revAfter}");
+            if (!string.IsNullOrWhiteSpace(revisionList))
+                merge.LogInfo($"[{opName}] Reversing revisions: {revisionList}");
+
+            // === FIX (switch): switch gałęzi NIE czyści pliku snapshotu (per-WC, z
+            // rozsądku — przeżywa restarty projektu). Bez weryfikacji Undo odwracałoby
+            // zakres mergowany na INNEJ gałęzi. Stare snapshoty (bez URL) → check
+            // pomijany. Fail-closed: awaria GetRepoUrlAsync → mismatch → abort.
+            if (!string.IsNullOrWhiteSpace(merge._snapshotManager.LastMergeWorkingCopyUrl))
+            {
+                string currentWcUrl = await SvnRunner.GetRepoUrlAsync(merge.SVNManager.WorkingDir).ConfigureAwait(false);
+                if (SVNMerge.Normalize(currentWcUrl) != SVNMerge.Normalize(merge._snapshotManager.LastMergeWorkingCopyUrl))
+                {
+                    merge.LogErrorLocal($"[{opName}] Rollback point belongs to a DIFFERENT branch — aborting.");
+                    merge.LogWarning($"Snapshot branch : {merge._snapshotManager.LastMergeWorkingCopyUrl}");
+                    merge.LogWarning($"Current branch  : {currentWcUrl ?? "(unknown)"}");
+                    merge.LogWarning("Switch back to the original branch first, or use 'Revert to HEAD' to reset.");
+                    return;
+                }
+            }
+
             merge.LogInfo($"[{opName}] Bringing working copy to a uniform revision...");
 
             try
@@ -270,21 +316,35 @@ namespace SVN.Core
                 merge.LogWarning($"[{opName}] Update failed (non-fatal): {ex.Message}");
             }
 
-            if (revBefore == revAfter)
+            // === FIX (dziury + off-by-one): undo z LISTY (-c -N odwraca dokładnie
+            // wskazane rewizje i koryguje mergeinfo per-rewizja); zakres tylko jako
+            // fallback dla starych snapshotów bez listy.
+            string baseArgs;
+            if (!string.IsNullOrWhiteSpace(revisionList))
             {
-                merge.LogErrorLocal($"[{opName}] Cannot auto-undo a base-merge snapshot (identical revisions).");
-                merge.LogWarning("To undo this, manually revert the 'svn:mergeinfo' property change on the root folder.");
-                return;
+                string reverseList = string.Join(",", revisionList
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(x => $"-{x.Trim()}"));
+
+                baseArgs = $"merge -c {reverseList} {SvnMergeUrlResolver.EscapeSvnArg(source)} --non-interactive --accept postpone";
+            }
+            else
+            {
+                if (revBefore == revAfter)
+                {
+                    merge.LogErrorLocal($"[{opName}] Cannot auto-undo a legacy snapshot (identical revisions).");
+                    merge.LogWarning("Perform a fresh merge (new snapshot format) or revert the svn:mergeinfo property manually.");
+                    return;
+                }
+
+                baseArgs = $"merge -r {revAfter}:{revBefore} {SvnMergeUrlResolver.EscapeSvnArg(source)} --non-interactive --accept postpone";
             }
 
-            // Odwrotność merga zakresu [revBefore..revAfter]:
-            string range = $"{revAfter}:{revBefore}";
-
-            // === FIX P2: flaga przed komendą — cancel w trakcie undo revertuje
-            // częściowe zmiany undo do BASE (stan sprzed undo), nie dalej.
+            // === FIX P2 (zachowany): flaga przed komendą — cancel w trakcie undo
+            // revertuje częściowe zmiany undo do BASE.
             merge._mergeCommandStarted = true;
 
-            string args = $"merge -r {range} {SvnMergeUrlResolver.EscapeSvnArg(source)} --non-interactive --accept postpone";
+            string args = baseArgs;
             merge.LogInfo($"[{opName}] Executing: svn {args}");
 
             string output;
@@ -310,21 +370,11 @@ namespace SVN.Core
             catch (Exception ex) when (IsAncestryError(ex))
             {
                 merge.LogWarning($"[{opName}] Ancestry issue – retrying with --ignore-ancestry...");
-                args = $"merge -r {range} {SvnMergeUrlResolver.EscapeSvnArg(source)} --ignore-ancestry --non-interactive --accept postpone";
+                args = $"{baseArgs} --ignore-ancestry";
                 merge.LogInfo($"[{opName}] Retrying with: svn {args}");
                 output = await SvnRunner.RunAsync(args, merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
             }
 
-            // ========== PRZED ==========
-            //if (autoCommit)
-            //{
-            //    string msg = $"Undo merge from {source} (r{revBefore}→r{revAfter})";
-            //    merge.LogInfo($"[{opName}] Auto-committing: {msg}");
-            //    await SvnRunner.RunAsync($"commit -m {SvnMergeUrlResolver.EscapeSvnArg(msg)}", merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
-            //    merge.LogSuccess($"[{opName}] Changes committed automatically.");
-            //}
-
-            // ========== PO ==========
             if (autoCommit)
             {
                 string msg = $"Undo merge from {source} (r{revBefore}→r{revAfter})";
@@ -336,7 +386,7 @@ namespace SVN.Core
             merge._snapshotManager.ClearRollbackSnapshot();
             await merge.SVNManager.RefreshStatus().ConfigureAwait(false);
             await merge.RefreshResolveUI().ConfigureAwait(false);
-            merge.LogSuccessBlock($"{opName} Complete", $"Successfully reverted merge of {source} (r{revBefore}→r{revAfter})");
+            merge.LogSuccessBlock($"{opName} Complete", $"Successfully reverted merge of {source}");
         }
 
         public static async Task RevertToHeadAsync(SVNMerge merge)
@@ -435,6 +485,14 @@ namespace SVN.Core
                     $"mergeinfo . {SvnMergeUrlResolver.EscapeSvnArg(trunkUrl)} --show-revs eligible",
                     merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
 
+                // === FIX (fail-closed raportu): awaria mergeinfo raportowała
+                // "Fully synchronized" — mylące zamiast błędu
+                if (IsSvnErrorOutput(missingInBranch) || IsSvnErrorOutput(branchOnlyChanges))
+                {
+                    merge.LogErrorLocal("[Comparison] mergeinfo failed — comparison unavailable.");
+                    return;
+                }
+
                 int missingCount = CountRevisions(missingInBranch);
                 int localCount = CountRevisions(branchOnlyChanges);
 
@@ -484,8 +542,6 @@ namespace SVN.Core
             }
             merge._lastForceMergeClickTime = -10f;
 
-            // === FIX P1: guard → try natychmiast; walidacja WEWNĄTRZ try
-            // (wcześniej ValidateSourceInput stał między guardami a try).
             if (!merge.TryStart())
             {
                 merge.LogWarning("[Force Merge] Another operation is already in progress.");
@@ -495,6 +551,7 @@ namespace SVN.Core
             using var cts = new CancellationTokenSource();
             merge._mergeCts = cts;
             CancellationToken token = cts.Token;
+            bool snapshotSessionStarted = false;   // lifecycle
 
             try
             {
@@ -534,7 +591,24 @@ namespace SVN.Core
                     "WARNING: This bypasses normal merge tracking.");
 
                 merge._hadLocalChangesBeforeMerge = await merge.HasPendingMergeChanges(token).ConfigureAwait(false);
-                await TryCaptureMergeSnapshotAsync(merge, sourceUrl, token).ConfigureAwait(false);
+
+                // === FIX (warn-not-block — celowo BEZ blokady): force = escape hatch;
+                // SVN sam obroni się konfliktami, a flaga _hadLocalChanges chroni
+                // usera przed revert -R przy cancel. Ale user musi wiedzieć, że cancel
+                // NIE zrobi auto-revert na brudnej kopii.
+                if (merge._hadLocalChangesBeforeMerge)
+                    merge.LogWarning("[Force Merge] Working copy is NOT clean – force merge will proceed, but cancel will NOT auto-revert. Commit or revert first if unsure.");
+
+                // === FIX (lifecycle A): unieważnia punkt poprzedniej sesji
+                merge._snapshotManager.ClearRollbackSnapshot();
+                snapshotSessionStarted = true;
+
+                // === FIX (fail-closed + switch): currentUrl → snapshot
+                if (!await TryCaptureMergeSnapshotAsync(merge, sourceUrl, currentUrl, token).ConfigureAwait(false))
+                {
+                    merge.LogErrorLocal("[Force Merge] Aborted — could not determine merge range (mergeinfo failed).");
+                    return;
+                }
 
                 string args;
                 if (merge._snapshotManager.HasRollbackPoint &&
@@ -542,8 +616,7 @@ namespace SVN.Core
                     !string.IsNullOrWhiteSpace(merge._snapshotManager.LastMergeRevisionAfter) &&
                     merge._snapshotManager.LastMergeRevisionBefore != merge._snapshotManager.LastMergeRevisionAfter)
                 {
-                    // === FIX P5 (spójność): snapshot to teraz zakres eligible —
-                    // force-merge merguje dokładnie ten zakres.
+                    // snapshot = (peg, last) → -r peg:last = dokładnie first..last
                     string range = $"{merge._snapshotManager.LastMergeRevisionBefore}:{merge._snapshotManager.LastMergeRevisionAfter}";
                     args = $"merge -r {range} {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --ignore-ancestry --non-interactive --accept postpone";
                     merge.LogInfo($"[Force Merge] Range: {range}");
@@ -572,10 +645,14 @@ namespace SVN.Core
             {
                 merge.LogWarning("[ForceMerge] Cancelled by user.");
                 await merge.SafeCleanupAfterCancel().ConfigureAwait(false);
+                // === FIX (lifecycle C)
+                if (snapshotSessionStarted) merge._snapshotManager.ClearRollbackSnapshot();
             }
             catch (Exception ex)
             {
                 merge.LogErrorLocal($"[Force Merge Error] {ex.Message}");
+                // === FIX (lifecycle B)
+                if (snapshotSessionStarted) merge._snapshotManager.ClearRollbackSnapshot();
             }
             finally
             {
@@ -602,7 +679,6 @@ namespace SVN.Core
             }
             merge._lastRepairMergeClickTime = -10f;
 
-            // === FIX P1: guard → try natychmiast.
             if (!merge.TryStart())
             {
                 merge.LogWarning("[RepairMergeHistory] Another operation is already in progress.");
@@ -656,6 +732,13 @@ namespace SVN.Core
 
                 merge._hadLocalChangesBeforeMerge = await merge.HasPendingMergeChanges(token).ConfigureAwait(false);
 
+                // === FIX (warn-not-block — celowo BEZ blokady): repair istnieje po to,
+                // żeby naprawiać bałagan w mergeinfo — a taki bałagan SAM rejestruje się
+                // jako pending change (' M' w kolumnie 2). Blokada odmówiłaby naprawy
+                // dokładnie tego stanu, po którym ta operacja istnieje.
+                if (merge._hadLocalChangesBeforeMerge)
+                    merge.LogWarning("[RepairMergeHistory] Working copy has pending changes – the mergeinfo record will mix with them on commit. Commit selectively if unsure.");
+
                 merge.LogInfo($"[RepairMergeHistory] Source branch: {sourceUrl}");
                 string args = $"merge --record-only --ignore-ancestry {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive --accept postpone";
                 merge.LogInfo($"[RepairMergeHistory] Executing: svn {args}");
@@ -663,10 +746,12 @@ namespace SVN.Core
                 merge._mergeCommandStarted = true;
                 string output = await SvnRunner.RunAsync(args, merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
 
-                if (output.Contains("Recording") || output.Contains("recorded") || string.IsNullOrWhiteSpace(output))
+                // === FIX: null-check pierwszy (było: output.Contains przed IsNullOrWhiteSpace → NRE przy null)
+                if (string.IsNullOrWhiteSpace(output) || output.Contains("Recording") || output.Contains("recorded"))
                 {
                     merge.LogSuccess("[RepairMergeHistory] Mergeinfo successfully recorded.");
-                    merge.LogSuccess("Please commit this change immediately.");
+                    // === FIX: LogWarning zamiast LogSuccess — "commitnij teraz" nie może ginąć między sukcesami
+                    merge.LogWarning("Please commit this change immediately.");
                     merge.LogSuccess("After commit, standard reintegrate from branch to trunk will work correctly.");
                     await merge.SVNManager.RefreshStatus().ConfigureAwait(false);
                 }
@@ -693,34 +778,49 @@ namespace SVN.Core
             }
         }
 
-        private static async Task TryCaptureMergeSnapshotAsync(SVNMerge merge, string sourceUrl, CancellationToken token)
+        // === FIX: zwraca false, gdy mergeinfo padł — caller przerywa (fail-closed).
+        // workingCopyUrl trafia do snapshotu — Undo weryfikuje, czy nadal jesteśmy
+        // na tej samej gałęzi (switch w obrębie projektu NIE czyści pliku snapshotu,
+        // bo jest per-WC — bez tego Undo odwracałoby zakres na INNEJ gałęzi).
+        private static async Task<bool> TryCaptureMergeSnapshotAsync(SVNMerge merge, string sourceUrl, string workingCopyUrl, CancellationToken token)
         {
-            // === FIX P5: revBefore = PIERWSZA eligible rewizja (nie BASE kopii) —
-            // undo (-r last:first) odwraca dokładnie zakres mergowany.
             string eligible = await SvnRunner.RunAsync(
                 $"mergeinfo {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} . --show-revs eligible",
-                merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
+                merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
+
+            if (IsSvnErrorOutput(eligible))
+            {
+                merge.LogErrorLocal($"[Snapshot] Mergeinfo failed: {eligible.Trim()}");
+                return false;
+            }
 
             if (string.IsNullOrWhiteSpace(eligible))
             {
                 merge.LogInfo("[Snapshot] No eligible revisions – no rollback point created.");
-                return;
+                return true;
             }
 
             var revisions = ParseRevisionList(eligible);
             if (revisions.Count == 0)
             {
                 merge.LogWarning("[Snapshot] Mergeinfo exists but revisions are invalid.");
-                return;
+                return true;
             }
 
-            long firstEligible = revisions.First();
+            // === FIX (off-by-one): svn merge -r N:M aplikuje zmiany N+1..M — zakres
+            // [first..last] wymaga pegu (first-1).
+            long firstPeg = revisions.First() - 1;
             long lastEligible = revisions.Last();
 
-            merge._snapshotManager.SetSnapshot(sourceUrl, firstEligible.ToString(), lastEligible.ToString());
+            // === FIX (dziury): pełna lista — undo przez -c -N.
+            string revisionList = string.Join(",", revisions);
+            bool contiguous = (lastEligible - firstPeg) == revisions.Count;
+
+            merge._snapshotManager.SetSnapshot(sourceUrl, firstPeg.ToString(), lastEligible.ToString(), revisionList, workingCopyUrl);
             merge._snapshotManager.SaveRollbackSnapshot();
             merge.LogInfoBlock("MERGE SNAPSHOT CREATED",
-                $"Eligible range: r{firstEligible} → r{lastEligible}\n(Undo will reverse exactly this range)");
+                $"Eligible: r{firstPeg + 1} → r{lastEligible}{(contiguous ? "" : " (non-contiguous)")}\n(Undo will reverse exactly these revisions)");
+            return true;
         }
 
         private static async Task<string> ExecuteMergeCommandAsync(SVNMerge merge, string sourceUrl, bool isDryRun, CancellationToken token)
@@ -794,7 +894,6 @@ namespace SVN.Core
                 return;
             }
 
-            // === FIX P1: guard → try natychmiast; cała walidacja wewnątrz try.
             if (!merge.TryStart())
             {
                 merge.LogWarning("[Cherry-pick] Another operation is already in progress.");
@@ -804,6 +903,7 @@ namespace SVN.Core
             using var cts = new CancellationTokenSource();
             merge._mergeCts = cts;
             CancellationToken token = cts.Token;
+            bool snapshotSessionStarted = false;   // lifecycle; false dla dry-run (nie kasuje punktu LIVE merge)
 
             try
             {
@@ -840,6 +940,9 @@ namespace SVN.Core
                     return;
                 }
 
+                // === FIX (preview): prefiks ścieżki źródła — wyliczony, nie hardcoded
+                string sourcePathPrefix = ComputeSourcePathPrefix(sourceUrl, repoRoot);
+
                 string revisionDescription = string.Join(", ", revisionItems.Select(item =>
                     item.IsRange ? $"{item.Start}:{item.End}" : item.Start.ToString()));
 
@@ -871,37 +974,68 @@ namespace SVN.Core
                 await RunWithHeartbeatAsync(merge, "update", merge.SVNManager.WorkingDir,
                     true, token, "Cherry-Pick Update").ConfigureAwait(false);
 
+                // === FIX (semantyka): item = ZBIÓR rewizji Start..End → -r (Start-1):End
                 var revisionArgs = new System.Text.StringBuilder();
                 foreach (var item in revisionItems)
                 {
                     if (item.IsRange)
-                        revisionArgs.Append($"-r {item.Start}:{item.End} ");
+                        revisionArgs.Append($"-r {item.Start - 1}:{item.End} ");
                     else
                         revisionArgs.Append($"-c {item.Start} ");
                 }
 
                 if (!isDryRun)
                 {
+                    // === FIX (lifecycle A): unieważnia punkt poprzedniej sesji
+                    merge._snapshotManager.ClearRollbackSnapshot();
+                    snapshotSessionStarted = true;
+
                     if (revisionItems.Count == 1)
                     {
                         var single = revisionItems[0];
-                        string snapBefore = single.IsRange ? single.Start.ToString() : (single.Start - 1).ToString();
+                        string snapBefore = (single.Start - 1).ToString();
                         string snapAfter = single.End.ToString();
-                        merge._snapshotManager.SetSnapshot(sourceUrl, snapBefore, snapAfter);
+                        merge._snapshotManager.SetSnapshot(sourceUrl, snapBefore, snapAfter, null, currentUrl);
                         merge._snapshotManager.SaveRollbackSnapshot();
                         merge.LogInfoBlock("CHERRY-PICK SNAPSHOT", $"Created rollback point for {revisionDescription}.");
                     }
                     else
                     {
-                        merge.LogWarning("[Cherry-pick] Multiple revisions specified – rollback snapshot not created. Use 'Cancel Local Merge' or 'Revert to HEAD' manually if needed.");
+                        long totalRevisions = revisionItems.Sum(i => i.End - i.Start + 1);
+                        if (totalRevisions <= MaxUndoListRevisions)
+                        {
+                            var allRevisions = new List<long>();
+                            foreach (var item in revisionItems)
+                                for (long r = item.Start; r <= item.End; r++)
+                                    allRevisions.Add(r);
+
+                            merge._snapshotManager.SetSnapshot(
+                                sourceUrl,
+                                (revisionItems.Min(i => i.Start) - 1).ToString(),
+                                revisionItems.Max(i => i.End).ToString(),
+                                string.Join(",", allRevisions),
+                                currentUrl);
+                            merge._snapshotManager.SaveRollbackSnapshot();
+                            merge.LogInfoBlock("CHERRY-PICK SNAPSHOT", $"Created rollback point for {revisionDescription} (union list).");
+                        }
+                        else
+                        {
+                            // === FIX (pkt 3 analizy): LogWarningBlock zamiast jednolinijkowego
+                            // LogWarning — to decision-critical info, musi być widoczne
+                            merge.LogWarningBlock("CHERRY-PICK SNAPSHOT UNAVAILABLE",
+                                $"Revision set too large ({totalRevisions} > {MaxUndoListRevisions}) for an automatic rollback point.\n" +
+                                "No automatic Undo will be available for this cherry-pick.\n" +
+                                "If you need to cancel its effects, use 'Revert to HEAD' to reset the working copy.");
+                        }
                     }
                 }
 
                 merge.LogInfo($"[Cherry-pick] Fetching file changes for revisions: {revisionDescription}");
-                string logArgs = $"log -r {revisionDescription.Replace(" ", "")} -v --xml {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)}";
+                string logArgs = $"log -r {revisionDescription.Replace(" ", "")} -v --xml {SvnMergeUrlResolver.EscapeSvnArg(sourceUrl)} --non-interactive";
                 string logXml = await SvnRunner.RunAsync(logArgs, merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
 
-                var previewResult = ParseCherryPickLogXml(logXml, out string commitMsg);
+                // === FIX (preview): prefiks źródła przekazany do parsera
+                var previewResult = ParseCherryPickLogXml(logXml, sourcePathPrefix, out string commitMsg);
                 if (previewResult.Files.Count > 0)
                 {
                     merge.LogInfoBlock("REVISION CONTENTS", $"Commit msg: {commitMsg}\nFiles affected: {previewResult.Files.Count}");
@@ -950,10 +1084,12 @@ namespace SVN.Core
             {
                 merge.LogWarning("[Cherry-pick] Cancelled by user.");
                 await merge.SafeCleanupAfterCancel().ConfigureAwait(false);
+                if (snapshotSessionStarted) merge._snapshotManager.ClearRollbackSnapshot();
             }
             catch (Exception ex)
             {
                 merge.LogErrorLocal($"[Cherry-pick Error] {ex.Message}");
+                if (snapshotSessionStarted) merge._snapshotManager.ClearRollbackSnapshot();
             }
             finally
             {
@@ -964,13 +1100,20 @@ namespace SVN.Core
             }
         }
 
-        private static SVNMerge.MergeFileResult ParseCherryPickLogXml(string xmlOutput, out string message)
+        // === FIX (preview): obcinanie prefiksu WYLICZONEGO ze źródła, nie hardcoded
+        // "/trunk/". Cherry-pick z brancha pokazywał pełne ścieżki "/branches/x/Assets/..."
+        // zamiast relatywnych. Dotyczy wyłącznie preview UI — merge operuje na URL-ach
+        // i nie czyta nic z tego parsera.
+        private static SVNMerge.MergeFileResult ParseCherryPickLogXml(string xmlOutput, string sourcePathPrefix, out string message)
         {
             var result = new SVNMerge.MergeFileResult();
             result.Files = new List<SVNMerge.MergeFileInfo>();
             message = "N/A";
 
             if (string.IsNullOrWhiteSpace(xmlOutput)) return result;
+
+            string prefix = (sourcePathPrefix ?? "").Trim().TrimEnd('/');
+            bool hasPrefix = prefix.Length > 0;
 
             try
             {
@@ -996,13 +1139,18 @@ namespace SVN.Core
                         string filePath = pathNode.InnerText?.Trim() ?? "";
                         if (string.IsNullOrEmpty(filePath)) continue;
 
-                        if (filePath.Equals("/trunk", StringComparison.OrdinalIgnoreCase))
+                        // === FIX: prefiks źródła (dla trunka — "/trunk" — zachowanie
+                        // identyczne z dotychczasowym; dla brancha — jego własny prefiks)
+                        if (hasPrefix)
                         {
-                            filePath = ". (Root / Property Change)";
-                        }
-                        else if (filePath.StartsWith("/trunk/", StringComparison.OrdinalIgnoreCase))
-                        {
-                            filePath = filePath.Substring("/trunk/".Length);
+                            if (filePath.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+                            {
+                                filePath = ". (Root / Property Change)";
+                            }
+                            else if (filePath.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+                            {
+                                filePath = filePath.Substring(prefix.Length + 1);
+                            }
                         }
 
                         char stateChar = action.Length > 0 ? char.ToUpper(action[0]) : 'M';
@@ -1024,13 +1172,23 @@ namespace SVN.Core
             }
             catch (Exception)
             {
-
             }
 
             return result;
         }
 
         #region Private Helpers - Heartbeat & Parsing
+
+        // === NOWA: błąd mergeinfo potrafi wrócić jako tekst "svn: E..." zamiast
+        // wyjątku (semantyka flagi w RunAsync nie została rozstrzygnięta) — bez tego
+        // check wyglądał jak pusty eligible = "zsynchronizowany" (fail-open).
+        private static bool IsSvnErrorOutput(string output)
+        {
+            if (string.IsNullOrWhiteSpace(output)) return false;   // puste = legalny "brak eligible"
+            string trimmed = output.TrimStart();
+            return trimmed.StartsWith("svn: E", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("svn: W", StringComparison.Ordinal);
+        }
 
         private static async Task<string> RunWithHeartbeatAsync(SVNMerge merge, string command, string workingDir, bool logErrors, CancellationToken token, string context)
         {
@@ -1081,6 +1239,26 @@ namespace SVN.Core
                 .ToList();
         }
 
+        /// Repo-relatywna ścieżka ŹRÓDŁA ("/trunk", "/branches/foo") — do preview
+        /// cherry-picka. sourceUrl pochodzi zawsze z ResolveSourceUrl
+        /// (repoRoot + /trunk|/branches/...|/tags/...), więc prefiks jest bezpieczny.
+        /// Zwraca null, gdy sourceUrl nie leży pod repoRoot — wtedy preview nie obcina.
+        private static string ComputeSourcePathPrefix(string sourceUrl, string repoRoot)
+        {
+            if (string.IsNullOrWhiteSpace(sourceUrl)) return null;
+
+            string url = sourceUrl.Trim().TrimEnd('/');
+            string root = (repoRoot ?? "").Trim().TrimEnd('/');
+
+            if (root.Length > 0 &&
+                url.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return url.Substring(root.Length);   // "/trunk" | "/branches/foo" | "/tags/x"
+            }
+
+            return null;
+        }
+
         private static bool IsAncestryError(Exception ex)
         {
             string msg = ex?.Message ?? string.Empty;
@@ -1103,8 +1281,11 @@ namespace SVN.Core
             try
             {
                 merge.LogInfo("[RepairMergeHistory] Searching log for incomplete reintegrate...");
+
+                // === FIX P3 (domknięty): BEZ SshConfigOption — SSH zapewnia SvnRunner
+                // (env SVN_SSH per proces). Prefiks konkurował z env (własna analiza P3).
                 string logOutput = await SvnRunner.RunAsync(
-                    $"{SVNMerge.SshConfigOption}log --stop-on-copy --xml --verbose -l 20",
+                    "log --stop-on-copy --xml --verbose -l 20",
                     merge.SVNManager.WorkingDir, true, token).ConfigureAwait(false);
 
                 long targetRev = FindIncompleteReintegrateRevisionInXml(logOutput);
@@ -1116,7 +1297,7 @@ namespace SVN.Core
 
                 merge.LogInfo($"[RepairMergeHistory] Found candidate at r{targetRev}. Attempting to determine source branch from mergeinfo diff...");
                 string diffOutput = await SvnRunner.RunAsync(
-                    $"{SVNMerge.SshConfigOption}diff -c {targetRev} --properties-only",
+                    $"diff -c {targetRev} --properties-only",
                     merge.SVNManager.WorkingDir, false, token).ConfigureAwait(false);
 
                 if (!string.IsNullOrWhiteSpace(diffOutput))

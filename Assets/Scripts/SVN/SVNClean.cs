@@ -10,14 +10,16 @@ namespace SVN.Core
     {
         private readonly object _ctsSync = new();
         private CancellationTokenSource _cts;
-        private volatile bool _isDisposed;
+
+        // === FIX: atomowa flaga (było: volatile bool check-then-set — benign
+        // race przy podwójnym Dispose; wzorzec Interlocked jak w reszcie modułów).
+        private int _disposedFlag;   // 0/1
 
         // === FIX (dialog → double-click): potwierdzenia jak w SVNRevert/SVNUpdate/
         // SVNBranchTag/SVNMerge. Pola per operacja; Time.unscaledTime czytane
         // WYŁĄCZNIE na main thread (publiczne metody wołane z przycisków UI,
         // przed pierwszym await). Zero dialogów — działa identycznie w edytorze
-        // i player-buildzie (poprzedni fallback w buildzie auto-zwracał false
-        // = "Cancelled by user" dla każdej operacji destrukcyjnej).
+        // i player-buildzie.
         private float _lastDeepRepairClickTime = -10f;
         private float _lastDiscardUnversionedClickTime = -10f;
         private float _lastHardResetClickTime = -10f;
@@ -60,8 +62,11 @@ namespace SVN.Core
 
         // === Entry points: confirm NA MAIN THREAD (przed pierwszym await),
         // potem operacja asynchroniczna. Zero dialogów.
-        public void LightCleanup() => _ = StartAsync(LightCleanupAsync, requireConfirm: false);
-        public void VacuumCleanup() => _ = StartAsync(VacuumCleanupAsync, requireConfirm: false);
+        // (requireConfirm usunięty — martwy parametr; confirmy robią publiczne
+        // metody, StartAsync jest private i każde wywołanie już potwierdzone
+        // albo nie wymaga potwierdzenia.)
+        public void LightCleanup() => _ = StartAsync(LightCleanupAsync);
+        public void VacuumCleanup() => _ = StartAsync(VacuumCleanupAsync);
 
         public void DeepRepair()
         {
@@ -71,7 +76,7 @@ namespace SVN.Core
                     "Press the button again within <b>5 seconds</b> to confirm."))
                 return;
 
-            _ = StartAsync(DeepRepairAsync, requireConfirm: false);
+            _ = StartAsync(DeepRepairAsync);
         }
 
         public void DiscardUnversioned()
@@ -81,7 +86,7 @@ namespace SVN.Core
                     "Press the button again within <b>5 seconds</b> to confirm."))
                 return;
 
-            _ = StartAsync(DiscardUnversionedAsync, requireConfirm: false);
+            _ = StartAsync(DiscardUnversionedAsync);
         }
 
         public void HardReset()
@@ -92,7 +97,7 @@ namespace SVN.Core
                     "Press the button again within <b>5 seconds</b> to confirm."))
                 return;
 
-            _ = StartAsync(HardResetAsync, requireConfirm: false);
+            _ = StartAsync(HardResetAsync);
         }
 
         public void RepairStructure()
@@ -103,14 +108,13 @@ namespace SVN.Core
                     "Press the button again within <b>5 seconds</b> to confirm."))
                 return;
 
-            _ = StartAsync(RepairStructureAsync, requireConfirm: false);
+            _ = StartAsync(RepairStructureAsync);
         }
 
         // === Wzorzec double-click (spójny z SVNRevert.ConfirmAction).
-        // Wołane WYŁĄCZNIE z main thread (publiczne metody = przyciski UI).
+        // Wołane WYŁĄCZNIE z main thread — jawnie odmawia z puli (fail-safe).
         private bool ConfirmAction(ref float lastClickTime, string warningMessage)
         {
-            // Guard: jeśli wołane z puli (nie z przycisku) — odmowa (fail-safe).
             if (!UnityMainThreadDispatcher.IsMainThread)
             {
                 SVNLogBridge.LogWarning("[SVN Clean] Confirmation must be triggered from UI (main thread). Operation denied.");
@@ -140,15 +144,11 @@ namespace SVN.Core
 
         // === FIX (kaskada): StartAsync czeka na RunAsync; cleanup należy WYŁĄCZNIE
         // do RunAsync. Kolejność w finally: _cts=null PRZED End() (niezmiennik
-        // "_cts != null ⟹ IsProcessing").
-        private async Task StartAsync(Func<CancellationToken, Task> op, bool requireConfirm)
+        // "_cts != null ⟹ IsProcessing"). Gałąź 'initialization error' to martwy
+        // defensywny kod z definicji niezmiennika.
+        private async Task StartAsync(Func<CancellationToken, Task> op)
         {
-            if (op == null || _isDisposed) return;
-
-            // requireConfirm obsłużony w publicznych metodach (double-click, main thread).
-            // Parametr zostaje dla kompatybilności sygnatury.
-
-            if (_isDisposed) return;
+            if (op == null || Volatile.Read(ref _disposedFlag) == 1) return;
 
             if (!TryStart())
             {
@@ -159,7 +159,7 @@ namespace SVN.Core
             CancellationTokenSource opCts;
             lock (_ctsSync)
             {
-                if (_isDisposed || _cts != null)
+                if (Volatile.Read(ref _disposedFlag) == 1 || _cts != null)
                 {
                     End();
                     LogClean("<color=#FFAA00>Operation initialization error.</color>");
@@ -201,20 +201,21 @@ namespace SVN.Core
                 try { End(); } catch (Exception ex) { SVNLogBridge.LogException(ex); }
 
                 // Dispose bezpieczny: _cts zdjęte pod lockiem (Cancel nie sięgnie),
-                // operacja zakończona (token nieużywany), refresh niżej własnym tokenem.
+                // operacja zakończona (token nieużywany), refresh niżej własnym guardem.
                 try { cts.Dispose(); } catch { }
 
                 PostUIFinish();
 
-                if (!_isDisposed)
+                if (Volatile.Read(ref _disposedFlag) == 0)
                     await RefreshStatusSafeAsync().ConfigureAwait(false);
             }
         }
 
         public void Dispose()
         {
-            if (_isDisposed) return;
-            _isDisposed = true;
+            // === FIX: atomowo (Interlocked) — check-then-set na volatile bool
+            // miał benign race przy podwójnym Dispose
+            if (Interlocked.Exchange(ref _disposedFlag, 1) == 1) return;
 
             CancellationTokenSource opCts;
             lock (_ctsSync) { opCts = _cts; _cts = null; }
@@ -252,8 +253,13 @@ namespace SVN.Core
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
+                // === FIX: WARNING zamiast ERROR — to próba, nie porażka; sukces
+                // retry zaloguje "Success!". Wcześniej user widział sekwencję
+                // "Cleanup failed..." → "Success!" w jednej operacji.
+                // (Retry po KAŻDYM błędzie jest naciągany — sensowny głównie
+                // dla błędów externals; zostaje, z komunikatem nie mylącym.)
                 UnityMainThreadDispatcher.Enqueue(() =>
-                    SVNLogBridge.LogErrorToOutput($"[SVN] Cleanup failed: {ex.Message}"));
+                    SVNLogBridge.LogWarning($"[SVN] Cleanup retrying with --include-externals ({ex.Message})..."));
                 t.ThrowIfCancellationRequested();
                 return await SvnRunner.RunAsync("cleanup --include-externals", wd, false, t).ConfigureAwait(false);
             }
@@ -275,6 +281,9 @@ namespace SVN.Core
                 LogClean(output);
         }
 
+        // (UWAGA: fallback 'invalid option' jest TYLKO tu — HardReset/RepairStructure
+        // używają --remove-unversioned/--vacuum-pristines bez fallbacku; na kliencie
+        // < 1.10 padną twardym błędem, co łapie RunAsync jako "Error". Świadome.)
         public static async Task<string> ExecuteVacuumCleanupAsync(string wd, CancellationToken t = default)
         {
             try
@@ -376,8 +385,14 @@ namespace SVN.Core
                 return null;
             }
 
+            // === FIX: było ciche return null (pozostałe ścieżki walidacji
+            // logują — niespójność)
             try { p = Path.GetFullPath(p); }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                LogClean($"<color=#FFAA00>Invalid path: {ex.Message}</color>", false);
+                return null;
+            }
 
             if (!Directory.Exists(p))
             {
@@ -399,7 +414,7 @@ namespace SVN.Core
 
         private async Task RefreshStatusSafeAsync()
         {
-            if (_isDisposed || svnManager == null) return;
+            if (Volatile.Read(ref _disposedFlag) == 1 || svnManager == null) return;
 
             try
             {
@@ -430,7 +445,7 @@ namespace SVN.Core
 
         private void PostUIFinish()
         {
-            // celowo puste (utrzymane dla symetrii — patrz review)
+            // celowo puste (utrzymane dla symetrii — status końcowy logują operacje)
         }
 
         private static void TryCancel(CancellationTokenSource cts, ref bool flag)

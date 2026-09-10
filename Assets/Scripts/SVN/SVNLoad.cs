@@ -16,8 +16,6 @@ namespace SVN.Core
 
         public SVNLoad(SVNUI ui, SVNManager manager) : base(ui, manager) { }
 
-        // === FIX Ś1: snapshot inputów na main thread (metoda publiczna — może
-        // być wołana z dowolnego kontekstu); dopiero potem async rdzeń.
         public void LoadRepoPathAndRefresh()
         {
             if (Volatile.Read(ref _disposed) == 1) return;
@@ -44,9 +42,6 @@ namespace SVN.Core
             else
                 keyPath = SvnRunner.KeyPath ?? string.Empty;
 
-            // === FIX K1: delayed dispose starego CTS — natychmiastowy Cancel+Dispose
-            // potrafił rzucić ObjectDisposedException w biegnącym checkoucie (token
-            // zarejestrowany w SvnRunner), co wyglądało jak błąd operacji, nie cancel.
             var newCts = new CancellationTokenSource();
             var oldCts = Interlocked.Exchange(ref _loadCts, newCts);
             if (oldCts != null)
@@ -87,8 +82,6 @@ namespace SVN.Core
                 return;
             }
 
-            // === FIX K2: walidacja scheme — Uri.TryCreate akceptował file://,
-            // ftp:// i dowolne śmieci; checkout startował i padał w połowie.
             if (!string.IsNullOrEmpty(manualUrl) && !IsValidSvnUrl(manualUrl))
             {
                 SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Invalid SVN URL. Expected svn://, svn+ssh://, http:// or https://.");
@@ -101,8 +94,6 @@ namespace SVN.Core
             {
                 token.ThrowIfCancellationRequested();
 
-                // === FIX K3: normalizacja trailing slasha — Path.GetFileName("D:/Repo/")
-                // zwracał PUSTY string → projekt bez nazwy w liście projektów.
                 string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
 
                 UnityMainThreadDispatcher.Enqueue(() =>
@@ -140,31 +131,40 @@ namespace SVN.Core
                     await SvnRunner.RunAsync($"checkout \"{manualUrl}\" .{forceFlag}", normalizedPath, token: token).ConfigureAwait(false);
                     SVNLogBridge.LogLine("<color=green>Checkout completed!</color>");
                 }
+                else if (string.IsNullOrEmpty(manualUrl))
+                {
+                    // Working copy istnieje, user NIE podał URL → dopiero teraz
+                    // sensowne jest pytanie .svn o origin.
+                    await svnManager.RefreshRepositoryInfo().ConfigureAwait(false);
+                }
                 else
                 {
-                    await svnManager.RefreshRepositoryInfo().ConfigureAwait(false);
+                    // Working copy istnieje, ALE user podał własny URL → to jest
+                    // jego świadoma decyzja. NIE czytaj .svn (bo tam może siedzieć
+                    // stary origin z innego repo).
+                    SVNLogBridge.LogLine(
+                        $"<color=#88CCFF>[SVNLoad]</color> Using user-provided URL (ignoring working-copy metadata): {manualUrl}");
                 }
 
                 token.ThrowIfCancellationRequested();
 
-                if (string.IsNullOrEmpty(svnManager.RepositoryUrl) && !string.IsNullOrEmpty(manualUrl))
-                    svnManager.RepositoryUrl = manualUrl;
+                // === FIX: user-typed URL wygrywa z .svn. Bez tego Load wpisywał
+                // do JSON-a projektu URL z dysku (Test) mimo, że user wpisał inny.
+                string urlForProject = !string.IsNullOrEmpty(manualUrl)
+                    ? manualUrl
+                    : (svnManager.RepositoryUrl ?? string.Empty);
 
-                string urlSnapshot = svnManager.RepositoryUrl ?? string.Empty;
+                string urlSnapshot = urlForProject;
                 string keySnapshot = keyPath;
 
                 var project = new SVNProject
                 {
                     projectName = Path.GetFileName(normalizedPath),
-                    repoUrl = urlSnapshot,
+                    repoUrl = urlForProject,
                     workingDir = normalizedPath,
                     privateKeyPath = keySnapshot
                 };
 
-                // === FIX Ś2: LoadProject (po fixie martwej kopii) zwraca Task<bool> —
-                // false = odmowa (brak .svn / martwa kopia). Wcześniej kod leciał
-                // dalej: ustawiał stan, register, SUCCESS i ZAMYKAŁ panel mimo to,
-                // że projekt się nie załadował.
                 bool loaded = await svnManager.LoadProject(project).ConfigureAwait(false);
                 if (!loaded)
                 {
@@ -175,6 +175,12 @@ namespace SVN.Core
                 svnManager.WorkingDir = normalizedPath;
                 svnManager.CurrentKey = keyPath;
                 SvnRunner.KeyPath = keyPath;
+
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    if (svnUI?.TreeDisplay != null)
+                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
+                });
 
                 UnityMainThreadDispatcher.Enqueue(() =>
                 {
@@ -193,6 +199,20 @@ namespace SVN.Core
                 });
 
                 SVNLogBridge.LogLine("<color=green>SUCCESS:</color> System synchronized.");
+
+                try
+                {
+                    await Task.Delay(250, token).ConfigureAwait(false);
+                    await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception refreshEx)
+                {
+                    SVNLogBridge.LogError($"[SVNLoad] Post-load refresh failed: {refreshEx.Message}");
+                }
 
                 if (svnManager.PanelHandler != null)
                 {
@@ -215,7 +235,6 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(path)) return;
 
-            // === S1: atomowe
             ProjectSettings.AddOrUpdateProject(path, (p, created) =>
             {
                 if (created)
@@ -262,7 +281,6 @@ namespace SVN.Core
             if (cts != null)
             {
                 try { cts.Cancel(); } catch { }
-                // === FIX Ś4: delayed dispose (spójnie z K1).
                 _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
             }
         }

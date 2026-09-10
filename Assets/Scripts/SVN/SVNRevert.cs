@@ -10,6 +10,12 @@ namespace SVN.Core
     {
         private float _lastRevertAllClickTime = -10f;
         private float _lastRevertSingleClickTime = -10f;
+
+        // === FIX (safety): ostatni cel potwierdzenia — okno 5 s per PLIK,
+        // nie globalne. Wcześniej potwierdzenie wystawione przez klik na A
+        // autokonfirmowało klik na B (B wracał bez własnego potwierdzenia).
+        private string _lastRevertSingleTarget;
+
         private CancellationTokenSource _revertCts;
         private readonly SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
         private const int CleanupTimeoutSeconds = 30;
@@ -52,8 +58,7 @@ namespace SVN.Core
         }
 
         // === FIX D2: porażka cleanupu z dowolnego powodu = czytelny komunikat
-        // "cleanup blocked" (wcześniej: ogólne "[Revert All] Failed: svn: E155004..."
-        // — użytkownik nie wiedział, że to pre-check zablokował, nie revert, padł).
+        // "cleanup blocked" (wcześniej: ogólne "[Revert All] Failed: svn: E155004...").
         private async Task<bool> CleanupWorkingCopyAsync(string root, CancellationToken token)
         {
             LogToConsole("<b>[Cleanup]</b> Checking working copy locks...");
@@ -110,10 +115,9 @@ namespace SVN.Core
             }
         }
 
-        // === FIX D1: delayed dispose — pole zdejmowane pod CompareExchange (jak było,
-        // poprawnie odcina Cancel), a fizyczny dispose po sekundzie: token bywa jeszcze
-        // zarejestrowany w umierającym RefreshStatus/SvnRunner i natychmiastowy
-        // dispose dawał tam ODE (nie-OCE!) → fałszywy "[Revert] Failed: safe handle...".
+        // === FIX D1: delayed dispose — pole zdejmowane pod CompareExchange, a
+        // fizyczny dispose po sekundzie (natychmiastowy dawał ODE w umierającym
+        // RefreshStatus/SvnRunner → fałszywy "[Revert] Failed: safe handle...").
         private void ClearOperationToken(CancellationTokenSource localCts)
         {
             if (localCts == null) return;
@@ -123,6 +127,10 @@ namespace SVN.Core
 
         public async void RevertAll()
         {
+            // === FIX (teardown): guard _disposed — po Dispose opacja nie startuje
+            // (WaitAsync na zdysponowanym semaforze = ODE w async void)
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             float clickTime = Time.unscaledTime;
             if (!ConfirmAction(clickTime, ref _lastRevertAllClickTime,
                 "<color=#FFAA00><b>[Revert All]</b></color> This will discard <b>ALL local changes</b>!\n" +
@@ -136,7 +144,13 @@ namespace SVN.Core
             try
             {
                 hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
-                if (!hasLock) return;
+                if (!hasLock)
+                {
+                    // === FIX (UX): było ciche return — user potwierdził dwuklikiem
+                    // destrukcyjną akcję i nic się nie stało bez słowa
+                    LogToConsole("<color=#FFAA00><b>[Revert All]</b> Another revert operation is already in progress.</color>");
+                    return;
+                }
 
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
@@ -194,6 +208,9 @@ namespace SVN.Core
 
         public async void RevertSingleItem(SvnTreeElement element)
         {
+            // === FIX (teardown): guard _disposed
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             if (element == null)
             {
                 LogToConsole("<color=#FFAA00>Cannot revert: item is null.</color>");
@@ -203,6 +220,16 @@ namespace SVN.Core
             // Snapshot pól na main thread (tu jesteśmy — klik z drzewa UI).
             string elementName = element.Name;
             string elementFullPath = element.FullPath;
+
+            // === FIX (safety — GŁÓWNA poprawka): okno potwierdzenia per CEL.
+            // Wcześniej _lastRevertSingleClickTime było współdzielone między
+            // plikami: klik na A (warning), zmiana zdania, klik na B → elapsed
+            // wpadał w okno (0.3–5 s) wystawione przez A → ConfirmAction
+            // zwracał TRUE → B wracał NATYCHMIAST, bez własnego potwierdzenia.
+            // Zmiana celu = reset okna = nowa pełna sekwencja potwierdzenia.
+            if (!string.Equals(elementFullPath, _lastRevertSingleTarget, StringComparison.OrdinalIgnoreCase))
+                _lastRevertSingleClickTime = -10f;
+            _lastRevertSingleTarget = elementFullPath;
 
             float clickTime = Time.unscaledTime;
             if (!ConfirmAction(clickTime, ref _lastRevertSingleClickTime,
@@ -217,7 +244,12 @@ namespace SVN.Core
             try
             {
                 hasLock = await _operationLock.WaitAsync(0).ConfigureAwait(false);
-                if (!hasLock) return;
+                if (!hasLock)
+                {
+                    // === FIX (UX): jw. — komunikat zamiast ciszy
+                    LogToConsole("<color=#FFAA00><b>[Revert]</b> Another revert operation is already in progress.</color>");
+                    return;
+                }
 
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
@@ -240,16 +272,41 @@ namespace SVN.Core
                 bool cleanupOk = await CleanupWorkingCopyAsync(root, token).ConfigureAwait(false);
                 if (!cleanupOk) return;
 
-                if (!TryGetRelativePath(root, elementFullPath, out string safePath))
+                // === FIX (.svn-root): element "[Repository Root Change]" ma
+                // SZTUCZNĄ ścieżkę ".svn-root" — revert -R .svn-root padał na
+                // svn error. Mapowanie na "." ALE ŚWIADOMIE BEZ -R:
+                // svn revert . (bez -R) cofa wyłącznie ZMIANY SAMEGO ROOTA
+                // (property, np. mergeinfo po mergu). Naiwne "-R ." cofnęłoby
+                // WSZYSTKIE zmiany w całej kopii — katastrofa przy intencji
+                // "cofnij tylko mergeinfo roota". Foldery z drzewa zachowują -R
+                // (rekursywny revert poddrzewa = zamierzona semantyka UI).
+                string revertTarget;
+                bool recursive;
+
+                if (string.Equals(elementFullPath, ".svn-root", StringComparison.Ordinal))
                 {
-                    LogToConsole("<color=#FF4444>Invalid path or path outside working copy.</color>");
-                    return;
+                    revertTarget = ".";
+                    recursive = false;
+                }
+                else
+                {
+                    if (!TryGetRelativePath(root, elementFullPath, out string safePath))
+                    {
+                        LogToConsole("<color=#FF4444>Invalid path or path outside working copy.</color>");
+                        return;
+                    }
+                    revertTarget = safePath;
+                    recursive = true;
                 }
 
                 token.ThrowIfCancellationRequested();
-                LogToConsole($"<b>[Revert]</b> Reverting: {safePath}...");
+                LogToConsole($"<b>[Revert]</b> Reverting: {revertTarget}{(recursive ? " (recursive)" : "")}...");
 
-                await SvnRunner.RunAsync(new[] { "revert", "-R", safePath }, root, false, token).ConfigureAwait(false);
+                string[] revertArgs = recursive
+                    ? new[] { "revert", "-R", revertTarget }
+                    : new[] { "revert", revertTarget };
+
+                await SvnRunner.RunAsync(revertArgs, root, false, token).ConfigureAwait(false);
                 svnManager.DiskChangesDetected = true;
 
                 await svnManager.RefreshStatus(force: true).ConfigureAwait(false);
@@ -301,8 +358,7 @@ namespace SVN.Core
             CancelRevert();
 
             // === FIX D3: grace period na dojście operacji do finally (Release/
-            // RefreshStatus) po Cancel — dopiero potem dispose semafora
-            // (wzorzec z SVNMissing).
+            // RefreshStatus) po Cancel — dopiero potem dispose semafora.
             _ = Task.Delay(1500).ContinueWith(_ =>
             {
                 try { _operationLock.Dispose(); } catch { }

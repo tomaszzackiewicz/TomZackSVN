@@ -449,7 +449,13 @@ namespace SVN.Core
                 "copy" or "cp" or
                 "move" or "mv" or "rename" or
                 "resolve" or
-                "relocate";
+                "relocate" or
+                "propset" or "ps" or
+                "propdel" or "pd" or
+                "propedit" or "pe" or
+                "lock" or
+                "unlock" or
+                "patch";
         }
 
         private void TerminalWriteLineSafe(string message)

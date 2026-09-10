@@ -10,31 +10,30 @@ namespace SVN.Core
         private static readonly Queue<Action> ExecutionQueue = new Queue<Action>();
         private static UnityMainThreadDispatcher _instance;
 
-        // === NOWE (fix GetString off-thread #2): ID wątku głównego złapane w
-        // Bootstrap — dla IsMainThread (szybka ścieżka odczytów main-only API,
-        // np. PlayerPrefs w SVNManager.GetSettingWithFallback).
+        // === ID wątku głównego złapane w bootstrap — dla IsMainThread.
         private static int _mainThreadId = -1;
 
-        // === FIX Ś1: budżet CZASOWY zamiast sztywnej liczby akcji — 256 akcji
-        // ciężkich (render tekstu) potrafi zjeść klatkę; przy zalewie (checkout
-        // 10k+ linii) stary limit powodował rosnący backlog mimo warningów.
+        // === Budżet CZASOWY zamiast sztywnej liczby akcji.
         private const float MaxProcessingMsPerFrame = 8f;
 
-        // === FIX K1: bootstrap w RuntimeInitializeOnLoadMethod — ZAWSZE main
-        // thread, ZAWSZE przed pierwszym Enqueue z jakiejkolwiek inicjalizacji
-        // modułów.
+        // === Edge-triggered raportowanie backlogu (start + resolved).
+        // Komunikaty idą TYLKO do pliku logu (LogToFile), nie do konsoli UI —
+        // to diagnostyka techniczna, nie informacja dla użytkownika.
+        private static bool _backlogReported;
+        private const int BacklogThreshold = 100;
+
+        // === Bootstrap w RuntimeInitializeOnLoadMethod — ZAWSZE main thread,
+        // ZAWSZE przed pierwszym Enqueue.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void Bootstrap()
         {
-            // === NOWE: zapisz ID main threadu ZANIM cokolwiek innego.
             _mainThreadId = Thread.CurrentThread.ManagedThreadId;
-
             CreateInstance();
         }
 
         /// <summary>
-        /// Czy bieżący wątek to main thread Unity.
-        /// Przed Bootstrap (teoretycznie tylko poza play mode) — bezpieczne 'true'.
+        /// Czy bieżący wątek to main thread Unity. Przed Bootstrap (teoretycznie
+        /// tylko poza play mode) — bezpieczne 'true'.
         /// </summary>
         public static bool IsMainThread =>
             _mainThreadId == -1 ||
@@ -51,34 +50,46 @@ namespace SVN.Core
 
         private void Update()
         {
-            if (ExecutionQueue.Count == 0) return;
+            if (ExecutionQueue.Count == 0)
+            {
+                // === Domknięcie epizodu backlogu — tylko do pliku logu.
+                if (_backlogReported)
+                {
+                    _backlogReported = false;
+                    SVNLogBridge.LogToFile("[Dispatcher] Queue backlog resolved.", "WARN");
+                }
+                return;
+            }
 
             var actionsToExecute = new List<Action>(Math.Min(ExecutionQueue.Count, 512));
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            bool backlogWarned = false;
 
+            int pendingTotal;
             lock (ExecutionQueue)
             {
-                if (ExecutionQueue.Count > 100)
-                {
-                    backlogWarned = true;
-                }
-
                 int count = Math.Min(ExecutionQueue.Count, 512);
                 for (int i = 0; i < count; i++)
                 {
                     actionsToExecute.Add(ExecutionQueue.Dequeue());
                 }
+
+                pendingTotal = actionsToExecute.Count + ExecutionQueue.Count;
             }
 
-            if (backlogWarned)
-                SVNLogBridge.LogWarning($"[Dispatcher] Queue backlog: {actionsToExecute.Count + ExecutionQueue.Count}");
+            // === Edge-triggered — jeden komunikat na epizod, TYLKO do pliku logu.
+            if (pendingTotal > BacklogThreshold && !_backlogReported)
+            {
+                _backlogReported = true;
+                SVNLogBridge.LogToFile(
+                    $"[Dispatcher] Queue backlog: {pendingTotal} pending actions — UI updates lagging (slow actions or throttled main loop).",
+                    "WARN");
+            }
 
             int executed = 0;
             foreach (var action in actionsToExecute)
             {
-                // === FIX Ś1: szanuj budżet czasowy; resztę ODŁÓŻ z powrotem
-                // na POCZĄTEK kolejki — FIFO zachowane, brak utraty akcji.
+                // === Budżet czasowy; resztę ODŁÓŻ na POCZĄTEK kolejki
+                // (FIFO zachowane, brak utraty akcji).
                 if (executed > 0 && stopwatch.ElapsedMilliseconds > MaxProcessingMsPerFrame)
                 {
                     lock (ExecutionQueue)
@@ -132,9 +143,9 @@ namespace SVN.Core
             DontDestroyOnLoad(go);
         }
 
-        // === FIX (korekta K2): NIE niszczymy hosta — dispatcher często siedzi na
-        // GŁÓWNYM obiekcie UI razem z SVNManager/SVNUI/PanelHandler. Redundantna
-        // kopia ze sceny jest neutralizowana (komponent off), bootstrapowa pompa działa.
+        // === NIE niszczymy hosta — dispatcher często siedzi na GŁÓWNYM obiekcie UI
+        // razem z SVNManager/SVNUI/PanelHandler. Redundantna kopia ze sceny jest
+        // neutralizowana (komponent off), bootstrapowa pompa działa.
         private void Awake()
         {
             if (_instance != null && _instance != this)
@@ -148,7 +159,19 @@ namespace SVN.Core
         private void OnDestroy()
         {
             if (_instance == this)
+            {
                 _instance = null;
+
+                // === Przy wyłączonym domain reload statyczna kolejka przeżywa
+                // sesje — akcje z poprzedniego play (pump umarł z obiektem, więc
+                // nigdy się nie wykonały) odpaliłyby się na starcie NASTĘPNEJ sesji,
+                // uderzając w zniszczone obiekty. Obiekt jest DontDestroyOnLoad,
+                // więc OnDestroy = koniec sesji/aplikacji — nic wartościowego nie tracimy.
+                lock (ExecutionQueue)
+                {
+                    ExecutionQueue.Clear();
+                }
+            }
         }
     }
 }

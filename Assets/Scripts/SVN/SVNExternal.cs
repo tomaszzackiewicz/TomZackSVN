@@ -222,9 +222,9 @@ namespace SVN.Core
         {
             var ext = new[]
             {
-                new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh"),
-                new ExtensionFilter("All Files", "*")
-            };
+        new ExtensionFilter("Private Key Files", "ppk", "key", "pem", "ssh"),
+        new ExtensionFilter("All Files", "*")
+    };
 
             string[] paths = StandaloneFileBrowser.OpenFilePanel("Select Private Key File", "", ext, false);
             if (paths == null || paths.Length == 0 || string.IsNullOrEmpty(paths[0]))
@@ -234,7 +234,13 @@ namespace SVN.Core
             }
 
             string p = NormalizePath(paths[0]);
+
+            // === FIX: bezpośrednie 'CurrentKey = p' PRZED 'input.text = p' zabijało
+            // deltę w SynchronizeConnectionSettings (listener widzi key == CurrentKey
+            // → skip → SvnRunner.KeyPath zostawał STARY — każda komenda SVN działała
+            // ze starym kluczem w env SVN_SSH). Teraz ustawiamy JAWNIE oba.
             svnManager.CurrentKey = p;
+            SvnRunner.KeyPath = p;
 
             if (svnUI.LoadPrivateKeyInput != null)
                 svnUI.LoadPrivateKeyInput.text = p;
@@ -498,7 +504,7 @@ namespace SVN.Core
             try
             {
                 // === FIX Ś-drobiazg: token z twardym limitem — diagnostyka potrafi
-                // trwać ~40 s (10 kroków po kilka s) i była nieprzerywalna.
+                // trwać ~40 s (10 kroków) i była nieprzerywalna.
                 using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
                 await RunDiagnosticsAsync(cts.Token);
             }
@@ -515,6 +521,10 @@ namespace SVN.Core
                 IsProcessing = false;
                 try { _processingLock.Release(); }
                 catch (SemaphoreFullException) { }
+                // === FIX: wyjątek z finally NIE trafia do catchy tej metody — Release
+                // po natychmiastowym Dispose() z Dispose() rzucał ODE → unhandled
+                // w async void przy zamykaniu aplikacji.
+                catch (ObjectDisposedException) { }
             }
         }
 
@@ -960,6 +970,9 @@ namespace SVN.Core
 
         public async Task ExportRevisionAsync(string revision, string relativePath = "")
         {
+            // === FIX: guard _disposed (TestConnection ma — tu brakowało)
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             string root = svnManager.WorkingDir;
             if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
             {
@@ -973,8 +986,7 @@ namespace SVN.Core
                 return;
             }
 
-            // === FIX Ś3: walidacja rewizji (public API — wcześniej szła wprost do
-            // komendy; SVNRevision walidował, ale moduł sam nie).
+            // === FIX Ś3: walidacja rewizji (public API)
             string rev = revision.Trim().TrimStart('r', 'R');
             if (!System.Text.RegularExpressions.Regex.IsMatch(rev, @"^\d+(:\d+)?$"))
             {
@@ -983,16 +995,15 @@ namespace SVN.Core
             }
 
             // === NEW (FIX): cała operacja (dialog + svn) pod IsProcessing — monitor
-            // w SVNRevision widzi ją od początku, także gdyby kiedyś dialog przestał
-            // blokować wątek główny (dzisiaj chroni nas tylko szczęśliwy akcident).
+            // w SVNRevision widzi ją od początku.
             if (!await _processingLock.WaitAsync(0))
             {
                 SVNLogBridge.LogLine("<color=#FFAA00>Export:</color> another SVNExternal operation is running. Please wait.");
                 return;
             }
 
-            IsProcessing = true;                 // === NEW
-            _lastExportSucceeded = false;        // === NEW
+            IsProcessing = true;
+            _lastExportSucceeded = false;
 
             try
             {
@@ -1015,24 +1026,29 @@ namespace SVN.Core
 
                 await SvnRunner.RunAsync(cmd, root);
 
-                _lastExportSucceeded = true;     // === NEW: sukces dopiero TU
+                _lastExportSucceeded = true;     // sukces dopiero TU
 
                 SVNLogBridge.LogLine(
                     $"<color=green>Export Success:</color> Revision r{rev} exported successfully to {exportFolder}");
 
-                OpenFolderInFileManager(exportFolder);
+                // === FIX: otwarcie folderu — best-effort, WŁASNY try. Wcześniej porażka
+                // explorera PO udanym exporcie logowała "Export Error" (eksport się
+                // udał, flaga=true — komunikat kłamał).
+                try { OpenFolderInFileManager(exportFolder); }
+                catch { /* best-effort — export zakończony sukcesem */ }
             }
             catch (Exception ex)
             {
-                // === NEW: flaga zostaje false → monitor w SVNRevision zgłosi porażkę,
-                // nie fałszywy sukces.
+                // flaga zostaje false → monitor w SVNRevision zgłosi porażkę
                 SVNLogBridge.LogLine($"<color=#FFAA00>Export Error:</color> {ex.Message}");
             }
             finally
             {
-                IsProcessing = false;            // === NEW
+                IsProcessing = false;
                 try { _processingLock.Release(); }
                 catch (SemaphoreFullException) { }
+                // === FIX: jw. — ODE z finally omija catche metody
+                catch (ObjectDisposedException) { }
             }
         }
 

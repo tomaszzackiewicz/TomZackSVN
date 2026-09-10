@@ -6,8 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
-using UnityEngine.Rendering;
-
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -39,12 +37,9 @@ namespace SVN.Core
         [Header("Project Load Safety")]
         [SerializeField] private bool autoSwitchRootCheckoutToTrunk = false;
 
-        [Header("Focus Refreash")]
-        [SerializeField] private float focusRefreshCooldownSeconds = 10f;
-
         public event Action OnRepositoryStateChanged;
 
-		private static readonly AsyncReaderWriterLock _managerLock = new();
+        private static readonly AsyncReaderWriterLock _managerLock = new();
 
         private bool _ignoreSync;
         private float _lastFocusRefreshTime;
@@ -61,17 +56,12 @@ namespace SVN.Core
         private FileSystemWatcher _folderWatcher;
         private int _isUpdatingSize = 0;
         private int _diskChangesDetectedFlag = 0;
-        private SVNBar _cachedBar;
         private string sshOptions = "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
 
         private long _lastDiskEventTimestamp = 0;
         private const int DiskDebounceMs = 1500;
-        private int _restartingWatcher;   // 0/1
 
         private SVNPollingService _cachedPoller;
-        /// <summary>RepoBrowser: preload drzewa przy starcie (svn list na
-        /// SERWERZE). Default false — lazy przy pierwszym otwarciu panelu.</summary>
-        public bool preloadRepoBrowserAtStartup = false;
 
         private CancellationTokenSource _refreshStatusCts;
         private CancellationTokenSource _projectSwitchDebounceCts;
@@ -103,14 +93,14 @@ namespace SVN.Core
             CurrentStatusDict = data;
         }
 
-		public void RaiseRepositoryStateChanged()
-		{
-			UnityMainThreadDispatcher.Enqueue(() =>
-			{
-				try { OnRepositoryStateChanged?.Invoke(); }
-				catch (Exception ex) { SVNLogBridge.LogError($"[SVNManager] OnRepositoryStateChanged handler: {ex.Message}"); }
-			});
-		}
+        public void RaiseRepositoryStateChanged()
+        {
+            UnityMainThreadDispatcher.Enqueue(() =>
+            {
+                try { OnRepositoryStateChanged?.Invoke(); }
+                catch (Exception ex) { SVNLogBridge.LogError($"[SVNManager] OnRepositoryStateChanged handler: {ex.Message}"); }
+            });
+        }
 
         public string WorkingDir
         {
@@ -123,8 +113,13 @@ namespace SVN.Core
                     return;
                 }
 
-                // === FIX: była 2. kopia tego samego filtra (inline StringBuilder)
-                workingDir = FilterPathChars(value);
+                var sb = new System.Text.StringBuilder(value.Length);
+                foreach (char c in value)
+                {
+                    if (!char.IsControl(c) && c != '\u00A0' && c != '\u200B')
+                        sb.Append(c);
+                }
+                workingDir = sb.ToString().Trim();
             }
         }
 
@@ -193,14 +188,12 @@ namespace SVN.Core
             SVN.Core.SvnRunner.OnProcessingStateChanged += OnSvnProcessingChanged;
 
             _cachedPoller = GetComponent<SVNPollingService>();
-
-            _cachedBar = GetModule<SVNBar>();
         }
 
         private void Update()
         {
-            // FIX zasobów: lookup co klatkę → cache z Awake:
-            _cachedBar?.Tick();
+            var bar = GetModule<SVNBar>();
+            bar?.Tick();
 
             if (DiskChangesDetected)
             {
@@ -211,10 +204,7 @@ namespace SVN.Core
                 if (elapsedMs >= DiskDebounceMs)
                 {
                     DiskChangesDetected = false;
-
-                    if (!IsUpdateRunning && !IsProcessing &&
-                        !string.IsNullOrEmpty(WorkingDir) &&
-                        gameObject.activeInHierarchy)
+                    if (!IsUpdateRunning && !IsProcessing && !string.IsNullOrEmpty(WorkingDir) && gameObject.activeInHierarchy)
                     {
                         _ = RefreshStatus(force: false);
                     }
@@ -294,7 +284,6 @@ namespace SVN.Core
                     return;
                 }
                 WorkingDir = SVNAssetLocator.NormalizePath(path);
-                MainThreadWorkingDir = WorkingDir;   // === FIX: statyka nadąża za zmianą
                 SVNLogBridge.LogToOutput($"[SVN] Working Directory set to: {WorkingDir}");
                 await RefreshRepositoryInfo();
             }
@@ -306,11 +295,6 @@ namespace SVN.Core
 
         private void Start()
         {
-            QualitySettings.vSyncCount = 0;
-            //Application.targetFrameRate = 4;
-            Application.runInBackground = true;
-            OnDemandRendering.renderFrameInterval = 60;
-
             _ = StartAsync().ContinueWith(t =>
             {
                 if (t.IsFaulted)
@@ -324,14 +308,9 @@ namespace SVN.Core
 
             SetupInputListeners();
 
-            // Snapshot main-thread API PRZED pierwszym await (ConfigureAwait w Verify
-            // przenosi dalszy kod na pulę — PlayerPrefs jest main-only).
             string lastPath = PlayerPrefs.GetString("SVN_LastOpenedProjectPath", "");
             var projects = ProjectSettings.LoadProjects();
 
-            // === FIX: porównanie NORMALIZOWANE (case-insensitive + unify slash) —
-            // wcześniej 'p.workingDir == lastPath' gubiło projekt przy różnicy
-            // '\' vs '/' między zapisami checkoutu a LoadProject.
             var lastProject = projects.Find(p =>
                 !string.IsNullOrEmpty(p.workingDir) &&
                 string.Equals(
@@ -339,8 +318,6 @@ namespace SVN.Core
                     lastPath.Replace("\\", "/").TrimEnd('/'),
                     StringComparison.OrdinalIgnoreCase));
 
-            // === FIX: hint o wstrzymanym checkoucie (stan pauzy istnieje po resecie,
-            // ale nikt go nie czytał — użytkownik nie wiedział, że może wznowić).
             string pausedCheckoutPath = PlayerPrefs.GetString("SVN_CheckoutPaused_Path", "");
             if (!string.IsNullOrEmpty(pausedCheckoutPath) &&
                 Directory.Exists(Path.Combine(pausedCheckoutPath, ".svn")))
@@ -350,7 +327,6 @@ namespace SVN.Core
                     "Dokończ go w panelu Checkout → Resume.</color>");
             }
 
-            // S6: środowisko SVN. Bez CFA — dalszy bootstrap ma wrócić na MAIN.
             bool svnOk = await VerifySvnClientInstalledAsync();
 
             if (svnOk && !string.IsNullOrEmpty(lastPath))
@@ -389,17 +365,13 @@ namespace SVN.Core
             }
         }
 
-        // ===================================================================
-        //  CENTRUM SYNCHRONIZACJI — każde źródło (Settings/Checkout/Load/
-        //  AddRepo/Browse) → manager + SvnRunner + wszystkie pola UI.
-        // ===================================================================
-
         public enum SettingsSource { None, Settings, Checkout, Load }
 
         /// <summary>
         /// JEDYNY punkt synchronizacji danych połączenia (URL / katalog / klucz SSH).
         /// null = "nie zmieniaj tej wartości". SetTextWithoutNotify = brak pętli
-        //  zdarzeń i brak skoku kursora w polu-źródle. Zapis przez debounce.
+        /// zdarzeń i brak skoku kursora w polu-źródle. Zapis przez debounce.
+        /// Zmiana URL-a unieważnia cache filtrów RepoBrowsera (cache per-URL).
         /// </summary>
         public void SynchronizeConnectionSettings(
             SettingsSource source,
@@ -415,6 +387,10 @@ namespace SVN.Core
             {
                 RepositoryUrl = url.Trim();
                 changed = true;
+
+                // Cache filtrów RepoBrowsera jest KLUCZOWANY URL-em — nowe repo
+                // = twarde unieważnienie (inaczej filtr zwracałby wyniki ze starego).
+                GetModule<SVNRepoBrowser>()?.InvalidatePathCache();
             }
 
             if (workingDirValue != null && workingDirValue != WorkingDir)
@@ -426,7 +402,7 @@ namespace SVN.Core
             if (key != null && key.Trim() != CurrentKey)
             {
                 CurrentKey = key.Trim();
-                SvnRunner.KeyPath = CurrentKey;   // realne SSH od następnej komendy
+                SvnRunner.KeyPath = CurrentKey;
                 changed = true;
             }
 
@@ -460,7 +436,6 @@ namespace SVN.Core
                 DebounceSaveProject();
         }
 
-        // Deleguje do centrum (kompatybilność starych wywołań).
         public void SyncFromCheckoutUI()
         {
             SynchronizeConnectionSettings(
@@ -473,28 +448,26 @@ namespace SVN.Core
         public async Task<string> AutoDetectSvnUser()
         {
             currentUserName = "Detecting...";
-            if (string.IsNullOrEmpty(WorkingDir)) return SetUser("Unknown");
+            if (string.IsNullOrEmpty(WorkingDir)) return currentUserName = "Unknown";
 
             if (!SVNAssetLocator.IsWorkingCopy(WorkingDir))
-                return SetUser(Environment.UserName.ToLower());
+                return currentUserName = Environment.UserName.ToLower();
 
             try
             {
                 string xmlOutput = await SvnRunner.RunAsync("info --xml", WorkingDir, false);
                 string detected = SVNAssetLocator.ExtractUserFromUrl(xmlOutput);
-                if (!string.IsNullOrEmpty(detected)) return SetUser(detected);
+                if (!string.IsNullOrEmpty(detected)) return currentUserName = detected;
 
                 string authOutput = await SvnRunner.RunAsync("auth", WorkingDir, false);
                 var userLine = authOutput.Split('\n').FirstOrDefault(l => l.Trim().StartsWith("Username:"));
-                if (userLine != null) return SetUser(userLine.Replace("Username:", "").Trim());
+                if (userLine != null) return currentUserName = userLine.Replace("Username:", "").Trim();
             }
             catch { }
 
-            return SetUser(Environment.UserName.ToLower());
+            return currentUserName = Environment.UserName.ToLower();
         }
 
-        // === Wrapper: LoadProject czyta PlayerPrefs/UI — API main-only; przeskok
-        // przez dispatcher gdy wołane z puli wątków.
         public Task<bool> LoadProject(SVNProject project)
         {
             if (project == null) return Task.FromResult(false);
@@ -536,13 +509,29 @@ namespace SVN.Core
                 return false;
             }
 
+            // === SEKCJA 1: mutacje pamięci pod lockiem, żadnego UI/Enqueue. ===
             await _managerLock.EnterWriteAsync(_lifetimeCts.Token);
             try
             {
                 CurrentProject = project;
                 WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
-                MainThreadWorkingDir = WorkingDir;              // === FIX: statyka nadąża za projektem
-                RepositoryUrl = project.repoUrl;
+
+                // === FIX: URL projektu ma ZAWSZE pierwszeństwo nad tym, co
+                // ewentualnie zostało w polu. Zmiana → unieważnij cache filtrów.
+                string newRepoUrl = project.repoUrl ?? "";
+                if (!string.Equals(
+                        (RepositoryUrl ?? "").TrimEnd('/'),
+                        newRepoUrl.TrimEnd('/'),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    RepositoryUrl = newRepoUrl;
+                    GetModule<SVNRepoBrowser>()?.InvalidatePathCache();
+                }
+                else
+                {
+                    RepositoryUrl = newRepoUrl;
+                }
+
                 CurrentKey = SVNAssetLocator.NormalizePath(project.privateKeyPath);
 
                 if (string.IsNullOrWhiteSpace(CurrentKey))
@@ -553,7 +542,8 @@ namespace SVN.Core
                 ResolveToolPath = GetSettingWithFallback(project.resolveToolPath, KEY_RESOLVE_TOOL);
                 BlameToolPath = GetSettingWithFallback(project.blameToolPath, KEY_BLAME_TOOL);
                 SvnRunner.KeyPath = CurrentKey;
-                SshOptions = GetSettingWithFallback(project.sshOptions, KEY_SSH_OPTIONS) ?? "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
+                SshOptions = GetSettingWithFallback(project.sshOptions, KEY_SSH_OPTIONS)
+                             ?? "-o ServerAliveInterval=15 -o ServerAliveCountMax=10 -o IPQoS=throughput";
                 SvnRunner.SshOptions = SshOptions;
 
                 ProjectSettings.UpdateProject(project.workingDir, p => p.lastOpened = DateTime.UtcNow);
@@ -563,6 +553,7 @@ namespace SVN.Core
                 _managerLock.ExitWrite();
             }
 
+            // === SEKCJA 2: UI + Enqueue poza lockiem. ===
             var barModule = GetModule<SVNBar>();
             barModule?.SetLoadingContent(project.projectName ?? "Project");
 
@@ -593,6 +584,7 @@ namespace SVN.Core
                 statusModule?.ClearCurrentData();
             });
 
+            // === SEKCJA 3: inicjalizacja. ===
             if (Directory.Exists(WorkingDir))
             {
                 await InitializeActiveProject(project);
@@ -615,20 +607,7 @@ namespace SVN.Core
                 if (this == null) return;
             }
 
-            // === OPTYMALIZACJA: URL już jest w snapshotcie (BuildSnapshotAsync
-            // sparsował go z tego samego 'svn info'). Wcześniej RefreshRepository-
-            // Info robił KOLEJNY spawn 'svn info --show-item url' o te same dane:
-            string snapshotUrl = CurrentSnapshot?.Url;
-            if (!string.IsNullOrWhiteSpace(snapshotUrl) && snapshotUrl != "unknown")
-            {
-                RepositoryUrl = snapshotUrl.Trim();
-                UnityMainThreadDispatcher.Enqueue(() =>
-                    SynchronizeConnectionSettings(SettingsSource.None, url: RepositoryUrl));
-            }
-            else
-            {
-                await RefreshRepositoryInfo();
-            }
+            await RefreshRepositoryInfo();
             if (this == null) return;
 
             await TryAutoSwitchToTrunkAsync();
@@ -644,7 +623,6 @@ namespace SVN.Core
                     SVNLogBridge.LogError($"[Init] Background refresh failed: {t.Exception?.InnerException?.Message}");
             }, TaskScheduler.Default);
 
-            // Safety-net: puste drzewo po loadzie → wymuszony refresh.
             _ = Task.Run(async () =>
             {
                 try
@@ -672,11 +650,8 @@ namespace SVN.Core
                 }
             });
 
-            // === OPTYMALIZACJA: RepoBrowser LAZY — 'svn list' (serwer) przy
-            // starcie konkurował z RefreshStatus o semafor SvnRunner. Teraz
-            // drzewo dociąga się przy pierwszym otwarciu panelu browsera:
             var repoBrowser = GetModule<SVNRepoBrowser>();
-            if (repoBrowser != null && preloadRepoBrowserAtStartup)
+            if (repoBrowser != null)
             {
                 _ = repoBrowser.LoadInitialTreeAsync().ContinueWith(t =>
                 {
@@ -781,7 +756,6 @@ namespace SVN.Core
 
         private void SyncUIToCurrentState()
         {
-            // Przez centrum — jeden kod, wszystkie panele.
             SynchronizeConnectionSettings(SettingsSource.None,
                 url: RepositoryUrl,
                 workingDirValue: WorkingDir,
@@ -809,8 +783,19 @@ namespace SVN.Core
             }
         }
 
-        // === FIX: była 3. kopia filtra — deleguje
-        private string CleanPath(string path) => FilterPathChars(path);
+        private string CleanPath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return string.Empty;
+            var sb = new System.Text.StringBuilder(path.Length);
+            foreach (char c in path)
+            {
+                if (!char.IsControl(c) && c != '\u00A0' && c != '\u200B')
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString().Trim();
+        }
 
         public async Task RefreshStatus(bool force = false)
         {
@@ -905,6 +890,8 @@ namespace SVN.Core
 
             try
             {
+                await Task.Yield();
+
                 string root = WorkingDir;
                 if (string.IsNullOrEmpty(root))
                     return;
@@ -934,11 +921,13 @@ namespace SVN.Core
             if (statusDict?.Values.Any(v => v.status?.Contains("C") == true) == true)
             {
                 SVNLogBridge.LogErrorToOutput("[SVN] Conflicts detected! Opening Resolve panel.");
-                UnityMainThreadDispatcher.Enqueue(() => panelHandler?.Button_OpenResolve());
 
-                var resolveModule = GetModule<SVNResolve>();
-                if (resolveModule != null)
-                    await resolveModule.RefreshConflictUI();
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    panelHandler?.Button_OpenResolve();
+                });
+
+                await GetModule<SVNResolve>()?.RefreshConflictUI();
             }
 
             await UpdateStatus();
@@ -960,46 +949,32 @@ namespace SVN.Core
 
                 RaiseRepositoryStateChanged();
             }
-            catch { /* cichy — sieć/serwer chwilowo; następny focus złapie */ }
+            catch { }
         }
 
         private async Task FocusRefreshAsync()
         {
-            // Jeśli trwa jakakolwiek operacja SVN, od razu przerywamy – bez czekania.
             if (mainUIPanel != null && !mainUIPanel.activeInHierarchy) return;
             if (IsProcessing || IsUpdateRunning) return;
 
-            try
-            {
-                // Sprawdź zdalne commity (jeśli poller istnieje)
-                if (_cachedPoller != null)
-                    await _cachedPoller.CheckForRemoteCommitsAsync();
+            if (_cachedPoller != null)
+                await _cachedPoller.CheckForRemoteCommitsAsync();
 
-                // Odśwież locki i protection (szybkie, lokalne)
-                await PollRepositoryStateAsync();
+            await PollRepositoryStateAsync();
 
-                // Zwykłe odświeżenie statusu – bez wymuszania.
-                if (!string.IsNullOrEmpty(WorkingDir))
-                    await RefreshStatus(force: false);
-            }
-            catch (OperationCanceledException)
-            {
-                // ciche – anulowanie nie jest błędem
-            }
-            catch (Exception ex)
-            {
-                SVNLogBridge.LogError($"[FocusRefresh] Unexpected error: {ex.Message}");
-            }
+            if (!string.IsNullOrEmpty(WorkingDir))
+                await RefreshStatus(force: false);
         }
 
         private void OnApplicationFocus(bool hasFocus)
         {
             if (!hasFocus) return;
-
-            // FIX: jeśli okno główne jest nieaktywne, nie rób nic
-            if (mainUIPanel != null && !mainUIPanel.activeInHierarchy) return;
-
             if (_focusRefreshRunning) return;
+
+            if (Time.realtimeSinceStartup - _lastFocusRefreshTime < 10f)
+                return;
+
+            _lastFocusRefreshTime = Time.realtimeSinceStartup;
             _focusRefreshRunning = true;
 
             _ = FocusRefreshAsync().ContinueWith(t =>
@@ -1038,12 +1013,10 @@ namespace SVN.Core
         public async Task CancelBackgroundTasksAsync()
         {
             GetModule<SVNStatus>()?.CancelCurrentRefresh();
-            try { Volatile.Read(ref _refreshStatusCts)?.Cancel(); }
-            catch (ObjectDisposedException) { }   // stary CTS dysponowany po 1 s
+            _refreshStatusCts?.Cancel();
             await Task.Yield();
         }
 
-        // Browse-buttony (SVNExternal) i inne źródła → przez centrum.
         public void BroadcastWorkingDirChange(string path)
         {
             SynchronizeConnectionSettings(SettingsSource.None, workingDirValue: path);
@@ -1059,21 +1032,50 @@ namespace SVN.Core
             SynchronizeConnectionSettings(SettingsSource.None, url: newUrl);
         }
 
+        /// <summary>
+        /// Odczyt .svn — TYLKO uzupełnia RepositoryUrl, gdy projekt NIE ma
+        /// zapisanego własnego URL-a. Gdy projekt ma URL, dysk nie może go
+        /// nadpisać (inaczej RepoBrowser/commit po cichu przeskakują na repo,
+        /// z którego pierwotnie sklonowano katalog).
+        /// </summary>
         public async Task RefreshRepositoryInfo()
         {
             if (!SVNAssetLocator.IsWorkingCopy(WorkingDir)) return;
+
             string url = await SvnRunner.GetRepoUrlAsync(WorkingDir);
-            if (!string.IsNullOrEmpty(url))
+            if (string.IsNullOrEmpty(url)) return;
+
+            string diskUrl = url.Trim();
+            string projectUrl = (CurrentProject?.repoUrl ?? "").Trim();
+
+            if (!string.IsNullOrEmpty(projectUrl) &&
+                !string.Equals(
+                    projectUrl.TrimEnd('/'),
+                    diskUrl.TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase))
             {
-                RepositoryUrl = url.Trim();
+                SVNLogBridge.LogLine(
+                    $"<color=#FFAA00>[SVN]</color> Working copy reports '{diskUrl}', " +
+                    $"project saved '{projectUrl}'. Keeping PROJECT URL.");
+
                 UnityMainThreadDispatcher.Enqueue(() =>
-                    SynchronizeConnectionSettings(SettingsSource.None, url: RepositoryUrl));
+                    SynchronizeConnectionSettings(SettingsSource.None, url: projectUrl));
+                return;
             }
+
+            if (string.Equals(
+                    (RepositoryUrl ?? "").TrimEnd('/'),
+                    diskUrl.TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase))
+                return;
+
+            RepositoryUrl = diskUrl;
+            UnityMainThreadDispatcher.Enqueue(() =>
+                SynchronizeConnectionSettings(SettingsSource.None, url: diskUrl));
         }
 
         private void SetupInputListeners()
         {
-            // --- SETTINGS → centrum ---
             svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
@@ -1092,7 +1094,6 @@ namespace SVN.Core
                 SynchronizeConnectionSettings(SettingsSource.Settings, workingDirValue: v);
             });
 
-            // --- CHECKOUT → centrum ---
             svnUI.CheckoutRepoUrlInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
@@ -1111,7 +1112,6 @@ namespace SVN.Core
                 SynchronizeConnectionSettings(SettingsSource.Checkout, key: v);
             });
 
-            // --- LOAD → centrum (dotąd ZERO listenerów!) ---
             svnUI.LoadRepoUrlInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
@@ -1130,7 +1130,6 @@ namespace SVN.Core
                 SynchronizeConnectionSettings(SettingsSource.Load, key: v);
             });
 
-            // --- Tools (panel-specyficzne) + debounce zapisu ---
             svnUI.SettingsMergeToolPathInput?.onValueChanged.AddListener(v =>
             {
                 if (_ignoreSync || _isApplyingSnapshot) return;
@@ -1160,39 +1159,26 @@ namespace SVN.Core
             });
         }
 
-        private string SetUser(string user)
-        {
-            currentUserName = user;
-            CachedUserName = user;   // statyka nadąża za detekcją
-            return user;
-        }
-
-        private static string FilterPathChars(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return string.Empty;
-            var sb = new System.Text.StringBuilder(value.Length);
-            foreach (char c in value)
-                if (!char.IsControl(c) && c != '\u00A0' && c != '\u200B')
-                    sb.Append(c);
-            return sb.ToString().Trim();
-        }
-        // setter WorkingDir: workingDir = FilterPathChars(value);
-        // CleanPath(path) => FilterPathChars(path);
-
         private void DebounceSaveProject()
         {
-            var newCts = new CancellationTokenSource();
-            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _saveProjectDebounceCts, newCts));
+            var oldCts = _saveProjectDebounceCts;
+            _saveProjectDebounceCts = new CancellationTokenSource();
 
-            Task.Delay(500, newCts.Token).ContinueWith(t =>
+            if (oldCts != null)
+            {
+                oldCts.Cancel();
+                _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
+            }
+
+            var token = _saveProjectDebounceCts.Token;
+
+            Task.Delay(500, token).ContinueWith(t =>
             {
                 if (!t.IsCanceled)
                     UpdateCurrentProjectDataImmediate();
             }, TaskScheduler.Default);
         }
 
-        // === FIX (wymazywanie danych): zapis NIEZNISZCZAJĄCY — pole opcjonalne
-        // zapisywane tylko gdy mamy wartość (pamięć-pustka nie kasuje JSON).
         private void UpdateCurrentProjectDataImmediate()
         {
             try
@@ -1225,30 +1211,23 @@ namespace SVN.Core
             string tempPath = null;
             try
             {
-                IsProcessing = true;   // UWAGA: ręczny set — patrz notka o clobberze; usuń, gdy RunToFileAsync strzela OnProcessingStateChanged
+                IsProcessing = true;
                 SVNLogBridge.LogLine($"<b>[File]</b> Fetching r{revision}: {relativePath}...", append: true);
 
                 string fileName = Path.GetFileName(relativePath);
                 string tempFileName = $"r{revision}_{fileName}";
                 string cacheFolder = Path.Combine(SVNPrefs.TemporaryCachePath, "SVN_Cache");
 
-                Directory.CreateDirectory(cacheFolder);   // idempotentne — bez Exists
+                if (!Directory.Exists(cacheFolder))
+                    Directory.CreateDirectory(cacheFolder);
 
                 tempPath = Path.Combine(cacheFolder, tempFileName);
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
 
-                // === FIX: jawny błąd zamiast cichej złej ścieżki przy braku roota
                 string repoRoot = GetRepoRoot();
-                if (string.IsNullOrEmpty(repoRoot))
-                {
-                    SVNLogBridge.LogErrorToOutput("[SVN] Cannot resolve repository root for 'cat'.");
-                    return;
-                }
-
                 string fullUrl = repoRoot + (relativePath.StartsWith("/") ? "" : "/") + relativePath;
 
-                // === FIX: escapowanie (cudzysłów w ścieżce łamał komendę)
-                string command = $"cat -r {revision} \"{SVNShared.EscapeSvnArg(fullUrl)}\"";
+                string command = $"cat -r {revision} \"{fullUrl}\"";
                 var (exitCode, error) = await SvnRunner.RunToFileAsync(command, WorkingDir, tempPath);
 
                 if (exitCode != 0)
@@ -1261,39 +1240,31 @@ namespace SVN.Core
                 CleanupOldCacheFiles(cacheFolder, "r*_");
 
                 string absoluteTempPath = Path.GetFullPath(tempPath);
-                // === FIX (spacje!): poprawny file:// URI — "C:\Users\Jan Kowalski\..."
-                // łamał OpenURL; podobnie '#' i '%' w nazwie
-                string fileUri = new Uri(absoluteTempPath).AbsoluteUri;
 
-                string mergeToolSnapshot = MergeToolPath;
-
-                // === FIX: Application.OpenURL to Unity-API (main only) — przez
-                // dispatcher, niezależnie od wątku, z którego przyszliśmy
-                UnityMainThreadDispatcher.Enqueue(() =>
+                if (!string.IsNullOrEmpty(MergeToolPath) && File.Exists(MergeToolPath))
                 {
-                    if (!string.IsNullOrWhiteSpace(mergeToolSnapshot) && File.Exists(mergeToolSnapshot))
+                    try
                     {
-                        if (SVNShared.TryStartProcess(new System.Diagnostics.ProcessStartInfo()
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
                         {
-                            FileName = mergeToolSnapshot,
+                            FileName = MergeToolPath,
                             Arguments = $"\"{absoluteTempPath}\"",
                             UseShellExecute = true
-                        },
-                             ex =>
-                             {
-                                 SVNLogBridge.LogErrorToOutput($"[SVN] Failed to open with MergeTool: {ex.Message}. Falling back to default.");
-                                 Application.OpenURL(fileUri);
-                             }))
-                        {
-                            SVNLogBridge.LogLine($"<color=green>Opened in editor:</color> {tempFileName}", append: true);
-                        }
+                        });
+
+                        SVNLogBridge.LogLine($"<color=green>Opened in editor:</color> {tempFileName}", append: true);
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Application.OpenURL(fileUri);
-                        SVNLogBridge.LogLine($"<color=yellow>Opened with default app:</color> {tempFileName} (No editor path set)", append: true);
+                        SVNLogBridge.LogErrorToOutput($"[SVN] Failed to open with MergeTool: {ex.Message}. Falling back to default.");
+                        Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
                     }
-                });
+                }
+                else
+                {
+                    Application.OpenURL("file://" + absoluteTempPath.Replace("\\", "/"));
+                    SVNLogBridge.LogLine($"<color=yellow>Opened with default app:</color> {tempFileName} (No editor path set)", append: true);
+                }
             }
             catch (Exception e)
             {
@@ -1323,10 +1294,11 @@ namespace SVN.Core
             catch { }
         }
 
+        private bool _restartingWatcher = false;
+
         private void InitFileSystemWatcher()
         {
-            // === FIX: flaga REALNIE strzeże cooldownu restartu
-            if (Interlocked.CompareExchange(ref _restartingWatcher, 0, 0) == 1)
+            if (_restartingWatcher)
                 return;
 
             try
@@ -1348,7 +1320,32 @@ namespace SVN.Core
                 _folderWatcher.Created += OnDiskEvent;
                 _folderWatcher.Deleted += OnDiskEvent;
                 _folderWatcher.Renamed += OnDiskEvent;
-                _folderWatcher.Error += OnWatcherError;
+
+                _folderWatcher.Error += (sender, e) =>
+                {
+                    var ex = e.GetException();
+
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                        SVNLogBridge.LogError($"[SVN Watcher] Buffer overflow/error: {ex.Message}. Will restart after cooldown."));
+
+                    var oldRestart = _watcherRestartCts;
+                    _watcherRestartCts = new CancellationTokenSource();
+                    if (oldRestart != null)
+                    {
+                        oldRestart.Cancel();
+                        _ = Task.Delay(1000).ContinueWith(_ => { try { oldRestart.Dispose(); } catch { } });
+                    }
+
+                    Task.Delay(TimeSpan.FromSeconds(15), _watcherRestartCts.Token)
+                        .ContinueWith(t =>
+                        {
+                            if (!t.IsCanceled)
+                            {
+                                _restartingWatcher = false;
+                                UnityMainThreadDispatcher.Enqueue(() => InitFileSystemWatcher());
+                            }
+                        }, TaskScheduler.Default);
+                };
 
                 _folderWatcher.EnableRaisingEvents = true;
                 SVNLogBridge.LogLine($"[SVN Watcher] Started watching: {path}");
@@ -1357,34 +1354,6 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogError($"[SVN Watcher] Failed to start: {ex.Message}");
             }
-        }
-
-        // === FIX: wyciągnięty z lambdy — (a) flaga cooldownu faktycznie USTAWIANA,
-        // (b) atomowy swap CTS (Error leci z puli wątków watchera — dwa pod rząd
-        // = leaknięty CTS przy zwykłym przypisaniu), (c) delayed dispose przez SVNShared.
-        private void OnWatcherError(object sender, ErrorEventArgs e)
-        {
-            var ex = e.GetException();
-
-            UnityMainThreadDispatcher.Enqueue(() =>
-                SVNLogBridge.LogError($"[SVN Watcher] Buffer overflow/error: {ex.Message}. Will restart after cooldown."));
-
-            Interlocked.Exchange(ref _restartingWatcher, 1);
-
-            var newRestart = new CancellationTokenSource();
-            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _watcherRestartCts, newRestart));
-
-            Task.Delay(TimeSpan.FromSeconds(15), newRestart.Token)
-                .ContinueWith(t =>
-                {
-                    // canceled = teardown lub nadpisany przez nowszy błąd (ten czyści
-                    // flagę przy swoim sukcesie)
-                    if (!t.IsCanceled)
-                    {
-                        Interlocked.Exchange(ref _restartingWatcher, 0);
-                        UnityMainThreadDispatcher.Enqueue(() => InitFileSystemWatcher());
-                    }
-                }, TaskScheduler.Default);
         }
 
         public void DisposeFileSystemWatcher()
@@ -1396,7 +1365,6 @@ namespace SVN.Core
                 _folderWatcher.Created -= OnDiskEvent;
                 _folderWatcher.Deleted -= OnDiskEvent;
                 _folderWatcher.Renamed -= OnDiskEvent;
-                _folderWatcher.Error -= OnWatcherError;   // === FIX: była lambda — nieodczepialna
                 _folderWatcher.Dispose();
                 _folderWatcher = null;
             }
@@ -1412,9 +1380,7 @@ namespace SVN.Core
 
         private string GetSettingWithFallback(string projectValue, string playerPrefsKey)
         {
-            // GetSettingWithFallback, pierwsza linia body:
-            string normalized = string.IsNullOrWhiteSpace(projectValue)
-                ? "" : SVNAssetLocator.NormalizePath(projectValue);
+            string normalized = SVNAssetLocator.NormalizePath(projectValue);
 
             if (string.IsNullOrWhiteSpace(normalized))
                 normalized = SVNPrefs.GetString(playerPrefsKey, "");
@@ -1538,28 +1504,34 @@ namespace SVN.Core
         private void OnDestroy()
         {
             SVN.Core.SvnRunner.OnProcessingStateChanged -= OnSvnProcessingChanged;
+            SVNLogBridge.Shutdown();
 
-            // moduły PRZED Shutdown bridża (Dispose może jeszcze logować)
+            _lifetimeCts?.Cancel();
+            _lifetimeCts?.Dispose();
+
+            _refreshStatusCts?.Cancel();
+            _refreshStatusCts?.Dispose();
+
+            _projectSwitchDebounceCts?.Cancel();
+            _projectSwitchDebounceCts?.Dispose();
+
+            _watcherRestartCts?.Cancel();
+            _watcherRestartCts?.Dispose();
+
+            _saveProjectDebounceCts?.Cancel();
+            _saveProjectDebounceCts?.Dispose();
+
+            DisposeFileSystemWatcher();
+
             foreach (var module in _modules.Values)
             {
                 if (module is IDisposable disposable)
                     disposable.Dispose();
             }
+
             _modules.Clear();
 
-            SVNLogBridge.Shutdown();
-
-            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _lifetimeCts, null));
-            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _refreshStatusCts, null));
-            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _projectSwitchDebounceCts, null));
-            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _watcherRestartCts, null));
-            SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _saveProjectDebounceCts, null));
-
-            DisposeFileSystemWatcher();
-
-            _managerLock?.Dispose();              // poprawne — lock jest teraz instancyjny
-
-            if (Instance == this) Instance = null; // fake-null łapie '== null', ale nie '?.'
+            _managerLock?.Dispose();
         }
 
 #if UNITY_EDITOR

@@ -27,7 +27,8 @@ namespace SVN.Core
             catch (ObjectDisposedException) { }
         }
 
-        // === FIX Ś2: odczyt inputu na main thread (wejście z przycisku).
+        // === FIX Ś2: odczyt inputu na main thread (wejście z przycisku),
+        // PRZED ConfigureAwait — dalej pula.
         public async void ShowLog()
         {
             int count = ParseLogCount();
@@ -55,7 +56,12 @@ namespace SVN.Core
 
         private async Task ShowLogAsync(int count)
         {
-            if (!await TryEnterProcessingAsync().ConfigureAwait(false)) return;
+            if (!await TryEnterProcessingAsync().ConfigureAwait(false))
+            {
+                // === FIX (UX): cichy return — user klika i nic się nie dzieje
+                SVNLogBridge.LogLine("<color=#FFAA00>[Log]</color> Another log operation is already running.");
+                return;
+            }
 
             try
             {
@@ -104,23 +110,42 @@ namespace SVN.Core
 
         private async Task ShowLogForPathAsync(string relativePath, int count)
         {
-            if (!await TryEnterProcessingAsync().ConfigureAwait(false)) return;
+            if (!await TryEnterProcessingAsync().ConfigureAwait(false))
+            {
+                // === FIX (UX): jw.
+                SVNLogBridge.LogLine("<color=#FFAA00>[Log]</color> Another log operation is already running.");
+                return;
+            }
 
             try
             {
                 string root = svnManager.WorkingDir;
                 if (string.IsNullOrEmpty(root))
+                {
+                    // === FIX: było ciche return (ShowLogAsync w tym samym przypadku
+                    // loguje — niespójność)
+                    SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Path not found.");
                     return;
+                }
 
                 relativePath = SvnRunner.ForceCleanPath(relativePath);
                 if (string.IsNullOrWhiteSpace(relativePath))
                     return;
 
+                // === FIX (.svn-root): element "[Repository Root Change]" ma SZTUCZNĄ
+                // ścieżkę ".svn-root" — svn status/log na niej padał błędem. Mapowanie
+                // na "." = log historii roota (rodzina fixów SVNCommit/SVNRevert).
+                if (string.Equals(relativePath, ".svn-root", StringComparison.Ordinal))
+                    relativePath = ".";
+
                 bool isServerUrl =
                     relativePath.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                     relativePath.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
                     relativePath.StartsWith("svn://", StringComparison.OrdinalIgnoreCase) ||
-                    relativePath.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase);
+                    relativePath.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase) ||
+                    // === FIX: spójnie z SVNShared.IsServerPath (bez tego file://
+                    // szedł do Path.Combine i kończył się błędem svn)
+                    relativePath.StartsWith("file://", StringComparison.OrdinalIgnoreCase);
 
                 string targetPath;
                 if (isServerUrl)
@@ -133,7 +158,7 @@ namespace SVN.Core
                     targetPath = SvnRunner.ForceCleanPath(Path.Combine(root, relativePath));
                 }
 
-                // === FIX K1: jw. — token z lokalnej referencji.
+                // === FIX K1: token z lokalnej referencji
                 var token = ResetCts(TimeSpan.FromSeconds(60));
 
                 SVNLogBridge.LogLine($"<color=#00FF99>Fetching history for: {targetPath}</color>", append: false);
@@ -181,7 +206,7 @@ namespace SVN.Core
             }
         }
 
-        // === FIX Ś-drobne: wspólny rendering (dedylikacja duplikatu z dwóch metod).
+        // === FIX Ś-drobne: wspólny rendering (deduplikacja z dwóch metod).
         private async Task RenderLogOutputAsync(string output)
         {
             string coloredOutput = ApplyColoring(StripBanner(output));
@@ -208,6 +233,8 @@ namespace SVN.Core
             return newCts.Token;
         }
 
+        // === UWAGA: 3. lokalna kopia w kodzie (MergeUrlResolver, RepoBrowser, Log)
+        // — docelowo przenieść do SVNShared.
         private static string EscapeSvnArg(string arg)
         {
             if (string.IsNullOrWhiteSpace(arg)) return arg;
@@ -221,6 +248,8 @@ namespace SVN.Core
         }
 
         // UWAGA: czyta UI — wywoływać na main thread (wejścia publiczne to robią).
+        // Notka: 500 wpisów ≈ 2000–3000 linii, a konsola trzyma ~500 (trim
+        // SVNLogBridge) — user zobaczy ogon. Świadomy kompromis pamięć/UX.
         private int ParseLogCount()
         {
             int count = 10;
@@ -233,6 +262,12 @@ namespace SVN.Core
             return Mathf.Clamp(count, 1, 500);
         }
 
+        // === FIX (GŁÓWNA poprawka): escape rich-text PRZED kolorowaniem —
+        // svn log zawiera HISTORYCZNE komunikaty commitów wszystkich commiterów
+        // (niesanityzowane — sanitizacja SVNCommit działa tylko na WEJŚCIU).
+        // Message z '<' / '>' był parsowany przez TMP jako tag (znikanie treści /
+        // wstrzyknięcie formatowania). Wzorzec <noparse> — ten sam co w
+        // SVNDiff.FormatDiffForUnity.
         private static string ApplyColoring(string rawText)
         {
             if (string.IsNullOrEmpty(rawText)) return rawText;
@@ -242,17 +277,27 @@ namespace SVN.Core
 
             foreach (string rawLine in lines)
             {
-                string line = rawLine.TrimEnd();
+                string trimmed = rawLine.TrimEnd();
+                string line = EscapeTmpText(trimmed);
 
-                if (line.StartsWith("r", StringComparison.Ordinal) && line.Contains(" | "))
+                // checki formatu na SUROWEJ linii (escape nie psuje
+                // StartsWith/Contains, ale tak jest stabilnie)
+                if (trimmed.StartsWith("r", StringComparison.Ordinal) && trimmed.Contains(" | "))
                     compressedLines.Add($"<color=yellow><b>{line}</b></color>");
-                else if (line.StartsWith("---", StringComparison.Ordinal))
+                else if (trimmed.StartsWith("---", StringComparison.Ordinal))
                     compressedLines.Add($"<color=#444444>{line}</color>");
                 else
                     compressedLines.Add($"<color=#E6E6E6>{line}</color>");
             }
 
             return string.Join("\n", compressedLines);
+        }
+
+        private static string EscapeTmpText(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            return s.Replace("<", "<noparse><</noparse>")
+                    .Replace(">", "<noparse>></noparse>");
         }
 
         private Task ScrollToBottomOnMainThreadAsync()
@@ -265,6 +310,8 @@ namespace SVN.Core
                 {
                     if (svnUI.LogScrollRect != null)
                     {
+                        // (legalne użycie: layout musi być aktualny PRZED ustawieniem
+                        // pozycji scrolla — ten sam przypadek co RevGraph w PanelHandler)
                         Canvas.ForceUpdateCanvases();
                         svnUI.LogScrollRect.verticalNormalizedPosition = 0f;
                     }
@@ -327,6 +374,9 @@ namespace SVN.Core
                 _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
             }
 
+            // Natychmiastowy dispose semafora jest tu bezpieczny (każde
+            // Release/WaitAsync łapie ODE), ale niespójny z grace-period
+            // z SVNRevert — przy okazji można ujednolicić.
             try { _processingLock.Dispose(); } catch { }
         }
     }
