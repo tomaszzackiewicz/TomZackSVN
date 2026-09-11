@@ -21,7 +21,7 @@ public class ViewTabsController : MonoBehaviour
         if (repoBrowserPanel != null) repoBrowserPanel.SetActive(false);
 
         SetButtonTextColor(tabLocalBtn, Color.white);
-        SetButtonTextColor(tabRepoBtn, Color.gray);
+        SetButtonTextColor(tabRepoBtn, Color.black);
     }
 
     public void Button_ShowRepoBrowser()
@@ -29,7 +29,7 @@ public class ViewTabsController : MonoBehaviour
         if (localChangesPanel != null) localChangesPanel.SetActive(false);
         if (repoBrowserPanel != null) repoBrowserPanel.SetActive(true);
 
-        SetButtonTextColor(tabLocalBtn, Color.gray);
+        SetButtonTextColor(tabLocalBtn, Color.black);
         SetButtonTextColor(tabRepoBtn, Color.white);
     }
 

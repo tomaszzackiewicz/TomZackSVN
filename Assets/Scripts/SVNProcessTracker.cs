@@ -49,7 +49,6 @@ namespace SVN.Core
             try
             {
                 process.EnableRaisingEvents = true;
-
                 process.Exited += (_, __) => Unregister(process);
             }
             catch (Exception ex)
@@ -86,10 +85,7 @@ namespace SVN.Core
             {
                 Unregister(process);
 
-                try
-                {
-                    process.Dispose();
-                }
+                try { process.Dispose(); }
                 catch { }
             }
         }
@@ -101,19 +97,13 @@ namespace SVN.Core
                 if (process == null)
                     return;
 
-                // === FIX (shutdown noise): proces mógł zakończyć się naturalnie I zostać
-                // zdisposowany przez właściciela (SvnRunner 'using'), zanim handler Exited
-                // (threadpool) wyrejestrował go ze zbioru. HasExited/Id na takim obiekcie
-                // rzuca "No process is associated with this object" (lub ObjectDisposedException,
-                // który jest PODKLASĄ InvalidOperationException — dlatego jeden catch na
-                // bazową klasę załatwia oba). Dla killa: już martwy = cichy powrót.
                 try
                 {
                     if (process.HasExited)
                         return;
                 }
                 catch (InvalidOperationException) { return; }        // ⊇ ObjectDisposedException ("No process...")
-                catch (System.ComponentModel.Win32Exception) { return; }   // np. brak dostępu do uchwytu
+                catch (System.ComponentModel.Win32Exception) { return; }
 
                 using var killer = Process.Start(new ProcessStartInfo
                 {
@@ -123,7 +113,10 @@ namespace SVN.Core
                     UseShellExecute = false
                 });
 
-                killer?.WaitForExit(500);
+                // === FIX (cancel latency): 500ms → 200ms — taskkill kończy
+                // zwykle w 10-50 ms; 500 ms dodawało opóźnienie do każdego
+                // cancelu (user widział "Cancel requested" ale proces wisiał).
+                killer?.WaitForExit(200);
             }
             catch (Exception ex)
             {
@@ -165,10 +158,7 @@ namespace SVN.Core
                 }
                 finally
                 {
-                    try
-                    {
-                        process.Dispose();
-                    }
+                    try { process.Dispose(); }
                     catch { }
                 }
             }

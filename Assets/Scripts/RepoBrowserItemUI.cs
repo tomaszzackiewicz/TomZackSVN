@@ -275,7 +275,12 @@ namespace SVN.Core
             if (foldArrowText != null && _node != null && _node.IsDirectory)
             {
                 foldArrowText.text = "▼";
-                foldArrowText.rectTransform.localRotation = Quaternion.Euler(0, 0, isExpanded ? 0f : -90f);
+
+                // === FIX: expanded = ▼ (0°, tip w dół), collapsed = ▶ (90° CCW, tip w prawo).
+                // Wcześniej -90f (CW) dawało ◀ (tip w lewo) — odwrotnie niż w changes tree
+                // (SvnLineController używa +90f).
+                foldArrowText.rectTransform.localRotation =
+                    Quaternion.Euler(0, 0, isExpanded ? 0f : 90f);
             }
         }
 

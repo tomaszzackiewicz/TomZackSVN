@@ -15,25 +15,6 @@ namespace SVN.Core
         PostUpdate
     }
 
-    /// <summary>
-    /// Pasek statusu projektu.
-    ///
-    /// === ARCHITEKTURA ROZMIARÓW (fix kropek po restarcie):
-    ///   BuildSnapshotAsync = LEKKI (lokalny svn info, natychmiast) + w tle
-    ///   FillHeavySnapshotDataAsync (skan dysku, status '!', HEAD z serwera).
-    ///
-    ///   ŹRÓDŁA rozmiarów przy budowie snapshotu (priorytetem):
-    ///     1. cache 10 s w pamięci (świeże),
-    ///     2. OBIEKT projektu (start aplikacji — svnProject przyszedł prosto
-    ///        z JSON-a: zero I/O, zero ryzyka mismatchu ścieżki),
-    ///     3. lookup w ProjectSettings (gdy brak obiektu — np. EndUpdate),
-    ///     4. "..." (pierwsze uruchomienie ever).
-    ///
-    ///   PERSIST: świeży pomiar zapisywany jest do pól SVNProject
-    ///   (cachedWorkingSize / cachedTotalSize) — klucz = CurrentProject.
-    ///   workingDir (FORMAT ZAPISU — po nim UpdateProject matchuje lastOpened
-    ///   od zawsze; nasza normalizacja tylko jako fallback).
-    /// </summary>
     public class SVNBar : SVNBase, IDisposable
     {
         private string _svnVersionCached = "";
@@ -41,10 +22,7 @@ namespace SVN.Core
         private readonly Dictionary<string, (DateTime time, string working, string total)> _sizeCache = new();
         private readonly object _sizeCacheLock = new object();
 
-        // === FIX NESTED: cache korzenia working copy (klucz = ścieżka wejściowa)
         private (string path, string root) _wcRootCache;
-
-        // === CHECKOUT NIEKOMPLETNY: true, gdy wc ma pozycje '!' (missing).
         private volatile bool _checkoutIncomplete;
 
         private CancellationTokenSource _snapshotCts;
@@ -52,7 +30,7 @@ namespace SVN.Core
         private volatile BarState _state = BarState.Idle;
         private volatile string _desiredContent = "";
         private volatile string _lastRenderedContent = "";
-        
+
         private CancellationTokenSource _monitorCts;
 
         public BarState CurrentState => _state;
@@ -85,9 +63,9 @@ namespace SVN.Core
         public void SetLoadingContent(string projectName)
         {
             string content =
-                $"<size=150%><color=#FFFF00>●</color></size> " +
+                $"<size=150%><color={SVNColors.StatusModified}>●</color></size> " +
                 $"<color=orange><b>{projectName}</b></color> | " +
-                $"<color=#FFFF00>Loading project...</color>";
+                $"<color={SVNColors.StatusModified}>Loading project...</color>";
 
             SetContent(content, "SetLoadingContent");
         }
@@ -96,10 +74,10 @@ namespace SVN.Core
         {
             string name = string.IsNullOrWhiteSpace(projectName)
                 ? ""
-                : $"<color=#888888><b>{projectName}</b></color> | ";
+                : $"<color={SVNColors.Dim}><b>{projectName}</b></color> | ";
             string content =
                 $"<size=150%><color=black>●</color></size> " +
-                $"{name}<color=#888888>No working copy</color>";
+                $"{name}<color={SVNColors.Dim}>No working copy</color>";
 
             SetContent(content, "ShowNoWorkingCopy");
         }
@@ -112,9 +90,15 @@ namespace SVN.Core
         {
             if (_state != BarState.Idle) return;
 
-            // === FIX (CTS): CancelAndDisposeLater zamiast natychmiastowego Dispose.
-            // Natychmiastowy Dispose mógł rzucić ObjectDisposedException w trwającym
-            // BuildSnapshotAsync, który sprawdzał token. Wzorzec spójny z resztą kodu.
+            // === FIX (cache wersji SVN per projekt): jeśli poprzedni projekt
+            // miał sfaultowane wykrycie wersji ("?.?.?"), zostawało na stałe.
+            // Reset przy zmianie ścieżki projektu.
+            if (!string.Equals(_wcRootCache.path, path, StringComparison.OrdinalIgnoreCase))
+            {
+                _svnVersionTask = null;
+                _svnVersionCached = "";
+            }
+
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _snapshotCts, null));
             var newCts = new CancellationTokenSource();
             _snapshotCts = newCts;
@@ -186,7 +170,6 @@ namespace SVN.Core
             string total = svnManager.CurrentSnapshot?.RepoTotalSize ?? "...";
             SetContent(BuildUpdatingContent(projectName, size, total), "BeginUpdate");
 
-            // === FIX (CTS): CancelAndDisposeLater zamiast immediate dispose.
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
             var newMonitorCts = new CancellationTokenSource();
             _monitorCts = newMonitorCts;
@@ -195,7 +178,6 @@ namespace SVN.Core
 
         public async Task EndUpdate(SVNProjectInfoSnapshot fallbackSnapshot)
         {
-            // === FIX (CTS): shared helper.
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
             _state = BarState.Idle;
 
@@ -260,7 +242,6 @@ namespace SVN.Core
 
         public void EndUpdateFailed(SVNProjectInfoSnapshot oldSnapshot)
         {
-            // === FIX (CTS): shared helper.
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
             _state = BarState.Idle;
 
@@ -321,13 +302,13 @@ namespace SVN.Core
             string svnVer = snapshot?.SvnVersion ?? "...";
 
             return
-                $"<size=150%><color=#FFFF00>●</color></size> " +
+                $"<size=150%><color={SVNColors.StatusModified}>●</color></size> " +
                 $"<color=orange><b>{projectName}</b> ({FormatSizeDisplay(workingSize, totalSize)})</color> | " +
-                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{user}</color> | " +
-                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{branch}</color> | " +
-                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{rev}</color> | " +
-                $"<color=#E6E6E6>SVN: {svnVer}</color>" +
-                " | <color=#FFFF00>Updating...</color>";
+                $"<color={SVNColors.Header}>User:</color> <color={SVNColors.Info}>{user}</color> | " +
+                $"<color={SVNColors.Header}>Branch:</color> <color={SVNColors.Info}>{branch}</color> | " +
+                $"<color={SVNColors.Header}>Rev:</color> <color={SVNColors.Info}>{rev}</color> | " +
+                $"<color={SVNColors.Info}>SVN: {svnVer}</color>" +
+                $" | <color={SVNColors.StatusModified}>Updating...</color>";
         }
 
         private string BuildNormalContent(SVNProjectInfoSnapshot snapshot, bool isRefreshing)
@@ -337,17 +318,17 @@ namespace SVN.Core
             bool isFailed = state.State == SVNOperationState.Failed;
 
             string statusColor = "#4ca74c";
-            if (isRefreshing) statusColor = "#FFFF00";
-            else if (isCanceled) statusColor = "#FFAA00";
-            else if (isFailed) statusColor = "#FF1A1A";
-            else if (snapshot.IsOutdated) statusColor = "#FF1A1A";
+            if (isRefreshing) statusColor = SVNColors.StatusModified;
+            else if (isCanceled) statusColor = SVNColors.Warning;
+            else if (isFailed) statusColor = SVNColors.Error;
+            else if (snapshot.IsOutdated) statusColor = SVNColors.Error;
 
             string shortDate = snapshot.Date != "unknown"
                 ? snapshot.Date.Split('(')[0].Trim()
                 : "no dates";
 
             string revDisplay = snapshot.IsOutdated
-                ? $"<color=#FF4444>{snapshot.Revision}</color> <color=#FF8888>(HEAD: {snapshot.RemoteRevision})</color>"
+                ? $"<color={SVNColors.Error}>{snapshot.Revision}</color> <color={SVNColors.Warning}>(HEAD: {snapshot.RemoteRevision})</color>"
                 : snapshot.Revision;
 
             string statusSuffix = "";
@@ -357,37 +338,15 @@ namespace SVN.Core
             return
                 $"<size=150%><color={statusColor}>●</color></size> " +
                 $"<color=orange><b>{snapshot.ProjectName}</b> ({FormatSizeDisplay(snapshot.WorkingCopySize, snapshot.RepoTotalSize)})</color> | " +
-                $"<color=#00E5FF>User:</color> <color=#E6E6E6>{snapshot.CurrentUser}</color> | " +
-                $"<color=#00E5FF>Branch:</color> <color=#E6E6E6>{snapshot.Branch}</color> | " +
-                $"<color=#00E5FF>Rev:</color> <color=#E6E6E6>{revDisplay}</color> | " +
-                $"<color=#00E5FF>By:</color> <color=#E6E6E6>{snapshot.Author}</color> | " +
-                $"<color=#E6E6E6>{shortDate}</color> | " +
-                $"<color=#E6E6E6>Srv: {snapshot.Server}</color> | " +
-                $"<color=#E6E6E6>App: {snapshot.AppVersion}</color> | " +
-                $"<color=#E6E6E6>SVN: {snapshot.SvnVersion}</color>" +
+                $"<color={SVNColors.Header}>User:</color> <color={SVNColors.Info}>{snapshot.CurrentUser}</color> | " +
+                $"<color={SVNColors.Header}>Branch:</color> <color={SVNColors.Info}>{snapshot.Branch}</color> | " +
+                $"<color={SVNColors.Header}>Rev:</color> <color={SVNColors.Info}>{revDisplay}</color> | " +
+                $"<color={SVNColors.Header}>By:</color> <color={SVNColors.Info}>{snapshot.Author}</color> | " +
+                $"<color={SVNColors.Info}>{shortDate}</color> | " +
+                $"<color={SVNColors.Info}>Srv: {snapshot.Server}</color> | " +
+                $"<color={SVNColors.Info}>App: {snapshot.AppVersion}</color> | " +
+                $"<color={SVNColors.Info}>SVN: {snapshot.SvnVersion}</color>" +
                 statusSuffix;
-        }
-
-        public async Task StartLightSizeMonitor(string path, CancellationToken token)
-        {
-            await Task.CompletedTask;
-        }
-
-        public async Task StartLiveSizeMonitor(string path, CancellationToken token)
-        {
-            await Task.CompletedTask;
-        }
-
-        public void ShowUpdatingStatus(string projectName)
-        {
-        }
-
-        public void ResetMonitorState()
-        {
-        }
-
-        public void ForceRenderAfterUpdate(SVNProjectInfoSnapshot snapshot)
-        {
         }
 
         public void ClearSizeCache()
@@ -536,10 +495,10 @@ namespace SVN.Core
 
             if (string.IsNullOrWhiteSpace(totalSize) ||
                 totalSize == "unknown" || totalSize == "Size unknown")
-                return $"<color=#00E5FF>Project:</color> {working}";
+                return $"<color={SVNColors.Header}>Project:</color> {working}";
 
-            return $"<color=#00E5FF>Project:</color> {working} " +
-                   $"/ <color=#00E5FF>Repo:</color> {totalSize}";
+            return $"<color={SVNColors.Header}>Project:</color> {working} " +
+                   $"/ <color={SVNColors.Header}>Repo:</color> {totalSize}";
         }
 
         private async Task<bool> CheckCheckoutIncompleteAsync(string path, CancellationToken token = default)
@@ -718,13 +677,18 @@ namespace SVN.Core
             }
         }
 
+        /// <summary>
+        /// Background "ciężkie dane" — best effort, bez timeoutu. Jeśli svn
+        /// utknie, SvnProcessTracker killuje proces na shutdown.
+        /// </summary>
         private async Task FillHeavySnapshotDataAsync(
             SVNProjectInfoSnapshot snapshot, string path, string cacheKey)
         {
             try
             {
                 var remoteTask = SvnRunner.RunAsync(
-                    "info -r HEAD --show-item last-changed-revision", path);
+                    "info -r HEAD --show-item last-changed-revision",
+                    path);
 
                 string wcRoot = await GetWorkingCopyRootAsync(path).ConfigureAwait(false);
                 var sizeTask = GetSizesForNestedAsync(path, wcRoot);
@@ -778,7 +742,7 @@ namespace SVN.Core
                     SetContent(BuildNormalContent(snapshot, isRefreshing: false), "FillHeavy");
                 }
             }
-            catch { /* cichy */ }
+            catch { }
         }
 
         // ==================== CHECKOUT ====================
@@ -804,7 +768,6 @@ namespace SVN.Core
                 svnManager.CurrentSnapshot.WorkingCopySize,
                 svnManager.CurrentSnapshot.RepoTotalSize), "BeginCheckout");
 
-            // === FIX (CTS): CancelAndDisposeLater.
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
             var newMonitorCts = new CancellationTokenSource();
             _monitorCts = newMonitorCts;
@@ -819,7 +782,6 @@ namespace SVN.Core
 
         public void Dispose()
         {
-            // === FIX (CTS): CancelAndDisposeLater (spójnie z resztą kodu).
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _monitorCts, null));
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _snapshotCts, null));
         }

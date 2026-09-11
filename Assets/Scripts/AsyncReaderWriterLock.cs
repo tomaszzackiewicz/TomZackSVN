@@ -15,11 +15,6 @@ namespace SVN.Core
         {
             ThrowIfDisposed();
 
-            // === FIX K1: czekaj na readSemaphore PRZED try — wyjątek z WaitAsync
-            // (np. cancel przed wejściem) NIE może trafiać do catch, który robi
-            // rollback --_readers/Release: wcześniej cancel w tym punkcie
-            // ZMNIEJSZAŁ cudzy licznik czytelników i wypuszczał cudzy slot
-            // (trwała korupcja stanu przy pierwszym EnterReadAsync z canceled tokenem).
             await _readSemaphore.WaitAsync(token).ConfigureAwait(false);
 
             try
@@ -43,11 +38,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Wersja synchroniczna — WYŁĄCZNIE dla kodu, który na 100% NIE jest na
-        /// main thread Unity (np. wewnątrz Task.Run). Na main thread może
-        /// zablokować się w nieskończoność, gdy writer czeka na main thread.
-        /// </summary>
         public void ExitRead()
         {
             ThrowIfDisposed();
@@ -95,13 +85,37 @@ namespace SVN.Core
         }
 
         /// <summary>
-        /// === FIX (shutdown race): ŚWIADOMIE nie disposujemy semaforów.
-        /// SemaphoreSlim.Dispose() zwalnia natywne zasoby tylko wtedy, gdy
-        /// użyto AvailableWaitHandle — my nie używamy, więc nie ma czego
-        /// zwalniać poza managed pamięcią (GC i tak to zrobi).
-        /// Disposal w trakcie in-flight operacji (ExitWrite / ExitReadAsync
-        /// po Dispose) rzucałby ObjectDisposedException w losowym miejscu
-        /// aplikacji. Bezpieczniej zostawić semafory żywe do końca procesu.
+        /// === FIX (editor domain reload): reset stanu po przerwanym Play mode.
+        ///
+        /// Gdy w edytorze z wyłączonym Domain Reload zatrzymasz Play w trakcie
+        /// operacji (np. w trakcie refreshu), semafory zostają zajęte. Static
+        /// lock żyje dalej → następna sesja Play zaczyna z zablokowanym lockiem
+        /// → pierwszy EnterWriteAsync deadlockuje.
+        ///
+        /// Reset: oddaj wszystkie zajęte sloty (Wait(0) w pętli + Release),
+        /// wyzeruj licznik czytelników, wyczyść flagę disposed.
+        ///
+        /// Wywołać z SvnEditorLifecycle.OnPlayModeStateChanged (razem z
+        /// SvnRunner.ResetStaticState).
+        /// </summary>
+        public void ResetForEditorReload()
+        {
+            // Drain write semaphore slots
+            while (_writeSemaphore.Wait(0))
+                _writeSemaphore.Release();
+
+            // Drain read semaphore slots
+            while (_readSemaphore.Wait(0))
+                _readSemaphore.Release();
+
+            _readers = 0;
+            _disposed = false;
+        }
+
+        /// <summary>
+        /// NIE disposujemy semaforów — statyczne instancje muszą przetrwać
+        /// kolejne sesje Play (edytor z wył. Domain Reload). SemaphoreSlim
+        /// nie ma zasobów natywnych do zwolnienia w tej konfiguracji.
         /// </summary>
         public void Dispose()
         {

@@ -957,9 +957,16 @@ namespace SVN.Core
 
                 if (!isExport)
                 {
+                    // === FIX (spójność nazewnictwa): ten obiekt idzie do SetActiveProject →
+                    // LoadProjectCore → SVNBar. Ustawiamy tę samą auto-nazwę co w JSON-ie,
+                    // żeby dolny pasek od razu pokazywał "MyRepo (trunk)", a nie "trunk".
+                    string displayName = SVNProjectNaming.BuildDisplayName(url, path);
+                    if (string.IsNullOrWhiteSpace(displayName))
+                        displayName = Path.GetFileName(path.TrimEnd('/', '\\'));
+
                     var activeProject = new SVNProject
                     {
-                        projectName = Path.GetFileName(path.TrimEnd('/', '\\')),
+                        projectName = displayName,
                         repoUrl = url,
                         workingDir = path,
                         privateKeyPath = keyPath ?? _resolvedKeyPath,
@@ -1232,21 +1239,24 @@ namespace SVN.Core
         }
 
         /// <summary>
-        /// === FIX (KRYTYCZNY): PlayerPrefs.SetString/Save są main-thread-only.
-        /// Ta metoda jest wołana z ExecuteSvnOperationAsync PO awaitach (pula wątków) —
-        /// wcześniej pisała PlayerPrefs z wątku w tle (niezdefiniowane zachowanie,
-        /// w praktyce cichy no-op lub crash w buildzie). Teraz: SVNPrefs.SetString,
-        /// który sam dispatchuje na main gdy trzeba.
+        /// === FIX (spójność nazewnictwa): auto-nazwa w tym samym formacie co
+        /// SVNLoad/SVNSettings — "UrlName (folder)". Bez tego checkout przez panel
+        /// Checkout tworzył wpis z nazwą "trunk" zamiast "MyRepo (trunk)".
+        /// PlayerPrefs.SetString → SVNPrefs (thread-safe) — wywołanie po awaitach.
         /// </summary>
         private void RegisterProjectInList(string path, string url, string keyPath)
         {
             if (string.IsNullOrWhiteSpace(path)) return;
 
-            // === S1: atomowe AddOrUpdate (koniec Load→Find→Save)
             ProjectSettings.AddOrUpdateProject(path, (p, created) =>
             {
+                // Auto-nazwa TYLKO dla nowego wpisu — ręczny Rename ma priorytet.
                 if (created)
-                    p.projectName = GetRepoNameFromUrl(url);
+                {
+                    string auto = SVNProjectNaming.BuildDisplayName(url, path);
+                    if (!string.IsNullOrWhiteSpace(auto))
+                        p.projectName = auto;
+                }
 
                 p.repoUrl = url;
                 p.privateKeyPath = keyPath;
@@ -1254,20 +1264,7 @@ namespace SVN.Core
             });
 
             string normalizedPath = path.Replace("\\", "/").TrimEnd('/');
-
-            // === FIX: thread-safe zapis (main thread dispatchowany wewnątrz SVNPrefs)
             SVNPrefs.SetString("SVN_LastOpenedProjectPath", normalizedPath);
-        }
-
-        private string GetRepoNameFromUrl(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url)) return "Repository";
-            url = url.TrimEnd('/');
-            if (url.EndsWith("/trunk", StringComparison.OrdinalIgnoreCase)) url = url.Substring(0, url.Length - "/trunk".Length);
-            if (url.EndsWith("/branches", StringComparison.OrdinalIgnoreCase)) url = url.Substring(0, url.Length - "/branches".Length);
-            if (url.EndsWith("/tags", StringComparison.OrdinalIgnoreCase)) url = url.Substring(0, url.Length - "/tags".Length);
-            int slash = url.LastIndexOf('/');
-            return slash >= 0 && slash < url.Length - 1 ? url.Substring(slash + 1) : url;
         }
 
         // === FIX: wołane po awaitach (pula wątków) — PlayerPrefs przez SVNPrefs.

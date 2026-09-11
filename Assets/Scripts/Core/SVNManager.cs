@@ -483,6 +483,9 @@ namespace SVN.Core
         {
             if (project == null) return false;
 
+            if (this == null || _lifetimeCts == null || _lifetimeCts.IsCancellationRequested)
+                return false;
+
             if (string.IsNullOrWhiteSpace(project.workingDir) ||
                 !Directory.Exists(project.workingDir) ||
                 !SVNAssetLocator.IsWorkingCopy(project.workingDir))
@@ -612,20 +615,42 @@ namespace SVN.Core
                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
             });
 
-            // === FIX (kosmetyka): usunięty wrapper RefreshStatusAsync() —
-            // bezpośrednie wywołanie RefreshStatus() (wrapper robił tylko
-            // `await RefreshStatus()` i nic więcej).
-            _ = RefreshStatus().ContinueWith(t =>
+            // === FIX (race na starcie): JEDNA, wyczekana ścieżka odświeżania.
+            //
+            // Wcześniej w tej metodzie odpalały się RÓWNOLEGLE trzy źródła refreshu:
+            //   (1) fire-and-forget RefreshStatusAsync()
+            //   (2) safety-net Task.Run po 1200 ms → force refresh jeśli pusto
+            //   (3) ewentualny OnApplicationFocus z managera
+            // Plus `RefreshStatus` ma `if (IsProcessing && !force) return;` — jeśli
+            // (3) albo inna operacja SVN ustawiła IsProcessing w oknie startu, (1)
+            // wychodziło wcześnie bez danych; safety-net (2) też mógł trafić w okno
+            // gdy `statusModule.IsProcessing == true` i też się wycofywał. Wynik:
+            // drzewo puste mimo że `svn status` działa poprawnie.
+            //
+            // Teraz: JEDEN `RefreshStatus(force: true)`, który czekamy do końca.
+            // Force omija guard `IsProcessing` — refresh i tak jest serializowany
+            // przez `_svnLock` w SvnRunner, więc nie koliduje z żadnym innym
+            // `svn`-em. Metoda i tak chodzi w background Task, więc nie blokuje UI.
+            try
             {
-                if (t.IsFaulted)
-                    SVNLogBridge.LogError($"[Init] Background refresh failed: {t.Exception?.InnerException?.Message}");
-            }, TaskScheduler.Default);
+                await RefreshStatus(force: true);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN Init] Initial status refresh failed: {ex.Message}");
+            }
 
+            if (this == null) return;
+
+            // === Safety net NADAL potrzebny, ale TYLKO na przypadek gdy initial
+            // refresh zwrócił pusto z powodu błędu SVN (np. sieć padła na 2 s).
+            // Sprawdzamy `_activeRefreshId` żeby nie kolidować z innymi refreshami
+            // — jeśli inny refresh jest w locie, po prostu go zostawiamy.
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(1200);
+                    await Task.Delay(2500);
 
                     if (this == null) return;
                     if (string.IsNullOrEmpty(WorkingDir)) return;
@@ -633,12 +658,12 @@ namespace SVN.Core
 
                     var statusModule = GetModule<SVNStatus>();
                     if (statusModule == null) return;
-                    if (statusModule.IsProcessing) return;
 
                     var data = statusModule.GetCurrentData();
                     if (data == null || data.Count == 0)
                     {
-                        SVNLogBridge.LogToOutput("<color=yellow>[SVN Init] Changes tree empty after load — forcing status refresh.</color>");
+                        SVNLogBridge.LogToOutput(
+                            $"<color={SVNColors.Warning}>[SVN Init] Changes tree still empty after load — retrying status refresh.</color>");
                         await RefreshStatus(force: true);
                     }
                 }
@@ -796,7 +821,7 @@ namespace SVN.Core
 
             if (!Directory.Exists(WorkingDir) || !SVNAssetLocator.IsWorkingCopy(WorkingDir))
             {
-                SVNLogBridge.LogToOutput("<color=#8B0000>>[SVN] Working copy is missing — status refresh skipped.</color>");
+                SVNLogBridge.LogToOutput($"<color={SVNColors.Error}>[SVN] Working copy is missing — status refresh skipped.</color>");
                 GetModule<SVNBar>()?.ShowNoWorkingCopy(CurrentProject?.projectName);
                 return;
             }
@@ -824,7 +849,10 @@ namespace SVN.Core
                 await statusModule.ExecuteRefreshWithAutoExpand(force: force);
                 await PostProcessStatus();
 
-                SVNLogBridge.LogLine("<color=green>Status updated successfully.</color>", false);
+                // === FIX (kolor): było "<color=green>" — HTML green = #008000, ciemna
+                // zieleń zlewała się z szarym tłem konsoli. SVNColors.Success = #66FF66,
+                // jasna i wyraźnie widoczna.
+                SVNLogBridge.LogLine($"<color={SVNColors.Success}>Status updated successfully.</color>", false);
 
                 if (!IsUpdateRunning && Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
                 {
@@ -1067,6 +1095,18 @@ namespace SVN.Core
                 SynchronizeConnectionSettings(SettingsSource.None, url: diskUrl));
         }
 
+        /// <summary>
+        /// Atomowa zamiana referencji CurrentProject BEZ wywoływania LoadProject.
+        /// Używane przez moduły, które muszą zsynchronizować obiekt po zmianach
+        /// w projects.json (np. SVNRepoRepair po rejestracji naprawionego WC —
+        /// inaczej CurrentProject trzyma starą nazwę/URL do końca sesji).
+        /// </summary>
+        public void ReplaceCurrentProject(SVNProject project)
+        {
+            if (project == null) return;
+            CurrentProject = project;
+        }
+
         private void SetupInputListeners()
         {
             svnUI.SettingsRepoUrlInput?.onValueChanged.AddListener(v =>
@@ -1152,6 +1192,12 @@ namespace SVN.Core
             });
         }
 
+        /// <summary>
+        /// === FIX (race przy przełączeniu projektu): snapshot WorkingDir w momencie
+        /// enqueue, nie po 500 ms. Wcześniej `UpdateCurrentProjectDataImmediate`
+        /// czytał WorkingDir po opóźnieniu — jeśli user w międzyczasie przełączył
+        /// projekt, dane z Settings trafiały pod klucz NOWEGO projektu.
+        /// </summary>
         private void DebounceSaveProject()
         {
             var oldCts = _saveProjectDebounceCts;
@@ -1163,21 +1209,38 @@ namespace SVN.Core
                 _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
             }
 
+            // Snapshot TU — projekt, który był aktywny gdy user zaczął edycję.
+            string workingDirSnapshot = WorkingDir;
             var token = _saveProjectDebounceCts.Token;
 
             Task.Delay(500, token).ContinueWith(t =>
             {
                 if (!t.IsCanceled)
-                    UpdateCurrentProjectDataImmediate();
+                    UpdateProjectDataSnapshot(workingDirSnapshot);
             }, TaskScheduler.Default);
         }
 
-        private void UpdateCurrentProjectDataImmediate()
+        /// <summary>
+        /// Zapis danych projektu pod KONKRETNYM kluczem (snapshot z DebounceSaveProject).
+        /// Auto-nazwa: jeśli bieżąca nazwa w JSON-ie wygląda na wygenerowaną dla
+        /// STAREgo URL-a, po zmianie URL-a zostanie zaktualizowana do nowej auto-nazwy
+        /// ("UrlName (folder)"). Ręczny Rename (nazwa != auto dla starego URL) zostaje
+        /// nietknięty.
+        /// </summary>
+        private void UpdateProjectDataSnapshot(string workingDirSnapshot)
         {
+            if (string.IsNullOrWhiteSpace(workingDirSnapshot)) return;
+
             try
             {
-                ProjectSettings.UpdateProject(WorkingDir, p =>
+                ProjectSettings.UpdateProject(workingDirSnapshot, p =>
                 {
+                    // Detekcja "auto-nazwy" PRZED nadpisaniem pól:
+                    //   auto-nazwa dla starego URL-a == p.projectName  →  była auto,
+                    //   różna  →  user ręcznie zmienił przez Rename, nie ruszamy.
+                    string oldAuto = SVNProjectNaming.BuildDisplayName(p.repoUrl, p.workingDir);
+                    bool nameWasAuto = string.Equals(p.projectName, oldAuto, StringComparison.Ordinal);
+
                     if (!string.IsNullOrWhiteSpace(RepositoryUrl)) p.repoUrl = RepositoryUrl;
                     if (!string.IsNullOrWhiteSpace(CurrentKey)) p.privateKeyPath = CurrentKey;
                     if (!string.IsNullOrWhiteSpace(MergeToolPath)) p.mergeToolPath = MergeToolPath;
@@ -1185,6 +1248,14 @@ namespace SVN.Core
                     if (!string.IsNullOrWhiteSpace(ResolveToolPath)) p.resolveToolPath = ResolveToolPath;
                     if (!string.IsNullOrWhiteSpace(BlameToolPath)) p.blameToolPath = BlameToolPath;
                     if (!string.IsNullOrWhiteSpace(SshOptions)) p.sshOptions = SshOptions;
+
+                    // Po zmianie URL-a: jeśli nazwa była auto — przelicz na nową auto-nazwę.
+                    if (nameWasAuto)
+                    {
+                        string newAuto = SVNProjectNaming.BuildDisplayName(p.repoUrl, p.workingDir);
+                        if (!string.IsNullOrWhiteSpace(newAuto))
+                            p.projectName = newAuto;
+                    }
                 });
             }
             catch (Exception ex)
@@ -1548,6 +1619,11 @@ namespace SVN.Core
                 {
                     SvnProcessTracker.KillAll();
                     SvnRunner.ResetStaticState();
+
+                    // === FIX (deadlock): reset staticznego _managerLock po przerwanym
+                    // Play mode. SvnEditorLifecycle jest zagnieżdżoną klasą wewnątrz
+                    // SVNManager, więc ma dostęp do prywatnego static pola _managerLock.
+                    _managerLock.ResetForEditorReload();
                 }
             }
         }

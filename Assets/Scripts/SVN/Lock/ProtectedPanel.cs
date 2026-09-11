@@ -381,25 +381,71 @@ public class ProtectedPanel : MonoBehaviour
 
         if (rowsContainer == null || rowPrefab == null)
         {
-            Debug.LogWarning("[ProtectedPanel] rowsContainer / rowPrefab not assigned — rows not built.");
+            Debug.LogError(
+                "[ProtectedPanel] rowsContainer / rowPrefab NOT ASSIGNED — rows not built. " +
+                "Assign them in the Inspector.");
+            ShowPlaceholder("Row prefab/container not assigned — check the Inspector.", isError: true);
             return;
         }
+
+        if (snapshot == null)
+        {
+            Debug.LogWarning("[ProtectedPanel] RebuildRows called with null snapshot.");
+            return;
+        }
+
+        Debug.Log($"[ProtectedPanel] RebuildRows: {snapshot.Count} item(s), container={rowsContainer.name}, prefab={rowPrefab.name}");
+
+        int built = 0;
 
         foreach (var info in snapshot)
         {
             if (info == null) continue;
 
-            GameObject rowObject = Instantiate(rowPrefab, rowsContainer);
+            GameObject rowObject;
+            try
+            {
+                rowObject = Instantiate(rowPrefab, rowsContainer);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ProtectedPanel] Instantiate failed: {ex}");
+                continue;
+            }
+
+            if (rowObject == null)
+            {
+                Debug.LogError("[ProtectedPanel] Instantiate returned null.");
+                continue;
+            }
+
+            // KRYTYCZNE: prefab mógł być zapisany jako inactive w projekcie.
+            // Bez tego klon też jest inactive → Awake/OnEnable/Setup nie działają
+            // → wiersz niewidoczny, bez błędu.
+            if (!rowObject.activeSelf)
+                rowObject.SetActive(true);
+
             _rowObjects.Add(rowObject);
 
-            SetupRow(rowObject, info);
+            try
+            {
+                SetupRow(rowObject, info);
+                built++;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ProtectedPanel] SetupRow failed for '{info.Path}': {ex}");
+            }
         }
+
+        Debug.Log($"[ProtectedPanel] Built {built}/{snapshot.Count} row(s).");
     }
 
     private void SetupRow(GameObject rowObject, SVNFileProtection.ProtectionInfo info)
     {
-        var row = rowObject.GetComponent<ProtectedRowController>();
+        if (rowObject == null || info == null) return;
 
+        var row = rowObject.GetComponent<ProtectedRowController>();
         if (row == null)
             row = rowObject.GetComponentInChildren<ProtectedRowController>(true);
 
@@ -415,12 +461,21 @@ public class ProtectedPanel : MonoBehaviour
 
             row.ActionCompleted -= OnRowActionCompleted;
             row.ActionCompleted += OnRowActionCompleted;
+
+            return;
+        }
+
+        // Fallback: brak ProtectedRowController na prefabie.
+        var text = rowObject.GetComponentInChildren<TMP_Text>(true);
+        if (text != null)
+        {
+            text.text = BuildFallbackRowText(info);
         }
         else
         {
-            var text = rowObject.GetComponentInChildren<TMP_Text>(true);
-            if (text != null)
-                text.text = BuildFallbackRowText(info);
+            Debug.LogWarning(
+                $"[ProtectedPanel] Prefab has no ProtectedRowController AND no TMP_Text — " +
+                $"row for '{info.Path}' will be empty. Add ProtectedRowController to the prefab.");
         }
     }
 
@@ -446,8 +501,15 @@ public class ProtectedPanel : MonoBehaviour
     {
         for (int i = 0; i < _rowObjects.Count; i++)
         {
-            if (_rowObjects[i] != null)
-                Destroy(_rowObjects[i]);
+            var go = _rowObjects[i];
+            if (go == null) continue;
+
+            // Natychmiast ukryj — Destroy jest odroczony do końca klatki,
+            // a my chcemy mieć pewność, że stary wiersz nie mignie w nowym układzie.
+            if (go.activeSelf)
+                go.SetActive(false);
+
+            Destroy(go);
         }
         _rowObjects.Clear();
     }

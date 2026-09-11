@@ -133,23 +133,17 @@ namespace SVN.Core
                 }
                 else if (string.IsNullOrEmpty(manualUrl))
                 {
-                    // Working copy istnieje, user NIE podał URL → dopiero teraz
-                    // sensowne jest pytanie .svn o origin.
                     await svnManager.RefreshRepositoryInfo().ConfigureAwait(false);
                 }
                 else
                 {
-                    // Working copy istnieje, ALE user podał własny URL → to jest
-                    // jego świadoma decyzja. NIE czytaj .svn (bo tam może siedzieć
-                    // stary origin z innego repo).
                     SVNLogBridge.LogLine(
                         $"<color=#88CCFF>[SVNLoad]</color> Using user-provided URL (ignoring working-copy metadata): {manualUrl}");
                 }
 
                 token.ThrowIfCancellationRequested();
 
-                // === FIX: user-typed URL wygrywa z .svn. Bez tego Load wpisywał
-                // do JSON-a projektu URL z dysku (Test) mimo, że user wpisał inny.
+                // User-typed URL wygrywa z .svn.
                 string urlForProject = !string.IsNullOrEmpty(manualUrl)
                     ? manualUrl
                     : (svnManager.RepositoryUrl ?? string.Empty);
@@ -157,9 +151,14 @@ namespace SVN.Core
                 string urlSnapshot = urlForProject;
                 string keySnapshot = keyPath;
 
+                // Auto-nazwa: "UrlName (folder)" — rozróżnia wiele checkoutów tego samego repo.
+                string displayName = SVNProjectNaming.BuildDisplayName(urlForProject, normalizedPath);
+                if (string.IsNullOrWhiteSpace(displayName))
+                    displayName = Path.GetFileName(normalizedPath);
+
                 var project = new SVNProject
                 {
-                    projectName = Path.GetFileName(normalizedPath),
+                    projectName = displayName,
                     repoUrl = urlForProject,
                     workingDir = normalizedPath,
                     privateKeyPath = keySnapshot
@@ -237,8 +236,13 @@ namespace SVN.Core
 
             ProjectSettings.AddOrUpdateProject(path, (p, created) =>
             {
+                // Auto-nazwa TYLKO dla nowego wpisu — ręczny Rename ma priorytet.
                 if (created)
-                    p.projectName = Path.GetFileName(path.Replace("\\", "/").TrimEnd('/'));
+                {
+                    string auto = SVNProjectNaming.BuildDisplayName(url, path);
+                    if (!string.IsNullOrWhiteSpace(auto))
+                        p.projectName = auto;
+                }
 
                 p.repoUrl = url;
                 p.privateKeyPath = key;

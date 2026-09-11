@@ -216,29 +216,57 @@ namespace SVN.Core
             string root = svnManager.WorkingDir;
             if (string.IsNullOrWhiteSpace(root)) return result;
 
-            var active = await SvnRunner.GetProtectedPathsAsync(root, token).ConfigureAwait(false);
-            var propertyModified = await GetPropertyModifiedPathsAsync(root, token).ConfigureAwait(false);
+            // === FIX: jedna, spójna normalizacja ścieżek dla OBU zbiorów.
+            // Bez tego 'active' (np. "folder\file.cs") i 'propertyModified'
+            // (np. "folder/file.cs") nigdy się nie pokrywały → Contains() zawsze false.
+            static string Norm(string s) =>
+                (s ?? "").Replace('\\', '/').TrimStart('/').TrimEnd('/');
+
+            var activeRaw = await SvnRunner.GetProtectedPathsAsync(root, token).ConfigureAwait(false);
+            var propModRaw = await GetPropertyModifiedPathsAsync(root, token).ConfigureAwait(false);
+
+            var active = new HashSet<string>(
+                activeRaw.Where(x => !string.IsNullOrWhiteSpace(x)).Select(Norm),
+                StringComparer.OrdinalIgnoreCase);
+
+            var propertyModified = new HashSet<string>(
+                propModRaw.Where(x => !string.IsNullOrWhiteSpace(x)).Select(Norm),
+                StringComparer.OrdinalIgnoreCase);
 
             await EnsureLockCacheFreshAsync().ConfigureAwait(false);
 
+            //Debug.Log($"[ProtectionSnapshot] root='{root}' active={active.Count} propMod={propertyModified.Count}");
+
+            // === Aktywne (Protected / PendingAdd) — iterujemy po znormalizowanych:
             foreach (var p in active)
             {
+                token.ThrowIfCancellationRequested();
+
                 var info = new ProtectionInfo
                 {
                     Path = p,
-                    State = propertyModified.Contains(p) ? ProtectionState.PendingAdd : ProtectionState.Protected
+                    State = propertyModified.Contains(p)
+                        ? ProtectionState.PendingAdd
+                        : ProtectionState.Protected
                 };
                 FillLockInfo(info);
                 result.Add(info);
             }
 
+            // === PendingRemoval — w propMod, ale nie w active, i ma needs-lock w BASE:
             foreach (var p in propertyModified)
             {
+                token.ThrowIfCancellationRequested();
+
                 if (active.Contains(p)) continue;
 
                 if (await IsNeedsLockInBaseAsync(p, root, token).ConfigureAwait(false))
                 {
-                    var info = new ProtectionInfo { Path = p, State = ProtectionState.PendingRemoval };
+                    var info = new ProtectionInfo
+                    {
+                        Path = p,
+                        State = ProtectionState.PendingRemoval
+                    };
                     FillLockInfo(info);
                     result.Add(info);
                 }

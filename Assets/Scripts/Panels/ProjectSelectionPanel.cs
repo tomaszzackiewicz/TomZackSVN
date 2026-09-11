@@ -25,6 +25,8 @@ public class ProjectSelectionPanel : MonoBehaviour
     [Header("Rename Panel")]
     [SerializeField] private GameObject renameProjectSubPanel;
     [SerializeField] private TMP_InputField renameNewNameInput;
+    [Tooltip("Opcjonalna etykieta pokazująca sugerowaną auto-nazwę (UrlName (folder)).")]
+    [SerializeField] private TMP_Text renameAutoNameHintLabel = null;
 
     [Header("Search & Sort")]
     [SerializeField] private TMP_InputField searchInput;
@@ -46,16 +48,6 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     private UnityAction<string> _onSearchChanged;
     private UnityAction<int> _onSortChanged;
-
-    // === FIX (lost-update): _jsonLock usunięty — ProjectSettings ma własny
-    // lock i oferuje atomowe AddOrUpdateProject/UpdateProject. Mieszanie
-    // LoadProjects→mutacja→SaveProjects z atomowym API prowadziło do
-    // wyścigu (rename + relocate + debounce save → jedno z nadpisań ginęło).
-
-    private static readonly HashSet<string> SvnKeywords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        "trunk", "branches", "tags"
-    };
 
     private void Start()
     {
@@ -230,8 +222,29 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (renameNewNameInput != null)
             renameNewNameInput.text = project.projectName;
 
+        UpdateRenameAutoHint(project);
+
         if (renameProjectSubPanel != null)
             renameProjectSubPanel.SetActive(true);
+    }
+
+    /// <summary>
+    /// Resetuje pole do auto-nazwy generowanej z URL + folder roboczy.
+    /// Podepnij pod przycisk "Reset" w dialogu Rename (opcjonalnie).
+    /// </summary>
+    public void Button_ResetRenameToAuto()
+    {
+        if (_projectToRename == null) return;
+        if (renameNewNameInput == null) return;
+
+        string auto = SVNProjectNaming.BuildDisplayName(
+            _projectToRename.repoUrl,
+            _projectToRename.workingDir);
+
+        if (string.IsNullOrWhiteSpace(auto))
+            auto = _projectToRename.projectName ?? "";
+
+        renameNewNameInput.text = auto;
     }
 
     public void Button_ConfirmRename()
@@ -253,6 +266,29 @@ public class ProjectSelectionPanel : MonoBehaviour
         }
 
         var projectToRename = _projectToRename;
+
+        // Ostrzeżenie o duplikacie nazwy — nie blokujemy, tylko informujemy.
+        try
+        {
+            bool duplicate = _allProjects.Any(p =>
+                !string.Equals(
+                    (p.workingDir ?? "").Replace('\\', '/').TrimEnd('/'),
+                    (projectToRename.workingDir ?? "").Replace('\\', '/').TrimEnd('/'),
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(p.projectName, newName, StringComparison.OrdinalIgnoreCase));
+
+            if (duplicate)
+            {
+                string auto = SVNProjectNaming.BuildDisplayName(
+                    projectToRename.repoUrl, projectToRename.workingDir);
+
+                SVNLogBridge.LogLine(
+                    $"<color=#FFA500>[Rename]</color> Inny projekt ma już nazwę '{newName}'. " +
+                    $"Rozważ wyróżnik (np. „{auto}”), żeby łatwiej je rozróżnić w tabeli.");
+            }
+        }
+        catch { }
+
         _ = ExecuteRenameAsync(projectToRename, newName).ContinueWith(t =>
         {
             Interlocked.Exchange(ref _isRenaming, 0);
@@ -273,16 +309,32 @@ public class ProjectSelectionPanel : MonoBehaviour
         if (renameProjectSubPanel != null) renameProjectSubPanel.SetActive(false);
     }
 
+    private void UpdateRenameAutoHint(SVNProject project)
+    {
+        if (renameAutoNameHintLabel == null) return;
+
+        string auto = SVNProjectNaming.BuildDisplayName(
+            project?.repoUrl,
+            project?.workingDir);
+
+        if (string.IsNullOrWhiteSpace(auto))
+        {
+            renameAutoNameHintLabel.text = "";
+            return;
+        }
+
+        renameAutoNameHintLabel.text = $"Auto: {auto}";
+    }
+
     private async Task ExecuteRenameAsync(SVNProject project, string newName)
     {
         try
         {
             await Task.Run(() =>
             {
-                // === FIX (lost-update): atomowy UpdateProject — ProjectSettings
-                // trzyma własny lock przez cały read-modify-write. Bez tego
-                // równoległy debounce save z SVNManager (albo relocate) mógł
-                // nadpisać zmianę nazwy.
+                // Atomowy UpdateProject — ProjectSettings trzyma lock przez cały
+                // read-modify-write. Folder na dysku, URL i klucz SSH bez zmian —
+                // Rename zmienia TYLKO etykietę w JSON.
                 bool updated = ProjectSettings.UpdateProject(project.workingDir, p => p.projectName = newName);
 
                 if (updated)
@@ -294,7 +346,15 @@ public class ProjectSelectionPanel : MonoBehaviour
                         string a = (svnManager.CurrentProject.workingDir ?? "").Replace("\\", "/").TrimEnd('/');
                         string b = (project.workingDir ?? "").Replace("\\", "/").TrimEnd('/');
                         if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+                        {
                             svnManager.CurrentProject.projectName = newName;
+
+                            // === FIX (spójność UI): powiadom subskrybentów
+                            // OnProjectChanged (SVNBar, ewentualne labele) —
+                            // bez tego nazwa w dolnym pasku zostaje STARA
+                            // do następnego LoadProject.
+                            svnManager.RaiseProjectChanged(svnManager.CurrentProject);
+                        }
                     }
                 }
                 else
@@ -408,8 +468,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             await SvnRunner.RunAsync($"relocate \"{newUrl}\"", project.workingDir).ConfigureAwait(false);
             SVNLogBridge.LogLine($"<color=green>Relocated successfully to {newUrl}</color>");
 
-            // === FIX (lost-update): atomowy UpdateProject zamiast
-            // LoadProjects→Find→SaveProjects.
             ProjectSettings.UpdateProject(project.workingDir, p => p.repoUrl = newUrl);
 
             if (svnManager != null &&
@@ -421,8 +479,6 @@ public class ProjectSelectionPanel : MonoBehaviour
             {
                 svnManager.CurrentProject.repoUrl = newUrl;
 
-                // === FIX: przez centrum — unieważnia cache filtrów RepoBrowsera
-                // i syncuje wszystkie pola UI (Settings / Checkout / Load).
                 UnityMainThreadDispatcher.Enqueue(() =>
                     svnManager.SynchronizeConnectionSettings(SVNManager.SettingsSource.None, url: newUrl));
             }
@@ -589,11 +645,28 @@ public class ProjectSelectionPanel : MonoBehaviour
         string path = svnUI.AddProjectFolderPathInput.text;
         string key = svnUI.AddProjectKeyPathInput.text;
 
-        if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(url))
+        // === Auto-nazwa gdy Name puste (klasyczna ścieżka: URL + folder):
+        if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(path))
         {
-            name = GetProjectNameFromUrl(url);
-            svnUI.AddProjectNameInput.text = name;
+            string auto = SVNProjectNaming.BuildDisplayName(url, path);
+            if (string.IsNullOrWhiteSpace(auto))
+                auto = GetProjectNameFromUrl(url);
+
+            name = auto;
         }
+        // === Ręczna nazwa usera: dołącz " (folder)". Zdejmowany jest stary
+        // trailing " (...)", więc bez dublowania typu "MyRepo (trunk) (trunk)".
+        else if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(path))
+        {
+            string before = name;
+            name = SVNProjectNaming.EnsureFolderSuffix(name, path);
+
+            if (!string.Equals(before, name, StringComparison.Ordinal))
+                SVNLogBridge.LogLine($"<color=#88CCFF>[AddProject]</color> Auto-suffix: \"{before}\" → \"{name}\"");
+        }
+
+        if (!string.IsNullOrWhiteSpace(name))
+            svnUI.AddProjectNameInput.text = name;
 
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
         {
@@ -612,28 +685,26 @@ public class ProjectSelectionPanel : MonoBehaviour
 
     public void OnUrlInputEndEdit(string url)
     {
-        if (string.IsNullOrWhiteSpace(svnUI.AddProjectNameInput.text) && !string.IsNullOrWhiteSpace(url))
-            svnUI.AddProjectNameInput.text = GetProjectNameFromUrl(url);
+        // Auto-nazwa TYLKO gdy Name puste (live-preview). Ręczna nazwa usera
+        // nie jest ruszana w locie — suffix z folderu dołączany jest przy Save.
+        if (!string.IsNullOrWhiteSpace(svnUI.AddProjectNameInput.text))
+            return;
+
+        string path = svnUI.AddProjectFolderPathInput?.text ?? "";
+
+        string auto = SVNProjectNaming.BuildDisplayName(url, path);
+        if (string.IsNullOrWhiteSpace(auto))
+            auto = GetProjectNameFromUrl(url);
+
+        if (!string.IsNullOrWhiteSpace(auto))
+            svnUI.AddProjectNameInput.text = auto;
     }
 
     private string GetProjectNameFromUrl(string url)
     {
-        try
-        {
-            string cleanedUrl = url.Trim().TrimEnd('/', '\\');
-            string[] segments = cleanedUrl.Split(new char[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
-            if (segments.Length > 0)
-            {
-                string lastSegment = segments[segments.Length - 1];
-                if (SvnKeywords.Contains(lastSegment) && segments.Length > 1)
-                    lastSegment = segments[segments.Length - 2];
-                if (lastSegment.EndsWith(".git")) lastSegment = lastSegment.Substring(0, lastSegment.Length - 4);
-                if (lastSegment.EndsWith(".svn")) lastSegment = lastSegment.Substring(0, lastSegment.Length - 4);
-                return lastSegment;
-            }
-        }
-        catch (Exception e) { SVNLogBridge.LogErrorToOutput($"[SVN] URL Parse failed: {e.Message}"); }
-        return "New Project";
+        // Wrapper na wspólny helper — jedno źródło logiki parsowania URL.
+        string name = SVNProjectNaming.FromUrl(url);
+        return string.IsNullOrWhiteSpace(name) ? "New Project" : name;
     }
 
     private void AddNewProject(string name, string url, string path, string key)
@@ -661,6 +732,21 @@ public class ProjectSelectionPanel : MonoBehaviour
             lastOpened = DateTime.UtcNow
         };
         OnProjectSelected(newProj);
+    }
+
+    private void OnAddProjectFolderEndEdit(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        if (!string.IsNullOrWhiteSpace(svnUI.AddProjectNameInput.text)) return;
+
+        string url = svnUI.AddProjectRepoUrlInput?.text ?? "";
+
+        string auto = SVNProjectNaming.BuildDisplayName(url, path);
+        if (string.IsNullOrWhiteSpace(auto))
+            auto = GetProjectNameFromUrl(url);
+
+        if (!string.IsNullOrWhiteSpace(auto))
+            svnUI.AddProjectNameInput.text = auto;
     }
 
     #endregion

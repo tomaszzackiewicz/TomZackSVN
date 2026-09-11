@@ -175,16 +175,20 @@ namespace SVN.Core
 
                 if (!Directory.Exists(Path.Combine(newPath, ".svn")))
                 {
-                    SVNLogBridge.LogLine($"<color=#FFAA00>Error:</color> Not a valid SVN working copy: {newPath}");
+                    SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Not a valid SVN working copy.");
                     return;
                 }
 
                 string normalizedPath = newPath.TrimEnd('/');
 
+                // === FIX (spójność nazewnictwa): nie generujemy tu nazwy na sztywno
+                // z folderu — URL poznamy dopiero po LoadProject (jest w .svn).
+                // Tworzymy wpis z fallbackiem; po udanym LoadProject zaktualizujemy
+                // nazwę do "UrlName (folder)" — tym samym formatem co SVNLoad.
                 SVNProject project = ProjectSettings.AddOrUpdateProject(normalizedPath, (p, created) =>
                 {
-                    if (created)
-                        p.projectName = Path.GetFileName(newPath);
+                    if (created && string.IsNullOrWhiteSpace(p.projectName))
+                        p.projectName = Path.GetFileName(newPath);   // tymczasowy fallback
                     p.lastOpened = DateTime.UtcNow;
                 });
 
@@ -195,6 +199,34 @@ namespace SVN.Core
                 {
                     SVNLogBridge.LogLine("<color=#FFAA00>Error:</color> Project could not be loaded (working copy invalid).");
                     return;
+                }
+
+                // === FIX (spójność nazewnictwa): po LoadProject svnManager.RepositoryUrl
+                // zawiera URL z .svn. Ustawiamy auto-nazwę w tym samym formacie, co
+                // SVNLoad.RegisterProjectInList. Tylko gdy user nie zrobił ręcznego Rename
+                // (tzn. nazwa nadal == fallback z folderu).
+                try
+                {
+                    string finalUrl = svnManager.RepositoryUrl ?? "";
+                    string folderFallback = Path.GetFileName(newPath);
+
+                    ProjectSettings.UpdateProject(normalizedPath, p =>
+                    {
+                        bool untouchedByUser =
+                            string.Equals(p.projectName, folderFallback, StringComparison.Ordinal) ||
+                            string.IsNullOrWhiteSpace(p.projectName);
+
+                        if (untouchedByUser)
+                        {
+                            string auto = SVNProjectNaming.BuildDisplayName(finalUrl, normalizedPath);
+                            if (!string.IsNullOrWhiteSpace(auto))
+                                p.projectName = auto;
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogLine($"<color=yellow>[Settings]</color> Auto-name update skipped: {ex.Message}");
                 }
 
                 SVNLogBridge.LogLine($"<color=green>Success:</color> Switched to project at {normalizedPath}");

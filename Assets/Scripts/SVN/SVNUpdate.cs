@@ -358,7 +358,7 @@ namespace SVN.Core
                                     if (revMatch.Success)
                                         rest = rest.Substring(revMatch.Length).TrimStart();
 
-                                    string cleanPath = SvnRunner.NormalizeRepositoryPath(rest.TrimEnd());
+                                    string cleanPath = SvnRunner.SanitizeSvnPath(rest.TrimEnd());
                                     if (cleanPath.Length > 0)
                                         outOfDatePaths.Add(cleanPath);
                                 }
@@ -491,7 +491,7 @@ namespace SVN.Core
                         if (trimmed.Length > 2 && "UAGDCR".Contains(activeStatus) && trimmed[1] == ' ')
                         {
                             char status = activeStatus;
-                            string path = SvnRunner.NormalizeRepositoryPath(trimmed.Substring(2).TrimStart());
+                            string path = SvnRunner.SanitizeSvnPath(trimmed.Substring(2).TrimStart());
                             itemPath = path;
 
                             switch (status)
@@ -1161,7 +1161,7 @@ namespace SVN.Core
                         rest = rest.Substring(revMatch.Length).TrimStart();
                     }
 
-                    string cleanPath = SvnRunner.NormalizeRepositoryPath(rest.TrimEnd());
+                    string cleanPath = SvnRunner.SanitizeSvnPath(rest.TrimEnd());
                     if (cleanPath.Length > 0)
                         report.Items.Add(new RemoteItem { Path = cleanPath, RemoteRevision = remoteRev });
                 }
@@ -1170,7 +1170,7 @@ namespace SVN.Core
                 if (line.Length > 1 && (line[0] == 'C' || line[1] == 'C'))
                 {
                     string rawPath = line.Length > 8 ? line.Substring(8).Trim() : line.Trim();
-                    string cleanPath = SvnRunner.NormalizeRepositoryPath(SvnRunner.CleanSvnPath(rawPath));
+                    string cleanPath = SvnRunner.SanitizeSvnPath(SvnRunner.CleanSvnPath(rawPath));
                     if (cleanPath.Length > 0 && !report.Conflicts.Contains(cleanPath))
                         report.Conflicts.Add(cleanPath);
                 }

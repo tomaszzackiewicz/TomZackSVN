@@ -191,7 +191,7 @@ namespace SVN.Core
                 return 0;
 
             var cleanMissingFiles = missingFiles
-                .Select(p => SvnRunner.NormalizeRepositoryPath(p.Trim().Replace('\\', '/')))
+                .Select(p => SvnRunner.SanitizeSvnPath(p.Trim().Replace('\\', '/')))
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToList();
 

@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using TMPro;
 using System;
@@ -16,45 +17,78 @@ namespace SVN.Core
         private const int FlushThreshold = 10;
         private const int FlushDelayMs = 200;
 
-        // Histeraza: rebuild bufora zdarzał się przy KAŻDYM flushu po osiągnięciu
-        // limitu (stan stały sesji, nie "rzadki przypadek"). Tnę dopiero przy
-        // nadmiarze >= TrimBatch → rebuild co ~50 linii.
         private const int MaxUILines = 500;
         private const int TrimBatch = 50;
-
-        // Limit linii pól modułów (UpdateUIField append). Wcześniej ZEROWY limit
-        // — konsole blame/diff/merge rosły bez końca + O(n) read+concat+set
-        // per linia (pełny re-parse TMP).
         private const int MaxFieldLines = 400;
 
         private static readonly object _bufferLock = new();
         private static List<string> _buffer = new();
-        private static bool _flushScheduled;            // strzeżone WYŁĄCZNIE _timerLock
+        private static bool _flushScheduled;
         private static Timer _flushTimer;
         private static readonly object _timerLock = new();
 
-        // Bufor appendów per pole UI (koaleskowanie per tick dispatchera).
         private static readonly object _fieldLock = new();
         private static readonly Dictionary<TextMeshProUGUI, StringBuilder> _fieldBuffers = new();
-        private static int _fieldFlushQueued;           // 0/1
+        private static int _fieldFlushQueued;
 
-        // === FIX (dispatcher flood): dedup masowych OnDisable → ClearTooltip.
-        // RepoBrowser/SVNStatus teardown niszczy N itemów × M buttonów, każdy
-        // SVNHoverHandler.OnDisable woła ClearTooltip. Rebuild 198-itemowy z 6
-        // buttonami = 1188 identycznych akcji w dispatcherze ("ustaw pusty
-        // tekst na pusty tekst"). Backlog 1191 w logu diagnostycznym.
-        // Flaga 0/1 koaleskuje wszystkie wywołania w jednej klatce w 1 akcję.
-        private static int _clearTooltipQueued;         // 0/1
-
-        // Guard rekurencji handlerów globalnych (LogLine → logger → Debug.Log
-        // → logMessageReceivedThreaded → LogLine → ...).
         [ThreadStatic] private static bool _inGlobalHandler;
 
-        // MAIN THREAD ONLY.
         private static readonly StringBuilder _fullLogBuilder = new StringBuilder(16 * 1024);
         private static readonly Queue<string> _allLines = new Queue<string>(MaxUILines + TrimBatch + 8);
 
         private static bool _globalHandlingEnabled = false;
+        private static int _clearTooltipQueued;
+
+        // === FIX (late-log po Shutdown): flaga blokująca dalsze enqueue do pliku.
+        // Wcześniej po Shutdown kolejny LogLine startował nowy flusher task piszący
+        // do zamkniętego loggera.
+        private static volatile bool _shutdown;
+
+        // =====================================================================
+        //  === FIX (perf): buforowany zapis do pliku
+        //
+        //  Wcześniej KAŻDA linia logu robiła `_ = Task.Run(() => SVNLogger.LogToFile(...))`.
+        //  Commit progress z 500 plikami = 500 Tasków + 500 File.AppendAllText.
+        //  Refresh z 5 subkomendami logującymi = dziesiątki Tasków w puli.
+        //  GC pressure i I/O serializacja przez File lock.
+        //
+        //  Teraz: kolejka + jeden flusher task, flush co ~250 ms partiami.
+        //  Setki zapisów/s → 4/s. Kolejność zachowana (ConcurrentQueue FIFO).
+        // =====================================================================
+        private static readonly ConcurrentQueue<(string text, string level)> _fileLogQueue = new();
+        private static Task _fileFlushTask;
+
+        private static void EnqueueFileLog(string text, string level)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            if (_shutdown) return;   // po Shutdown nie piszemy
+
+            _fileLogQueue.Enqueue((text, level));
+
+            if (_fileFlushTask == null || _fileFlushTask.IsCompleted)
+                _fileFlushTask = Task.Run(FileFlushLoop);
+        }
+
+        private static async Task FileFlushLoop()
+        {
+            await Task.Delay(250).ConfigureAwait(false);
+
+            var sb = new StringBuilder(2048);
+            string lastLevel = "INFO";
+
+            while (_fileLogQueue.TryDequeue(out var item))
+            {
+                sb.AppendLine(item.text);
+                lastLevel = item.level;
+            }
+
+            if (sb.Length == 0) return;
+
+            // Po Shutdown SVNLogger jest zamknięty — pomiń.
+            if (_shutdown) return;
+
+            try { SVNLogger.LogToFile(sb.ToString(), lastLevel); } catch { }
+        }
 
         private static string NormalizeForDisplay(string text)
         {
@@ -122,13 +156,12 @@ namespace SVN.Core
             finally { _inGlobalHandler = false; }
         }
 
-        // Normalizacja też tutaj (spójność '\'-vs-'/' w pliku logu) + safe write
-        // (late-log po Shutdown nie może rzucić w Task.Run).
+        // === FIX (perf): przez kolejkę zamiast Task.Run per linia.
         public static void LogToFile(string message, string level = "INFO")
         {
             if (string.IsNullOrEmpty(message)) return;
             string cleanMessage = StripRichText(NormalizeForDisplay(message));
-            _ = Task.Run(() => { try { SVNLogger.LogToFile(cleanMessage, level); } catch { } });
+            EnqueueFileLog(cleanMessage, level);
         }
 
         public static void LogLine(string message, bool append = true, string level = "INFO")
@@ -141,7 +174,7 @@ namespace SVN.Core
             string uiMessage = $"<color=blue>[{timestamp}]</color> {message}";
             string cleanMessage = StripRichText(message);
 
-            _ = Task.Run(() => { try { SVNLogger.LogToFile(cleanMessage, level); } catch { } });
+            EnqueueFileLog(cleanMessage, level);
 
             if (!append)
             {
@@ -149,9 +182,6 @@ namespace SVN.Core
                 return;
             }
 
-            // === FIX (null-safe): `level.Equals(...)` rzucał NRE gdy level == null
-            // (parametr publicznego API — caller zewnętrzny mógł przekazać null).
-            // string.Equals(string, string, StringComparison) jest null-safe.
             bool forceFlush =
                 string.Equals(level, "ERROR", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(level, "EXCEPTION", StringComparison.OrdinalIgnoreCase) ||
@@ -218,11 +248,10 @@ namespace SVN.Core
 
             string cleanContent = StripRichText(content);
             if (!string.IsNullOrEmpty(cleanContent))
-                _ = Task.Run(() => { try { SVNLogger.LogToFile(cleanContent, logLabel); } catch { } });
+                EnqueueFileLog(cleanContent, logLabel);
 
             if (!append)
             {
-                // replace — caller świadomie nadpisuje pole (status/raport).
                 string replacement = content.TrimEnd('\n', '\r') + "\n";
                 UnityMainThreadDispatcher.Enqueue(() =>
                 {
@@ -232,7 +261,6 @@ namespace SVN.Core
                 return;
             }
 
-            // append przez bufor per pole + JEDEN flush na tick dispatchera.
             lock (_fieldLock)
             {
                 if (!_fieldBuffers.TryGetValue(uiField, out var buffer))
@@ -247,7 +275,6 @@ namespace SVN.Core
                 UnityMainThreadDispatcher.Enqueue(FlushFieldBuffers);
         }
 
-        // MAIN THREAD ONLY (z dispatchera).
         private static void FlushFieldBuffers()
         {
             List<(TextMeshProUGUI field, string chunk)> chunks = null;
@@ -259,7 +286,7 @@ namespace SVN.Core
 
                 foreach (var kvp in _fieldBuffers)
                 {
-                    if (kvp.Key == null)   // zniszczone UI (Unity ==) → sprzątamy wpis
+                    if (kvp.Key == null)
                     {
                         (dead ??= new List<TextMeshProUGUI>()).Add(kvp.Key);
                         continue;
@@ -279,11 +306,10 @@ namespace SVN.Core
             foreach (var entry in chunks)
             {
                 try { AppendFieldChunk(entry.field, entry.chunk); }
-                catch { /* pole zniszczone w teardown */ }
+                catch { }
             }
         }
 
-        // MAIN THREAD ONLY.
         private static void AppendFieldChunk(TextMeshProUGUI field, string chunk)
         {
             string current = field.text;
@@ -294,9 +320,6 @@ namespace SVN.Core
             field.text = TrimLeadingLines(combined, MaxFieldLines);
         }
 
-        // MAIN THREAD ONLY. Tnie najstarsze linie; tagi rich text w naszych
-        // komunikatach są zamknięte w obrębie jednej linii — cięcie po '\n'
-        // nie rozbija tagów.
         private static string TrimLeadingLines(string text, int maxLines)
         {
             if (string.IsNullOrEmpty(text)) return text;
@@ -320,8 +343,6 @@ namespace SVN.Core
             return cutIndex <= text.Length ? text.Substring(cutIndex) : text;
         }
 
-        // ScheduleFlush pod lockiem (dwa Timery). _flushScheduled strzeżone
-        // TYLKO tym lockiem — patrz Flush.
         private static void ScheduleFlush()
         {
             lock (_timerLock)
@@ -343,13 +364,8 @@ namespace SVN.Core
             }
         }
 
-        // MAIN THREAD ONLY (z dispatchera).
         private static void Flush()
         {
-            // Reset flagi pod WŁAŚNYM lockiem. Wcześniej ScheduleFlush czytało
-            // ją pod _timerLock, a Flush zerował pod _bufferLock → flaga
-            // utykała na 'true' i ciche linie siedziały w buforze bez timera.
-            // Reset PRZED drainem: linie dodane po resecie uzbrają nowy timer.
             lock (_timerLock) _flushScheduled = false;
 
             List<string> linesToAdd;
@@ -410,7 +426,6 @@ namespace SVN.Core
             });
         }
 
-        // MAIN THREAD ONLY.
         private static void AppendToLog(List<string> linesToAdd)
         {
             if (linesToAdd == null || linesToAdd.Count == 0) return;
@@ -433,7 +448,6 @@ namespace SVN.Core
             }
         }
 
-        // MAIN THREAD ONLY.
         private static string BuildCurrentText() => _fullLogBuilder.ToString();
 
         private static void SetLogText(string text, bool scroll)
@@ -471,22 +485,6 @@ namespace SVN.Core
             });
         }
 
-        /// <summary>
-        /// === FIX (dispatcher flood): dedup — jedno zakolejkowane czyszczenie
-        /// na tick. Masowe teardowny UI (RepoBrowser rebuild: 198 itemów × 6
-        /// buttonów = 1188 OnDisable → ClearTooltip; drzewo statusów, drzewo
-        /// commitów podobnie) zalewały dispatcher setkami IDENTYCZNYCH akcji
-        /// typu "ustaw pusty tekst na pusty tekst". Wizualny efekt identyczny,
-        /// a dispatcher nie ma backlogu 1191 akcji.
-        ///
-        /// Bezpieczeństwo dedup:
-        ///  - dwa ClearTooltip w tej samej klatce → drugie pomijane, oba
-        ///    chciały to samo (pusty tekst).
-        ///  - LogTooltip (hover-in) NIE jest dedupowany — kolejność FIFO w
-        ///    dispatcherze zachowuje intencję (set → clear → set = set).
-        ///  - flaga zwalniana na main thread PRZED wykonaniem akcji, więc
-        ///    kolejne ClearTooltip w następnej klatce zadziała normalnie.
-        /// </summary>
         public static void ClearTooltip()
         {
             if (Interlocked.CompareExchange(ref _clearTooltipQueued, 1, 0) == 1)
@@ -507,7 +505,7 @@ namespace SVN.Core
 
             string cleanMessage = StripRichText(message);
             if (!string.IsNullOrEmpty(cleanMessage))
-                _ = Task.Run(() => { try { SVNLogger.LogToFile(cleanMessage, "CHECKOUT"); } catch { } });
+                EnqueueFileLog(cleanMessage, "CHECKOUT");
 
             string uiMessage = message;
             UnityMainThreadDispatcher.Enqueue(() =>
@@ -528,21 +526,34 @@ namespace SVN.Core
             return RichTextRegex.Replace(input, string.Empty);
         }
 
-        // Teardown best-effort: FlushImmediate enqueue'uje flush przez
-        // dispatcher — po OnDestroy managera kolejka nie płynie (plik dostaje
-        // linie z LogLine). Late-logi po Shutdown tolerowane (safe Task.Run).
+        // =====================================================================
+        //  === FIX (late-log po Shutdown): flaga _shutdown ustawiana NA POCZĄTKU,
+        //  przed jakimkolwiek dalszym enqueue; ostatni flush kolejki pliku
+        //  PRZED zamknięciem loggera (best-effort).
+        // =====================================================================
         public static void Shutdown()
         {
+            // Flaga NA POCZĄTKU — blokuje nowe enqueue ZANIM zamkniemy logger.
+            _shutdown = true;
+
             DisableGlobalExceptionHandling();
             FlushImmediate();
 
             lock (_fieldLock) _fieldBuffers.Clear();
             Interlocked.Exchange(ref _fieldFlushQueued, 0);
-
-            // === FIX: reset dedup flagi tooltipa — inaczej kolejna sesja Play
-            // (edytor z wył. Domain Reload) zaczynałaby z _clearTooltipQueued == 1
-            // i ClearTooltip byłby nieaktywny do pierwszej akcji main thread.
             Interlocked.Exchange(ref _clearTooltipQueued, 0);
+
+            // Ostatni flush kolejki pliku — best effort, PRZED zamknięciem loggera.
+            try
+            {
+                var sb = new StringBuilder();
+                while (_fileLogQueue.TryDequeue(out var item))
+                    sb.AppendLine(item.text);
+
+                if (sb.Length > 0)
+                    SVNLogger.LogToFile(sb.ToString(), "SHUTDOWN");
+            }
+            catch { }
 
             SVNLogger.Shutdown();
 

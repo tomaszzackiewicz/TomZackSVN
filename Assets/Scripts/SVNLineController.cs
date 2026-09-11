@@ -35,27 +35,6 @@ public class SvnLineController : MonoBehaviour
     [SerializeField] private Button restoreFromRevBtn;
     [SerializeField] private Button extractToRevBtn;
 
-    private static readonly Color RowBgModified = new(1f, 0.85f, 0f, 0.08f);
-    private static readonly Color RowBgAdded = new(0f, 1f, 0f, 0.06f);
-    private static readonly Color RowBgUnversioned = new(0f, 0.9f, 1f, 0.06f);
-    private static readonly Color RowBgDeleted = new(1f, 0.2f, 0.2f, 0.08f);
-    private static readonly Color RowBgConflict = new(1f, 0f, 1f, 0.1f);
-    private static readonly Color RowBgIgnored = new(0.3f, 0.3f, 0.3f, 0.05f);
-    private static readonly Color RowBgDefault = new(0, 0, 0, 0);
-
-    private static readonly Color StatusModified = new(1f, 0.843f, 0f);
-    private static readonly Color StatusLocked = new(0f, 1f, 0f);
-    private static readonly Color StatusOtherLocked = new(1f, 0.267f, 0.267f);
-    private static readonly Color StatusAdded = new(0f, 1f, 0f);
-    private static readonly Color StatusUnversioned = new(0f, 0.898f, 1f);
-    private static readonly Color StatusDeleted = new(1f, 0.267f, 0.267f);
-    private static readonly Color StatusConflict = new(1f, 0f, 1f);
-    private static readonly Color StatusIgnored = new(0.267f, 0.267f, 0.267f);
-    private static readonly Color StatusDefault = Color.white;
-
-    private static readonly Color DirNameColor = new(0f, 0.2f, 0.4f);
-    private static readonly string DirHex = "#003366";
-
     private SvnTreeElement _element;
     private SVNStatus _svnStatus;
     private Image _rowBackground;
@@ -95,9 +74,6 @@ public class SvnLineController : MonoBehaviour
 
         _canvasGroup = GetComponent<CanvasGroup>();
 
-        // === FIX (perf): najpierw spróbuj wziąć komponenty z prefabu (jeśli są
-        // tam w edytorze), AddComponent tylko jako fallback. Pozwala uniknąć
-        // setek runtime AddComponent przy dużej liście.
         _hoverHandlersCache = new Dictionary<Button, SVNHoverHandler>();
         Button[] allButtons = GetComponentsInChildren<Button>(true);
         foreach (var btn in allButtons)
@@ -113,9 +89,6 @@ public class SvnLineController : MonoBehaviour
     private void OnDestroy()
     {
         _destroyCts?.Cancel();
-        // === FIX K3: delayed dispose — commit/lock w locie trzymają token w
-        // SvnRunner; natychmiastowy dispose dawał ODE (nie-OCE) → fałszywy
-        // "Commit failed: safe handle...".
         var cts = _destroyCts;
         _destroyCts = null;
         if (cts != null)
@@ -168,14 +141,6 @@ public class SvnLineController : MonoBehaviour
         SetButtonActive(extractToRevBtn, false);
     }
 
-    /// <summary>
-    /// === FIX (perf): cache indent-stringów per głębokość — bez tego rebuild
-    /// drzewa (setki itemów) alokuje StringBuilder + string per item.
-    /// Klucz: int depth. Wartość: niemutowalny string.
-    ///
-    /// UWAGA: pole to _element (SvnTreeElement) — klasa pracuje na elementach
-    /// drzewa statusu, nie na RepoNode (to RepoBrowserItemUI ma _node).
-    /// </summary>
     private void RenderIndent()
     {
         if (indentText == null) return;
@@ -192,7 +157,7 @@ public class SvnLineController : MonoBehaviour
 
         if (!IndentCache.TryGetValue(depth, out string cached))
         {
-            var sb = new System.Text.StringBuilder(depth * 4);
+            var sb = new StringBuilder(depth * 4);
             for (int i = 0; i < depth; i++)
                 sb.Append(i == depth - 1 ? "└─ " : " |  ");
             cached = sb.ToString();
@@ -205,13 +170,22 @@ public class SvnLineController : MonoBehaviour
     private void RenderStatusAndName()
     {
         bool isRoot = IsRootElement(_element.FullPath);
-        string statusClean = (_element.Status == "DIR" || string.IsNullOrEmpty(_element.Status))
-            ? ""
-            : $" [{_element.Status}]";
+
+        // === FIX (spójność marków): status mark ([M], [A], [D], ...) zawsze w kolorze
+        // SVNColors.GetStatusHex(status). Marki typu ([DIR]/[ROOT]/[FILE]) zostają na
+        // DirHex/FileHex. Nazwy: folder → DirNameColor, plik → FileNameColor (= FileHex).
+        string statusHex = SVNColors.GetStatusHex(_element.Status);
+        bool hasStatus = !string.IsNullOrEmpty(_element.Status)
+                         && _element.Status != " "
+                         && _element.Status != "DIR";
+
+        string statusMark = hasStatus
+            ? $" <color={statusHex}><b>[{_element.Status}]</b></color>"
+            : "";
 
         string protTag =
-            _element.IsProtectionRemovalPending ? "<color=#FFA500><b>[P-]</b></color>" :
-            _element.IsProtected ? "<color=#FFA500><b>[P]</b></color>" : "";
+            _element.IsProtectionRemovalPending ? $" <color={SVNColors.Warning}><b>[P-]</b></color>" :
+            _element.IsProtected ? $" <color={SVNColors.Warning}><b>[P]</b></color>" : "";
 
         if (nameText != null)
         {
@@ -221,18 +195,20 @@ public class SvnLineController : MonoBehaviour
 
         if (_element.IsFolder)
         {
+            string typeMark = isRoot
+                ? $"<color={SVNColors.DirHex}><b>[ROOT]</b></color>"
+                : $"<color={SVNColors.DirHex}><b>[DIR]</b></color>";
+
             if (statusText != null)
             {
-                statusText.text = isRoot
-                    ? $"<b><color={DirHex}>[ROOT]</color></b>{statusClean}{protTag}"
-                    : $"<b><color={DirHex}>[DIR]</color></b>{statusClean}{protTag}";
-                statusText.color = Color.black;
+                statusText.text = $"{typeMark}{statusMark}{protTag}";
+                statusText.color = Color.white;
             }
 
             if (nameText != null)
             {
                 nameText.text = _element.Name;
-                nameText.color = DirNameColor;
+                nameText.color = SVNColors.DirNameColor;
                 nameText.fontStyle = FontStyles.Bold;
             }
 
@@ -243,12 +219,18 @@ public class SvnLineController : MonoBehaviour
         {
             if (statusText != null)
             {
-                statusText.text = "<color=#ADD8E6>[FILE]</color> " + statusClean + protTag;
-                statusText.color = GetStatusColor(_element.Status);
+                string typeMark = $"<color={SVNColors.FileHex}>[FILE]</color>";
+                statusText.text = $"{typeMark}{statusMark}{protTag}";
+                statusText.color = Color.white;
             }
 
             if (nameText != null)
+            {
                 nameText.text = _element.Name;
+                // === FIX: nazwa pliku w kolorze [FILE] (#ADD8E6). Wcześniej
+                // brak ustawienia → dziedziczyła `Color.white` z Resetu wyżej.
+                nameText.color = SVNColors.FileNameColor;
+            }
 
             if (sizeText != null)
                 sizeText.text = _element.IsCommitDelegate ? "" : _element.Size;
@@ -456,19 +438,19 @@ public class SvnLineController : MonoBehaviour
 
         if (_element.LockedByOther)
         {
-            lockBtnText.text = "<color=#FF4444>O</color>";
+            lockBtnText.text = $"<color={SVNColors.StatusLockedByOther}>O</color>";
             lockBtn.interactable = false;
             BindHover(lockBtn, "Locked by another user. Use the dedicated Lock Panel to force steal.");
         }
         else if (_element.LockedByMe)
         {
-            lockBtnText.text = "<color=#00FF00>K</color>";
+            lockBtnText.text = $"<color={SVNColors.StatusLockedByMe}>K</color>";
             lockBtn.interactable = true;
             BindHover(lockBtn, "Click to unlock.");
         }
         else
         {
-            lockBtnText.text = "<color=#E6E6E6>U</color>";
+            lockBtnText.text = $"<color={SVNColors.Info}>U</color>";
             lockBtn.interactable = true;
 
             BindHover(lockBtn, _element.IsProtected
@@ -539,16 +521,13 @@ public class SvnLineController : MonoBehaviour
         ui.UpdateRevisionInput.text = "";
         ui.UpdateRevisionInput.ActivateInputField();
 
-        SVNLogBridge.LogLine("<color=#00E5FF><b>[Revision Tool]</b></color> File path sent to the Revision Panel successfully.");
-        SVNLogBridge.LogLine("<color=yellow>-> Now, type the revision number in the highlighted field (e.g., <b>150</b>).</color>");
-        SVNLogBridge.LogLine("<color=yellow>-> Then click <b>'Restore'</b> to overwrite the file, or <b>'Extract'</b> to save a copy elsewhere.</color>");
+        SVNLogBridge.LogLine($"<color={SVNColors.Header}><b>[Revision Tool]</b></color> File path sent to the Revision Panel successfully.");
+        SVNLogBridge.LogLine($"<color={SVNColors.Warning}>-> Now, type the revision number in the highlighted field (e.g., <b>150</b>).</color>");
+        SVNLogBridge.LogLine($"<color={SVNColors.Warning}>-> Then click <b>'Restore'</b> to overwrite the file, or <b>'Extract'</b> to save a copy elsewhere.</color>");
     }
 
     private async Task OnCommitClickAsync()
     {
-        // === FIX (NRE po await): snapshot CTS PRZED jakimkolwiek await. Wcześniej
-        // po pierwszym await (File.WriteAllTextAsync) kolejne await używało
-        // _destroyCts, które OnDestroy mógł już ustawić na null → NRE w głębi.
         var cts = _destroyCts;
         if (cts == null || cts.IsCancellationRequested) return;
         var token = cts.Token;
@@ -562,7 +541,7 @@ public class SvnLineController : MonoBehaviour
             if (manager == null) return;
 
             string safeName = (_element.Name ?? "file").Replace("\"", "'");
-            var sb = new System.Text.StringBuilder(safeName.Length);
+            var sb = new StringBuilder(safeName.Length);
             foreach (char c in $"Commit {safeName}")
                 if (!char.IsControl(c)) sb.Append(c);
             string message = sb.ToString().Trim();
@@ -581,7 +560,7 @@ public class SvnLineController : MonoBehaviour
 
             if (result != null && result.Contains("Committed revision"))
             {
-                SVNLogBridge.LogLine($"<color=green>Committed:</color> {_element.Name}");
+                SVNLogBridge.LogLine($"<color={SVNColors.Success}>Committed:</color> {_element.Name}");
 
                 SVNStatus.ClearLockCache();
                 manager.DiskChangesDetected = true;
@@ -590,7 +569,7 @@ public class SvnLineController : MonoBehaviour
             }
             else
             {
-                SVNLogBridge.LogLine($"<color=yellow>Commit result:</color> {result}");
+                SVNLogBridge.LogLine($"<color={SVNColors.Warning}>Commit result:</color> {result}");
             }
         }
         catch (OperationCanceledException) { }
@@ -614,7 +593,6 @@ public class SvnLineController : MonoBehaviour
 
     private async Task OnLockClickAsync()
     {
-        // === FIX (spójność z OnCommitClickAsync): snapshot CTS przed await.
         var cts = _destroyCts;
         if (cts == null || cts.IsCancellationRequested) return;
 
@@ -681,19 +659,8 @@ public class SvnLineController : MonoBehaviour
     private void ApplyRowBackground()
     {
         if (_rowBackground != null)
-            _rowBackground.color = GetRowBackgroundColor(_element.Status);
+            _rowBackground.color = SVNColors.GetRowBackgroundColor(_element.Status);
     }
-
-    private static Color GetRowBackgroundColor(string status) => status switch
-    {
-        "M" => RowBgModified,
-        "A" => RowBgAdded,
-        "?" => RowBgUnversioned,
-        "D" or "!" => RowBgDeleted,
-        "C" => RowBgConflict,
-        "I" => RowBgIgnored,
-        _ => RowBgDefault
-    };
 
     public void ApplyFilter(string filterText)
     {
@@ -738,19 +705,6 @@ public class SvnLineController : MonoBehaviour
     private static bool IsRootElement(string fullPath) =>
         fullPath == ".svn-root" || fullPath == "__ROOT__";
 
-    private static Color GetStatusColor(string status) => status switch
-    {
-        "M" => StatusModified,
-        "K" => StatusLocked,
-        "O" => StatusOtherLocked,
-        "A" => StatusAdded,
-        "?" => StatusUnversioned,
-        "D" or "!" => StatusDeleted,
-        "C" => StatusConflict,
-        "I" => StatusIgnored,
-        _ => StatusDefault
-    };
-
     private static void SetButtonActive(Button btn, bool active)
     {
         if (btn != null)
@@ -761,9 +715,6 @@ public class SvnLineController : MonoBehaviour
     {
         foldButton?.onClick.RemoveListener(_onFoldClickDelegate);
         selectionToggle?.onValueChanged.RemoveListener(_onToggleChangedDelegate);
-        // === FIX (higiena): zdejmij OBA delegaty z fullRowButton — SetupFullRowButton
-        // dodaje _onFoldClickDelegate dla folderów i _onFullRowClickDelegate dla
-        // plików; wcześniej tylko drugi był tu zdejmowany.
         fullRowButton?.onClick.RemoveListener(_onFullRowClickDelegate);
         fullRowButton?.onClick.RemoveListener(_onFoldClickDelegate);
         commitBtn?.onClick.RemoveListener(_onCommitClickDelegate);

@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -246,65 +245,68 @@ namespace SVN.Core
             using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             SvnProcessTracker.Register(process);
 
-            var stdoutQueue = new ConcurrentQueue<string>();
-            var stderrQueue = new ConcurrentQueue<string>();
-
-            var stdoutTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var stderrTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            process.OutputDataReceived += (s, e) =>
-            {
-                if (e.Data != null)
-                {
-                    stdoutQueue.Enqueue(e.Data);
-                    try { stdoutCb?.Invoke(e.Data); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Callback error: {ex.Message}"); }
-                }
-                else
-                {
-                    stdoutTcs.TrySetResult(true);
-                }
-            };
-
-            process.ErrorDataReceived += (s, e) =>
-            {
-                if (e.Data != null)
-                {
-                    // === NEW (FIX): banner SSH wycinany u źRÓDŁA — nie trafia do
-                    // error string, exception message ("SVN Error (Code 1): ***...")
-                    // ani logu "svn warning". Realne błędy (svn: Exxxxx, client_loop)
-                    // przechodzą normalnie.
-                    if (IsSshBannerNoise(e.Data)) return;
-
-                    stderrQueue.Enqueue(e.Data);
-                    try { stderrCb?.Invoke(e.Data); }
-                    catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] Callback error: {ex.Message}"); }
-                }
-                else
-                {
-                    stderrTcs.TrySetResult(true);
-                }
-            };
+            var stdoutSb = new StringBuilder(4096);
+            var stderrSb = new StringBuilder(1024);
+            var stdoutLock = new object();
+            var stderrLock = new object();
 
             try
             {
                 if (!process.Start()) throw new Exception("Failed to start SVN process.");
 
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
+                // === FIX (cancel deadlock, KRYTYCZNE): Kill procesu na cancel.
+                //
+                // `Task.WhenAll` czeka na WSZYSTKIE taski. WaitForExitAsync rzuca OCE
+                // na cancel, ALE pumpy są zablokowane w stream.ReadAsync — to synchroniczny
+                // strumień Process (__ConsoleStream), nie obserwuje tokenu. Bez tego
+                // callbacka: WaitForExitAsync rzuca → WhenAll czeka na pumpy → pumpy
+                // czekają aż proces umrze → proces nie umiera, bo `catch` w którym jest
+                // Kill nigdy się nie wykona → DEADLOCK.
+                //
+                // Ten callback zabija proces NATYCHMIAST gdy token jest anulowany,
+                // co zamyka pipe i odblokowuje pumpy (ReadAsync zwraca 0/IOException).
+                using var killOnCancel = token.Register(() =>
+                {
+                    try { SvnProcessTracker.Kill(process); } catch { }
+                });
 
-                await WaitForExitAsync(process, token).ConfigureAwait(false);
+                var stdoutPump = PumpStreamAsync(
+                    process.StandardOutput.BaseStream,
+                    stdoutSb, stdoutLock,
+                    segment =>
+                    {
+                        try { stdoutCb?.Invoke(segment); }
+                        catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] stdout callback error: {ex.Message}"); }
+                    },
+                    isStderr: false,
+                    token);
 
-                await Task.WhenAll(stdoutTcs.Task, stderrTcs.Task).ConfigureAwait(false);
+                var stderrPump = PumpStreamAsync(
+                    process.StandardError.BaseStream,
+                    stderrSb, stderrLock,
+                    segment =>
+                    {
+                        if (IsSshBannerNoise(segment)) return;
+                        try { stderrCb?.Invoke(segment); }
+                        catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN] stderr callback error: {ex.Message}"); }
+                    },
+                    isStderr: true,
+                    token);
 
-                return (
-                    string.Join("\n", stdoutQueue),
-                    string.Join("\n", stderrQueue),
-                    process.ExitCode);
+                await Task.WhenAll(
+                    WaitForExitAsync(process, token),
+                    stdoutPump,
+                    stderrPump).ConfigureAwait(false);
+
+                string stdout, stderr;
+                lock (stdoutLock) stdout = stdoutSb.ToString();
+                lock (stderrLock) stderr = stderrSb.ToString();
+
+                return (stdout.TrimEnd('\r', '\n'), stderr.TrimEnd('\r', '\n'), process.ExitCode);
             }
             catch (OperationCanceledException)
             {
-                SvnProcessTracker.Kill(process);
+                SvnProcessTracker.Kill(process);   // idempotent — jeśli już ubity, no-op
                 throw;
             }
             finally
@@ -458,6 +460,131 @@ namespace SVN.Core
             }
         }
 
+        /// <summary>
+        /// === FIX (Windows CRLF): poprzednia wersja traktowała '\r' jako terminator
+        /// linii TYLKO dla callbacku — segment NIE trafiał do akumulatora (output).
+        /// Na Windows SVN pisze linie jako '\r\n', więc:
+        ///   - '\r' emitował linię tylko do callbacku,
+        ///   - '\n' był po nim konsumowany (skipNextLF),
+        ///   - akumulator (output/error) zostawał PUSTY.
+        /// Skutek: `RunAsync` zwracał "" mimo że svn coś wypisał → GetRepoUrlAsync
+        /// rzucał "Failed to retrieve repository URL" i cały LoadProject padał.
+        ///
+        /// Teraz: '\r' i '\n' OBA są terminatorami linii — segment idzie i do
+        /// callbacku, i do akumulatora. '\n' bezpośrednio po '\r' jest konsumowany
+        /// jako część tego samego CRLF.
+        /// </summary>
+        private static async Task PumpStreamAsync(
+            Stream stream,
+            StringBuilder accumulator,
+            object accumulatorLock,
+            Action<string> onSegment,
+            bool isStderr,
+            CancellationToken token)
+        {
+            var buffer = new byte[4096];
+            var current = new StringBuilder(256);
+
+            long lastEmitTicks = DateTime.UtcNow.Ticks;
+            long intervalTicks = TimeSpan.FromMilliseconds(300).Ticks;
+
+            // '\r' widziany na końcu bufora ma "zjeść" '\n' na początku następnego.
+            bool skipNextLF = false;
+
+            while (true)
+            {
+                int read;
+                try
+                {
+                    read = await stream.ReadAsync(buffer, 0, buffer.Length, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (ObjectDisposedException) { break; }
+                catch (IOException) { break; }
+
+                if (read <= 0) break;
+
+                bool emittedTerminatedSegment = false;
+
+                for (int i = 0; i < read; i++)
+                {
+                    char c = (char)buffer[i];
+
+                    // Część CRLF: pomiń '\n' po '\r'
+                    if (skipNextLF)
+                    {
+                        skipNextLF = false;
+                        if (c == '\n') continue;
+                    }
+
+                    if (c == '\r')
+                    {
+                        EmitSegment(current, accumulator, accumulatorLock, onSegment, isStderr);
+                        skipNextLF = true;
+                        emittedTerminatedSegment = true;
+                        continue;
+                    }
+
+                    if (c == '\n')
+                    {
+                        EmitSegment(current, accumulator, accumulatorLock, onSegment, isStderr);
+                        emittedTerminatedSegment = true;
+                        continue;
+                    }
+
+                    current.Append(c);
+                }
+
+                // Partial-emit: SVN wypchnął kropki progresu, ale bez '\n'.
+                // Co ~300 ms wysyłamy snapshot do callbacku — BEZ resetowania bufora
+                // i BEZ wpisu do akumulatora (to nie jest pełna linia).
+                if (!emittedTerminatedSegment && current.Length > 0)
+                {
+                    long now = DateTime.UtcNow.Ticks;
+                    if (now - lastEmitTicks >= intervalTicks)
+                    {
+                        string snapshot = current.ToString();
+                        if (!(isStderr && IsSshBannerNoise(snapshot)))
+                            onSegment?.Invoke(snapshot);
+
+                        lastEmitTicks = now;
+                    }
+                }
+
+                if (emittedTerminatedSegment)
+                    lastEmitTicks = DateTime.UtcNow.Ticks;
+            }
+
+            // Ostatni fragment bez terminatora (strumień zamknięty w trakcie linii)
+            if (current.Length > 0)
+                EmitSegment(current, accumulator, accumulatorLock, onSegment, isStderr);
+        }
+
+        /// <summary>
+        /// Pomocnik: wyemituj segment z `current` do callbacku i do akumulatora.
+        /// Wołane przez terminator ('\r' lub '\n') oraz na końcu strumienia.
+        /// </summary>
+        private static void EmitSegment(
+            StringBuilder current,
+            StringBuilder accumulator,
+            object accumulatorLock,
+            Action<string> onSegment,
+            bool isStderr)
+        {
+            if (current.Length == 0) return;
+
+            string segment = current.ToString();
+            current.Clear();
+
+            if (isStderr && IsSshBannerNoise(segment))
+                return;
+
+            onSegment?.Invoke(segment);
+
+            lock (accumulatorLock)
+                accumulator.AppendLine(segment);
+        }
+
         #endregion
 
         #region Public API Methods
@@ -567,11 +694,7 @@ namespace SVN.Core
 
             lock (_infoCacheLock)
             {
-                // === FIX (memory leak): przy przekroczeniu progu robimy lazy cleanup
-                // wygasłych wpisów. Wcześniej wpis po 2s wygasał, ale NIE był usuwany —
-                // nadpisywany tylko przy następnym GetInfoAsync na TYM SAMYM kluczu.
-                // Przełączenie 50 projektów = 50 wpisów * (kilka KB) trzymanych do końca
-                // procesu. Próg 32 = wystarczająco dla aktywnego projektu + sąsiadów.
+                // === FIX (memory leak): lazy cleanup wygasłych wpisów przy przekroczeniu progu.
                 if (_infoCache.Count > 32)
                 {
                     var expired = _infoCache
@@ -585,7 +708,7 @@ namespace SVN.Core
 
                 if (_infoCache.TryGetValue(cleanWd, out var cached) && DateTime.UtcNow - cached.time < InfoCacheDuration)
                 {
-                    SVNLogBridge.LogLine("<color=#8888FF>[SVN CACHE]</color> Using cached svn info", false);
+                    SVNLogBridge.LogLine($"<color={SVNColors.Header}>[SVN CACHE]</color> Using cached svn info", false);
                     return cached.output;
                 }
             }
@@ -1125,27 +1248,68 @@ namespace SVN.Core
             return new string(path.Where(c => !char.IsControl(c) && c != '\u00A0' && c != '\u200B').ToArray()).Trim();
         }
 
-        public static string NormalizeRepositoryPath(string path)
+        /// <summary>
+        /// Normalizacja ścieżki — obsługuje DWA konteksty:
+        ///
+        ///  A) ścieżka z `svn status` (względna) — tylko czyści `\`→`/`, usuwa znaki
+        ///     kontrolne i wiodące `/`. NIE przycina segmentów `trunk/`/`branches/`/`tags/`
+        ///     bo one są REALNYMI folderami w working copy.
+        ///
+        ///  B) URL (svn+ssh://..., http://...) — przycina do pierwszego markera
+        ///     `/trunk/`, `/branches/`, `/tags/` żeby dostać ścieżkę repo-relative.
+        ///
+        /// === FIX (manglujący bug): poprzednia wersja używała `path.IndexOf("trunk/")`
+        /// dla KAŻDEJ ścieżki — plik/folder o nazwie `trunk` gdziekolwiek w drzewie
+        /// (np. `Assets/trunk/Foo.cs`) był cicho przycinany do `trunk/Foo.cs`. Skutek:
+        /// drzewo zmian pokazywało ścieżki, które nie istnieją na dysku (a refresh
+        /// gubił wpisy bo `File.Exists(workingDir + "/" + cleanPath)` zwracał false).
+        /// Teraz stripping markerów dotyczy TYLKO inputów URL-owych, a wewnątrz URL-i
+        /// szukamy markera jako PEŁNEGO segmentu (z wiodącym '/').
+        /// </summary>
+        public static string SanitizeSvnPath(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
                 return string.Empty;
 
+            // Sanityzacja: usuń znaki kontrolne i NBSP (mógł przyjść z svn output).
             path = new string(path
                 .Where(c => !char.IsControl(c) && c != '\u00A0')
                 .ToArray());
 
             path = path.Replace('\\', '/').Trim();
 
-            string[] roots = { "trunk/", "branches/", "tags/" };
+            if (path.Length == 0) return string.Empty;
 
-            foreach (string root in roots)
+            // === Kontekst URL: tylko wtedy przycinamy trunk/branches/tags do granicy.
+            // Sprawdzenie "://" odróżnia URL od ścieżki względnej (Windows drive "C:"
+            // ma dwukropek, ale nie "://"; ścieżka absolutna "/trunk" też tego nie ma).
+            bool looksLikeUrl = path.IndexOf("://", StringComparison.Ordinal) > 0;
+
+            if (!looksLikeUrl)
             {
-                int index = path.IndexOf(root, StringComparison.OrdinalIgnoreCase);
-                if (index >= 0)
-                    return path.Substring(index);
+                // Ścieżka względna z `svn status` (lub absolutna z dysku) — nie
+                // ruszamy segmentów. Tylko wiodący '/' (jeśli jest) na out.
+                return path.TrimStart('/');
             }
 
-            return path;
+            // URL — przycina do pierwszego markera struktury repo (jako PEŁNY segment).
+            // Bierzemy NAJWCZEŚNIEJSZE wystąpienie, żeby np.
+            // `/srv/svn/repos/x/branches/trunk-fix/...` nie łapał się fałszywie.
+            string[] markers = { "/trunk/", "/branches/", "/tags/" };
+
+            int cut = int.MaxValue;
+            foreach (var marker in markers)
+            {
+                int idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0 && idx < cut)
+                    cut = idx;
+            }
+
+            if (cut != int.MaxValue)
+                return path.Substring(cut + 1);   // skip leading '/'
+
+            // URL bez markera struktury — zwróć znormalizowany URL (bez wiodącego '/').
+            return path.TrimStart('/');
         }
         #endregion
 
@@ -1205,8 +1369,14 @@ namespace SVN.Core
             }
         }
 
+        /// <summary>
+        /// === FIX (defensywny): kill procesu na cancel. CopyToAsync z tokenem
+        /// zwykle przerwie się sam, ale przy zablokowanym pipe (ssh backpressure,
+        /// wolny dysk) może to zająć sekundy — token.Register(Kill) zamyka pipe
+        /// natychmiast i odblokowuje CopyToAsync.
+        /// </summary>
         private static async Task<(int exitCode, string error)> ExecuteRawProcessToFileAsync(
-    List<string> args, string workingDir, string destFilePath, CancellationToken token)
+            List<string> args, string workingDir, string destFilePath, CancellationToken token)
         {
             var psi = new ProcessStartInfo
             {
@@ -1230,7 +1400,6 @@ namespace SVN.Core
             {
                 if (e.Data == null) { stderrTcs.TrySetResult(true); return; }
 
-                // === NEW (FIX): banner SSH wycinany — nie trafia do zwracanego error
                 if (IsSshBannerNoise(e.Data)) return;
 
                 stderrSb.AppendLine(e.Data);
@@ -1241,6 +1410,11 @@ namespace SVN.Core
                 if (!process.Start()) throw new Exception("Failed to start SVN process.");
 
                 process.BeginErrorReadLine();
+
+                using var killOnCancel = token.Register(() =>
+                {
+                    try { SvnProcessTracker.Kill(process); } catch { }
+                });
 
                 using (var fs = new FileStream(destFilePath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
                 {
@@ -1267,6 +1441,14 @@ namespace SVN.Core
         #endregion
 
 #if UNITY_EDITOR
+        /// <summary>
+        /// Reset stanu statycznych pól po przerwanym Play mode (Domain Reload wyłączony).
+        ///
+        /// === FIX (krytyczne, deadlock): _svnLock MUSI być zresetowany tak samo jak
+        /// _managerLock w SVNManager. Bez tego stop Play w trakcie aktywnego svn
+        /// command zostawiał semafory zajęte (task przerwany przed finally { ExitWrite }),
+        /// a następna sesja Play deadlockowała na pierwszym RunAsync.
+        /// </summary>
         public static void ResetStaticState()
         {
             lock (_infoCacheLock)
@@ -1274,12 +1456,6 @@ namespace SVN.Core
                 _infoCache.Clear();
             }
 
-            // === FIX (editor / brak domain reload): operacja przerwana mid-flight
-            // (kontynuacja nie dobiegła do DecrementOperations) zostawiała
-            // _activeOperationsCount > 0 → OnProcessingStateChanged(true) wisi →
-            // manager.IsProcessing = true → watcher i focus-refresh zablokowane
-            // do końca sesji. Reset liczników; spóźnione Decrementy wbiją w -1,
-            // co jest clampowane na 0 — bez efektu ubocznego.
             lock (_processingLock)
             {
                 _activeOperationsCount = 0;
@@ -1289,6 +1465,9 @@ namespace SVN.Core
                     InvokeProcessingStateChanged(false);
                 }
             }
+
+            // === FIX (deadlock): reset semaforów locka SvnRunner.
+            _svnLock.ResetForEditorReload();
         }
 #endif
     }

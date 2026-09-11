@@ -14,22 +14,12 @@ namespace SVN.Core
     {
         private readonly object _repairSync = new();
 
-        // === FIX (atomowość): '_disposedFlag' to JEDYNE źródło prawdy dla Dispose().
-        // Poprzednio check-then-set na 'volatile bool _isDisposed' — dwie
-        // równoległe ścieżki (OnDestroy + SVNManager.Dispose) mogły wejść
-        // w ciało jednocześnie.
-        private int _disposedFlag;                    // 0/1 — atomowy zapis przez Interlocked
+        private int _disposedFlag;
 
         private CancellationTokenSource _repairCTS;
         private volatile bool _repairRunning;
         private volatile bool _metadataRemoved;
 
-        /// <summary>
-        /// Zgodność wsteczna z odczytami w kodzie — reprezentuje tę samą flagę
-        /// co <see cref="_disposedFlag"/>, tylko przez Volatile.Read/Write.
-        /// Wszystkie miejsca w klasie (TryBeginRepair, ForceRepairWorkingCopyAsync,
-        /// PostRepairStatus) używają tej property bez zmian.
-        /// </summary>
         private bool _isDisposed
         {
             get => Volatile.Read(ref _disposedFlag) == 1;
@@ -41,8 +31,6 @@ namespace SVN.Core
             UnityMainThreadDispatcher.EnsureExists();
         }
 
-        // === FIX K4-drobne: snapshot inputów na main thread (wejście z przycisku),
-        // przekazane do rdzenia — publiczne API nie zakłada już wątku wywołania.
         public async void ForceRepairWorkingCopy()
         {
             string path = svnUI?.CheckoutDestFolderInput?.text?.Trim();
@@ -84,25 +72,19 @@ namespace SVN.Core
 
                 PostRepairStatus("<color=yellow><b>Initializing Force Repair...</b></color>");
 
-                // === FIX K4: SSH zapewnia SvnRunner per-proces (env SVN_SSH z
-                // aktualnym kluczem) — usunięty redundantny --config-option tunnels:ssh,
-                // który dodatkowo korzystał z klucza złapanego w momencie walidacji.
                 var keyPath = ResolveAndValidateKeyPath();
                 if (string.IsNullOrWhiteSpace(keyPath) && url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase))
                 { ShowErrorSafe("SSH repository requires a valid private key."); return; }
 
                 PostRepairStatus("<color=#8B0000>><b>Step 1/2:</b> Removing old .svn metadata...</color>\n<size=11><i>Please wait...</i></size>");
 
-                // UWAGA: po naprawie watcher nie jest restartowany — dziś bez skutku
-                // (InitFileSystemWatcher nie jest nigdzie wołany), ale po ewentualnym
-                // włączeniu watchera trzeba tu dodać InitFileSystemWatcher() na końcu.
                 SVNManager.Instance?.DisposeFileSystemWatcher();
                 token.ThrowIfCancellationRequested();
 
                 if (!await DeleteOldMetadataAsync(svnDir, token).ConfigureAwait(false))
                 {
                     HandleMetadataDeletionFailure();
-                    pollingWasPausedByUs = false;   // kopia nietknięta — polling może wrócić
+                    pollingWasPausedByUs = false;
                     return;
                 }
                 _metadataRemoved = true;
@@ -195,13 +177,6 @@ namespace SVN.Core
             catch (ObjectDisposedException) { }
         }
 
-        /// <summary>
-        /// === FIX (atomowość): poprzednio check-then-set na 'volatile bool _isDisposed'
-        /// — dwie równoległe ścieżki Dispose (np. OnDestroy + SVNManager.Dispose)
-        /// mogły wejść w ciało jednocześnie; zamiana na 'Interlocked.Exchange'
-        /// daje twardy single-shot guard, spójny z resztą modułów
-        /// (SVNAdd/SVNCommit/SVNDiff/SVNRevert/SVNStatus/SVNTerminal).
-        /// </summary>
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposedFlag, 1) == 1) return;
@@ -238,7 +213,6 @@ namespace SVN.Core
             }
         }
 
-        // === FIX K3: delayed dispose (natychmiastowy ratował tylko catch w CancelRepair).
         private void EndRepair(CancellationTokenSource currentCts)
         {
             lock (_repairSync) { if (ReferenceEquals(_repairCTS, currentCts)) { _repairCTS = null; _repairRunning = false; } }
@@ -368,10 +342,11 @@ namespace SVN.Core
             catch { return false; }
         }
 
-        // === FIX K1: dodane repairedUrl/repairedKey — po udanej naprawie manager
-        // dostaje stan NAPRAWIONEJ kopii. Wcześniej SVNStatus.RefreshModifiedInternal
-        // (wołane niżej) skanowało STARY svnManager.WorkingDir — naprawa innego
-        // katalogu niż bieżący zostawiała drzewo zmian i bar na starym miejscu.
+        /// <summary>
+        /// Po udanej naprawie: przepięcie managera + rejestracja w projects.json
+        /// z auto-nazwą "UrlName (folder)" (spójnie z SVNLoad/SVNCheckout/SVNSettings)
+        /// + synchronizacja wszystkich pól UI (Settings/Checkout/Load).
+        /// </summary>
         private async Task SynchronizeAppStateAfterRepair(string fullPath, string repairedUrl, string repairedKey,
             string finalDbSize, TimeSpan elapsed, int svnEvents, CancellationToken token)
         {
@@ -381,10 +356,10 @@ namespace SVN.Core
             SVNStatus.ClearLockCache();
             if (svnManager != null) svnManager.DiskChangesDetected = true;
 
-            // === FIX K1: przepięcie managera na naprawioną kopię.
+            string newWorkingDir = fullPath.Replace('\\', '/').TrimEnd('/');
+
             if (svnManager != null)
             {
-                string newWorkingDir = fullPath.Replace('\\', '/').TrimEnd('/');
                 string currentNorm = (svnManager.WorkingDir ?? "").Replace('\\', '/').TrimEnd('/');
                 if (!string.Equals(newWorkingDir, currentNorm, StringComparison.OrdinalIgnoreCase))
                 {
@@ -398,6 +373,70 @@ namespace SVN.Core
                     svnManager.CurrentKey = repairedKey;
                     SvnRunner.KeyPath = repairedKey;
                 }
+
+                // === FIX (spójność nazewnictwa + rejestracja po repair):
+                // Repair buduje nowy WC — rejestrujemy go w projects.json tą samą
+                // auto-nazwą co SVNLoad/SVNCheckout/SVNSettings: "UrlName (folder)".
+                // Bez tego:
+                //   (a) JSON mógł mieć stary URL → RefreshRepositoryInfo ostrzegał
+                //       o konflikcie przy następnym Load,
+                //   (b) naprawiony WC spoza listy nie pojawiał się w tabeli.
+                try
+                {
+                    ProjectSettings.AddOrUpdateProject(fullPath, (p, created) =>
+                    {
+                        if (created)
+                        {
+                            string auto = SVNProjectNaming.BuildDisplayName(repairedUrl, fullPath);
+                            if (!string.IsNullOrWhiteSpace(auto))
+                                p.projectName = auto;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(repairedUrl))
+                            p.repoUrl = repairedUrl;
+                        if (!string.IsNullOrWhiteSpace(repairedKey))
+                            p.privateKeyPath = repairedKey;
+
+                        p.lastOpened = DateTime.UtcNow;
+                    });
+
+                    // Odśwież referencję CurrentProject z JSON-a — inaczej
+                    // CurrentProject trzyma starą nazwę/URL do końca sesji.
+                    // === FIX (CS0272): CurrentProject ma prywatny setter —
+                    // używamy publicznego ReplaceCurrentProject z SVNManager.
+                    var refreshed = ProjectSettings.LoadProjects().Find(p =>
+                        string.Equals(
+                            (p.workingDir ?? "").Replace('\\', '/').TrimEnd('/'),
+                            newWorkingDir,
+                            StringComparison.OrdinalIgnoreCase));
+
+                    if (refreshed != null)
+                        svnManager.ReplaceCurrentProject(refreshed);
+                }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogErrorToOutput($"[SVN Repair] Project registration failed: {ex.Message}");
+                }
+
+                // === Synchronizacja pól UI (Settings/Checkout/Load) na main thread.
+                string urlSnapshot = repairedUrl;
+                string dirSnapshot = newWorkingDir;
+                string keySnapshot = repairedKey;
+                UnityMainThreadDispatcher.Enqueue(() =>
+                {
+                    try
+                    {
+                        svnManager.SynchronizeConnectionSettings(
+                            SVNManager.SettingsSource.None,
+                            url: urlSnapshot,
+                            workingDirValue: dirSnapshot,
+                            key: keySnapshot);
+                    }
+                    catch (Exception ex)
+                    {
+                        SVNLogBridge.LogErrorToOutput($"[SVN Repair] UI sync failed: {ex.Message}");
+                    }
+                });
             }
 
             string newRevision = "Unknown", newAuthor = "", commitDate = "", statusOutput = "";
@@ -427,8 +466,6 @@ namespace SVN.Core
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { SVNLogBridge.LogErrorToOutput($"[SVN Repair] status failed: {ex.Message}"); }
 
-            // === FIX K2: 'I' (ignored — status biegnie z --no-ignore!) i 'X'
-            // (externals) nie są zmianami — wcześniej liczyły się jako "Locally modified".
             int modifiedFiles = 0;
             if (!string.IsNullOrWhiteSpace(statusOutput))
             {
@@ -527,10 +564,10 @@ namespace SVN.Core
             {
                 if (string.IsNullOrWhiteSpace(line) || line.Length < 8) continue;
                 char status = line[0];
-                if (status == 'I' || status == 'X') continue;   // === FIX K2: ignored/externals nie są zmianami
+                if (status == 'I' || status == 'X') continue;
                 var path = line.Substring(7).Trim();
                 if (string.IsNullOrWhiteSpace(path) || path.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
-                try { path = SvnRunner.NormalizeRepositoryPath(path); } catch { }
+                try { path = SvnRunner.SanitizeSvnPath(path); } catch { }
                 var color = status switch { 'A' => "#00FF41", 'D' => "#FF4444", 'M' => "#FFD700", '!' => "#FF00FF", '?' => "yellow", 'C' => "#FF8800", 'R' => "#00FFFF", _ => "#E6E6E6" };
                 sb.AppendLine($"<color={color}>[{status}]</color> {EscapeRichText(path)}");
             }
@@ -594,7 +631,6 @@ namespace SVN.Core
         private void ShowErrorSafe(string msg) => PostToMainThread(() => ShowError(msg));
         private void SetProcessingState(bool v) => IsProcessing = v;
 
-        // === FIX (martwy parametr → wbudowany w komunikat).
         private void HandleRepairCancellation(bool checkoutStarted)
         {
             var checkoutNote = checkoutStarted

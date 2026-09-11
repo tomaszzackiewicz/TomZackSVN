@@ -63,10 +63,7 @@ public class ProtectedRowController : MonoBehaviour
 
     private void Awake()
     {
-        _onLockClick = OnLockClick;
-        _onUnprotectClick = OnUnprotectClick;
-        _onRevertClick = OnRevertClick;
-        _onExplorerClick = OnExplorerClick;
+        EnsureHandlers();
 
         _hoverCache = new Dictionary<Button, SVNHoverHandler>();
         foreach (var btn in GetComponentsInChildren<Button>(true))
@@ -78,19 +75,64 @@ public class ProtectedRowController : MonoBehaviour
         }
     }
 
+    private void EnsureHandlers()
+    {
+        _onLockClick ??= OnLockClick;
+        _onUnprotectClick ??= OnUnprotectClick;
+        _onRevertClick ??= OnRevertClick;
+        _onExplorerClick ??= OnExplorerClick;
+    }
+
     private void OnDestroy()
     {
+        EnsureHandlers();
         RemoveListeners();
+        ActionCompleted = null;
+    }
+
+    private void WireButtons()
+    {
+        EnsureHandlers();
+
+        if (lockButton != null && lockButton.gameObject.activeSelf && lockButton.interactable)
+            lockButton.onClick.AddListener(_onLockClick);
+
+        if (unprotectButton != null)
+            unprotectButton.onClick.AddListener(_onUnprotectClick);
+
+        if (revertButton != null)
+            revertButton.onClick.AddListener(_onRevertClick);
+
+        if (explorerButton != null)
+            explorerButton.onClick.AddListener(_onExplorerClick);
+    }
+
+    private void RemoveListeners()
+    {
+        EnsureHandlers();
+
+        if (lockButton != null && _onLockClick != null)
+            lockButton.onClick.RemoveListener(_onLockClick);
+
+        if (unprotectButton != null && _onUnprotectClick != null)
+            unprotectButton.onClick.RemoveListener(_onUnprotectClick);
+
+        if (revertButton != null && _onRevertClick != null)
+            revertButton.onClick.RemoveListener(_onRevertClick);
+
+        if (explorerButton != null && _onExplorerClick != null)
+            explorerButton.onClick.RemoveListener(_onExplorerClick);
     }
 
     public void Setup(
-        SVNFileProtection.ProtectionInfo info,
-        Action<string, string> unlockAction,
-        Action<string, string> lockAction,
-        Action<string, string> unprotectAction,
-        Action<string, string> revertAction,
-        TMP_Text logArea)
+    SVNFileProtection.ProtectionInfo info,
+    Action<string, string> unlockAction,
+    Action<string, string> lockAction,
+    Action<string, string> unprotectAction,
+    Action<string, string> revertAction,
+    TMP_Text logArea)
     {
+        EnsureHandlers();
         RemoveListeners();
 
         _info = info;
@@ -100,8 +142,15 @@ public class ProtectedRowController : MonoBehaviour
         _revertAction = revertAction;
         _logArea = logArea;
 
-        Render();
-        WireButtons();
+        try
+        {
+            Render();
+            WireButtons();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[ProtectedRow] Setup failed for '{info?.Path}': {ex}");
+        }
     }
 
     public void UpdateInfo(SVNFileProtection.ProtectionInfo info)
@@ -236,29 +285,6 @@ public class ProtectedRowController : MonoBehaviour
         // ---- Row background ----
         if (rowBackground != null)
             rowBackground.color = hasLock ? lockedColor : baseColor;
-    }
-
-    private void WireButtons()
-    {
-        if (lockButton != null && lockButton.gameObject.activeSelf && lockButton.interactable)
-            lockButton.onClick.AddListener(_onLockClick);
-
-        if (unprotectButton != null)
-            unprotectButton.onClick.AddListener(_onUnprotectClick);
-
-        if (revertButton != null)
-            revertButton.onClick.AddListener(_onRevertClick);
-
-        if (explorerButton != null)
-            explorerButton.onClick.AddListener(_onExplorerClick);
-    }
-
-    private void RemoveListeners()
-    {
-        lockButton?.onClick.RemoveListener(_onLockClick);
-        unprotectButton?.onClick.RemoveListener(_onUnprotectClick);
-        revertButton?.onClick.RemoveListener(_onRevertClick);
-        explorerButton?.onClick.RemoveListener(_onExplorerClick);
     }
 
     private void OnLockClick()

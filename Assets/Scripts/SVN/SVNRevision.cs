@@ -1049,7 +1049,7 @@ namespace SVN.Core
 
             if (!TryEnterProcessing()) return;
 
-            string normalizedPath = cleanPath.Length == 0 ? "." : SvnRunner.NormalizeRepositoryPath(cleanPath);
+            string normalizedPath = cleanPath.Length == 0 ? "." : SvnRunner.SanitizeSvnPath(cleanPath);
             string rev = revision.Trim().TrimStart('r', 'R');
             string revDisplay = rev.Equals("HEAD", StringComparison.OrdinalIgnoreCase) ? "HEAD" : $"r{rev}";
 

@@ -21,8 +21,14 @@ namespace SVN.Core
         private const bool ENABLE_FILE_SIZES = true;
         private CancellationTokenSource _projectSwitchDebounceCts;
 
-        // === FIX CACHE: cache locków kluczowany per root — dwie instancje
-        // SVNStatus nie nadpisywały sobie nawzajem wpisów innego projektu.
+        // === FIX (perf): cache ścieżek svn:needs-lock — `propget -R` na dużym WC
+        // trwa kilka sekund, a był wołany przy KAŻDYM refreshu (commit, edit, focus).
+        // TTL 2 min, tak samo jak lock cache; oba unieważniane razem przy ClearLockCache.
+        private static readonly Dictionary<string, (DateTime time, HashSet<string> data)> _protectionCacheMap
+            = new Dictionary<string, (DateTime, HashSet<string>)>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan ProtectionCacheDuration = TimeSpan.FromMinutes(2);
+        private static readonly object _protectionCacheLock = new object();
+
         private static readonly Dictionary<string, (DateTime time, Dictionary<string, SVNLockDetails> data)> _lockCacheMap
             = new Dictionary<string, (DateTime, Dictionary<string, SVNLockDetails>)>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan LockCacheDuration = TimeSpan.FromMinutes(2);
@@ -117,12 +123,27 @@ namespace SVN.Core
             if (svnUI.StatsText != null)
             {
                 string obstructedPart = stats.ObstructedCount > 0
-                    ? $" | <color=#FF8800>Obs (~): {stats.ObstructedCount}</color>"
+                    ? $" | <color={SVNColors.StatusObstructed}>Obs (~): {stats.ObstructedCount}</color>"
                     : "";
 
+                // === FIX (kolory): liczniki sumaryczne Folder/Files używają kolorów
+                // spójnych z drzewem plików:
+                //   - "Folders: N" → DirHex (granatowy, jak [DIR] w drzewie)
+                //   - "Files: N"   → FileHex (jasnoniebieski, jak nazwy plików)
+                // Sekcje per-status (M/A/?/D/R/C) — bez zmian, dalej SVNColors.Status*.
                 string statsContent = isIgnoredView
-                    ? $"<color=#444444><b>VIEW: IGNORED</b></color> | Folders: {stats.IgnoredFolderCount} | Files: {stats.IgnoredFileCount} | Total Ignored: <color=#FFFFFF>{stats.IgnoredCount}</color>"
-                    : $"Folders: {stats.FolderCount} | Files: {stats.FileCount} | <color=#FFD700>Mod (M): {stats.ModifiedCount}</color> | <color=#00FF00>Add (A): {stats.AddedCount}</color> | <color=#00E5FF>New (?): {stats.NewFilesCount}</color> | <color=#FF4444>Del (D/!): {stats.DeletedCount}</color> | <color=#A0A0FF>Rep (R): {stats.ReplacedCount}</color> | <color=#FF00FF>Conf (C): {stats.ConflictsCount}</color>{obstructedPart}";
+                    ? $"<color=#444444><b>VIEW: IGNORED</b></color> | " +
+                      $"<color={SVNColors.DirHex}>Folders: {stats.IgnoredFolderCount}</color> | " +
+                      $"<color={SVNColors.FileHex}>Files: {stats.IgnoredFileCount}</color> | " +
+                      $"Total Ignored: <color={SVNColors.StatusDefault}>{stats.IgnoredCount}</color>"
+                    : $"<color={SVNColors.DirHex}>Folders: {stats.FolderCount}</color> | " +
+                      $"<color={SVNColors.FileHex}>Files: {stats.FileCount}</color> | " +
+                      $"<color={SVNColors.StatusModified}>Mod (M): {stats.ModifiedCount}</color> | " +
+                      $"<color={SVNColors.StatusAdded}>Add (A): {stats.AddedCount}</color> | " +
+                      $"<color={SVNColors.StatusUnversioned}>New (?): {stats.NewFilesCount}</color> | " +
+                      $"<color={SVNColors.StatusDeleted}>Del (D/!): {stats.DeletedCount}</color> | " +
+                      $"<color={SVNColors.StatusReplaced}>Rep (R): {stats.ReplacedCount}</color> | " +
+                      $"<color={SVNColors.StatusConflict}>Conf (C): {stats.ConflictsCount}</color>{obstructedPart}";
 
                 SVNLogBridge.UpdateUIField(svnUI.StatsText, statsContent, "STATS", append: false);
             }
@@ -132,7 +153,7 @@ namespace SVN.Core
                 if (isIgnoredView)
                 {
                     SVNLogBridge.UpdateUIField(svnUI.CommitStatsText,
-                        "<color=#FFCC00>Switch to 'Modified' view to see commit details.</color>",
+                        $"<color={SVNColors.Warning}>Switch to 'Modified' view to see commit details.</color>",
                         "STATS", append: false);
                 }
                 else
@@ -142,21 +163,21 @@ namespace SVN.Core
                                         stats.ReplacedCount;
 
                     string conflictPart = stats.ConflictsCount > 0
-                        ? $" | <color=#FF0000><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>"
+                        ? $" | <color={SVNColors.Error}><b> CONFLICTS (C): {stats.ConflictsCount} (Resolve first!)</b></color>"
                         : "";
 
                     string obstructedPart = stats.ObstructedCount > 0
-                        ? $" | <color=#FF8800><b> OBSTRUCTED (~): {stats.ObstructedCount} (Fix first!)</b></color>"
+                        ? $" | <color={SVNColors.StatusObstructed}><b> OBSTRUCTED (~): {stats.ObstructedCount} (Fix first!)</b></color>"
                         : "";
 
                     string commitStats =
                         $"<b>Pending Changes:</b> " +
-                        $"<color=#FFD700>M: {stats.ModifiedCount}</color> | " +
-                        $"<color=#00FF00>A: {stats.AddedCount}</color> | " +
-                        $"<color=#00E5FF>?: {stats.NewFilesCount}</color> | " +
-                        $"<color=#FF4444>D/!: {stats.DeletedCount}</color> | " +
-                        $"<color=#A0A0FF>R: {stats.ReplacedCount}</color> | " +
-                        $"<color=#FFFFFF><b>Total: {totalToCommit}</b></color>{conflictPart}{obstructedPart}";
+                        $"<color={SVNColors.StatusModified}>M: {stats.ModifiedCount}</color> | " +
+                        $"<color={SVNColors.StatusAdded}>A: {stats.AddedCount}</color> | " +
+                        $"<color={SVNColors.StatusUnversioned}>?: {stats.NewFilesCount}</color> | " +
+                        $"<color={SVNColors.StatusDeleted}>D/!: {stats.DeletedCount}</color> | " +
+                        $"<color={SVNColors.StatusReplaced}>R: {stats.ReplacedCount}</color> | " +
+                        $"<color={SVNColors.StatusDefault}><b>Total: {totalToCommit}</b></color>{conflictPart}{obstructedPart}";
 
                     SVNLogBridge.UpdateUIField(svnUI.CommitStatsText, commitStats, "STATS", append: false);
                 }
@@ -221,7 +242,7 @@ namespace SVN.Core
 
                     string stat = activeChar.ToString();
                     string rawPath = line.Substring(svnStatusPrefixLength).TrimStart();
-                    string cleanPath = SvnRunner.NormalizeRepositoryPath(rawPath);
+                    string cleanPath = SvnRunner.SanitizeSvnPath(rawPath);
 
                     if (!string.IsNullOrEmpty(cleanPath))
                         cleanPath = cleanPath.Replace('\\', '/').Trim().Trim('/');
@@ -430,13 +451,43 @@ namespace SVN.Core
             public bool Exists;
         }
 
-        // === [P]: propget svn:needs-lock -R --xml — porażka nie wywala refreshu.
+        /// <summary>
+        /// === FIX (perf): cache ścieżek ochrony na 2 min. Wcześniej `propget
+        /// svn:needs-lock -R --xml .` był wołany przy każdym ExecuteRefreshWithAutoExpand
+        /// — na WC z 10k+ plików to kilka sekund per refresh.
+        /// </summary>
         private static async Task<HashSet<string>> SafeGetProtectedPathsAsync(
             string root, CancellationToken token)
         {
+            if (string.IsNullOrEmpty(root))
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            lock (_protectionCacheLock)
+            {
+                if (_protectionCacheMap.TryGetValue(root, out var cached) &&
+                    (DateTime.UtcNow - cached.time) < ProtectionCacheDuration)
+                {
+                    return cached.data;
+                }
+            }
+
             try
             {
-                return await SvnRunner.GetProtectedPathsAsync(root, token).ConfigureAwait(false);
+                var result = await SvnRunner.GetProtectedPathsAsync(root, token).ConfigureAwait(false);
+
+                lock (_protectionCacheLock)
+                {
+                    // Lazy prune ekspirowanych przy okazji zapisu
+                    var expired = _protectionCacheMap
+                        .Where(kv => (DateTime.UtcNow - kv.Value.time) > ProtectionCacheDuration)
+                        .Select(kv => kv.Key)
+                        .ToList();
+                    foreach (var k in expired) _protectionCacheMap.Remove(k);
+
+                    _protectionCacheMap[root] = (DateTime.UtcNow, result);
+                }
+
+                return result;
             }
             catch (OperationCanceledException)
             {
@@ -565,9 +616,14 @@ namespace SVN.Core
             foreach (var key in expired) _lockCacheMap.Remove(key);
         }
 
+        /// <summary>
+        /// Unieważnia oba cache — locków i ścieżek ochrony. Zmieniają się razem
+        /// (propset/propdel svn:needs-lock ma natychmiastowy wpływ na oba).
+        /// </summary>
         public static void ClearLockCache()
         {
             lock (_cacheLock) _lockCacheMap.Clear();
+            lock (_protectionCacheLock) _protectionCacheMap.Clear();
         }
 
         public void NotifySelectionChanged()
@@ -621,7 +677,7 @@ namespace SVN.Core
         }
 
         private string NormalizeLockPath(string path) =>
-            SvnRunner.NormalizeRepositoryPath(path);
+            SvnRunner.SanitizeSvnPath(path);
 
         public void CancelCurrentRefresh()
         {
@@ -1088,6 +1144,14 @@ namespace SVN.Core
                 svnUI.CommitTreeDisplay.text = "<i>Nothing to commit.</i>";
 
             UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
+
+            // === DIAG: log przy KAŻDYM empty-state. Jeśli w logu sesji pojawi się
+            // BEZ poprzedzającego "Status updated successfully." — to znaczy że
+            // refresh został skasowany przez inny i sam nie doszedł do końca
+            // (objaw race na starcie). Pomaga odróżnić "svn status zwrócił 0 zmian"
+            // (poprawne, WC czyste) od "refresh nie doszedł do końca" (bug).
+            SVNLogBridge.LogToOutput(
+                $"<color={SVNColors.Dim}>[SVN] Empty state at {DateTime.Now:HH:mm:ss.fff} (refreshId={Volatile.Read(ref _activeRefreshId)})</color>");
         }
 
         public void RefreshVisibleUIOnly()
@@ -1253,7 +1317,7 @@ namespace SVN.Core
             {
                 if (relPath == ".") continue;
 
-                string normalizedPath = SvnRunner.NormalizeRepositoryPath(relPath);
+                string normalizedPath = SvnRunner.SanitizeSvnPath(relPath);
                 if (!string.IsNullOrEmpty(normalizedPath))
                     normalizedPath = normalizedPath.Replace('\\', '/').Trim();
 

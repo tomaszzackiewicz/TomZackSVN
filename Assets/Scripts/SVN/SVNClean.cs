@@ -62,9 +62,6 @@ namespace SVN.Core
 
         // === Entry points: confirm NA MAIN THREAD (przed pierwszym await),
         // potem operacja asynchroniczna. Zero dialogów.
-        // (requireConfirm usunięty — martwy parametr; confirmy robią publiczne
-        // metody, StartAsync jest private i każde wywołanie już potwierdzone
-        // albo nie wymaga potwierdzenia.)
         public void LightCleanup() => _ = StartAsync(LightCleanupAsync);
         public void VacuumCleanup() => _ = StartAsync(VacuumCleanupAsync);
 
@@ -144,8 +141,13 @@ namespace SVN.Core
 
         // === FIX (kaskada): StartAsync czeka na RunAsync; cleanup należy WYŁĄCZNIE
         // do RunAsync. Kolejność w finally: _cts=null PRZED End() (niezmiennik
-        // "_cts != null ⟹ IsProcessing"). Gałąź 'initialization error' to martwy
-        // defensywny kod z definicji niezmiennika.
+        // "_cts != null ⟹ IsProcessing").
+        //
+        // === FIX (End pod lockiem): wyjście z _ctsSync PRZED wywołaniem End().
+        // End() w SVNBase dziś nie dotyka _ctsSync, ale to kontrakt niejawny —
+        // każda przyszła zmiana w SVNBase (np. dodanie logu wołającego callback)
+        // mogłaby wywołać deadlock. Bezpieczniej: trzymać lock tylko na czas
+        // mutacji _cts.
         private async Task StartAsync(Func<CancellationToken, Task> op)
         {
             if (op == null || Volatile.Read(ref _disposedFlag) == 1) return;
@@ -156,17 +158,27 @@ namespace SVN.Core
                 return;
             }
 
-            CancellationTokenSource opCts;
+            CancellationTokenSource opCts = null;
+            bool initFailed = false;
+
             lock (_ctsSync)
             {
                 if (Volatile.Read(ref _disposedFlag) == 1 || _cts != null)
                 {
-                    End();
-                    LogClean("<color=#FFAA00>Operation initialization error.</color>");
-                    return;
+                    initFailed = true;
                 }
+                else
+                {
+                    opCts = _cts = new CancellationTokenSource();
+                }
+            }
 
-                opCts = _cts = new CancellationTokenSource();
+            // === End() POZA lockiem — patrz komentarz wyżej.
+            if (initFailed)
+            {
+                try { End(); } catch (Exception ex) { SVNLogBridge.LogException(ex); }
+                LogClean("<color=#FFAA00>Operation initialization error.</color>");
+                return;
             }
 
             PostUIStart();
@@ -281,9 +293,18 @@ namespace SVN.Core
                 LogClean(output);
         }
 
-        // (UWAGA: fallback 'invalid option' jest TYLKO tu — HardReset/RepairStructure
-        // używają --remove-unversioned/--vacuum-pristines bez fallbacku; na kliencie
-        // < 1.10 padną twardym błędem, co łapie RunAsync jako "Error". Świadome.)
+        /// <summary>
+        /// Vacuum z fallbackiem dla klientów SVN &lt; 1.10 (brak --vacuum-pristines).
+        ///
+        /// === FIX (locale): dopasowanie po 'invalid option' / 'unrecognized option'
+        /// łapie tylko angielskie komunikaty SVN. Na polskim systemie SVN zwraca
+        /// "nieprawidłowa opcja" — fallback nie odpalał, user dostawał twardy błąd.
+        /// Dodano kod błędu SVN (E200007), który jest niezależny od locale.
+        ///
+        /// (UWAGA: fallback 'invalid option' jest TYLKO tu — HardReset/RepairStructure
+        /// używają --remove-unversioned/--vacuum-pristines bez fallbacku; na kliencie
+        /// &lt; 1.10 padną twardym błędem, co łapie RunAsync jako "Error". Świadome.)
+        /// </summary>
         public static async Task<string> ExecuteVacuumCleanupAsync(string wd, CancellationToken t = default)
         {
             try
@@ -292,15 +313,27 @@ namespace SVN.Core
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) when (
-                ex.Message.IndexOf("invalid option", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                ex.Message.IndexOf("unrecognized option", StringComparison.OrdinalIgnoreCase) >= 0)
+            catch (Exception ex) when (IsInvalidOptionError(ex.Message))
             {
                 UnityMainThreadDispatcher.Enqueue(() =>
                     SVNLogBridge.LogErrorToOutput("[SVN] Vacuum unsupported, fallback."));
                 t.ThrowIfCancellationRequested();
                 return await SvnRunner.RunAsync("cleanup", wd, false, t).ConfigureAwait(false);
             }
+        }
+
+        /// <summary>
+        /// Detekcja błędu "nieznana opcja" — odporny na locale.
+        /// - angielski:  "invalid option" / "unrecognized option"
+        /// - kod SVN:    E200007 (niezależny od języka)
+        /// </summary>
+        private static bool IsInvalidOptionError(string message)
+        {
+            if (string.IsNullOrEmpty(message)) return false;
+
+            return message.IndexOf("invalid option", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   message.IndexOf("unrecognized option", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   message.IndexOf("E200007", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         public async Task DeepRepairAsync(CancellationToken t)
@@ -314,12 +347,18 @@ namespace SVN.Core
             await SvnRunner.RunAsync("cleanup", path, true, t).ConfigureAwait(false);
 
             LogClean("Synchronizing working copy...");
-            try { await SvnRunner.RunAsync("update --force", path, true, t).ConfigureAwait(false); }
-            catch (OperationCanceledException) { throw; }
-            catch
+            try
             {
-                LogClean("<color=#FFAA00>Synchronization failed. Repair aborted.</color>");
-                throw;
+                await SvnRunner.RunAsync("update --force", path, true, t).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                // === FIX (podwójny log): komunikat wrzucamy DO wyjątku, żeby
+                // RunAsync (catch Exception) zalogował go raz — bez duplikatu
+                // "Synchronization failed." + "Error: svn: ...".
+                throw new InvalidOperationException(
+                    $"Synchronization failed. Repair aborted. {ex.Message}", ex);
             }
 
             LogClean("Resolving conflicts (theirs-full)...");
