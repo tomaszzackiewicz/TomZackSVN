@@ -38,5 +38,9 @@ namespace SVN.Core
         public double DurationSeconds;
 
         public bool CheckoutIncomplete;
+
+        public bool UpdateInterrupted;
+        public string UpdateInterruptedReason;
+        public string WorkingDir;
     }
 }

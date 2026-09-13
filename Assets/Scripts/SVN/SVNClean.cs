@@ -375,9 +375,83 @@ namespace SVN.Core
             ClearLog();
             LogClean("<b>Removing unversioned files...</b>");
 
-            await SvnRunner.RunAsync("cleanup --remove-unversioned", path, false, t).ConfigureAwait(false);
+            int remaining = await RunCleanupRemoveUnversionedUntilDoneAsync(path, t).ConfigureAwait(false);
+            t.ThrowIfCancellationRequested();
 
-            LogClean("<color=green>Unversioned files removed successfully.</color>");
+            if (remaining == 0)
+                LogClean("<color=green>All unversioned files removed.</color>");
+            else
+                LogClean($"<color=#FFAA00>Completed with {remaining} unversioned item(s) remaining — some files may be locked by another process.</color>");
+        }
+
+        /// <summary>
+        /// SVN-only usuwanie unversioned. `svn cleanup --remove-unversioned` na Windows
+        /// ma bug kolejności kasowania (E720145 "directory is not empty" na zagnieżdżonych
+        /// folderach). Każdy przebieg usuwa część; powtarzamy aż status nie pokaże '?'.
+        ///
+        /// Zabezpieczenia:
+        ///  - MAX_PASSES: twardy limit (nie ma sensu więcej niż głębokość drzewa)
+        ///  - early-exit gdy przebieg nic nie usunął (jesteśmy w pętli)
+        ///  - każdy błąd cleanup logowany jako warning, nie przerywa pętli
+        /// </summary>
+        private async Task<int> RunCleanupRemoveUnversionedUntilDoneAsync(string wcRoot, CancellationToken t)
+        {
+            const int MaxPasses = 20;
+
+            int previousCount = int.MaxValue;
+            int lastCount = int.MaxValue;
+
+            for (int pass = 1; pass <= MaxPasses; pass++)
+            {
+                t.ThrowIfCancellationRequested();
+
+                // Policz '?' przed przebiegiem (szybkie — svn status na WC 17GB to ~6s).
+                lastCount = await CountUnversionedAsync(wcRoot, t).ConfigureAwait(false);
+                if (lastCount == 0) return 0;
+
+                LogClean($"Pass {pass}/{MaxPasses}: {lastCount} unversioned item(s) remaining — running cleanup...");
+
+                try
+                {
+                    await SvnRunner.RunAsync("cleanup --remove-unversioned", wcRoot, false, t).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    // SVN rzucił E720145 — ale i tak usunął część. Logujemy i lecimy dalej.
+                    SVNLogBridge.LogWarning($"[SVNClean] cleanup pass {pass} warning: {ex.Message}");
+                }
+
+                // Early-exit: jeśli poprzednia liczba == obecna, nie ma postępu.
+                // (Musimy porównać z liczbą PO przebiegu — stąd dodatkowy status.)
+                int afterCount = await CountUnversionedAsync(wcRoot, t).ConfigureAwait(false);
+                if (afterCount == 0) return 0;
+
+                if (afterCount >= lastCount)
+                {
+                    SVNLogBridge.LogWarning(
+                        $"[SVNClean] No progress after pass {pass} (still {afterCount}). " +
+                        "Some files may be locked by another process (Unity, IDE, antivirus). Aborting loop.");
+                    return afterCount;
+                }
+
+                previousCount = afterCount;
+            }
+
+            return await CountUnversionedAsync(wcRoot, t).ConfigureAwait(false);
+        }
+
+        private static async Task<int> CountUnversionedAsync(string wcRoot, CancellationToken t)
+        {
+            string output = await SvnRunner.RunAsync("status", wcRoot, false, t).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(output)) return 0;
+
+            int count = 0;
+            foreach (var raw in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (raw.Length >= 1 && raw[0] == '?') count++;
+            }
+            return count;
         }
 
         public async Task HardResetAsync(CancellationToken t)
@@ -389,7 +463,13 @@ namespace SVN.Core
             LogClean("<b>[HARD RESET]</b>");
 
             await SvnRunner.RunAsync("revert -R .", path, true, t).ConfigureAwait(false);
-            await SvnRunner.RunAsync("cleanup --remove-unversioned --include-externals", path, true, t).ConfigureAwait(false);
+
+            // === SVN-only: pętla cleanup zamiast pojedynczego wywołania (bug Windows).
+            LogClean("Removing unversioned files...");
+            int remaining = await RunCleanupRemoveUnversionedUntilDoneAsync(path, t).ConfigureAwait(false);
+            if (remaining > 0)
+                LogClean($"<color=#FFAA00>{remaining} unversioned item(s) could not be removed.</color>");
+
             await SvnRunner.RunAsync("update --force --accept theirs-full", path, true, t).ConfigureAwait(false);
 
             LogClean("<color=#8B0000>>Hard Reset Complete.</color>");
@@ -407,7 +487,22 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(url))
                 throw new InvalidOperationException("Failed to retrieve repository URL.");
 
-            await SvnRunner.RunAsync("cleanup --remove-unversioned --vacuum-pristines --non-interactive", path, true, t).ConfigureAwait(false);
+            // === SVN-only: pętla cleanup (bug Windows E720145).
+            LogClean("Removing unversioned files...");
+            int remaining = await RunCleanupRemoveUnversionedUntilDoneAsync(path, t).ConfigureAwait(false);
+            if (remaining > 0)
+                LogClean($"<color=#FFAA00>{remaining} unversioned item(s) could not be removed.</color>");
+
+            try
+            {
+                await SvnRunner.RunAsync("cleanup --vacuum-pristines --non-interactive", path, true, t).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) when (IsInvalidOptionError(ex.Message))
+            {
+                await SvnRunner.RunAsync("cleanup --non-interactive", path, true, t).ConfigureAwait(false);
+            }
+
             await SvnRunner.RunAsync(new[] { "switch", url, ".", "--ignore-ancestry" }, path, true, t).ConfigureAwait(false);
             await SvnRunner.RunAsync("update --set-depth infinity --force --accept theirs-full --non-interactive", path, true, t).ConfigureAwait(false);
             await SvnRunner.RunAsync("resolve --accept theirs-full -R .", path, true, t).ConfigureAwait(false);

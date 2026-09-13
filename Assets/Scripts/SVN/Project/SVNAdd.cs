@@ -23,6 +23,9 @@ namespace SVN.Core
 
         public async void AddAll()
         {
+            // === FIX (teardown): guard _disposed — po Dispose opacja nie startuje.
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             try
             {
                 await AddAllAsync().ConfigureAwait(false);
@@ -38,6 +41,9 @@ namespace SVN.Core
         // ConfigureAwait(false) — z thread poolu.
         public void AddSingleItem(SvnTreeElement element)
         {
+            // === FIX (teardown): guard _disposed.
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             if (element == null) return;
 
             string fullPathSnapshot = element.FullPath;
@@ -52,6 +58,9 @@ namespace SVN.Core
         // na main thread → losowy InvalidOperationException "Collection was modified".
         public async void AddSelected()
         {
+            // === FIX (teardown): guard _disposed.
+            if (Volatile.Read(ref _disposed) == 1) return;
+
             var statusModule = svnManager.GetModule<SVNStatus>();
             List<(string FullPath, string Name)> selectionSnapshot = null;
 
@@ -364,6 +373,10 @@ namespace SVN.Core
             }
         }
 
+        // === FIX (bug): rozróżnienie "cancel użytkownika" od "timeout cleanupu".
+        // Poprzednia wersja łapała OperationCanceledException użytkownika w
+        // catch (Exception) — user widział "Cleanup failed: ..." zamiast
+        // "[ABORTED] Add operation cancelled".
         private async Task<bool> CleanupWorkingCopyAsync(string root, CancellationToken token)
         {
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(CleanupTimeoutSeconds));
@@ -377,6 +390,10 @@ namespace SVN.Core
             {
                 SVNLogBridge.LogLine("<color=#FF4444><b>Cleanup timed out.</b></color>");
                 return false;
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // === FIX: cancel użytkownika — propaguj wyżej
             }
             catch (Exception ex)
             {
@@ -525,7 +542,15 @@ namespace SVN.Core
                 });
             }
 
-            try { _operationLock.Dispose(); } catch { }
+            // === FIX (teardown): grace period na dojście aktywnej operacji do
+            // finally (Release/RefreshStatus) po Cancel — jak w SVNRevert.
+            // Natychmiastowy dispose semafora powodował ObjectDisposedException
+            // w Release() na umierającej operacji.
+            _ = Task.Delay(1500).ContinueWith(_ =>
+            {
+                try { _operationLock.Dispose(); } catch { }
+            });
+
             GC.SuppressFinalize(this);
         }
     }

@@ -20,10 +20,32 @@ namespace SVN.Core
         private volatile bool _repairRunning;
         private volatile bool _metadataRemoved;
 
+        // === PROGRESS BAR: indeterminate → %, gdy prefetch rozmiarów wróci.
+        private SvnUpdateProgressUI _progressUI;
+
+        // === DEBUG: licznik linii checkoutu zalogowanych do konsoli.
+        private int _checkoutDebugLinesLogged = 0;
+
+        // === PRE-REPAIR SNAPSHOT: flaga czy w tej sesji repair snapshot się udał.
+        private bool _preRepairSnapshotCreated;
+
+        // === STEP SUMMARY: akumulowane linie kroków 1/3, 2/3, 3/3.
+        // Powód: PostRepairStatus podmienia cały tekst — Step 1/3 znikał
+        // zanim user zdążył go przeczytać. Akumulujemy i pokazujemy razem.
+        private readonly StringBuilder _stepSummary = new();
+
         private bool _isDisposed
         {
             get => Volatile.Read(ref _disposedFlag) == 1;
             set => Volatile.Write(ref _disposedFlag, value ? 1 : 0);
+        }
+
+        // === Wynik kroku snapshotu — używany do wyświetlenia uczciwego statusu.
+        private enum SnapshotPreRepairOutcome
+        {
+            Created,   // snapshot zapisany
+            Skipped,   // brak warunków (brak .svn, brak modułu, brak working dir)
+            Failed     // próbowano, ale coś poszło nie tak
         }
 
         public SVNRepoRepair(SVNUI svnUI, SVNManager manager) : base(svnUI, manager)
@@ -70,69 +92,120 @@ namespace SVN.Core
                 pollingWasPausedByUs = true;
                 SetProcessingState(true);
 
-                PostRepairStatus("<color=yellow><b>Initializing Force Repair...</b></color>");
+                _checkoutDebugLinesLogged = 0;
+                _preRepairSnapshotCreated = false;
+
+                lock (_stepSummary) _stepSummary.Clear();
+                PostStep("<color=yellow><b>Initializing Force Repair...</b></color>");
 
                 var keyPath = ResolveAndValidateKeyPath();
                 if (string.IsNullOrWhiteSpace(keyPath) && url.StartsWith("svn+ssh://", StringComparison.OrdinalIgnoreCase))
                 { ShowErrorSafe("SSH repository requires a valid private key."); return; }
 
-                PostRepairStatus("<color=#8B0000>><b>Step 1/2:</b> Removing old .svn metadata...</color>\n<size=11><i>Please wait...</i></size>");
+                // PREFETCH rozmiarów (równolegle z krokiem 1 i 2).
+                var prefetchTask = PrefetchRemoteSizesAsync(url, token);
+
+                // ============================================================
+                //  STEP 1/3 — PRE-REPAIR SNAPSHOT
+                // ============================================================
+                PostStep("<color=yellow><b>Step 1/3:</b> Creating pre-repair safety snapshot...</color>");
+                PostStep("<size=11><i>Capturing local changes before rebuild (silent).</i></size>");
+
+                var snapOutcome = await TryCreatePreRepairSnapshotAsync(token).ConfigureAwait(false);
+                _preRepairSnapshotCreated = (snapOutcome == SnapshotPreRepairOutcome.Created);
+
+                switch (snapOutcome)
+                {
+                    case SnapshotPreRepairOutcome.Created:
+                        PostStep("<color=green><b>Step 1/3:</b> Safety snapshot created.</color>");
+                        break;
+                    case SnapshotPreRepairOutcome.Skipped:
+                        PostStep("<color=#FFAA00><b>Step 1/3:</b> Safety snapshot skipped (no .svn or module unavailable).</color>");
+                        break;
+                    default:
+                        PostStep("<color=#FF8800><b>Step 1/3:</b> Safety snapshot failed — see log above.</color>");
+                        break;
+                }
+
+                token.ThrowIfCancellationRequested();
+
+                // ============================================================
+                //  STEP 2/3 — usuń stare .svn
+                // ============================================================
+                PostStep("<color=#8B0000>><b>Step 2/3:</b> Removing old .svn metadata...</color>");
 
                 SVNManager.Instance?.DisposeFileSystemWatcher();
                 token.ThrowIfCancellationRequested();
 
                 if (!await DeleteOldMetadataAsync(svnDir, token).ConfigureAwait(false))
                 {
+                    PostStep("<color=#FF4444><b>Step 2/3:</b> Failed to remove .svn.</color>");
                     HandleMetadataDeletionFailure();
                     pollingWasPausedByUs = false;
                     return;
                 }
                 _metadataRemoved = true;
+                PostStep("<color=green><b>Step 2/3:</b> Old metadata removed successfully.</color>");
                 token.ThrowIfCancellationRequested();
 
-                PostRepairStatus("<color=green><b>Step 1/2:</b> Old metadata removed successfully.</color>\n<color=yellow><b>Step 2/2:</b> Rebuilding working copy...</color>\n<size=11><i>See console below for live progress.</i></size>");
+                // ============================================================
+                //  STEP 3/3 — checkout
+                // ============================================================
+                PostStep("<color=yellow><b>Step 3/3:</b> Rebuilding working copy...</color>");
+                PostStep("<size=11><i>See console below for live progress.</i></size>");
+
+                var progressTarget = svnUI?.CheckoutedFilesText;
+                if (progressTarget != null)
+                {
+                    _progressUI = new SvnUpdateProgressUI(progressTarget);
+
+                    var progressRef = _progressUI;
+                    _ = prefetchTask.ContinueWith(t =>
+                    {
+                        if (t.IsCanceled || t.IsFaulted) return;
+                        if (token.IsCancellationRequested) return;
+                        if (!ReferenceEquals(_progressUI, progressRef)) return;
+
+                        var result = t.Result;
+                        if (result.totalFiles > 0 && result.totalBytes > 0)
+                        {
+                            progressRef.SetTotal(result.totalFiles, result.totalBytes, result.sizes);
+                            SVNLogBridge.LogLine(
+                                "<color=#4FC3F7>[SVN Repair]</color> Progress bar switched to byte-weighted % mode.");
+                        }
+                    }, TaskScheduler.Default);
+                }
 
                 var checkoutArgs = $"checkout \"{url}\" \".\" --force --non-interactive --trust-server-cert";
                 checkoutStarted = true;
                 SVNLogBridge.LogToOutput("<color=yellow>[SVN]</color> Force Repair checkout started.");
 
                 int svnEvents = 0;
-                long lastReportedDbSize = -1;
                 DateTime startTime = DateTime.Now;
 
-                using var monitorCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-
-                var monitorTask = MonitorProgressAsync(svnDir, wcDbPath,
-                    () => Volatile.Read(ref svnEvents),
-                    () => lastReportedDbSize,
-                    v => lastReportedDbSize = v,
-                    () => (DateTime.Now - startTime).TotalSeconds,
-                    monitorCts.Token);
-
-                try
+                await SvnRunner.RunLiveAsync(checkoutArgs, fullPath, chunk =>
                 {
-                    await SvnRunner.RunLiveAsync(checkoutArgs, fullPath, line =>
+                    if (string.IsNullOrWhiteSpace(chunk)) return;
+
+                    var lines = chunk.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var rawLine in lines)
                     {
-                        if (string.IsNullOrWhiteSpace(line)) return;
+                        var line = rawLine.Trim();
+                        if (string.IsNullOrEmpty(line)) continue;
 
                         Interlocked.Increment(ref svnEvents);
-
-                        HandleCheckoutOutput(line.Trim());
-                    }, token).ConfigureAwait(false);
-                }
-                finally
-                {
-                    monitorCts.Cancel();
-                    try { await monitorTask.ConfigureAwait(false); } catch (OperationCanceledException) { } catch { }
-                }
+                        HandleCheckoutOutput(line);
+                    }
+                }, token).ConfigureAwait(false);
 
                 token.ThrowIfCancellationRequested();
 
                 if (!Directory.Exists(svnDir) || !File.Exists(wcDbPath))
                     throw new InvalidOperationException("SVN checkout finished, but the working copy database (.svn/wc.db) was not created.");
 
-                LogRepairConsole("<color=yellow><b>Verifying working copy integrity...</b></color>\n");
+                _progressUI?.Finish();
 
+                PostStep("<color=yellow><b>Verifying working copy integrity...</b></color>");
                 token.ThrowIfCancellationRequested();
 
                 workingCopyHealthy = await VerifyWorkingCopyHealthyAsync(fullPath, token).ConfigureAwait(false);
@@ -165,7 +238,94 @@ namespace SVN.Core
                 if (pollingWasPausedByUs)
                     LogRepairConsole("<color=#FFAA00>[Force Repair] SVN polling remains paused because the working copy could not be verified.</color>\n");
                 EndRepair(repairCts);
+
+                _progressUI = null;
             }
+        }
+
+        // ===================================================================
+        //  STEP SUMMARY HELPERS — akumulacja kroków żeby Step 1/3 nie znikał.
+        // ===================================================================
+        private void PostStep(string line)
+        {
+            string snapshot;
+            lock (_stepSummary)
+            {
+                _stepSummary.AppendLine(line);
+                snapshot = _stepSummary.ToString();
+            }
+            PostRepairStatus(snapshot);
+        }
+
+        // ===================================================================
+        //  STEP 1/3 — PRE-REPAIR SNAPSHOT
+        // ===================================================================
+        private async Task<SnapshotPreRepairOutcome> TryCreatePreRepairSnapshotAsync(CancellationToken repairToken)
+        {
+            var snapshotModule = svnManager?.GetModule<SVNSnapshot>();
+            if (snapshotModule == null)
+            {
+                SVNLogBridge.LogToOutput(
+                    "<color=#FFAA00>[SVN Repair]</color> Snapshot module not available — skipping step 1.");
+                LogRepairConsole(
+                    "<color=#FFAA00>[SVN Repair]</color> Snapshot module unavailable — Step 1 skipped, repair continues.\n");
+                return SnapshotPreRepairOutcome.Skipped;
+            }
+
+            if (string.IsNullOrWhiteSpace(svnManager?.WorkingDir))
+            {
+                SVNLogBridge.LogToOutput(
+                    "<color=#FFAA00>[SVN Repair]</color> Working dir not set — skipping step 1.");
+                LogRepairConsole(
+                    "<color=#FFAA00>[SVN Repair]</color> Working dir not set — Step 1 skipped, repair continues.\n");
+                return SnapshotPreRepairOutcome.Skipped;
+            }
+
+            string wcDbPath = Path.Combine(svnManager.WorkingDir, ".svn", "wc.db");
+            if (!File.Exists(wcDbPath))
+            {
+                SVNLogBridge.LogToOutput(
+                    "<color=#FFAA00>[SVN Repair]</color> Working copy has no .svn — no local changes to snapshot. " +
+                    "Step 1 skipped, repair continues.");
+                LogRepairConsole(
+                    "<color=#FFAA00>[SVN Repair]</color> Working copy has no .svn (broken state) — nothing to snapshot.\n");
+                return SnapshotPreRepairOutcome.Skipped;
+            }
+
+            LogRepairConsole("<color=yellow>[SVN Repair]</color> Creating pre-repair safety snapshot (silent)...\n");
+
+            bool ok;
+            try
+            {
+                ok = await snapshotModule.CreateSnapshotForRepairAsync("Pre-Repair").ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                SVNLogBridge.LogToOutput("<color=#FFAA00>[SVN Repair]</color> Pre-repair snapshot cancelled.");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogErrorToOutput($"[SVN Repair] Pre-repair snapshot failed: {ex.Message}");
+                LogRepairConsole($"<color=#FF8800>[SVN Repair]</color> Snapshot failed: {EscapeRichText(ex.Message)}\n");
+                return SnapshotPreRepairOutcome.Failed;
+            }
+
+            if (ok)
+            {
+                SVNLogBridge.LogToOutput(
+                    "<color=green>[SVN Repair]</color> Pre-repair snapshot created. " +
+                    "<b>After repair, use the 'Restore Snapshot' button to recover your local modifications.</b>");
+                LogRepairConsole(
+                    "<color=green>[SVN Repair]</color> Safety snapshot created.\n" +
+                    "<color=#FFCC00><b>After repair, use the 'Restore Snapshot' button to recover your local modifications.</b></color>\n");
+                return SnapshotPreRepairOutcome.Created;
+            }
+
+            SVNLogBridge.LogToOutput(
+                "<color=#FFAA00>[SVN Repair]</color> Pre-repair snapshot returned false — proceeding without safety net.");
+            LogRepairConsole("<color=#FFAA00>[SVN Repair]</color> Snapshot not created (see log above).\n");
+            return SnapshotPreRepairOutcome.Failed;
         }
 
         public void CancelRepair()
@@ -180,6 +340,9 @@ namespace SVN.Core
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposedFlag, 1) == 1) return;
+
+            try { _progressUI?.Clear(); } catch { }
+            _progressUI = null;
 
             CancellationTokenSource cts;
             lock (_repairSync)
@@ -209,6 +372,7 @@ namespace SVN.Core
                 cts = _repairCTS = new CancellationTokenSource();
                 _repairRunning = true;
                 _metadataRemoved = false;
+                _preRepairSnapshotCreated = false;
                 return true;
             }
         }
@@ -217,6 +381,71 @@ namespace SVN.Core
         {
             lock (_repairSync) { if (ReferenceEquals(_repairCTS, currentCts)) { _repairCTS = null; _repairRunning = false; } }
             _ = Task.Delay(1000).ContinueWith(_ => { try { currentCts.Dispose(); } catch { } });
+        }
+
+        private async Task<(int totalFiles, long totalBytes, Dictionary<string, long> sizes)>
+            PrefetchRemoteSizesAsync(string url, CancellationToken token)
+        {
+            try
+            {
+                string runDir = !string.IsNullOrWhiteSpace(svnManager?.WorkingDir)
+                    ? svnManager.WorkingDir
+                    : Path.GetTempPath();
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var output = await SvnRunner.RunAsync(
+                    $"list -R --xml \"{SVNShared.EscapeSvnArg(url)}\"",
+                    runDir,
+                    retryOnLock: false,
+                    token: token).ConfigureAwait(false);
+                sw.Stop();
+
+                if (string.IsNullOrWhiteSpace(output))
+                    return (0, 0, null);
+
+                int xmlStart = output.IndexOf("<?xml", StringComparison.OrdinalIgnoreCase);
+                if (xmlStart < 0) xmlStart = output.IndexOf("<lists", StringComparison.OrdinalIgnoreCase);
+                if (xmlStart < 0) xmlStart = output.IndexOf("<list", StringComparison.OrdinalIgnoreCase);
+                if (xmlStart > 0) output = output.Substring(xmlStart);
+
+                var sizes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                long totalBytes = 0;
+                int fileCount = 0;
+
+                var doc = XDocument.Parse(output);
+                foreach (var entry in doc.Descendants().Where(e => e.Name.LocalName == "entry"))
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    string kind = (string)entry.Attribute("kind");
+                    if (kind != "file") continue;
+
+                    var nameEl = entry.Elements().FirstOrDefault(e => e.Name.LocalName == "name");
+                    if (nameEl == null) continue;
+
+                    string path = (nameEl.Value ?? "").Replace('\\', '/').Trim();
+                    if (string.IsNullOrEmpty(path)) continue;
+
+                    long size = 0;
+                    var sizeEl = entry.Elements().FirstOrDefault(e => e.Name.LocalName == "size");
+                    if (sizeEl != null && long.TryParse(sizeEl.Value, out var s)) size = s;
+
+                    sizes[path] = size;
+                    totalBytes += size;
+                    fileCount++;
+                }
+
+                SVNLogBridge.LogLine(
+                    $"<color=#4FC3F7>[SVN Repair]</color> Size prefetch done in {sw.Elapsed.TotalSeconds:F1}s: " +
+                    $"{fileCount} file(s), ~{FormatSize(totalBytes)}.");
+                return (fileCount, totalBytes, sizes);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogWarning($"[SVN Repair] Size prefetch failed (indeterminate mode): {ex.Message}");
+                return (0, 0, null);
+            }
         }
 
         private async Task<bool> DeleteOldMetadataAsync(string svnDir, CancellationToken token)
@@ -262,54 +491,49 @@ namespace SVN.Core
             var msg = "Cannot remove the old .svn folder. It is locked by another process (e.g., TortoiseSVN, IDE, Antivirus).\n\n<b>ACTION REQUIRED:</b>\n1. Close other programs that might be using this folder.\n2. Manually delete the hidden <b>.svn</b> folder from your working directory.\n3. Click <b>Force Repair</b> again to continue.";
             PostRepairStatus("<color=#FF4444><b>DELETION FAILED</b></color>\n\n" + msg);
             LogRepairConsole("<color=#FF4444><b>[Repair]</b> Failed to delete .svn. Manual deletion required.</color>\n");
-        }
 
-        private async Task MonitorProgressAsync(string svnDir, string wcDbPath,
-            Func<int> getSvnEvents,
-            Func<long> getLastSize, Action<long> setLastSize,
-            Func<double> getElapsedSeconds, CancellationToken token)
-        {
-            var sb = new StringBuilder(256);
-            while (!token.IsCancellationRequested)
-            {
-                try
-                {
-                    double elapsed = Math.Max(getElapsedSeconds(), 1);
-                    int events = getSvnEvents();
-
-                    sb.Clear();
-                    sb.Append("<b>[Repair Progress]</b> Rebuilding...\n");
-                    sb.Append("<b>Time Elapsed:</b> ").AppendFormat("{0:F1}s", elapsed).Append('\n');
-
-                    sb.Append("<b>SVN Events:</b> ").Append(events).Append('\n');
-
-                    if (File.Exists(wcDbPath))
-                    {
-                        var size = new FileInfo(wcDbPath).Length;
-                        if (size != getLastSize()) setLastSize(size);
-                        sb.Append("<b>Database Size:</b> <b>").Append(FormatSize(size)).Append("</b>");
-                    }
-                    else if (Directory.Exists(svnDir))
-                    {
-                        sb.Append("<b>Database Size:</b> <i>initializing...</i>");
-                    }
-
-                    string currentText = sb.ToString();
-                    PostToMainThread(() =>
-                    {
-                        try { SVNLogBridge.LogCheckoutConsole(currentText + "\n"); } catch { }
-                    });
-                }
-                catch (OperationCanceledException) { throw; }
-                catch { }
-                try { await Task.Delay(1000, token).ConfigureAwait(false); } catch (OperationCanceledException) { break; }
-            }
+            _progressUI?.Clear();
         }
 
         private void HandleCheckoutOutput(string line)
         {
             if (string.IsNullOrWhiteSpace(line)) return;
+
             var n = line.Trim();
+
+            if (n.Length > 0 && n[0] == '\uFEFF')
+                n = n.Substring(1).TrimStart();
+            if (string.IsNullOrEmpty(n)) return;
+
+            int dbg = Interlocked.Increment(ref _checkoutDebugLinesLogged);
+            if (dbg <= 5)
+            {
+                int previewLen = Math.Min(60, n.Length);
+                SVNLogBridge.LogLine(
+                    $"<color={SVNColors.Dim}>[Repair Debug] checkout line #{dbg}: " +
+                    $"'{n.Substring(0, previewLen)}' (len={n.Length})</color>");
+            }
+
+            if (_progressUI != null && n.Length >= 3)
+            {
+                char c = n[0];
+                char c1 = n[1];
+
+                bool isStatus =
+                    (char.IsLetter(c) || c == '~' || c == '!') &&
+                    (c1 == ' ' || c1 == '\t' || char.IsWhiteSpace(c1));
+
+                if (isStatus)
+                {
+                    string path = n.Substring(1).TrimStart();
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        path = path.Replace('\\', '/').Trim('"', '\'');
+                        bool isConflict = (c == 'C');
+                        _progressUI.OnItem(path, path, "", isConflict);
+                    }
+                }
+            }
 
             if (n.StartsWith("Checked out revision", StringComparison.OrdinalIgnoreCase) ||
                 n.StartsWith("Updated to revision", StringComparison.OrdinalIgnoreCase))
@@ -342,11 +566,6 @@ namespace SVN.Core
             catch { return false; }
         }
 
-        /// <summary>
-        /// Po udanej naprawie: przepięcie managera + rejestracja w projects.json
-        /// z auto-nazwą "UrlName (folder)" (spójnie z SVNLoad/SVNCheckout/SVNSettings)
-        /// + synchronizacja wszystkich pól UI (Settings/Checkout/Load).
-        /// </summary>
         private async Task SynchronizeAppStateAfterRepair(string fullPath, string repairedUrl, string repairedKey,
             string finalDbSize, TimeSpan elapsed, int svnEvents, CancellationToken token)
         {
@@ -374,13 +593,6 @@ namespace SVN.Core
                     SvnRunner.KeyPath = repairedKey;
                 }
 
-                // === FIX (spójność nazewnictwa + rejestracja po repair):
-                // Repair buduje nowy WC — rejestrujemy go w projects.json tą samą
-                // auto-nazwą co SVNLoad/SVNCheckout/SVNSettings: "UrlName (folder)".
-                // Bez tego:
-                //   (a) JSON mógł mieć stary URL → RefreshRepositoryInfo ostrzegał
-                //       o konflikcie przy następnym Load,
-                //   (b) naprawiony WC spoza listy nie pojawiał się w tabeli.
                 try
                 {
                     ProjectSettings.AddOrUpdateProject(fullPath, (p, created) =>
@@ -400,10 +612,6 @@ namespace SVN.Core
                         p.lastOpened = DateTime.UtcNow;
                     });
 
-                    // Odśwież referencję CurrentProject z JSON-a — inaczej
-                    // CurrentProject trzyma starą nazwę/URL do końca sesji.
-                    // === FIX (CS0272): CurrentProject ma prywatny setter —
-                    // używamy publicznego ReplaceCurrentProject z SVNManager.
                     var refreshed = ProjectSettings.LoadProjects().Find(p =>
                         string.Equals(
                             (p.workingDir ?? "").Replace('\\', '/').TrimEnd('/'),
@@ -418,7 +626,6 @@ namespace SVN.Core
                     SVNLogBridge.LogErrorToOutput($"[SVN Repair] Project registration failed: {ex.Message}");
                 }
 
-                // === Synchronizacja pól UI (Settings/Checkout/Load) na main thread.
                 string urlSnapshot = repairedUrl;
                 string dirSnapshot = newWorkingDir;
                 string keySnapshot = repairedKey;
@@ -544,6 +751,35 @@ namespace SVN.Core
                 var formatted = FormatCheckoutStatusLines(statusOutput);
                 if (!string.IsNullOrWhiteSpace(formatted)) report.AppendLine().AppendLine("<b>[Working Copy Status]</b>").AppendLine(formatted);
             }
+
+            if (_preRepairSnapshotCreated)
+            {
+                report.AppendLine();
+                report.AppendLine("<color=#FFCC00><b>=========================================</b></color>");
+                report.AppendLine("<color=#FFCC00><b>  !!! IMPORTANT — SAFETY SNAPSHOT READY !!!</b></color>");
+                report.AppendLine("<color=#FFCC00><b>=========================================</b></color>");
+                report.AppendLine();
+                report.AppendLine("<color=#FFCC00><b>Your local changes were captured BEFORE the rebuild.</b></color>");
+                report.AppendLine("<color=#FFCC00><b>To get them back, you MUST click the</b></color>");
+                report.AppendLine("<color=#FFCC00><b>'RESTORE SNAPSHOT' button in the Snapshot panel.</b></color>");
+                report.AppendLine();
+                report.AppendLine("<color=#FFCC00>Repair does NOT restore them automatically.</color>");
+                report.AppendLine("<color=#FFCC00>If you don't need them, click 'Delete Snapshot' instead.</color>");
+                report.AppendLine("<color=#FFCC00><b>=========================================</b></color>");
+
+                PostToMainThread(() =>
+                {
+                    try
+                    {
+                        svnUI?.ShowNotificationWithTimer(
+                            "Repair done. Your local changes are in the Snapshot — " +
+                            "click 'Restore Snapshot' to recover them.",
+                            10f);
+                    }
+                    catch { }
+                });
+            }
+
             report.AppendLine("<color=green><b>=========================================</b></color>");
 
             PostRepairStatus(report.ToString());
@@ -640,6 +876,11 @@ namespace SVN.Core
             PostRepairStatus(msg);
             LogRepairConsole("<color=#FFAA00>[Force Repair] Cancelled by user.</color>\n");
             SVNLogBridge.LogToOutput("<color=#FFAA00>[SVN]</color> Force repair cancelled.");
+
+            if (checkoutStarted)
+                _progressUI?.FinishIncomplete("CANCELLED");
+            else
+                _progressUI?.Clear();
         }
 
         private void HandleRepairFailure(Exception ex)
@@ -648,6 +889,8 @@ namespace SVN.Core
             PostRepairStatus("<color=#FF4444><b>Force Repair Failed</b></color>\n\n" + EscapeRichText(message) + "\n\n" + (_metadataRemoved ? "<color=#FFAA00><b>WARNING:</b> The old .svn metadata has already been removed. Working copy may be incomplete.</color>" : ""));
             LogRepairConsole("<color=#FF4444>[Force Repair] Failed: " + EscapeRichText(message) + "</color>\n");
             SVNLogBridge.LogErrorToOutput($"[SVN] Force repair failed: {message}");
+
+            _progressUI?.Clear();
         }
 
         private void HandleOperationExceptionSafe(Exception ex)

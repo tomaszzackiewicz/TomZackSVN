@@ -900,7 +900,7 @@ namespace SVN.Core
                     {
                         LogToLockPanel(
                             "<color=#FFAA00>[Lock] Batch lock failed — retrying per file.</color>");
-                        LogToLockPanel($"<color=#888888>SVN: {batchEx.Message}</color>");
+                        LogToLockPanel($"<color={SVNColors.Dim}>SVN: {batchEx.Message}</color>");
 
                         foreach (string file in toLock)
                         {
@@ -1006,7 +1006,7 @@ namespace SVN.Core
 
                     if (candidates.Count > 50)
                         LogToLockPanel(
-                            $"<color=#888888>... and {candidates.Count - 50} more (see 'Show Locks').</color>");
+                            $"<color={SVNColors.Dim}>... and {candidates.Count - 50} more (see 'Show Locks').</color>");
                 }
 
                 // -----------------------------------------------------------

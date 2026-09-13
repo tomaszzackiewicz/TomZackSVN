@@ -22,9 +22,21 @@ namespace SVN.Core
     /// zmiany filtra (pisać / kasować) potrafiły wywołać kilka renderów
     /// w jednej klatce i zawiesić UI na layout rebuild loop.
     /// Kolor logów: #4FC3F7.
+    ///
+    /// === LAZY TAB: drzewo NIE jest ładowane przy starcie projektu.
+    /// ViewTabsController wywołuje statyczne zdarzenie RepoBrowserTabOpened
+    /// w momencie przełączenia na zakładkę Repo Browser.
     /// </summary>
     public class SVNRepoBrowser : SVNBase, IDisposable
     {
+        // ===== LAZY TAB =====
+        /// <summary>
+        /// Wywoływane przez ViewTabsController, gdy user przełącza się na
+        /// zakładkę Repo Browser. Dzięki temu NIE ładujemy drzewa z serwera
+        /// na starcie projektu — dopiero gdy user faktycznie tego chce.
+        /// </summary>
+        public static event Action RepoBrowserTabOpened;
+
         // ===== LAZY TREE =====
         private CancellationTokenSource _cts;
         private readonly object _ctsLock = new object();
@@ -57,6 +69,21 @@ namespace SVN.Core
                 ui.RepoBrowserFilterInput.onValueChanged.RemoveAllListeners();
                 ui.RepoBrowserFilterInput.onValueChanged.AddListener(OnFilterChanged);
             }
+
+            // Subskrypcja zdarzenia przełączenia zakładki.
+            // -= przed += chroni przed duplikatami przy ponownej inicjalizacji modułu.
+            RepoBrowserTabOpened -= HandleTabOpened;
+            RepoBrowserTabOpened += HandleTabOpened;
+        }
+
+        // ================= LAZY TAB HANDLER =================
+
+        private void HandleTabOpened()
+        {
+            // Ładuj drzewo tylko raz — EnsureLoadedAsync sam pilnuje flagami,
+            // że drugie wywołanie nie odpali kolejnego svn list.
+            if (IsTreeLoaded) return;
+            _ = EnsureLoadedAsync();
         }
 
         // ================= FILTR =================
@@ -868,6 +895,10 @@ namespace SVN.Core
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
 
+            // Odsubskrybuj zdarzenie zakładki — bez tego przy re-init modułu
+            // zostałby wisiący delegate trzymający this w pamięci.
+            RepoBrowserTabOpened -= HandleTabOpened;
+
             CancelOperations();
 
             lock (_allPathsCtsLock)
@@ -891,6 +922,11 @@ namespace SVN.Core
         {
             public string Path;
             public bool IsDirectory;
+        }
+
+        public static void NotifyTabOpened()
+        {
+            RepoBrowserTabOpened?.Invoke();
         }
     }
 }

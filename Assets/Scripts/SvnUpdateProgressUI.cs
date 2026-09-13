@@ -12,7 +12,9 @@ namespace SVN.Core
     ///   [SVN] = Updated: Assets/Scenes/Main.unity (105/172)
     ///
     /// LINIA 1: pasek + % WAŻONE BAJTAMI (rozmiary z svn list --xml -R);
-    ///   gdy rozmiary niedostępne — fallback na liczenie per plik.
+    ///   gdy rozmiary niedostępne — tryb INDETERMINISTYCZNY (pusta ramka +
+    ///   licznik items) — używany m.in. przez Force Repair, gdy prefetch
+    ///   rozmiarów nie zdążył / nie został odpalony.
     /// LINIA 2: aktualny plik NIEBIESKI + (x/y) LICZBA PLIKÓW — format
     ///   oryginalny (displayLine + progressStr).
     /// </summary>
@@ -53,10 +55,15 @@ namespace SVN.Core
 
         /// <summary>
         /// totalItems — estymacja z status -u ('*'); totalBytes + sizes — wagi
-        /// bajtowe. totalBytes <= 0 → automatyczny fallback na liczenie per plik.
+        /// bajtowe. totalBytes <= 0 → tryb INDETERMINISTYCZNY (pusta ramka).
+        ///
+        /// Po Finish()/Clear() wywołanie SetTotal jest ignorowane — chroni przed
+        /// sytuacją, gdy prefetch rozmiarów wraca PO zakończeniu operacji.
         /// </summary>
         public void SetTotal(int totalItems, long totalBytes, Dictionary<string, long> sizes)
         {
+            if (_finished) return;   // === GUARD: nie zmieniaj trybu po Finish/Clear
+
             if (totalItems > 0) _total = totalItems;
             _totalBytes = totalBytes > 0 ? totalBytes : 0;
             _sizes = _totalBytes > 0 ? sizes : null;
@@ -172,10 +179,18 @@ namespace SVN.Core
             }
             else
             {
-                line1 = $"<color=#FFFF00>Updating...</color>{conflict}";
+                // === TRYB INDETERMINISTYCZNY ===
+                // Brak znanej sumy — pusta ramka + licznik przetworzonych pozycji.
+                // Bez procentu, bo bez total każdy % byłby kłamstwem.
+                // Jeśli prefetch rozmiarów zdąży, SetTotal() przełączy na %.
+                string bar = $"<color=#777777>{new string(BarEmpty, BarWidth)}</color>";
+                string count = _done > 0
+                    ? $" <color=#FFFF00>{_done} items</color>"
+                    : "";
+                line1 = $"{bar}{count}{conflict}";
             }
 
-            // --- LINIA 2: aktualny plik na niebiesko + (x/y) plików — oryginalny format ---
+            // --- LINIA 2: aktualny plik na niebiesko + (x/y) plików ---
             string filePart = string.IsNullOrEmpty(_lastDisplayLine)
                 ? "<color=#FFFF00>Preparing...</color>"
                 : $"<b>[SVN]</b> <color=blue>{_lastDisplayLine}{_lastProgressStr}</color>";
@@ -194,7 +209,7 @@ namespace SVN.Core
                 if (text == null) return;   // obejmuje zniszczony (Unity null)
                 text.text = content;
             });
-            _lastContent = content ?? "";   // === FIX: pamiętamy, co napisaliśmy
+            _lastContent = content ?? "";   // === pamiętamy, co napisaliśmy
         }
 
         private static string FormatBytes(long bytes)
@@ -207,8 +222,8 @@ namespace SVN.Core
         }
 
         /// <summary>
-        /// === CHECKOUT: przerwanie — ostatnia podmieniana linia jasno mówi, że to
-        /// NIE jest całe repo (katalog częściowy, wznowienie przez Resume).
+        /// === CHECKOUT/REPAIR: przerwanie — ostatnia podmieniana linia jasno mówi,
+        /// że to NIE jest całe repo (katalog częściowy, wznowienie przez Resume).
         /// Zamiast czyszczenia (Clear) — zostaje widoczny komunikat.
         /// </summary>
         public void FinishIncomplete(string reason)

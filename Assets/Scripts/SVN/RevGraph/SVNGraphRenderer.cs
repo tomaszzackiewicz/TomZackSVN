@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using UnityEngine;
 
 namespace SVN.Core
@@ -10,8 +11,15 @@ namespace SVN.Core
 
         // === FIX D1: licznik "unknown branch" — repo z r1-dotykającym "/" sypało
         // LOGIEM PER NODE przy każdym renderze (2000 rewizji = 2000 linii w Output).
-        // Teraz: pierwszy przypadek logowany, kolejne liczone, podsumowanie co 100.
+        // Teraz: pierwszy przypadek logowany, kolejne liczone, podsumowanie na końcu.
         private static int _unknownBranchCount;
+
+        // === FIX (perf): regex dla "branches/X w wiadomości commita" — kompilowany
+        // raz na poziomie klasy zamiast Match(pattern, string) w pętli. Przy 2000
+        // rewizjach z merge to 2000 kompilacji mniej.
+        private static readonly Regex BranchInMessageRegex = new Regex(
+            @"(?:^|[\s/])branches/([^/\s\r\n]+)",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         #region Public API
 
@@ -91,10 +99,7 @@ namespace SVN.Core
 
                     if (string.IsNullOrEmpty(src) && !string.IsNullOrEmpty(node.Message))
                     {
-                        var match = System.Text.RegularExpressions.Regex.Match(
-                            node.Message,
-                            @"(?:^|[\s/])branches/([^/\s\r\n]+)",
-                            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        var match = BranchInMessageRegex.Match(node.Message);
 
                         if (match.Success)
                         {
@@ -130,13 +135,22 @@ namespace SVN.Core
                     data.ColumnToBranch[kv.Value] = kv.Key;
             }
 
+            // === FIX (deterministyczne kolory): sortujemy gałęzie przed
+            // przypisaniem hue. Dictionary.Keys nie ma gwarantowanej kolejności
+            // między uruchomieniami — bez sortowania ten sam branch miał różne
+            // kolory po restarcie apki.
+            var sortedBranches = new List<string>(data.LaneMap.Keys);
+            sortedBranches.Sort(StringComparer.OrdinalIgnoreCase);
+
             int colorIdx = 0;
-            foreach (var branch in data.LaneMap.Keys)
+            foreach (var branch in sortedBranches)
             {
                 float hue = Mathf.Repeat(colorIdx * 137.508f, 360f);
                 colorIdx++;
                 Color c = Color.HSVToRGB(hue / 360f, 0.75f, 1.0f);
-                data.BranchColors[branch] = branch == "trunk" ? COLOR_TRUNK : "#" + ColorUtility.ToHtmlStringRGB(c);
+                data.BranchColors[branch] = branch == "trunk"
+                    ? COLOR_TRUNK
+                    : "#" + ColorUtility.ToHtmlStringRGB(c);
             }
 
             // === FIX D1: podsumowanie zamiast spamu.
@@ -215,7 +229,6 @@ namespace SVN.Core
                 }
             }
 
-            // === FIX D1: pierwszy przypadek z logiem (przykład), reszta licznikiem.
             _unknownBranchCount++;
             if (_unknownBranchCount == 1)
                 SVNLogBridge.LogToOutput($"<color=#FFAA00>[SVN Branch Parser] Unknown branch for r{node.Revision}. Example path: '{NormalizePath(node.ChangedPaths[0])}'</color>");

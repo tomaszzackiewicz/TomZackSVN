@@ -5,14 +5,13 @@ namespace SVN.Core
     /// <summary>
     /// JEDYNE źródło prawdy dla kolorów statusów SVN w całym projekcie.
     ///
-    /// ZASADY:
-    ///  - Wszystkie statusy używają rozróżnialnych, czytelnych kolorów.
-    ///  - BEZ neonowego zielonego (#00FF41) — zbyt agresywny; A używa #5CE65C.
-    ///  - Statusy [?] używa Dodger Blue (#1E90FF).
-    ///  - Metadane (rev/author) — jasny steel blue (#A8C8E8).
-    ///  - Nazwy plików — białe (spójnie z drzewem zmian).
-    ///  - BEZ ciemnych zieleni typu #33CC66 — słabo widoczne na szarym tle;
-    ///    StatusAdded jest teraz w jasnej zieleni #5CE65C (jak Git success).
+    /// === FIX (Dim): ewolucja koloru "metadata/dim":
+    ///   #888888 — zlewał się z szarym tłem panelu
+    ///   #B8B8B8 — za jasny, rozmyty na szarym tle
+    ///   #4A5A6E — ciemny slate blue: wyraźny niebieski odcień, czytelny
+    ///              na neutralnym szarym tle, spójny z paletą (DirHex
+    ///              też jest granatowy). Wygląda jak "metadata", nie
+    ///              jak "highlight".
     /// </summary>
     public static class SVNColors
     {
@@ -20,12 +19,12 @@ namespace SVN.Core
         //  STATUSY SVN — hex stringi (do rich text w TMP)
         // =====================================================================
         public const string StatusModified = "#FFD700";   // M  — złoty
-        public const string StatusAdded = "#5CE65C";   // A  — jasny zieleń (widoczny na szarym)
+        public const string StatusAdded = "#5CE65C";   // A  — jasny zieleń
         public const string StatusDeleted = "#FF4444";   // D  — czerwony
-        public const string StatusMissing = "#FF00FF";   // !  — magenta
-        public const string StatusConflict = "#FF00FF";   // C  — magenta
+        public const string StatusMissing = "#FF4444";   // !  — czerwony (spójnie z D)
+        public const string StatusConflict = "#FF1493";   // C  — DeepPink
         public const string StatusUnversioned = "#1E90FF";   // ?  — Dodger Blue
-        public const string StatusIgnored = "#808080";   // I  — szary
+        public const string StatusIgnored = "#808080";   // I  — szary (status, zostaje)
         public const string StatusReplaced = "#FFA500";   // R  — pomarańczowy
         public const string StatusObstructed = "#FF8800";   // ~  — ciemny pomarańcz
         public const string StatusLockedByMe = "#00FF00";   // K
@@ -40,17 +39,17 @@ namespace SVN.Core
         public const string Warning = "#FFAA00";
         public const string Error = "#FF5555";
         public const string Info = "#E6E6E6";
-        public const string Dim = "#888888";
+        public const string Dim = "#4A5A6E";   // === FIX: ciemny slate blue (było #B8B8B8, wcześniej #888888)
         public const string Accent = "#FFD700";
-        public const string Metadata = "#A8C8E8";   // metadane (rev/author)
+        public const string Metadata = "#A8C8E8";
 
         // =====================================================================
         //  STATUSY — Unity Color
         // =====================================================================
         public static readonly Color StatusModifiedColor = new(1f, 0.843f, 0f);
-        public static readonly Color StatusAddedColor = new(0.361f, 0.902f, 0.361f);  // #5CE65C
+        public static readonly Color StatusAddedColor = new(0.361f, 0.902f, 0.361f);
         public static readonly Color StatusDeletedColor = new(1f, 0.267f, 0.267f);
-        public static readonly Color StatusConflictColor = new(1f, 0f, 1f);
+        public static readonly Color StatusConflictColor = new(1f, 0.0784f, 0.5765f);  // #FF1493
         public static readonly Color StatusUnversionedColor = new(0.118f, 0.565f, 1f);
         public static readonly Color StatusIgnoredColor = new(0.4f, 0.4f, 0.4f);
         public static readonly Color StatusReplacedColor = new(1f, 0.65f, 0f);
@@ -64,23 +63,15 @@ namespace SVN.Core
         public static readonly Color RowBgAdded = new(0.361f, 0.902f, 0.361f, 0.08f);
         public static readonly Color RowBgUnversioned = new(0.118f, 0.565f, 1f, 0.08f);
         public static readonly Color RowBgDeleted = new(1f, 0.2f, 0.2f, 0.08f);
-        public static readonly Color RowBgConflict = new(1f, 0f, 1f, 0.1f);
+        public static readonly Color RowBgConflict = new(1f, 0.0784f, 0.5765f, 0.10f);
         public static readonly Color RowBgIgnored = new(0.3f, 0.3f, 0.3f, 0.05f);
         public static readonly Color RowBgDefault = new(0, 0, 0, 0);
 
         // =====================================================================
         //  NAZWY PLIKÓW / FOLDERÓW
         // =====================================================================
-        // === FIX (czytelność): #003366 był bardzo ciemny — na szarym tle panelu
-        // napis "Folders: 12" zlewał się z tłem. #4F7BB8 to ten sam granat, ale
-        // 2 stopnie jaśniejszy — nadal rozpoznawalny jako "granatowy", czytelny
-        // na szarym tle. Wartość RGB dobrana tak, żeby kontrast vs panel ≥ 4.5:1
-        // (WCAG AA dla normalnego tekstu).
-        // === FIX (czytelność): #003366 był zbyt ciemny (zlewał się z tłem),
-        // #4F7BB8 i #3D6BA8 okazały się za jasne. #2E5C99 — wyraźnie ciemniejszy
-        // granat, ale wciąż czytelny na szarym tle panelu (kontrast ≥ 4.5:1).
         public static readonly Color DirNameColor = new Color(0.18f, 0.36f, 0.60f, 1f);   // #2E5C99
-        public static readonly Color FileNameColor = new Color(0.678f, 0.847f, 0.902f, 1f); // #ADD8E6 — jak FileHex
+        public static readonly Color FileNameColor = new Color(0.678f, 0.847f, 0.902f, 1f); // #ADD8E6
         public const string DirHex = "#2E5C99";
         public const string FileHex = "#ADD8E6";
 
@@ -141,7 +132,7 @@ namespace SVN.Core
             "!" => $"<color={StatusMissing}><b>[!]</b></color>",
             "D" => $"<color={StatusDeleted}><b>[D]</b></color>",
             "R" => $"<color={StatusReplaced}><b>[R]</b></color>",
-            _ => "<color=#444444>[ ]</color>"
+            _ => $"<color={Dim}>[ ]</color>"
         };
 
         public static string GetActionLetterHex(string action) => action switch

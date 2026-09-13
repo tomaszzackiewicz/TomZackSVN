@@ -21,6 +21,11 @@ namespace SVN.Core
         private const bool ENABLE_FILE_SIZES = true;
         private CancellationTokenSource _projectSwitchDebounceCts;
 
+        // === FIX (miganie): fingerprint ostatnio wyrenderowanego drzewa.
+        // Reprezentuje DANE Z SERWERA (status, bytes, locki, ochronę), NIE
+        // stan UI (IsChecked/IsExpanded). Zapisywany WYŁĄCZNIE na main thread.
+        private string _lastFlatTreeFingerprint;
+
         // === FIX (perf): cache ścieżek svn:needs-lock — `propget -R` na dużym WC
         // trwa kilka sekund, a był wołany przy KAŻDYM refreshu (commit, edit, focus).
         // TTL 2 min, tak samo jak lock cache; oba unieważniane razem przy ClearLockCache.
@@ -50,14 +55,11 @@ namespace SVN.Core
         //  naraz (objaw po mergu). Teraz: atomowo.
         // ===================================================================
 
-        // Teksty PRZEJŚCIOWE vs terminalne ("No changes detected." zostaje).
         private static bool IsTransientStatus(string text) =>
             text != null && (text.Contains("Scanning") ||
                              text.Contains("Refreshing") ||
                              text.Contains("Loading"));
 
-        /// MAIN THREAD ONLY. Bezpośredni zapis (.text) — atomowy z renderingiem
-        /// drzewa w tej samej akcji. Bez dispatchera, bez drugiego hopa.
         private void ClearTransientTreeStatusTexts()
         {
             if (svnUI == null) return;
@@ -69,9 +71,6 @@ namespace SVN.Core
                 svnUI.CommitTreeDisplay.text = "";
         }
 
-        /// MAIN THREAD ONLY. Wywoływane przy KAŻDYM re-renderze drzewa: rysujemy
-        /// drzewo z danymi ⇒ teksty przejściowe ("Scanning/Refreshing/Loading")
-        /// muszą zniknąć — RÓWNIEŻ podczas aktywnego refreshu.
         private void HealTreeStatusTextsOnRender()
         {
             if (_flatTreeData == null || _flatTreeData.Count == 0)
@@ -79,7 +78,6 @@ namespace SVN.Core
             ClearTransientTreeStatusTexts();
         }
 
-        /// PUBLIC — hook dla managera (OnApplicationFocus). Guarded + dispatched.
         public void ClearStaleTreeStatusTexts()
         {
             if (IsProcessing) return;
@@ -90,7 +88,6 @@ namespace SVN.Core
             });
         }
 
-        /// === FIX: JEDEN punkt zapisu tekstów statusu.
         private void WriteTreeStatus(int refreshId, string treeText, string commitText, bool clearTreeViews = false)
         {
             RunOnMainThread(() =>
@@ -108,8 +105,36 @@ namespace SVN.Core
                 {
                     svnUI.SvnTreeView?.ClearView();
                     svnUI.SVNCommitTreeDisplay?.ClearView();
+
+                    // === FIX (miganie): po ClearView fingerprint jest nieaktualny
+                    // — UI jest puste, więc następny refresh MUSI re-renderować.
+                    _lastFlatTreeFingerprint = null;
                 }
             });
+        }
+
+        // ===================================================================
+        //  FINGERPRINT — reprezentuje DANE Z SERWERA, nie stan UI.
+        // ===================================================================
+        private static string BuildFlatTreeFingerprint(List<SvnTreeElement> elements)
+        {
+            if (elements == null) return "null";
+            if (elements.Count == 0) return "empty";
+
+            var sb = new System.Text.StringBuilder(elements.Count * 40);
+            sb.Append(elements.Count).Append('\n');
+            foreach (var e in elements)
+            {
+                sb.Append(e.FullPath ?? "").Append('|');
+                sb.Append(e.Status ?? "").Append('|');
+                sb.Append(e.Size ?? "").Append('|');
+                sb.Append(e.Bytes).Append('|');
+                sb.Append(e.IsFolder ? 'D' : 'F').Append('|');
+                sb.Append(e.LockedByMe ? 'M' : '-').Append('|');
+                sb.Append(e.LockedByOther ? 'O' : '-').Append('|');
+                sb.Append(e.IsProtected ? 'P' : '-').Append('\n');
+            }
+            return sb.ToString();
         }
 
         // ===================================================================
@@ -126,11 +151,6 @@ namespace SVN.Core
                     ? $" | <color={SVNColors.StatusObstructed}>Obs (~): {stats.ObstructedCount}</color>"
                     : "";
 
-                // === FIX (kolory): liczniki sumaryczne Folder/Files używają kolorów
-                // spójnych z drzewem plików:
-                //   - "Folders: N" → DirHex (granatowy, jak [DIR] w drzewie)
-                //   - "Files: N"   → FileHex (jasnoniebieski, jak nazwy plików)
-                // Sekcje per-status (M/A/?/D/R/C) — bez zmian, dalej SVNColors.Status*.
                 string statsContent = isIgnoredView
                     ? $"<color=#444444><b>VIEW: IGNORED</b></color> | " +
                       $"<color={SVNColors.DirHex}>Folders: {stats.IgnoredFolderCount}</color> | " +
@@ -225,7 +245,6 @@ namespace SVN.Core
                     char itemStatus = line[0];
                     char propStatus = line[1];
 
-                    // === FIX TREE-CONFLICT: tree-conflict = 'C' w kolumnie 6
                     char treeConflictStatus = line.Length > 6 ? line[6] : ' ';
                     if (treeConflictStatus == 'C')
                     {
@@ -451,11 +470,6 @@ namespace SVN.Core
             public bool Exists;
         }
 
-        /// <summary>
-        /// === FIX (perf): cache ścieżek ochrony na 2 min. Wcześniej `propget
-        /// svn:needs-lock -R --xml .` był wołany przy każdym ExecuteRefreshWithAutoExpand
-        /// — na WC z 10k+ plików to kilka sekund per refresh.
-        /// </summary>
         private static async Task<HashSet<string>> SafeGetProtectedPathsAsync(
             string root, CancellationToken token)
         {
@@ -477,7 +491,6 @@ namespace SVN.Core
 
                 lock (_protectionCacheLock)
                 {
-                    // Lazy prune ekspirowanych przy okazji zapisu
                     var expired = _protectionCacheMap
                         .Where(kv => (DateTime.UtcNow - kv.Value.time) > ProtectionCacheDuration)
                         .Select(kv => kv.Key)
@@ -500,7 +513,6 @@ namespace SVN.Core
             }
         }
 
-        // === [P]: mirror ApplyLockColors — flagi svn:needs-lock na elementach.
         public void ApplyProtectionFlags(List<SvnTreeElement> elements, HashSet<string> protectedPaths)
         {
             if (elements == null || protectedPaths == null)
@@ -616,10 +628,6 @@ namespace SVN.Core
             foreach (var key in expired) _lockCacheMap.Remove(key);
         }
 
-        /// <summary>
-        /// Unieważnia oba cache — locków i ścieżek ochrony. Zmieniają się razem
-        /// (propset/propdel svn:needs-lock ma natychmiastowy wpływ na oba).
-        /// </summary>
         public static void ClearLockCache()
         {
             lock (_cacheLock) _lockCacheMap.Clear();
@@ -628,10 +636,8 @@ namespace SVN.Core
 
         public void NotifySelectionChanged()
         {
-            // === FIX: heal bez guardu
             HealTreeStatusTextsOnRender();
 
-            // === FIX: nie startuj coroutine na nieaktywnym TreeContent
             if (svnUI.SvnTreeView != null &&
                 svnUI.SvnTreeView.gameObject.activeInHierarchy)
             {
@@ -681,7 +687,6 @@ namespace SVN.Core
 
         public void CancelCurrentRefresh()
         {
-            // === FIX: guard ODE (CTS dysponowany z opóźnionym dispose)
             try { _cts?.Cancel(); }
             catch (ObjectDisposedException) { }
         }
@@ -691,7 +696,6 @@ namespace SVN.Core
             if (svnManager != null)
                 svnManager.OnProjectChanged -= HandleProjectChanged;
 
-            // === FIX: natychmiastowy Cancel+Dispose → ODE w locie operacji
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _cts, null));
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _projectSwitchDebounceCts, null));
         }
@@ -702,15 +706,39 @@ namespace SVN.Core
             UnityMainThreadDispatcher.Enqueue(action);
         }
 
+        // ===================================================================
+        //  HANDLE PROJECT CHANGED
+        // ===================================================================
         private async void HandleProjectChanged(SVNProject project)
         {
             if (project == null) return;
+
+            string normalizedNew = (project.workingDir ?? "").Replace('\\', '/').TrimEnd('/');
+            string normalizedCurrent = (svnManager?.WorkingDir ?? "").Replace('\\', '/').TrimEnd('/');
+
+            bool sameProjectAlreadyLoaded =
+                !string.IsNullOrEmpty(normalizedNew) &&
+                string.Equals(normalizedNew, normalizedCurrent, StringComparison.OrdinalIgnoreCase) &&
+                _flatTreeData != null && _flatTreeData.Count > 0 &&
+                _lastFlatTreeFingerprint != null;
+
+            if (sameProjectAlreadyLoaded)
+            {
+                if (svnManager != null)
+                {
+                    svnManager.ExpandedPaths.Clear();
+                    svnManager.ExpandedPaths.Add("");
+                }
+
+                SVNLogBridge.LogLine(
+                    $"<color={SVNColors.Dim}>[SVNStatus] Skipped redundant project-change refresh (already loaded).</color>");
+                return;
+            }
 
             var oldDebounce = _projectSwitchDebounceCts;
             _projectSwitchDebounceCts = new CancellationTokenSource();
             var debounceToken = _projectSwitchDebounceCts.Token;
 
-            // === FIX: SVNShared zamiast inline kopii (cancel + opóźniony dispose)
             SVNShared.CancelAndDisposeLater(oldDebounce);
 
             try
@@ -756,7 +784,6 @@ namespace SVN.Core
                 return;
             }
 
-            // === FIX (invariant): rozwiń/zwiń folderu też leczy przeterminowane teksty
             HealTreeStatusTextsOnRender();
 
             folder.IsExpanded = !folder.IsExpanded;
@@ -818,7 +845,6 @@ namespace SVN.Core
                 }
             }
 
-            // === FIX: guard activeInHierarchy
             if (svnUI.SvnTreeView != null &&
                 svnUI.SvnTreeView.gameObject.activeInHierarchy)
             {
@@ -834,7 +860,6 @@ namespace SVN.Core
 
         public void ExpandAll()
         {
-            // === FIX (invariant)
             HealTreeStatusTextsOnRender();
 
             if (_flatTreeData != null)
@@ -872,7 +897,6 @@ namespace SVN.Core
 
         public void CollapseAll()
         {
-            // === FIX (invariant)
             HealTreeStatusTextsOnRender();
 
             if (_flatTreeData != null)
@@ -924,14 +948,16 @@ namespace SVN.Core
 
         public async Task RefreshAfterAction()
         {
-            ClearSVNTreeView();
+            // === FIX (miganie): NIE czyścimy drzewa przed refreshem.
+            // ExecuteRefreshWithAutoExpand sam decyduje: przy zmianie danych
+            // re-renderuje, przy identycznym fingerprintcie pomija.
             await ExecuteRefreshWithAutoExpand(force: true);
         }
 
         public async void ShowOnlyModified()
         {
             try { await RefreshModifiedInternal(); }
-            catch (OperationCanceledException) { }   // === FIX: OCE ≠ błąd
+            catch (OperationCanceledException) { }
             catch (Exception e)
             {
                 SVNLogBridge.LogErrorToOutput($"[SVN] Błąd podczas odświeżania: {e.Message}");
@@ -940,16 +966,23 @@ namespace SVN.Core
 
         public async Task RefreshModifiedInternal()
         {
-            ClearSVNTreeView();
+            // === FIX (miganie tekstu): pokaż "Refreshing..." TYLKO gdy drzewo
+            // jest puste (brak cache). Gdy drzewo już jest widoczne, tekst
+            // "Refreshing..." renderowałby się NA WIERZCHU plików (TreeDisplay
+            // i drzewo dzielą obszar UI). ExecuteRefreshWithAutoExpand ma ten
+            // sam guard dla "Scanning..." — tutaj brakowało go dla "Refreshing...".
+            bool hasCache = _flatTreeData != null && _flatTreeData.Count > 0;
 
-            RunOnMainThread(() =>
+            if (!hasCache)
             {
-                // === FIX: bezpośrednio (jeden hop)
-                if (svnUI.TreeDisplay != null)
-                    svnUI.TreeDisplay.text = "Refreshing...";
-                if (svnUI.CommitTreeDisplay != null)
-                    svnUI.CommitTreeDisplay.text = "Refreshing...";
-            });
+                RunOnMainThread(() =>
+                {
+                    if (svnUI.TreeDisplay != null)
+                        svnUI.TreeDisplay.text = "Refreshing...";
+                    if (svnUI.CommitTreeDisplay != null)
+                        svnUI.CommitTreeDisplay.text = "Refreshing...";
+                });
+            }
 
             _isCurrentViewIgnored = false;
             await ExecuteRefreshWithAutoExpand(force: true);
@@ -960,7 +993,6 @@ namespace SVN.Core
             int myId = Interlocked.Increment(ref _activeRefreshId);
 
             var newCts = new CancellationTokenSource();
-            // === FIX: SVNShared zamiast inline kopii
             SVNShared.CancelAndDisposeLater(Interlocked.Exchange(ref _cts, newCts));
             CancellationToken token = newCts.Token;
 
@@ -982,8 +1014,16 @@ namespace SVN.Core
                     }
                 }
 
-                // === FIX: teksty "Scanning..." + czyszczenie widoku — JEDNA akcja
-                WriteTreeStatus(myId, "Scanning local changes...", "Refreshing commit list...", clearTreeViews: true);
+                // === FIX (miganie): jeśli mamy już drzewo (hasCache), nie
+                // czyścimy widoku i nie pokazujemy "Scanning..." — user nie
+                // widzi migotania. Tekst pojawia się tylko przy pierwszym
+                // załadowaniu.
+                bool hasCache = _flatTreeData != null && _flatTreeData.Count > 0;
+                WriteTreeStatus(
+                    myId,
+                    hasCache ? null : "Scanning local changes...",
+                    hasCache ? null : "Refreshing commit list...",
+                    clearTreeViews: !hasCache);
 
                 await Task.Yield();
                 token.ThrowIfCancellationRequested();
@@ -993,7 +1033,6 @@ namespace SVN.Core
                 Dictionary<string, SVNLockDetails> lockDict = null;
                 HashSet<string> protectedPaths = null;
 
-                // === FIX B: konwersja do formatu czytanego przez managera
                 Dictionary<string, (string status, string size)> legacyStatusDict = null;
 
                 await Task.Run(async () =>
@@ -1069,23 +1108,37 @@ namespace SVN.Core
                 var localCommitData = newCommitData;
                 var localTotalBytes = buildResult.TotalBytes;
 
+                // === FIX (miganie): fingerprint liczony POZA main thread.
+                string newFingerprint = BuildFlatTreeFingerprint(localFlatData);
+
                 RunOnMainThread(() =>
                 {
                     if (Volatile.Read(ref _activeRefreshId) != myId) return;
                     if (svnManager.WorkingDir != expectedWorkingDir) return;
 
+                    if (svnUI.TreeDisplay != null) svnUI.TreeDisplay.text = "";
+                    if (svnUI.CommitTreeDisplay != null) svnUI.CommitTreeDisplay.text = "";
+
                     if (legacyStatusDict != null)
                         svnManager.SetCurrentStatus(legacyStatusDict);
+
+                    // === FIX (miganie): pomiń re-render gdy dane logicznie identyczne.
+                    if (newFingerprint == _lastFlatTreeFingerprint &&
+                        _flatTreeData != null && _flatTreeData.Count > 0)
+                    {
+                        _flatTreeData = localFlatData;
+                        _commitTreeData = localCommitData;
+                        totalCommitBytes = localTotalBytes;
+
+                        UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
+                        return;
+                    }
+
+                    _lastFlatTreeFingerprint = newFingerprint;
 
                     _flatTreeData = localFlatData;
                     _commitTreeData = localCommitData;
                     totalCommitBytes = localTotalBytes;
-
-                    // === FIX (invariant, ATOMOWO)
-                    if (svnUI.TreeDisplay != null)
-                        svnUI.TreeDisplay.text = "";
-                    if (svnUI.CommitTreeDisplay != null)
-                        svnUI.CommitTreeDisplay.text = "";
 
                     if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
                     {
@@ -1134,32 +1187,25 @@ namespace SVN.Core
             svnUI.SvnTreeView?.ClearView();
             svnUI.SVNCommitTreeDisplay?.ClearView();
 
-            // === FIX B: pusty status ≠ ostatni status
             svnManager.SetCurrentStatus(new Dictionary<string, (string status, string size)>());
 
-            // === FIX: bezpośrednio — atomowo z ClearView
             if (svnUI.TreeDisplay != null)
                 svnUI.TreeDisplay.text = "<i>No changes detected.</i>";
             if (svnUI.CommitTreeDisplay != null)
                 svnUI.CommitTreeDisplay.text = "<i>Nothing to commit.</i>";
 
+            _lastFlatTreeFingerprint = null;
+
             UpdateAllStatisticsUI(new SvnStats(), _isCurrentViewIgnored);
 
-            // === DIAG: log przy KAŻDYM empty-state. Jeśli w logu sesji pojawi się
-            // BEZ poprzedzającego "Status updated successfully." — to znaczy że
-            // refresh został skasowany przez inny i sam nie doszedł do końca
-            // (objaw race na starcie). Pomaga odróżnić "svn status zwrócił 0 zmian"
-            // (poprawne, WC czyste) od "refresh nie doszedł do końca" (bug).
             SVNLogBridge.LogToOutput(
                 $"<color={SVNColors.Dim}>[SVN] Empty state at {DateTime.Now:HH:mm:ss.fff} (refreshId={Volatile.Read(ref _activeRefreshId)})</color>");
         }
 
         public void RefreshVisibleUIOnly()
         {
-            // === FIX: heal BEZ guardu IsProcessing
             HealTreeStatusTextsOnRender();
 
-            // === FIX: nie startuj coroutine na nieaktywnym TreeContent
             if (svnUI.SvnTreeView != null &&
                 svnUI.SvnTreeView.gameObject.activeInHierarchy)
             {
@@ -1169,7 +1215,6 @@ namespace SVN.Core
             bool commitPanelVisible = svnUI.SVNCommitTreeDisplay != null &&
                                       svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
 
-            // === FIX: null-guard — _commitTreeData bywa null (widok ignored)
             if (commitPanelVisible && _commitTreeData != null)
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
         }
@@ -1185,6 +1230,8 @@ namespace SVN.Core
                     svnManager.CurrentStatusDict.Clear();
 
                 totalCommitBytes = 0;
+
+                _lastFlatTreeFingerprint = null;
             });
         }
 
@@ -1194,6 +1241,8 @@ namespace SVN.Core
             {
                 foreach (var svnTreeView in svnUI.SVNTreeViews)
                     svnTreeView.ClearView();
+
+                _lastFlatTreeFingerprint = null;
             });
         }
 
@@ -1217,7 +1266,6 @@ namespace SVN.Core
                         case "C": stats.ConflictsCount++; break;
                         case "R": stats.ReplacedCount++; break;
                         case "~": stats.ObstructedCount++; break;
-                        // === FIX (spójność ze drzewem): M na folderze = zmiana property
                         case "M": stats.ModifiedCount++; break;
                     }
                     continue;
@@ -1364,7 +1412,6 @@ namespace SVN.Core
                         fileSize = FormatSize(bytes);
                     }
 
-                    // === FIX (restore vs whitelist)
                     bool isCommitableStatus = displayStatus == "M" ||
                                               displayStatus == "A" ||
                                               displayStatus == "?" ||
@@ -1377,7 +1424,6 @@ namespace SVN.Core
                     if (isCommitableStatus && previousSelectionStates.TryGetValue(currentPath, out bool prev))
                         isChecked = prev;
 
-                    // === FIX (spójność sumy)
                     if (isChecked && !isActuallyFolder && isLastPart)
                         localTotalBytes += bytes;
 
@@ -1553,7 +1599,7 @@ namespace SVN.Core
         public async void ShowOnlyIgnored()
         {
             try { await RefreshIgnoredInternal(); }
-            catch (OperationCanceledException) { }   // === FIX: OCE ≠ błąd
+            catch (OperationCanceledException) { }
             catch (Exception e)
             {
                 SVNLogBridge.LogErrorToOutput($"[SVN] Błąd podczas odświeżania widoku ignored: {e.Message}");
@@ -1600,6 +1646,8 @@ namespace SVN.Core
                         _commitTreeData = null;
                         _isCurrentViewIgnored = true;
 
+                        _lastFlatTreeFingerprint = null;
+
                         svnUI.SvnTreeView?.ClearView();
                         svnUI.SVNCommitTreeDisplay?.ClearView();
 
@@ -1637,19 +1685,33 @@ namespace SVN.Core
 
                 var stats = CalculateIgnoredStats(ignoredDict);
 
+                string newFingerprint = BuildFlatTreeFingerprint(localFlatData);
+
                 RunOnMainThread(() =>
                 {
                     if (Volatile.Read(ref _activeRefreshId) != myId) return;
                     if (svnManager.WorkingDir != expectedWorkingDir) return;
 
+                    if (svnUI.TreeDisplay != null)
+                        svnUI.TreeDisplay.text = "";
+
+                    if (newFingerprint == _lastFlatTreeFingerprint &&
+                        _flatTreeData != null && _flatTreeData.Count > 0)
+                    {
+                        _flatTreeData = localFlatData;
+                        _commitTreeData = null;
+                        totalCommitBytes = 0;
+                        _isCurrentViewIgnored = true;
+                        UpdateAllStatisticsUI(stats, isIgnoredView: true);
+                        return;
+                    }
+
+                    _lastFlatTreeFingerprint = newFingerprint;
+
                     _flatTreeData = localFlatData;
                     _commitTreeData = null;
                     totalCommitBytes = 0;
                     _isCurrentViewIgnored = true;
-
-                    // === FIX (invariant, ATOMOWO)
-                    if (svnUI.TreeDisplay != null)
-                        svnUI.TreeDisplay.text = "";
 
                     if (svnUI.SvnTreeView != null &&
                         svnUI.SvnTreeView.gameObject.activeInHierarchy)

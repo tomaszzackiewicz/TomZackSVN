@@ -26,11 +26,17 @@ public class ViewTabsController : MonoBehaviour
 
     public void Button_ShowRepoBrowser()
     {
+        bool wasInactive = repoBrowserPanel != null && !repoBrowserPanel.activeSelf;
+
         if (localChangesPanel != null) localChangesPanel.SetActive(false);
         if (repoBrowserPanel != null) repoBrowserPanel.SetActive(true);
 
         SetButtonTextColor(tabLocalBtn, Color.black);
         SetButtonTextColor(tabRepoBtn, Color.white);
+
+        // Ładuj drzewo dopiero przy PIERWSZYM wejściu na zakładkę.
+        if (wasInactive)
+            SVN.Core.SVNRepoBrowser.NotifyTabOpened();
     }
 
     private void SetButtonTextColor(Button btn, Color color)

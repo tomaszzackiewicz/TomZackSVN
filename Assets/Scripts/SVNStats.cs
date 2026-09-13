@@ -26,7 +26,7 @@ namespace SVN.Core
         {
             if (isIgnoredView)
             {
-                return $"<color=#666666><b>VIEW: IGNORED</b></color> | Total Ignored: <color=#FFFFFF>{IgnoredCount}</color>";
+                return $"<color={SVNColors.Dim}><b>VIEW: IGNORED</b></color> | Total Ignored: <color=#FFFFFF>{IgnoredCount}</color>";
             }
 
             string lockStats = "";

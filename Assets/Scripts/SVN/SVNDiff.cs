@@ -13,11 +13,7 @@ namespace SVN.Core
 {
     public class SVNDiff : SVNBase, IDisposable
     {
-        // Brak timeoutu — wisząca operacja wisi bezterminowo.
-        private const int DiffTimeoutSeconds = 60;
-
-        // Podgląd UI ZAWSZE okrojony (ShowPreviewInUnity wpuszczał megabajtowe
-        // stringi do TMP). Pełny diff: plik .diff / tool zewnętrzny.
+        private const int DiffTimeoutSeconds = 120;
         private const int MaxPreviewLines = 500;
 
         private static readonly Regex DiffSectionRegex = new Regex(@"@@ -(\d+),?\d* \+(\d+),?\d* @@", RegexOptions.Compiled);
@@ -61,7 +57,6 @@ namespace SVN.Core
 
         private void SafeFireAndForget(Func<Task> operation) => _ = FireAndForget(operation);
 
-        // ODE loguje rdzeń — safety-net bez dublowania komunikatów.
         private async Task FireAndForget(Func<Task> operation)
         {
             try { await operation().ConfigureAwait(false); }
@@ -69,7 +64,26 @@ namespace SVN.Core
             catch (Exception ex) { PostLog($"<color=#FFAA00>Unhandled:</color> {ex.Message}"); }
         }
 
-        // Snapshot WSZYSTKICH pól UI na main threadzie.
+        // === FIX (clear): czyści dedykowany panel diffa przed nowym runem.
+        // Nie dotyka LogText (główny log) — tylko DiffConsoleText i
+        // CommitConsoleContent, które są zarezerwowane na podgląd diffa.
+        // Bez tego kolejny diff appendował się do poprzedniego raportu.
+        private void ClearDiffPanel()
+        {
+            PostToMainThread(() =>
+            {
+                try
+                {
+                    if (svnUI?.DiffConsoleText != null)
+                        svnUI.DiffConsoleText.text = string.Empty;
+
+                    if (svnUI?.CommitConsoleContent != null)
+                        svnUI.CommitConsoleContent.text = string.Empty;
+                }
+                catch { }
+            });
+        }
+
         public void ExecuteDiff()
         {
             string relativePath = svnUI?.DiffTargetFileInput?.text?.Trim();
@@ -132,14 +146,10 @@ namespace SVN.Core
             });
         }
 
-        // JEDEN rdzeń z guardem dla WSZYSTKICH wejść (ShowDiff/ShowPreview/
-        // kliknięcia w drzewo chodziły bez guardu → równoległe diffy).
         private async Task RunDiffAsync(string relativePath, bool openExternal, string uiDiffToolPath)
         {
             if (!TryEnterProcessing())
             {
-                // duch dawnego "newest wins" — przerywamy bieżącą, kolejna próba
-                // po chwili wejdzie.
                 PostLog("<color=yellow>Diff already in progress – cancelling it. Try again in a moment.</color>");
                 CancelOperation();
                 return;
@@ -173,6 +183,11 @@ namespace SVN.Core
                     PostLog("<color=yellow>No file selected.</color>");
                     return;
                 }
+
+                // === FIX (clear): panel czyszczony PO walidacji ścieżki, ale
+                // PRZED komunikatem "Comparing:". Dzięki temu błędne wywołania
+                // (pusta ścieżka, zła ścieżka) nie kasują poprzedniego raportu.
+                ClearDiffPanel();
 
                 await svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
                 await ShowDiffInternal(safePath, openExternal, cts.Token, uiDiffToolPath).ConfigureAwait(false);
@@ -236,8 +251,6 @@ namespace SVN.Core
                 return;
             }
 
-            // Split RAZ (wcześniej 3x: stats + 2 formatery, każde z własnym
-            // Replace+Replace+Split).
             string[] lines = SplitLines(diffContent);
 
             (int added, int removed) = CountDiffStats(lines);
@@ -254,20 +267,18 @@ namespace SVN.Core
                         string fileName = Path.GetFileName(safePath);
                         string tempBasePath = Path.Combine(SVNPrefs.TemporaryCachePath, $"svn_base_{Guid.NewGuid():N}_{fileName}");
 
-                        // BASE przez strumień bajtów — bez dekodowania kodowania
-                        // i przepisywania końców linii.
                         var (catExit, catError) = await SvnRunner.RunToFileAsync(
-                            $"cat \"{SVNShared.EscapeSvnArg(safePath)}\"",
+                            $"cat -r BASE \"{SVNShared.EscapeSvnArg(safePath)}\"",
                             root, tempBasePath, token).ConfigureAwait(false);
 
                         if (catExit == 0)
                         {
-                            // pusty BASE = plik początkowo pusty — tool pokaże
-                            // całość jako dodaną
                             string workingCopyPath = Path.GetFullPath(fullPath);
                             bool isTortoise = diffToolPath.IndexOf("TortoiseMerge", StringComparison.OrdinalIgnoreCase) >= 0;
+
                             string processArgs = isTortoise
-                                ? $"/base:\"{tempBasePath}\" /mine:\"{workingCopyPath}\""
+                                ? $"/base:\"{tempBasePath}\" /mine:\"{workingCopyPath}\" " +
+                                  $"/basename:\"{fileName} (BASE)\" /minename:\"{fileName} (Working)\""
                                 : $"\"{tempBasePath}\" \"{workingCopyPath}\"";
 
                             PostToMainThread(() =>
@@ -295,12 +306,9 @@ namespace SVN.Core
                     {
                         PostLog($"<color=#FFAA00>External tool error:</color> {ex.Message}. Falling back to text.");
                     }
-                    // brak BASE / błąd toola → podgląd tekstowy
                 }
             }
 
-            // Truncation podglądu liczona W TRAKCIE formatowania — działa też
-            // dla ShowPreviewInUnity.
             string formatted = FormatDiffForUnity(diffContent, lines, MaxPreviewLines);
             string previewSnapshot = formatted;
 
@@ -335,7 +343,6 @@ namespace SVN.Core
             }
         }
 
-        // Fallback na pole UI TYLKO ze snapshotu z main threadu.
         private string ResolveDiffToolPath(string uiSnapshot)
         {
             string path = svnManager?.DiffToolPath;
@@ -348,8 +355,9 @@ namespace SVN.Core
             return path ?? "";
         }
 
-        // Jedna pętla zamiast dwóch + wbudowany limit podglądu — statystyki
-        // liczone po WSZYSTKICH liniach, emitowane tylko do limitu.
+        // ===================================================================
+        //  FormatDiffForUnity — podgląd w TMP (layout z separami │)
+        // ===================================================================
         private string FormatDiffForUnity(string rawDiff, string[] lines, int maxLines)
         {
             var sb = new StringBuilder(Math.Max(512, rawDiff.Length));
@@ -360,9 +368,11 @@ namespace SVN.Core
             bool truncated = false;
             int emitted = 0;
 
-            const string colNum = "#FFFFFF", colRem = "#800020", colAdd = "#6AFF9E", colInfo = "#FFD800";
+            const string colNum = "#FFFFFF", colRem = "#800020", colAdd = "#6AFF9E",
+                         colInfo = "#FFD800", colLegend = "#7A8A9E", colSep = "#4A5A6E";
             const int wNum = 8;
-            const string monoStart = "<mspace=0.6em>", monoEnd = "</mspace>", gap = "  ";
+            const string monoStart = "<mspace=0.6em>", monoEnd = "</mspace>";
+            const string sepText = "  │  ";
 
             bool Emit()
             {
@@ -371,10 +381,23 @@ namespace SVN.Core
                 return true;
             }
 
+            string BuildPrefix(string oldText, string newText, string opText, string opColor)
+            {
+                return monoStart
+                    + "<color=" + colNum + ">" + oldText.PadLeft(wNum) + "</color>"
+                    + "<color=" + colSep + ">" + sepText + "</color>"
+                    + "<color=" + colNum + ">" + newText.PadLeft(wNum) + "</color>"
+                    + "<color=" + colSep + ">" + sepText + "</color>"
+                    + "<color=" + opColor + ">" + opText.PadRight(3) + "</color>"
+                    + "<color=" + colSep + ">" + sepText + "</color>"
+                    + monoEnd;
+            }
+
+            string columnLegend = BuildPrefix("OLD", "NEW", "OP", colLegend)
+                + $"<color={colLegend}>CONTENT</color>";
+
             foreach (string raw in lines)
             {
-                // nagłówki ---/+++ tylko przed pierwszą sekcją; po niej "--- "
-                // to treść usuniętej linii
                 if (!hasSection)
                 {
                     if (raw.StartsWith("--- ")) { fileOld = raw.Substring(4).Trim(); continue; }
@@ -382,7 +405,7 @@ namespace SVN.Core
                 }
 
                 string line = raw.Replace("\t", "    ");
-                if (line.IndexOf('<') >= 0 || line.IndexOf('>') >= 0)   // escape tylko gdy trzeba
+                if (line.IndexOf('<') >= 0 || line.IndexOf('>') >= 0)
                     line = line.Replace("<", "<noparse><</noparse>").Replace(">", "<noparse>></noparse>");
 
                 if (line.StartsWith("@@"))
@@ -393,18 +416,22 @@ namespace SVN.Core
                     continue;
                 }
 
-                if (!hasSection) continue;
+                if (line.StartsWith("\\"))
+                {
+                    if (Emit())
+                        sb.Append(BuildPrefix("", "", "", colInfo))
+                          .Append("<color=").Append(colInfo).Append(">\\ No newline at end of file</color>")
+                          .AppendLine();
+                    continue;
+                }
 
-                string sOld = oldLine.ToString().PadLeft(wNum);
-                string sNew = newLine.ToString().PadLeft(wNum);
+                if (!hasSection) continue;
 
                 if (line.StartsWith("-"))
                 {
                     removed++;
                     if (Emit())
-                        sb.Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sOld).Append("</color>").Append(monoEnd).Append(gap)
-                          .Append(monoStart).Append(new string(' ', wNum)).Append(monoEnd).Append(gap)
-                          .Append("<color=").Append(colRem).Append(">-</color>").Append(gap)
+                        sb.Append(BuildPrefix(oldLine.ToString(), "", "-", colRem))
                           .Append("<color=").Append(colRem).Append('>').Append(line.Substring(1)).AppendLine("</color>");
                     oldLine++;
                 }
@@ -412,9 +439,7 @@ namespace SVN.Core
                 {
                     added++;
                     if (Emit())
-                        sb.Append(monoStart).Append(new string(' ', wNum)).Append(monoEnd).Append(gap)
-                          .Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sNew).Append("</color>").Append(monoEnd).Append(gap)
-                          .Append("<color=").Append(colAdd).Append(">+</color>").Append(gap)
+                        sb.Append(BuildPrefix("", newLine.ToString(), "+", colAdd))
                           .Append("<color=").Append(colAdd).Append('>').Append(line.Substring(1)).AppendLine("</color>");
                     newLine++;
                 }
@@ -422,9 +447,8 @@ namespace SVN.Core
                 {
                     unchanged++;
                     if (Emit())
-                        sb.Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sOld).Append("</color>").Append(monoEnd).Append(gap)
-                          .Append(monoStart).Append("<color=").Append(colNum).Append('>').Append(sNew).Append("</color>").Append(monoEnd).Append(gap)
-                          .Append("   ").Append(gap).AppendLine(line.Length > 0 ? line.Substring(1) : "");
+                        sb.Append(BuildPrefix(oldLine.ToString(), newLine.ToString(), "", colNum))
+                          .AppendLine(line.Length > 0 ? line.Substring(1) : "");
                     oldLine++;
                     newLine++;
                 }
@@ -435,18 +459,23 @@ namespace SVN.Core
 
             var header = new StringBuilder(512);
             header.AppendLine("<color=#00D0FF><b>DIFF SUMMARY</b></color>")
-                .AppendLine("<color=#DDDDDD>Original file:</color> " + fileOld)
-                .AppendLine("<color=#DDDDDD>Modified file:</color> " + fileNew)
+                .AppendLine("<color=#DDDDDD>Original file:</color> " + EscapeForTMP(fileOld))
+                .AppendLine("<color=#DDDDDD>Modified file:</color> " + EscapeForTMP(fileNew))
                 .AppendLine()
                 .AppendLine("<color=#6AFF9E>Added lines:</color> " + added)
                 .AppendLine("<color=#800020>Removed lines:</color> " + removed)
                 .AppendLine("<color=#FFFFFF>Unchanged lines:</color> " + unchanged)
                 .AppendLine("<color=#FFD800>Total changes:</color> " + (added + removed))
-                .AppendLine("\n────────────────────────────────────────\n");
+                .AppendLine("\n────────────────────────────────────────")
+                .AppendLine(columnLegend)
+                .AppendLine("────────────────────────────────────────\n");
 
             return header.ToString() + sb.ToString();
         }
 
+        // ===================================================================
+        //  FormatDiffForExternalEditor — raport .diff
+        // ===================================================================
         private string FormatDiffForExternalEditor(string rawDiff, string[] lines)
         {
             var sb = new StringBuilder(rawDiff.Length * 2);
@@ -456,13 +485,22 @@ namespace SVN.Core
 
             string ExtractVersion(string line) { int idx = line.LastIndexOf('('); return idx >= 0 ? line.Substring(idx).Trim() : line; }
 
+            bool inHunk = false;
             foreach (string raw in lines)
             {
-                if (raw.StartsWith("Index: ")) indexFile = raw.Substring(7);
-                else if (raw.StartsWith("--- ")) rev1 = ExtractVersion(raw);
-                else if (raw.StartsWith("+++ ")) rev2 = ExtractVersion(raw);
-                else if (raw.StartsWith("+") && !raw.StartsWith("+++")) added++;
-                else if (raw.StartsWith("-") && !raw.StartsWith("---")) removed++;
+                if (raw.Length == 0) continue;
+                if (raw.StartsWith("Index: ")) { indexFile = raw.Substring(7); inHunk = false; continue; }
+                if (raw.StartsWith("===")) continue;
+                if (raw.StartsWith("@@") || raw.StartsWith("##")) { inHunk = true; continue; }
+                if (raw.StartsWith(@"\ No newline")) continue;
+                if (!inHunk)
+                {
+                    if (raw.StartsWith("--- ")) { rev1 = ExtractVersion(raw); continue; }
+                    if (raw.StartsWith("+++ ")) { rev2 = ExtractVersion(raw); continue; }
+                }
+                char c = raw[0];
+                if (c == '+') added++;
+                else if (c == '-') removed++;
             }
 
             int boxWidth = 72; string hLine = new string('═', boxWidth);
@@ -485,21 +523,44 @@ namespace SVN.Core
             sb.AppendLine($"  {"OLD LINE",-7} {colSep} {"NEW LINE",-7} {colSep} {"OP",-3} {colSep} CODE CONTENT");
             sb.AppendLine(rowEdge);
 
+            inHunk = false;
             foreach (string raw in lines)
             {
-                if (raw.StartsWith("Index:") || raw.StartsWith("===") || raw.StartsWith("---") || raw.StartsWith("+++")) continue;
-                if (raw.StartsWith(@"\ No newline")) { sb.AppendLine($"  {"",-7} {colSep} {"",-7} {colSep} {"\\",-3} {colSep} \\ No newline at end of file"); continue; }
+                if (raw.Length == 0) continue;
+                if (raw.StartsWith("Index:")) { inHunk = false; continue; }
+                if (raw.StartsWith("===")) continue;
+
                 if (raw.StartsWith("@@"))
                 {
+                    inHunk = true;
                     var match = DiffSectionRegex.Match(raw);
                     if (match.Success) { int.TryParse(match.Groups[1].Value, out oldLine); int.TryParse(match.Groups[2].Value, out newLine); }
                     sb.AppendLine($"\n  ◄ BLOCK START: Changes starting near line {newLine} ►\n{rowEdge}");
                     continue;
                 }
-                string sOld = oldLine.ToString().PadLeft(7); string sNew = newLine.ToString().PadLeft(7);
+
+                if (raw.StartsWith(@"\ No newline"))
+                {
+                    sb.AppendLine($"  {"",-7} {colSep} {"",-7} {colSep} {"",-3} {colSep} {raw}");
+                    continue;
+                }
+
+                if (!inHunk)
+                {
+                    if (raw.StartsWith("--- ")) continue;
+                    if (raw.StartsWith("+++ ")) continue;
+                }
+
+                string sOld = oldLine.ToString().PadLeft(7);
+                string sNew = newLine.ToString().PadLeft(7);
                 if (raw.StartsWith("-")) { sb.AppendLine($"  {sOld} {colSep} {"",-7} {colSep} {"-",3} {colSep} {raw.Substring(1)}"); oldLine++; }
                 else if (raw.StartsWith("+")) { sb.AppendLine($"  {"",-7} {colSep} {sNew} {colSep} {"+",3} {colSep} {raw.Substring(1)}"); newLine++; }
-                else { sb.AppendLine($"  {sOld} {colSep} {sNew} {colSep} {"",-3} {colSep} {(raw.Length > 0 ? raw.Substring(1) : "")}"); if (raw.Length > 0) { oldLine++; newLine++; } }
+                else
+                {
+                    sb.AppendLine($"  {sOld} {colSep} {sNew} {colSep} {"",-3} {colSep} {(raw.Length > 0 ? raw.Substring(1) : "")}");
+                    oldLine++;
+                    newLine++;
+                }
             }
             sb.AppendLine(rowEdge);
             return sb.ToString();
@@ -508,12 +569,18 @@ namespace SVN.Core
         private static (int added, int removed) CountDiffStats(string[] lines)
         {
             int added = 0, removed = 0;
+            bool inHunk = false;
             foreach (string line in lines)
             {
                 if (line.Length == 0) continue;
+                if (line.StartsWith("Index:")) { inHunk = false; continue; }
+                if (line.StartsWith("===")) continue;
+                if (line.StartsWith("@@") || line.StartsWith("##")) { inHunk = true; continue; }
+                if (line.StartsWith(@"\ No newline")) continue;
+                if (!inHunk) continue;
                 char c = line[0];
-                if (c == '+' && !line.StartsWith("+++")) added++;
-                else if (c == '-' && !line.StartsWith("---")) removed++;
+                if (c == '+') added++;
+                else if (c == '-') removed++;
             }
             return (added, removed);
         }
@@ -530,6 +597,13 @@ namespace SVN.Core
         {
             if (string.IsNullOrEmpty(text)) return Array.Empty<string>();
             return text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        }
+
+        private static string EscapeForTMP(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s ?? "";
+            if (s.IndexOf('<') < 0 && s.IndexOf('>') < 0) return s;
+            return s.Replace("<", "<noparse><</noparse>").Replace(">", "<noparse>></noparse>");
         }
     }
 }

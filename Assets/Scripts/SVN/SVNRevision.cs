@@ -358,31 +358,43 @@ namespace SVN.Core
             }
 
             float now = Time.time;
-
-            var dirty = await svnManager.GetWorkingCopyDirtyStateAsync(svnManager.WorkingDir);
-
-            if (dirty.IsBlockingDirty)
-            {
-                ClearLogPanel();
-                LogHeader($"UPDATE TO REVISION r{rev} ABORTED");
-                LogWarning("Cannot update - uncommitted versioned changes present.");
-                if (dirty.ConflictedCount > 0)
-                    LogDetail($"Conflicts: {dirty.ConflictedCount}");
-                LogInfoBox(new[]
-                {
-                    "Options:",
-                    "  1. Commit your changes first",
-                    "  2. Use Revert All to discard them"
-                });
-                LogEnd(false);
-                return;
-            }
-
             float timeSinceLastClick = now - _lastUpdateToRevClickTime;
 
+            // === FIX (UX, bug): rozpoznaj double-click PIERWSZY, wykonaj dirty-check
+            // DOPIERO w branchu potwierdzonym.
+            //
+            // Wcześniej: `GetWorkingCopyDirtyStateAsync` (pełny `svn status` — na
+            // WC 17 GB to ~40 s) odpalał się PRZED sprawdzeniem double-clicka.
+            // Efekt: pierwszy klik wisiał 40 s bez feedbacku, potem user dostawał
+            // prompt "click again", klikał — i czekał kolejne 40 s. Total ~80 s
+            // + wyglądało jak zawieszenie apki.
+            //
+            // Teraz: pierwszy klik = natychmiastowy prompt (0 ms). Drugi klik =
+            // dirty-check + start update'u. Total ~40 s zamiast 80 s.
             if (timeSinceLastClick < DoubleClickThreshold && _pendingRevision == rev)
             {
                 _pendingRevision = null;
+
+                // === Dirty check dopiero teraz — user potwierdził zamiar.
+                var dirty = await svnManager.GetWorkingCopyDirtyStateAsync(svnManager.WorkingDir);
+
+                if (dirty.IsBlockingDirty)
+                {
+                    ClearLogPanel();
+                    LogHeader($"UPDATE TO REVISION r{rev} ABORTED");
+                    LogWarning("Cannot update - uncommitted versioned changes present.");
+                    if (dirty.ConflictedCount > 0)
+                        LogDetail($"Conflicts: {dirty.ConflictedCount}");
+                    LogInfoBox(new[]
+                    {
+                        "Options:",
+                        "  1. Commit your changes first",
+                        "  2. Use Revert All to discard them"
+                    });
+                    LogEnd(false);
+                    return;
+                }
+
                 ClearLogPanel();
                 LogHeader($"UPDATE TO REVISION r{rev}");
                 if (dirty.UnversionedCount > 0)

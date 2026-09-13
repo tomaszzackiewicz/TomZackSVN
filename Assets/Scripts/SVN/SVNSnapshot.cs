@@ -165,7 +165,18 @@ namespace SVN.Core
             }
         }
 
-        private async Task<bool> CreateSnapshotAsync(string reason = null, bool unversionedOnly = false)
+        // ===================================================================
+        //  PUBLICZNY ENTRY POINT DLA SVNRepoRepair
+        //  Ciche utworzenie snapshotu przed destrukcyjną operacją (repair).
+        //  Restore pozostaje manualny (ExecuteRestoreSnapshot z UI).
+        // ===================================================================
+        public Task<bool> CreateSnapshotForRepairAsync(string reason = "Pre-Repair")
+        {
+            return CreateSnapshotAsync(reason, unversionedOnly: false);
+        }
+
+        // === ZMIENIONO NA public — wywoływane przez SVNRepoRepair ===
+        public async Task<bool> CreateSnapshotAsync(string reason = null, bool unversionedOnly = false)
         {
             if (!TryEnterProcessing())
             {
@@ -185,6 +196,17 @@ namespace SVN.Core
                 if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                 {
                     PostUI(() => SVNLogBridge.LogLine("<color=#FF9900>[Snapshot] Invalid working directory.</color>"));
+                    return false;
+                }
+
+                // === FIX: brak .svn/wc.db = nie ma working copy = svn status/diff
+                // zwrócą E155007. Zwracamy false BEZ wyjątku — repair i tak idzie
+                // dalej bez siatki.
+                string wcDbPath = Path.Combine(root, ".svn", "wc.db");
+                if (!File.Exists(wcDbPath))
+                {
+                    PostUI(() => SVNLogBridge.LogLine(
+                        "<color=#FFAA00>[Snapshot] Working copy has no .svn (already removed or never existed) — snapshot skipped.</color>"));
                     return false;
                 }
 

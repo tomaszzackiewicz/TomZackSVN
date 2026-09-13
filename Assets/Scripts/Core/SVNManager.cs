@@ -86,6 +86,144 @@ namespace SVN.Core
         public string BlameToolPath { get; set; } = string.Empty;
         public string SshOptions { get => sshOptions; set => sshOptions = value; }
 
+        // ===================================================================
+        //  MARKER: przerwany update (persistent, per working dir)
+        //
+        //  Po restarcie apki user musi wiedzieć, że WC jest w mixed revision
+        //  i wymaga dokończenia. Marker żyje w PlayerPrefs pod kluczem
+        //  znormalizowanego workingDir.
+        // ===================================================================
+
+        /// <summary>
+        /// Powód ostatniego przerwanego update (jeśli jest). Ustawiane przez
+        /// LoadProjectCore przy ładowaniu projektu. Null gdy brak markera.
+        /// </summary>
+        public string UpdateInterruptedReason { get; private set; }
+
+        private static string UpdateInterruptedKey(string workingDir)
+        {
+            string norm = (workingDir ?? "").Replace('\\', '/').TrimEnd('/').ToLowerInvariant();
+            return "SVN_UpdateMarker_" + norm;
+        }
+
+        /// <summary>
+        /// Zapisz stan PRZED startem update. Payload zawiera pre-update rewizję
+        /// WC — potrzebną do renderu przy interrupted (svn client może częściowo
+        /// bumpnąć wc.db w trakcie transferu, więc svn info po cancelu zwraca
+        /// nowszą rev niż faktyczny stan WC).
+        /// </summary>
+        public void MarkUpdateRunning()
+        {
+            if (string.IsNullOrWhiteSpace(WorkingDir)) return;
+            try
+            {
+                string preRev = CurrentSnapshot?.Revision ?? "";
+                PlayerPrefs.SetString(UpdateInterruptedKey(WorkingDir), "running|" + preRev);
+                PlayerPrefs.Save();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Zapisz że update zakończył się porażką / cancel.
+        /// </summary>
+        public void MarkUpdateInterrupted(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(WorkingDir)) return;
+            try
+            {
+                // Zachowaj pre-update rewizję z markera "running" (jeśli był).
+                string preRev = "";
+                string existing = PlayerPrefs.GetString(UpdateInterruptedKey(WorkingDir), "");
+                if (existing.StartsWith("running|", StringComparison.Ordinal))
+                    preRev = existing.Substring("running|".Length);
+
+                if (string.IsNullOrEmpty(preRev))
+                    preRev = CurrentSnapshot?.Revision ?? "";
+
+                string payload = "interrupted|" + DateTime.UtcNow.ToString("o") + "|" +
+                                 (reason ?? "") + "|" + preRev;
+                PlayerPrefs.SetString(UpdateInterruptedKey(WorkingDir), payload);
+                PlayerPrefs.Save();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Wyczyść marker po udanym update. Nic do dokończenia.
+        /// </summary>
+        public void ClearUpdateInterrupted()
+        {
+            if (string.IsNullOrWhiteSpace(WorkingDir)) return;
+            try
+            {
+                PlayerPrefs.DeleteKey(UpdateInterruptedKey(WorkingDir));
+                PlayerPrefs.Save();
+            }
+            catch { }
+
+            UpdateInterruptedReason = null;
+        }
+
+        /// <summary>
+        /// Zwraca powód przerwanego update. "running" z poprzedniej sesji
+        /// interpretujemy jako "interrupted" — jeśli apka działa, "running"
+        /// byłoby już zastąpione. Zwraca null gdy brak markera.
+        /// </summary>
+        public string GetUpdateInterruptedReason(string workingDir)
+        {
+            if (string.IsNullOrWhiteSpace(workingDir)) return null;
+
+            try
+            {
+                string raw = PlayerPrefs.GetString(UpdateInterruptedKey(workingDir), "");
+                if (string.IsNullOrEmpty(raw)) return null;
+
+                if (raw.StartsWith("running|", StringComparison.Ordinal))
+                    return "Poprzednia sesja została przerwana w trakcie update'u.";
+
+                if (raw.StartsWith("interrupted|", StringComparison.Ordinal))
+                {
+                    string[] parts = raw.Split('|');
+                    string reason = parts.Length >= 3 ? parts[2] : "";
+                    return string.IsNullOrWhiteSpace(reason)
+                        ? "Poprzedni update został przerwany."
+                        : reason;
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Pre-update rewizja WC zapisana razem z markerem. Używana do wyświetlenia
+        /// WŁAŚCIWEJ rev przy interrupted — svn klient mógł częściowo zaktualizować
+        /// wc.db w trakcie transferu, więc svn info zwraca 186 mimo że WC jest mixed.
+        /// </summary>
+        public string GetUpdateInterruptedPreRev(string workingDir)
+        {
+            if (string.IsNullOrWhiteSpace(workingDir)) return null;
+
+            try
+            {
+                string raw = PlayerPrefs.GetString(UpdateInterruptedKey(workingDir), "");
+                if (string.IsNullOrEmpty(raw)) return null;
+
+                if (raw.StartsWith("running|", StringComparison.Ordinal))
+                    return raw.Substring("running|".Length);
+
+                if (raw.StartsWith("interrupted|", StringComparison.Ordinal))
+                {
+                    string[] parts = raw.Split('|');
+                    return parts.Length >= 4 ? parts[3] : null;
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
         public void SetCurrentStatus(Dictionary<string, (string status, string size)> data)
         {
             CurrentStatusDict = data;
@@ -383,8 +521,6 @@ namespace SVN.Core
                 RepositoryUrl = url.Trim();
                 changed = true;
 
-                // Cache filtrów RepoBrowsera jest KLUCZOWANY URL-em — nowe repo
-                // = twarde unieważnienie (inaczej filtr zwracałby wyniki ze starego).
                 GetModule<SVNRepoBrowser>()?.InvalidatePathCache();
             }
 
@@ -514,8 +650,6 @@ namespace SVN.Core
                 CurrentProject = project;
                 WorkingDir = CleanPath(SVNAssetLocator.NormalizePath(project.workingDir));
 
-                // === FIX: URL projektu ma ZAWSZE pierwszeństwo nad tym, co
-                // ewentualnie zostało w polu. Zmiana → unieważnij cache filtrów.
                 string newRepoUrl = project.repoUrl ?? "";
                 if (!string.Equals(
                         (RepositoryUrl ?? "").TrimEnd('/'),
@@ -549,6 +683,26 @@ namespace SVN.Core
             finally
             {
                 _managerLock.ExitWrite();
+            }
+
+            // === Marker przerwanego update: sprawdź po załadowaniu projektu.
+            // Jeśli w poprzedniej sesji update padł/przerwano — user musi wiedzieć.
+            string interruptedReason = GetUpdateInterruptedReason(WorkingDir);
+            UpdateInterruptedReason = interruptedReason;
+
+            if (!string.IsNullOrEmpty(interruptedReason))
+            {
+                SVNLogBridge.LogToOutput(
+                    "<color=#FFAA00><b>[SVN]</b></color> Ostatni update tego projektu został przerwany:\n" +
+                    $"  <color=#FFAA00>{interruptedReason}</color>\n" +
+                    "  → Uruchom <b>Update</b> ponownie, żeby dokończyć (svn sam dokończy brakujące pliki).");
+
+                // Świeży snapshot z markerem — bar pokaże badge od razu.
+                if (CurrentSnapshot != null)
+                {
+                    CurrentSnapshot.UpdateInterrupted = true;
+                    CurrentSnapshot.UpdateInterruptedReason = interruptedReason;
+                }
             }
 
             // === SEKCJA 2: UI + Enqueue poza lockiem. ===
@@ -615,22 +769,6 @@ namespace SVN.Core
                 SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "<i>Loading changes...</i>", "TREE", append: false);
             });
 
-            // === FIX (race na starcie): JEDNA, wyczekana ścieżka odświeżania.
-            //
-            // Wcześniej w tej metodzie odpalały się RÓWNOLEGLE trzy źródła refreshu:
-            //   (1) fire-and-forget RefreshStatusAsync()
-            //   (2) safety-net Task.Run po 1200 ms → force refresh jeśli pusto
-            //   (3) ewentualny OnApplicationFocus z managera
-            // Plus `RefreshStatus` ma `if (IsProcessing && !force) return;` — jeśli
-            // (3) albo inna operacja SVN ustawiła IsProcessing w oknie startu, (1)
-            // wychodziło wcześnie bez danych; safety-net (2) też mógł trafić w okno
-            // gdy `statusModule.IsProcessing == true` i też się wycofywał. Wynik:
-            // drzewo puste mimo że `svn status` działa poprawnie.
-            //
-            // Teraz: JEDEN `RefreshStatus(force: true)`, który czekamy do końca.
-            // Force omija guard `IsProcessing` — refresh i tak jest serializowany
-            // przez `_svnLock` w SvnRunner, więc nie koliduje z żadnym innym
-            // `svn`-em. Metoda i tak chodzi w background Task, więc nie blokuje UI.
             try
             {
                 await RefreshStatus(force: true);
@@ -642,10 +780,6 @@ namespace SVN.Core
 
             if (this == null) return;
 
-            // === Safety net NADAL potrzebny, ale TYLKO na przypadek gdy initial
-            // refresh zwrócił pusto z powodu błędu SVN (np. sieć padła na 2 s).
-            // Sprawdzamy `_activeRefreshId` żeby nie kolidować z innymi refreshami
-            // — jeśli inny refresh jest w locie, po prostu go zostawiamy.
             _ = Task.Run(async () =>
             {
                 try
@@ -673,15 +807,15 @@ namespace SVN.Core
                 }
             });
 
-            var repoBrowser = GetModule<SVNRepoBrowser>();
-            if (repoBrowser != null)
-            {
-                _ = repoBrowser.LoadInitialTreeAsync().ContinueWith(t =>
-                {
-                    if (t.IsFaulted)
-                        SVNLogBridge.LogError($"[Init] Repo Browser load failed: {t.Exception?.InnerException?.Message}");
-                }, TaskScheduler.Default);
-            }
+            //var repoBrowser = GetModule<SVNRepoBrowser>();
+            //if (repoBrowser != null)
+            //{
+            //    _ = repoBrowser.LoadInitialTreeAsync().ContinueWith(t =>
+            //    {
+            //        if (t.IsFaulted)
+            //            SVNLogBridge.LogError($"[Init] Repo Browser load failed: {t.Exception?.InnerException?.Message}");
+            //    }, TaskScheduler.Default);
+            //}
         }
 
         private async Task TryAutoSwitchToTrunkAsync()
@@ -849,9 +983,6 @@ namespace SVN.Core
                 await statusModule.ExecuteRefreshWithAutoExpand(force: force);
                 await PostProcessStatus();
 
-                // === FIX (kolor): było "<color=green>" — HTML green = #008000, ciemna
-                // zieleń zlewała się z szarym tłem konsoli. SVNColors.Success = #66FF66,
-                // jasna i wyraźnie widoczna.
                 SVNLogBridge.LogLine($"<color={SVNColors.Success}>Status updated successfully.</color>", false);
 
                 if (!IsUpdateRunning && Interlocked.Exchange(ref _isUpdatingSize, 1) == 0)
@@ -1053,12 +1184,6 @@ namespace SVN.Core
             SynchronizeConnectionSettings(SettingsSource.None, url: newUrl);
         }
 
-        /// <summary>
-        /// Odczyt .svn — TYLKO uzupełnia RepositoryUrl, gdy projekt NIE ma
-        /// zapisanego własnego URL-a. Gdy projekt ma URL, dysk nie może go
-        /// nadpisać (inaczej RepoBrowser/commit po cichu przeskakują na repo,
-        /// z którego pierwotnie sklonowano katalog).
-        /// </summary>
         public async Task RefreshRepositoryInfo()
         {
             if (!SVNAssetLocator.IsWorkingCopy(WorkingDir)) return;
@@ -1095,12 +1220,6 @@ namespace SVN.Core
                 SynchronizeConnectionSettings(SettingsSource.None, url: diskUrl));
         }
 
-        /// <summary>
-        /// Atomowa zamiana referencji CurrentProject BEZ wywoływania LoadProject.
-        /// Używane przez moduły, które muszą zsynchronizować obiekt po zmianach
-        /// w projects.json (np. SVNRepoRepair po rejestracji naprawionego WC —
-        /// inaczej CurrentProject trzyma starą nazwę/URL do końca sesji).
-        /// </summary>
         public void ReplaceCurrentProject(SVNProject project)
         {
             if (project == null) return;
@@ -1192,12 +1311,6 @@ namespace SVN.Core
             });
         }
 
-        /// <summary>
-        /// === FIX (race przy przełączeniu projektu): snapshot WorkingDir w momencie
-        /// enqueue, nie po 500 ms. Wcześniej `UpdateCurrentProjectDataImmediate`
-        /// czytał WorkingDir po opóźnieniu — jeśli user w międzyczasie przełączył
-        /// projekt, dane z Settings trafiały pod klucz NOWEGO projektu.
-        /// </summary>
         private void DebounceSaveProject()
         {
             var oldCts = _saveProjectDebounceCts;
@@ -1209,7 +1322,6 @@ namespace SVN.Core
                 _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
             }
 
-            // Snapshot TU — projekt, który był aktywny gdy user zaczął edycję.
             string workingDirSnapshot = WorkingDir;
             var token = _saveProjectDebounceCts.Token;
 
@@ -1220,13 +1332,6 @@ namespace SVN.Core
             }, TaskScheduler.Default);
         }
 
-        /// <summary>
-        /// Zapis danych projektu pod KONKRETNYM kluczem (snapshot z DebounceSaveProject).
-        /// Auto-nazwa: jeśli bieżąca nazwa w JSON-ie wygląda na wygenerowaną dla
-        /// STAREgo URL-a, po zmianie URL-a zostanie zaktualizowana do nowej auto-nazwy
-        /// ("UrlName (folder)"). Ręczny Rename (nazwa != auto dla starego URL) zostaje
-        /// nietknięty.
-        /// </summary>
         private void UpdateProjectDataSnapshot(string workingDirSnapshot)
         {
             if (string.IsNullOrWhiteSpace(workingDirSnapshot)) return;
@@ -1235,9 +1340,6 @@ namespace SVN.Core
             {
                 ProjectSettings.UpdateProject(workingDirSnapshot, p =>
                 {
-                    // Detekcja "auto-nazwy" PRZED nadpisaniem pól:
-                    //   auto-nazwa dla starego URL-a == p.projectName  →  była auto,
-                    //   różna  →  user ręcznie zmienił przez Rename, nie ruszamy.
                     string oldAuto = SVNProjectNaming.BuildDisplayName(p.repoUrl, p.workingDir);
                     bool nameWasAuto = string.Equals(p.projectName, oldAuto, StringComparison.Ordinal);
 
@@ -1249,7 +1351,6 @@ namespace SVN.Core
                     if (!string.IsNullOrWhiteSpace(BlameToolPath)) p.blameToolPath = BlameToolPath;
                     if (!string.IsNullOrWhiteSpace(SshOptions)) p.sshOptions = SshOptions;
 
-                    // Po zmianie URL-a: jeśli nazwa była auto — przelicz na nową auto-nazwę.
                     if (nameWasAuto)
                     {
                         string newAuto = SVNProjectNaming.BuildDisplayName(p.repoUrl, p.workingDir);
@@ -1594,13 +1695,6 @@ namespace SVN.Core
             }
 
             _modules.Clear();
-
-            // === FIX: NIE disposuj _managerLock — jest STATYCZNY i musi przetrwać
-            // kolejne sesje Play (edytor z wyłączonym Domain Reload). Dispose ustawia
-            // _disposed = true nieodwracalnie → pierwszy EnterWriteAsync w następnej
-            // sesji rzuca ObjectDisposedException → LoadProject nie działa.
-            // Semafor wewnątrz AsyncReaderWriterLock nie wymaga jawnego dispose
-            // (zwalniany przez GC razem ze static-iem).
         }
 
 #if UNITY_EDITOR
@@ -1619,10 +1713,6 @@ namespace SVN.Core
                 {
                     SvnProcessTracker.KillAll();
                     SvnRunner.ResetStaticState();
-
-                    // === FIX (deadlock): reset staticznego _managerLock po przerwanym
-                    // Play mode. SvnEditorLifecycle jest zagnieżdżoną klasą wewnątrz
-                    // SVNManager, więc ma dostęp do prywatnego static pola _managerLock.
                     _managerLock.ResetForEditorReload();
                 }
             }

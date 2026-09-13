@@ -137,8 +137,6 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
 
         // === FIX K2: usunięta heurystyka LastIndexOf(" /") — obcinała LEGALNE
         // wiadomości ("Refactor ModuleA / ModuleB" → "Refactor ModuleA").
-        // Commit-message to dane użytkownika; bez pewnego wzorca sufiksu
-        // nie manipulujemy treścią.
         this.rawMessage = node.Message ?? "";
 
         if (graphVisualText != null)
@@ -445,12 +443,14 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
 
             for (int i = 0; i < list.Count; i++)
             {
+                // === FIX: fPath = CZYSTA ścieżka (dla svn cat), highlighted =
+                // wersja z tagami <mark> TMP (tylko do wyświetlania).
                 string fPath = list[i].Substring(1).Trim();
                 string highlighted = GetMarkedText(fPath, currentFilter);
 
                 SVNFileItem script = GetPooledItem(activeItemIndex++);
                 if (script != null)
-                    script.Setup("[" + status + "]", highlighted, color, revisionNumber, svnManager);
+                    script.Setup("[" + status + "]", fPath, color, revisionNumber, svnManager, highlighted);
 
                 shown++;
                 processedThisFrame++;
@@ -509,12 +509,17 @@ public class SVNGraphItem : MonoBehaviour, IPointerClickHandler
         }
     }
 
+    // === FIX (revert): ForceRebuildLayoutImmediate — MUSI być synchroniczne,
+    // bo zmieniamy stan dziecka (SetActive) i ContentSizeFitter na itemie musi
+    // przeliczyć wysokość ZANIM klatka się wyrenderuje. MarkLayoutForRebuild
+    // tylko oznaczał do przebudowy na koniec klatki — przez to zwijanie
+    // zostawiało item z rozwiniętą wysokością i pustą zawartością (szara plama).
+    // ForceRebuild tutaj jest OK wydajnościowo: wołane dla JEDNEGO itema przy
+    // kliknięciu, nie dla 2000 w pętli.
     private void RefreshLayout()
     {
         if (transform.parent != null && transform.parent is RectTransform rt)
-        {
             LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
-        }
     }
 
     public void SetExpanded(bool state)

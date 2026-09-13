@@ -17,6 +17,10 @@ namespace SVN.Core
         private int _processingFlag;
         private int _disposed;
 
+        // === Double-click confirmation (spójnie z SVNClean/SVNRevert).
+        // Pole klasy zamiast lokalnej — trzyma stan między klikami.
+        private float _lastFixMissingClickTime = -10f;
+
         public SVNMissing(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
             UnityMainThreadDispatcher.EnsureExists();
@@ -42,7 +46,11 @@ namespace SVN.Core
 
         public async void FixMissingFiles()
         {
-            // === FIX: double-click confirmation (analogicznie do Revert)
+            // === FIX 1: guard na disposed — po Dispose nie ma sensu zaczynać
+            // (semaphore już zdisposowany, operationLock rzuci ODE).
+            if (Volatile.Read(ref _disposed) == 1) return;
+
+            // === Double-click confirmation (analogicznie do SVNRevert/SVNClean).
             // Operacja jest destrukcyjna (usuwa ścieżki z indeksu SVN).
             float clickTime = Time.unscaledTime;
             if (!ConfirmFixMissing(clickTime))
@@ -50,11 +58,6 @@ namespace SVN.Core
 
             if (Interlocked.Exchange(ref _processingFlag, 1) == 1)
             {
-                // === FIX: było CICHE return — user potwierdził dwuklikiem destrukcyjną
-                // operację i nic się nie stało bez słowa (rodzina buga z SVNRevert).
-                // (Jeśli _processingFlag i _operationLock strzegą tego samego i flaga
-                // nie jest używana przez inne metody klasy — rozważ usunięcie flagi
-                // i zostawienie samego semafora z komunikatem, wzorzec SVNRevert.)
                 LogToConsole("<color=#FFAA00><b>[Missing Files]</b> Another operation is already in progress.</color>");
                 return;
             }
@@ -71,9 +74,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // === FIX: walidacja katalogu na wejściu (wzorzec z reszty modułów) —
-                // wcześniej pusty WorkingDir leciał aż do svn-komend i kończył się
-                // enigmatycznym "FixMissing Error"
                 string root = svnManager?.WorkingDir;
                 if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
                 {
@@ -99,12 +99,7 @@ namespace SVN.Core
                 if (statusModule != null)
                 {
                     LogToConsole("<color=#4FC3F7>Refreshing SVN status...</color>");
-
                     await statusModule.ExecuteRefreshWithAutoExpand(force: true).ConfigureAwait(false);
-
-                    // === trivia: ten blok jest redundantny — pusta ścieżka refreshu
-                    // (ShowEmptyState) sama pisze "No changes detected." — zostawiam
-                    // jako no-op bezpieczny, do usunięcia przy okazji
                 }
 
                 if (removedCount > 0)
@@ -145,11 +140,18 @@ namespace SVN.Core
             }
         }
 
-        // === NOWE: potwierdzenie (pola klasy)
-        private float _lastFixMissingClickTime = -10f;
-
+        // === FIX 2: main-thread check — spójnie z SVNClean.ConfirmAction.
+        // ConfirmFixMissing czyta Time.unscaledTime (main-thread only) i loguje
+        // przez UI; z puli wątków to nie ma sensu — jawnie odmawiamy.
         private bool ConfirmFixMissing(float currentTime)
         {
+            if (!UnityMainThreadDispatcher.IsMainThread)
+            {
+                SVNLogBridge.LogWarning(
+                    "[SVN Missing] Confirmation must be triggered from UI (main thread). Operation denied.");
+                return false;
+            }
+
             const float ConfirmationWindow = 5f;
             const float MinDoubleClickDelay = 0.30f;
 
@@ -248,6 +250,16 @@ namespace SVN.Core
                         }
                         catch (Exception singleEx)
                         {
+                            // === FIX 3: batch mógł się częściowo powieść — plik
+                            // już usunięty z indeksu. SVN zwraca "is not under
+                            // version control" / "does not exist" / E200009.
+                            // Traktujemy to jako sukces, nie jako błąd.
+                            if (IsAlreadyRemovedError(singleEx.Message))
+                            {
+                                processed++;
+                                continue;
+                            }
+
                             failed++;
                             LogToConsole($"<color=#FFAA00>Failed to remove:</color> {singleFile} - {singleEx.Message}");
                         }
@@ -268,6 +280,21 @@ namespace SVN.Core
                 LogToConsole($"<color=#FFAA00>Warning:</color> {failed} file(s) could not be removed due to errors.");
 
             return processed;
+        }
+
+        /// <summary>
+        /// Detekcja błędu "plik już nie jest wersjonowany" — objaw częściowego
+        /// sukcesu batcha `svn delete --targets`. Odporny na locale: dopasowanie
+        /// po kodzie SVN (E200009) + angielskie komunikaty.
+        /// </summary>
+        private static bool IsAlreadyRemovedError(string message)
+        {
+            if (string.IsNullOrEmpty(message)) return false;
+
+            return message.IndexOf("is not under version control", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   message.IndexOf("does not exist", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   message.IndexOf("E200009", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   message.IndexOf("W155010", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         public void Dispose()

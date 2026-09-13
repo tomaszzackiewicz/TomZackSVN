@@ -16,19 +16,17 @@ public class SVNFileItem : MonoBehaviour
     private float lastClickTime = -10f;
     private const float doubleClickThreshold = 0.3f;
 
-    public void Setup(string statusTag, string path, string color, long rev, SVN.Core.SVNManager mgr)
+    public void Setup(string statusTag, string path, string color, long rev,
+                   SVN.Core.SVNManager mgr, string displayPath = null)
     {
-        this.fullPath = path?.Trim() ?? "";
+        this.fullPath = path?.Trim() ?? "";    // ← CZYSTA ścieżka dla svn cat
         this.revision = rev;
         this.svnManager = mgr;
 
-        if (fileText == null)
-        {
-            Debug.LogError("[SVNFileItem] fileText is not assigned in Inspector!", this);
-            return;
-        }
+        if (fileText == null) { /* ... */ return; }
 
-        fileText.text = $"<color={color}><b>{statusTag}</b></color> {fullPath}";
+        string display = string.IsNullOrEmpty(displayPath) ? fullPath : displayPath;
+        fileText.text = $"<color={color}><b>{statusTag}</b></color> {display}";
     }
 
     public void Button_OpenFile()

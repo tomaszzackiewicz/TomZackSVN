@@ -32,8 +32,18 @@ namespace SVN.Core
             PostToMainThread(() => SVNLogBridge.LogLine(msg));
         }
 
+        // === FIX (spójność z SVNClean/SVNMissing): ConfirmAction czyta
+        // Time.unscaledTime (main-only) i loguje przez UI. Z puli wątków
+        // jawnie odmawiamy — defense-in-depth.
         private bool ConfirmAction(float currentTime, ref float lastClickTime, string warningMessage)
         {
+            if (!UnityMainThreadDispatcher.IsMainThread)
+            {
+                SVNLogBridge.LogWarning(
+                    "[SVN Revert] Confirmation must be triggered from UI (main thread). Operation denied.");
+                return false;
+            }
+
             const float ConfirmationWindow = 5f;
             const float MinDoubleClickDelay = 0.30f;
 
