@@ -19,6 +19,11 @@ namespace SVN.Core
         private static readonly object _regexCacheLock = new object();
         private float _lastDeletePropertyClickTime = -10f;
 
+        private static List<string> _cachedSvnRules;
+        private static DateTime _cachedSvnRulesAt = DateTime.MinValue;
+        private static readonly object _svnRulesCacheLock = new object();
+        private static readonly TimeSpan SvnRulesCacheTtl = TimeSpan.FromSeconds(30);
+
         private static readonly char[] NewLineChars = new[] { '\n', '\r' };
 
         public SVNIgnore(SVNUI ui, SVNManager manager) : base(ui, manager)
@@ -63,6 +68,15 @@ namespace SVN.Core
             }
         }
 
+        public static void InvalidateSvnRulesCache()
+        {
+            lock (_svnRulesCacheLock)
+            {
+                _cachedSvnRules = null;
+                _cachedSvnRulesAt = DateTime.MinValue;
+            }
+        }
+
         public void RefreshIgnoredPanel() => SafeFireAndForget(() => RefreshIgnoredPanelAsync());
         public void OpenIgnoredFilesInEditor() => SafeFireAndForget(() => OpenIgnoredFilesInEditorAsync());
         public void PushLocalRulesToSvn() => SafeFireAndForget(() => PushLocalRulesToSvnAsync());
@@ -99,6 +113,8 @@ namespace SVN.Core
 
                 if (success)
                 {
+                    InvalidateSvnRulesCache();
+
                     PostUI(() => UpdateStatusInUI(
                         $"<color={SVNColors.Success}><b>SUCCESS:</b> svn:global-ignores deleted locally.\n" +
                         $"<color={SVNColors.Warning}>Don't forget to COMMIT this change to propagate it to the team!</color>"));
@@ -137,12 +153,11 @@ namespace SVN.Core
             }
 
             LoadIgnoreRulesFromFile(svnManager.WorkingDir);
+            InvalidateSvnRulesCache();
             await RefreshIgnoredPanelCoreAsync().ConfigureAwait(false);
             TriggerStatusRefresh();
         }
 
-        // === FIX (perf): publiczne dla pojedynczych zapytań — kopia reguł per call.
-        // Do FILTROWANIA CAŁEJ LISTY używaj FilterOutLocallyIgnored (jedna kopia).
         public bool IsPathIgnoredLocally(string relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath))
@@ -163,16 +178,6 @@ namespace SVN.Core
             return IsIgnoredByRules(name, relativePath, rulesCopy);
         }
 
-        // =====================================================================
-        //  === FIX (perf): JEDNA kopia reguł dla CAŁEJ listy plików.
-        //
-        //  Wcześniej SVNStatus.ExecuteRefreshWithAutoExpand wołał
-        //  FilterOutLocallyIgnored(statusDict) który iterował po plikach i dla
-        //  KAŻDEGO wołał IsPathIgnoredLocally → new List<string>(_cachedIgnoreRules).
-        //  Dla WC z 5000 zmodyfikowanych plików × 10 reguł = 50 000 kopii List.
-        //
-        //  Teraz: snapshot reguł RAZ, potem IsIgnoredByRules bez kopii.
-        // =====================================================================
         public void FilterOutLocallyIgnored<T>(Dictionary<string, T> statusDict)
         {
             if (statusDict == null || statusDict.Count == 0)
@@ -274,18 +279,29 @@ namespace SVN.Core
                 string[] allEntries = await Task.Run(() =>
                     Directory.GetFileSystemEntries(workingDir, "*", enumOptions), token).ConfigureAwait(false);
 
+                string rootPrefix = workingDir.EndsWith("/") ? workingDir : workingDir + "/";
+
                 foreach (var entry in allEntries)
                 {
                     token.ThrowIfCancellationRequested();
 
-                    string relPath = entry.Replace(workingDir, "").TrimStart('\\', '/').Replace('\\', '/');
+                    string normalizedEntry = entry.Replace('\\', '/');
+                    if (!normalizedEntry.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string relPath = normalizedEntry.Substring(rootPrefix.Length);
+                    if (string.IsNullOrEmpty(relPath))
+                        continue;
+
                     if (relPath.Split('/').Any(seg => seg == ".svn") || ignoredDict.ContainsKey(relPath))
                         continue;
 
                     string name = Path.GetFileName(entry);
-                    if (IsIgnoredByRules(name, relPath, activeRules))
+                    bool isDir = Directory.Exists(entry);
+
+                    if (IsIgnoredByRules(name, relPath, activeRules, isDir))
                     {
-                        ignoredDict[relPath] = ("I", Directory.Exists(entry) ? "DIR" : "FILE");
+                        ignoredDict[relPath] = ("I", isDir ? "DIR" : "FILE");
                     }
                 }
             }
@@ -483,17 +499,27 @@ namespace SVN.Core
                     string[] allEntries = await Task.Run(() =>
                         Directory.GetFileSystemEntries(root, "*", enumOptions), linkedToken).ConfigureAwait(false);
 
+                    string normalizedRoot = root.Replace('\\', '/').TrimEnd('/');
+                    string rootPrefix = normalizedRoot + "/";
+
                     foreach (var entry in allEntries)
                     {
                         linkedToken.ThrowIfCancellationRequested();
 
-                        string name = Path.GetFileName(entry);
-                        string relPath = entry.Replace(root, "").TrimStart('\\', '/').Replace('\\', '/');
+                        string normalizedEntry = entry.Replace('\\', '/');
+                        if (!normalizedEntry.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string relPath = normalizedEntry.Substring(rootPrefix.Length);
+                        if (string.IsNullOrEmpty(relPath))
+                            continue;
 
                         if (relPath.Split('/').Any(seg => seg == ".svn"))
                             continue;
 
-                        if (IsIgnoredByRules(name, relPath, activeRules))
+                        string name = Path.GetFileName(entry);
+                        bool isDir = Directory.Exists(entry);
+                        if (IsIgnoredByRules(name, relPath, activeRules, isDir))
                         {
                             fullIgnoredList.Add(relPath);
                         }
@@ -602,6 +628,16 @@ namespace SVN.Core
 
         public async Task<List<string>> GetIgnoreRulesFromSvnAsync(string workingDir, CancellationToken token = default)
         {
+            List<string> cachedSnapshot = null;
+            lock (_svnRulesCacheLock)
+            {
+                if (_cachedSvnRules != null && (DateTime.UtcNow - _cachedSvnRulesAt) < SvnRulesCacheTtl)
+                    cachedSnapshot = _cachedSvnRules;
+            }
+
+            if (cachedSnapshot != null)
+                return new List<string>(cachedSnapshot);
+
             var rules = new List<string>();
 
             try
@@ -613,6 +649,12 @@ namespace SVN.Core
 
                 CollectRulesFromPropgetXml(xmlOutput, rules);
                 CollectRulesFromPropgetXml(xmlOutput2, rules);
+
+                lock (_svnRulesCacheLock)
+                {
+                    _cachedSvnRules = new List<string>(rules);
+                    _cachedSvnRulesAt = DateTime.UtcNow;
+                }
             }
             catch (Exception e)
             {
@@ -685,20 +727,31 @@ namespace SVN.Core
 
                 string rules = await File.ReadAllTextAsync(ignoreFilePath, token).ConfigureAwait(false);
 
+                var allLines = rules.Replace("\r\n", "\n").Split('\n');
+                var svnRules = new List<string>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var rawLine in allLines)
+                {
+                    string line = rawLine.Trim();
+                    if (line.Length == 0 || line.StartsWith("#"))
+                        continue;
+
+                    if (seen.Add(line))
+                        svnRules.Add(line);
+                }
+
                 var oldRules = await GetIgnoreRulesFromSvnAsync(root, token).ConfigureAwait(false);
 
-                await SetSvnGlobalIgnorePropertyAsync(root, rules, token).ConfigureAwait(false);
+                string svnRulesText = string.Join("\n", svnRules);
+                await SetSvnGlobalIgnorePropertyAsync(root, svnRulesText, token).ConfigureAwait(false);
 
-                var newRules = rules.Split(NewLineChars, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(l => l.Trim())
-                    .Where(l => l.Length > 0 && !l.StartsWith("#"))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                InvalidateSvnRulesCache();
 
                 var removed = oldRules
-                    .Where(r => !newRules.Contains(r, StringComparer.OrdinalIgnoreCase))
+                    .Where(r => !svnRules.Contains(r, StringComparer.OrdinalIgnoreCase))
                     .ToList();
-                var added = newRules
+                var added = svnRules
                     .Where(r => !oldRules.Contains(r, StringComparer.OrdinalIgnoreCase))
                     .ToList();
 
@@ -889,11 +942,15 @@ namespace SVN.Core
         }
 
         private static bool IsIgnoredByRules(string name, string relPath, List<string> rules)
+            => IsIgnoredByRules(name, relPath, rules, isDirectory: null);
+
+        private static bool IsIgnoredByRules(string name, string relPath, List<string> rules, bool? isDirectory)
         {
             if (string.IsNullOrEmpty(relPath) || rules == null || rules.Count == 0)
                 return false;
 
             relPath = relPath.Replace("\\", "/").Trim('/');
+            if (string.IsNullOrEmpty(relPath)) return false;
             name = Path.GetFileName(relPath);
 
             bool finalDecision = false;
@@ -904,66 +961,89 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(rule) || rule.StartsWith("#"))
                     continue;
 
-                bool isNegation = rule.StartsWith("!");
-                if (isNegation)
-                    rule = rule.Substring(1).Trim();
-
                 bool isDirectoryOnly = rule.EndsWith("/");
-                if (isDirectoryOnly)
-                    rule = rule.TrimEnd('/');
+                if (isDirectoryOnly) rule = rule.TrimEnd('/');
 
                 bool mustBeRoot = rule.StartsWith("/");
-                if (mustBeRoot)
-                    rule = rule.TrimStart('/');
+                if (mustBeRoot) rule = rule.TrimStart('/');
 
                 if (string.IsNullOrEmpty(rule))
                     continue;
 
-                bool matches = false;
+                bool matches = MatchesRule(rule, relPath, name, mustBeRoot);
 
-                if (!mustBeRoot && !rule.Contains("/"))
+                if (matches && isDirectoryOnly && isDirectory == false)
                 {
-                    var segments = relPath.Split('/');
-                    if (segments.Any(seg => seg.Equals(rule, StringComparison.OrdinalIgnoreCase)))
-                        matches = true;
-                }
-
-                if (!matches && mustBeRoot)
-                {
-                    if (relPath.Equals(rule, StringComparison.OrdinalIgnoreCase) ||
-                        relPath.StartsWith(rule + "/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        matches = true;
-                    }
-                }
-
-                if (!matches && rule.Contains("*") && !rule.Contains("/") && !mustBeRoot)
-                {
-                    if (IsMatch(name, rule))
-                        matches = true;
-                }
-
-                if (!matches && rule.Contains("*"))
-                {
-                    if (IsMatch(relPath, rule))
-                        matches = true;
-                }
-                else if (!matches && rule.Contains("/"))
-                {
-                    if (relPath.Equals(rule, StringComparison.OrdinalIgnoreCase) ||
-                        relPath.StartsWith(rule + "/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        matches = true;
-                    }
+                    bool isDescendant = relPath.StartsWith(rule + "/", StringComparison.OrdinalIgnoreCase);
+                    if (!isDescendant)
+                        matches = false;
                 }
 
                 if (matches)
                 {
-                    finalDecision = !isNegation;
+                    finalDecision = true;
                 }
             }
 
             return finalDecision;
+        }
+
+        private static bool MatchesRule(string rule, string relPath, string name, bool mustBeRoot)
+        {
+            bool hasSlash = rule.Contains("/");
+            bool hasWildcard = rule.Contains("*") || rule.Contains("?");
+
+            if (!hasSlash && !mustBeRoot && !hasWildcard)
+            {
+                foreach (var seg in relPath.Split('/'))
+                {
+                    if (seg.Equals(rule, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                return false;
+            }
+
+            if (!hasSlash && !mustBeRoot && hasWildcard)
+            {
+                if (IsMatch(name, rule)) return true;
+                foreach (var seg in relPath.Split('/'))
+                {
+                    if (IsMatch(seg, rule)) return true;
+                }
+                return false;
+            }
+
+            if (hasSlash && !hasWildcard)
+            {
+                if (relPath.Equals(rule, StringComparison.OrdinalIgnoreCase)) return true;
+                if (relPath.StartsWith(rule + "/", StringComparison.OrdinalIgnoreCase)) return true;
+                return false;
+            }
+
+            if (hasWildcard)
+            {
+                if (IsMatch(relPath, rule)) return true;
+
+                if (rule.EndsWith("/**"))
+                {
+                    string head = rule.Substring(0, rule.Length - 3);
+                    if (!string.IsNullOrEmpty(head))
+                    {
+                        if (relPath.Equals(head, StringComparison.OrdinalIgnoreCase)) return true;
+                        if (relPath.StartsWith(head + "/", StringComparison.OrdinalIgnoreCase)) return true;
+                    }
+                }
+
+                int idx = relPath.Length;
+                while ((idx = relPath.LastIndexOf('/', idx - 1)) > 0)
+                {
+                    string prefix = relPath.Substring(0, idx);
+                    if (IsMatch(prefix, rule)) return true;
+                }
+                return false;
+            }
+
+            return false;
         }
 
         private static bool IsMatch(string text, string pattern)

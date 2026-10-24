@@ -14,6 +14,7 @@ namespace SVN.Core
     {
         private readonly SVNManager _svnManager;
         private readonly Action<string> _log;
+        private readonly string _projectName;
 
         // === RETENCJA: klucze prefs + domyślna polityka ===
         private const string KEY_RETENTION_DAYS = "SVN_BackupRetentionDays";
@@ -41,13 +42,29 @@ namespace SVN.Core
         {
             _svnManager = manager;
             _log = log;
+            // Application.productName is a Unity API — must be read on the main thread,
+            // not from the worker pool that BackupAsync/SafeDeleteAsync run on.
+            _projectName = ResolveProjectName();
             MigratePrefsOnce();
         }
 
-        // === MIGRACJA: jednorazowy bump starego defaultu 2048 → 10240.
-        // Kto miał ŚWIADOMIE ustawione 2048 też dostanie 10240 (może wrócić
-        // cyklem/inputem). Wartości custom (np. 5120) nietknięte.
-        // UWAGA: ctor musi działać na main thread (PlayerPrefs/SVNPrefs).
+        private static string ResolveProjectName()
+        {
+            try
+            {
+                string name = Application.productName;
+                if (string.IsNullOrWhiteSpace(name))
+                    name = "SVN_Project";
+                foreach (char c in Path.GetInvalidFileNameChars())
+                    name = name.Replace(c, '_');
+                return name;
+            }
+            catch
+            {
+                return "SVN_Project";
+            }
+        }
+
         private void MigratePrefsOnce()
         {
             if (GetPrefInt(KEY_PREFS_VERSION, 0) >= 1) return;
@@ -726,7 +743,6 @@ namespace SVN.Core
             try { dirs = Directory.GetDirectories(rootFull, "*", SearchOption.AllDirectories); }
             catch { return 0; }
 
-            // Najgłębiej pierwsze: dziecko przed rodzicem.
             Array.Sort(dirs, (a, b) =>
             {
                 int depthA = a.Count(c => c == Path.DirectorySeparatorChar);
@@ -738,7 +754,12 @@ namespace SVN.Core
             int pruned = 0;
             foreach (var d in dirs)
             {
-                try { Directory.Delete(d); pruned++; } // IOException = niepusty → pomijamy
+                try
+                {
+                    if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) continue;
+                    Directory.Delete(d);
+                    pruned++;
+                }
                 catch { }
             }
             return pruned;
@@ -762,18 +783,9 @@ namespace SVN.Core
         {
             try
             {
-                string projectName = Application.productName;
-                if (string.IsNullOrWhiteSpace(projectName))
-                    projectName = "SVN_Project";
-
-                foreach (char c in Path.GetInvalidFileNameChars())
-                    projectName = projectName.Replace(c, '_');
-
-                string backupRoot = Path.Combine(SVNPrefs.PersistentDataPath, $"{projectName}_Backup");
-
+                string backupRoot = Path.Combine(SVNPrefs.PersistentDataPath, $"{_projectName}_Backup");
                 if (!Directory.Exists(backupRoot))
                     Directory.CreateDirectory(backupRoot);
-
                 return backupRoot;
             }
             catch
@@ -811,9 +823,7 @@ namespace SVN.Core
             string name = Path.GetFileNameWithoutExtension(path);
             string ext = Path.GetExtension(path);
 
-            // === FIX: InvariantCulture — bez tego timestamp w kulturach z własnymi
-            // cyframi (np. arabska) dawał nazwy z innych zakresów Unicode.
-            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss",
+            string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss",
                 System.Globalization.CultureInfo.InvariantCulture);
 
             string candidate = Path.Combine(dir, $"{name}_{timestamp}{ext}");
@@ -834,6 +844,12 @@ namespace SVN.Core
             foreach (string file in Directory.GetFiles(sourceDir))
             {
                 token.ThrowIfCancellationRequested();
+                try
+                {
+                    if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) continue;
+                }
+                catch { continue; }
+
                 string destFile = Path.Combine(destDir, Path.GetFileName(file));
                 File.Copy(file, destFile, true);
             }
@@ -841,6 +857,12 @@ namespace SVN.Core
             foreach (string dir in Directory.GetDirectories(sourceDir))
             {
                 token.ThrowIfCancellationRequested();
+                try
+                {
+                    if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) continue;
+                }
+                catch { continue; }
+
                 string destSubDir = Path.Combine(destDir, Path.GetFileName(dir));
                 CopyDirectory(dir, destSubDir, token);
             }

@@ -23,9 +23,6 @@ namespace SVN.Core
 
         public async Task<List<SVNConflictData>> GetConflictsAsync(string root, CancellationToken token = default)
         {
-            // === FIX 5: retryOnLock = true — parser jest wołany przy KAŻDYM odświeżeniu
-            // listy konfliktów; przy chwilowo zajętym wc.db (inny proces svn) odczyt
-            // czeka 500ms i ponawia (ścieżka read+retry w SvnRunner) zamiast rzucać.
             string xml = await SvnRunner.RunAsync("status --xml", root, true, token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(xml)) return new List<SVNConflictData>();
 
@@ -43,12 +40,6 @@ namespace SVN.Core
                 string currentPath = null; string item = null; string props = null; string tree = null;
                 string tcReason = null; string tcAction = null; string tcVictim = null; string tcNodeKind = null;
                 bool insideTreeConflict = false;
-
-                // === FIX 4: część klientów svn NIE ustawia atrybutu
-                // tree-conflicted="true" na <wc-status>, a raportuje tree conflict
-                // wyłącznie elementem potomnym <tree-conflict>. Bez tej flagi takie
-                // konflikty były klasyfikowane jako Text (złe przyciski w UI,
-                // force-flow nieosiągalny).
                 bool sawTreeConflictElement = false;
 
                 while (await reader.ReadAsync().ConfigureAwait(false))
@@ -86,11 +77,6 @@ namespace SVN.Core
                                 {
                                     try
                                     {
-                                        // === FIX (skip-node): ReadContentAsStringAsync czyta ZAWARTOŚĆ
-                                        // i zatrzymuje reader na EndElement — outer ReadAsync() przejdzie
-                                        // dalej o jeden węzeł. ReadElementContentAsStringAsync dodatkowo
-                                        // zjada EndElement i PRZESUWA na następny — outer loop wtedy
-                                        // przeskakiwał KOLEJNY element (np. <action>).
                                         string content = await reader.ReadContentAsStringAsync().ConfigureAwait(false);
                                         if (!string.IsNullOrWhiteSpace(content)) tcReason = content.Trim();
                                     }
@@ -129,11 +115,17 @@ namespace SVN.Core
                                     if (cached?.State == SVNConflictState.ManualEditing)
                                         type = SVNConflictType.Manual;
 
+                                    SVNConflictState state;
+                                    if (cached == null || cached.State == SVNConflictState.Resolving)
+                                        state = SVNConflictState.Pending;
+                                    else
+                                        state = cached.State;
+
                                     var data = new SVNConflictData
                                     {
                                         Path = path,
                                         Type = type,
-                                        State = cached?.State ?? SVNConflictState.Pending,
+                                        State = state,
                                         TreeConflictReason = tcReason,
                                         TreeConflictAction = tcAction,
                                         TreeConflictVictim = string.IsNullOrEmpty(tcVictim) ? path : NormalizePath(tcVictim),
@@ -153,9 +145,6 @@ namespace SVN.Core
             }
 
             _cache.SynchronizeFrom(result);
-
-            // === FIX 15: usunięty log-and-rethrow — dublował komunikat błędu
-            // (callerzy: RefreshConflictUIAsync / RunWithLockAsync logują sami).
             return result.OrderBy(x => x.Path).ToList();
         }
 

@@ -632,6 +632,8 @@ namespace SVN.Core
         {
             lock (_cacheLock) _lockCacheMap.Clear();
             lock (_protectionCacheLock) _protectionCacheMap.Clear();
+
+            SVNIgnore.InvalidateSvnRulesCache();
         }
 
         public void NotifySelectionChanged()
@@ -770,6 +772,11 @@ namespace SVN.Core
             }
         }
 
+        /// <summary>
+        /// Przełącza rozwinięcie folderu. Identyfikacja po FullPath (nie po referencji),
+        /// dzięki czemu działa niezależnie z którego widoku (główny/commit) przyszło kliknięcie.
+        /// Zawsze synchronizuje oba widoki i oba drzewa danych.
+        /// </summary>
         public void ToggleFolderVisibility(SvnTreeElement folder)
         {
             if (folder == null)
@@ -784,78 +791,120 @@ namespace SVN.Core
                 return;
             }
 
+            ToggleFolderVisibilityByPath(folder.FullPath);
+        }
+
+        public void ToggleFolderVisibilityByPath(string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath)) return;
+
             HealTreeStatusTextsOnRender();
 
-            folder.IsExpanded = !folder.IsExpanded;
+            var flatFolder = FindFolderByPath(_flatTreeData, fullPath);
+            var commitFolder = FindFolderByPath(_commitTreeData, fullPath);
+
+            var reference = flatFolder ?? commitFolder;
+            if (reference == null)
+            {
+                SVNLogBridge.LogWarning($"[SVN Status] Toggle: folder '{fullPath}' not found in any view");
+                return;
+            }
+
+            bool newExpanded = !reference.IsExpanded;
+
+            if (flatFolder != null) flatFolder.IsExpanded = newExpanded;
+            if (commitFolder != null) commitFolder.IsExpanded = newExpanded;
 
             if (svnManager != null)
             {
-                if (folder.IsExpanded)
-                    svnManager.ExpandedPaths.Add(folder.FullPath);
-                else
-                    svnManager.ExpandedPaths.Remove(folder.FullPath);
+                if (newExpanded) svnManager.ExpandedPaths.Add(fullPath);
+                else svnManager.ExpandedPaths.Remove(fullPath);
             }
 
-            if (_flatTreeData == null || _flatTreeData.Count == 0)
+            RecomputeDescendantVisibility(_flatTreeData, fullPath, newExpanded);
+            RecomputeDescendantVisibility(_commitTreeData, fullPath, newExpanded);
+
+            RefreshTreesIfVisible();
+        }
+
+        private static SvnTreeElement FindFolderByPath(List<SvnTreeElement> list, string fullPath)
+        {
+            if (list == null || list.Count == 0 || string.IsNullOrEmpty(fullPath))
+                return null;
+
+            for (int i = 0; i < list.Count; i++)
             {
-                SVNLogBridge.LogWarning("[SVN Status] ToggleFolderVisibility: _flatTreeData is empty");
-                return;
+                var e = list[i];
+                if (e.IsFolder && !string.IsNullOrEmpty(e.FullPath) &&
+                    string.Equals(e.FullPath, fullPath, StringComparison.OrdinalIgnoreCase))
+                    return e;
             }
+            return null;
+        }
 
-            int startIndex = _flatTreeData.FindIndex(e => e == folder);
-            if (startIndex == -1)
-            {
-                Debug.LogError($"[SVN Status] ToggleFolderVisibility: folder '{folder.FullPath}' not found in current list");
+        private void RecomputeDescendantVisibility(List<SvnTreeElement> list, string folderPath, bool expanded)
+        {
+            if (list == null || list.Count == 0 || string.IsNullOrEmpty(folderPath))
                 return;
-            }
+            var folder = FindFolderByPath(list, folderPath);
+            if (folder != null) folder.IsExpanded = expanded;
 
-            string folderPath = folder.FullPath;
             string prefix = folderPath.EndsWith("/") ? folderPath : folderPath + "/";
 
-            var localLookup = new Dictionary<string, SvnTreeElement>(32, StringComparer.OrdinalIgnoreCase)
-            {
-                [folderPath] = folder
-            };
+            var lookup = new Dictionary<string, SvnTreeElement>(StringComparer.OrdinalIgnoreCase);
+            if (folder != null) lookup[folderPath] = folder;
 
-            for (int i = startIndex + 1; i < _flatTreeData.Count; i++)
+            for (int i = 0; i < list.Count; i++)
             {
-                var e = _flatTreeData[i];
-                if (!e.FullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    break;
+                var e = list[i];
+                if (string.IsNullOrEmpty(e.FullPath)) continue;
+                if (!e.FullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                lookup[e.FullPath] = e;
+            }
 
-                localLookup[e.FullPath] = e;
+            if (lookup.Count == 0) return;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                var e = list[i];
+                if (string.IsNullOrEmpty(e.FullPath)) continue;
+                if (!e.FullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                bool visible = expanded;
+
                 string parentPath = GetParentPath(e.FullPath);
-                if (string.IsNullOrEmpty(parentPath)) continue;
-
-                if (localLookup.TryGetValue(parentPath, out var parent))
-                    e.IsVisible = parent.IsVisible && parent.IsExpanded;
-            }
-
-            if (_commitTreeData != null)
-            {
-                var commitFolder = _commitTreeData.FirstOrDefault(e =>
-                    e.IsFolder && string.Equals(e.FullPath, folder.FullPath, StringComparison.OrdinalIgnoreCase));
-
-                if (commitFolder != null)
+                while (!string.IsNullOrEmpty(parentPath) &&
+                       parentPath.Length >= folderPath.Length)
                 {
-                    commitFolder.IsExpanded = folder.IsExpanded;
-                    RestoreExpandedPaths(_commitTreeData,
-                        new HashSet<string>(svnManager?.ExpandedPaths ?? Enumerable.Empty<string>(),
-                            StringComparer.OrdinalIgnoreCase));
+                    if (lookup.TryGetValue(parentPath, out var parent))
+                    {
+                        if (parent.IsFolder && !parent.IsExpanded)
+                        {
+                            visible = false;
+                            break;
+                        }
+                    }
+                    parentPath = GetParentPath(parentPath);
                 }
-            }
 
-            if (svnUI.SvnTreeView != null &&
+                e.IsVisible = visible;
+            }
+        }
+
+        private void RefreshTreesIfVisible()
+        {
+            if (svnUI?.SvnTreeView != null &&
                 svnUI.SvnTreeView.gameObject.activeInHierarchy)
             {
                 svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
             }
 
-            bool commitPanelVisible = svnUI.SVNCommitTreeDisplay != null &&
-                                      svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy;
-
-            if (commitPanelVisible && _commitTreeData != null)
+            if (svnUI?.SVNCommitTreeDisplay != null &&
+                svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy &&
+                _commitTreeData != null)
+            {
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
+            }
         }
 
         public void ExpandAll()
@@ -948,9 +997,8 @@ namespace SVN.Core
 
         public async Task RefreshAfterAction()
         {
-            // === FIX (miganie): NIE czyścimy drzewa przed refreshem.
-            // ExecuteRefreshWithAutoExpand sam decyduje: przy zmianie danych
-            // re-renderuje, przy identycznym fingerprintcie pomija.
+            SVNIgnore.InvalidateSvnRulesCache();
+
             await ExecuteRefreshWithAutoExpand(force: true);
         }
 
@@ -1740,6 +1788,36 @@ namespace SVN.Core
                     IsProcessing = false;
                 }
             }
+        }
+
+        public void RenderCommitTreeIfNeeded()
+        {
+            if (svnUI?.SVNCommitTreeDisplay == null) return;
+
+            RunOnMainThread(() =>
+            {
+                if (!svnUI.SVNCommitTreeDisplay.gameObject.activeInHierarchy) return;
+
+                if (_isCurrentViewIgnored)
+                {
+                    svnUI.SVNCommitTreeDisplay.ClearView();
+                    UpdateSelectedSizeDisplay();
+                    return;
+                }
+
+                if (_commitTreeData == null || _commitTreeData.Count == 0)
+                {
+                    svnUI.SVNCommitTreeDisplay.ClearView();
+                    UpdateSelectedSizeDisplay();
+                    return;
+                }
+
+                foreach (var e in _commitTreeData)
+                    e.IsCommitDelegate = true;
+
+                svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
+                UpdateSelectedSizeDisplay();
+            });
         }
 
         private static SvnStats CalculateIgnoredStats(Dictionary<string, (string status, string size)> ignoredDict)

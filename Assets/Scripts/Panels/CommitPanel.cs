@@ -20,14 +20,27 @@ public class CommitPanel : MonoBehaviour
 
     private async Task RefreshInBackground()
     {
+        svnManager ??= SVNManager.Instance;
         if (svnManager == null)
             return;
 
         var statusModule = svnManager.GetModule<SVNStatus>();
+        if (statusModule == null)
+        {
+            SVNLogBridge.LogErrorToOutput("[CommitPanel] SVNStatus module not available.");
+            return;
+        }
 
-        await statusModule.ExecuteRefreshWithAutoExpand();
-
-        statusModule.UpdateSelectedSizeDisplay();
+        try
+        {
+            await statusModule.ExecuteRefreshWithAutoExpand();
+            statusModule.RenderCommitTreeIfNeeded();
+            statusModule.UpdateSelectedSizeDisplay();
+        }
+        catch (System.Exception ex)
+        {
+            SVNLogBridge.LogErrorToOutput($"[CommitPanel] Refresh failed: {ex.Message}");
+        }
     }
 
     public void Button_ShowModified() => svnManager.GetModule<SVNStatus>().ShowOnlyModified();

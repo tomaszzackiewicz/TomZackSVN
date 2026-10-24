@@ -32,15 +32,11 @@ namespace SVN.Core
             _core = new SVNConflictCore(manager, parser, cache, backup, logBoth, logOverwrite);
         }
 
-        // === FIX (konsolidacja): expose HasConflictMarkersAsync — SVNResolve
-        // woła TĘ wersję zamiast własnej (jedna implementacja w Core).
         public Task<bool> HasConflictMarkersAsync(string fullPath, CancellationToken token = default)
         {
             return _core.HasConflictMarkersAsync(fullPath, token);
         }
 
-        // === FIX 2: wspólny bezpieczny cleanup — porażka cleanupu nie może
-        // kasować wyniku całej paczki.
         private async Task SafeCleanupAsync(CancellationToken token)
         {
             try
@@ -54,7 +50,6 @@ namespace SVN.Core
             }
         }
 
-        // === FIX 6: RefreshStatus usunięty — odświeżają wrappery w SVNResolve.
         public async Task<bool> ResolveSingleCoreAsync(string path, string strategy, CancellationToken token)
         {
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
@@ -81,7 +76,6 @@ namespace SVN.Core
 
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
-            // Pre-check chroniony
             List<SVNConflictData> allConflicts = null;
             try
             {
@@ -102,7 +96,6 @@ namespace SVN.Core
             bool success = false;
             string error = null;
 
-            // === Próba 1: standard resolve ===
             try
             {
                 if (strategy.Equals("base", StringComparison.OrdinalIgnoreCase))
@@ -121,7 +114,6 @@ namespace SVN.Core
             catch (Exception ex)
             {
                 error = ex.Message;
-                // === Próba 2: fallback -conflict ===
                 if (strategy.EndsWith("-full", StringComparison.OrdinalIgnoreCase))
                 {
                     string fallback = strategy.Replace("-full", "-conflict");
@@ -136,25 +128,27 @@ namespace SVN.Core
                 }
             }
 
-            // === FIX (escalation): W195024/E155027 → structural force-flow ===
-            // UWAGA: wcześniejsza wersja warunku "... && err.Contains(\"W195024\") || err.Contains(...)"
-            // miała błąd priorytetu operatorów — przy UDANYM resolve (error == null)
-            // prawa strona || rzucała NullReferenceException. Poniższy warunek jest
-            // null-safe: każda gałąź short-circuit, sprawdzenie null PRZED Contains.
+            await SafeCleanupAsync(token).ConfigureAwait(false);
+
+            bool stillExists = await VerifyConflictStillExistsAsync(path, token).ConfigureAwait(false);
+
             bool isTheirs = strategy.Contains("theirs", StringComparison.OrdinalIgnoreCase);
             bool isMine = strategy.Contains("mine", StringComparison.OrdinalIgnoreCase);
             bool isBase = strategy.Equals("base", StringComparison.OrdinalIgnoreCase);
+            bool hasStructural = isTheirs || isMine || isBase;
 
-            bool inapplicable = !success
-                && !string.IsNullOrEmpty(error)
+            bool inapplicable = !success && !string.IsNullOrEmpty(error)
                 && SVNErrorHelper.IsInapplicableOrObstruction(new Exception(error));
 
-            if (inapplicable && (isTheirs || isMine || isBase))
-            {
-                _logBoth("<color=yellow>Resolve option inapplicable for this tree conflict (W195024) — escalating to structural force resolve...</color>");
+            bool shouldEscalate = stillExists && hasStructural && (inapplicable || success);
 
-                // Łańcuch nigdy nie zwraca null: allConflicts → cache → fallback.
-                // Path gwarantowany niepusty (parser/cache walidują, fallback ustawia wprost).
+            if (shouldEscalate)
+            {
+                if (inapplicable)
+                    _logBoth("<color=yellow>Resolve option inapplicable (W195024) — escalating to structural force resolve...</color>");
+                else
+                    _logBoth("<color=yellow>Resolve reported success but conflict still present — escalating to structural force resolve...</color>");
+
                 var data = allConflicts?.FirstOrDefault(c =>
                                SVNPathUtilities.NormalizePath(c.Path).Equals(
                                    SVNPathUtilities.NormalizePath(path), StringComparison.OrdinalIgnoreCase))
@@ -169,25 +163,14 @@ namespace SVN.Core
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex2) { error = ex2.Message; }
+
+                await SafeCleanupAsync(token).ConfigureAwait(false);
+                stillExists = await VerifyConflictStillExistsAsync(path, token).ConfigureAwait(false);
             }
-            else if (inapplicable)
+            else if (stillExists && inapplicable && !hasStructural)
             {
-                // np. "working" na obstrukcji — bez structural odpowiednika; wymaga wyboru strony
                 _logBoth("<color=#FFAA00>Option inapplicable — this tree conflict requires an explicit Mine/Theirs/Base (or Force) strategy.</color>");
             }
-
-            await SafeCleanupAsync(token).ConfigureAwait(false);
-
-            // Weryfikacja — czy konflikt realnie zniknął?
-            bool stillExists = true;
-            try
-            {
-                var remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
-                string normalized = SVNPathUtilities.NormalizePath(path);
-                stillExists = remaining.Any(c => SVNPathUtilities.NormalizePath(c.Path).Equals(normalized, StringComparison.OrdinalIgnoreCase));
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { _logBoth($"<color=#FFAA00>Post-resolve verification failed:</color> {ex.Message}"); }
 
             if (success && !stillExists)
             {
@@ -201,8 +184,30 @@ namespace SVN.Core
             return false;
         }
 
-        public async Task<bool> MarkSingleResolvedAsync(string path, CancellationToken token)
+        private async Task<bool> VerifyConflictStillExistsAsync(string path, CancellationToken token)
         {
+            try
+            {
+                var remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
+                string normalized = SVNPathUtilities.NormalizePath(path);
+                return remaining.Any(c => SVNPathUtilities.NormalizePath(c.Path).Equals(normalized, StringComparison.OrdinalIgnoreCase));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logBoth($"<color=#FFAA00>Post-resolve verification failed:</color> {ex.Message}");
+                return true;
+            }
+        }
+
+        public async Task<bool> MarkSingleResolvedAsync(string rawPath, CancellationToken token)
+        {
+            if (!SVNPathUtilities.TryGetRelativePath(_svnManager.WorkingDir, rawPath, out string path))
+            {
+                _logBoth($"<color=#FFAA00>Invalid path (outside working copy):</color> {rawPath}");
+                return false;
+            }
+
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
             string fullPath = Path.Combine(_svnManager.WorkingDir, path);
 
@@ -213,7 +218,6 @@ namespace SVN.Core
                 return false;
             }
 
-            // === FIX (konsolidacja): użyj wspólnej implementacji z Core
             if (File.Exists(fullPath) && await _core.HasConflictMarkersAsync(fullPath).ConfigureAwait(false))
             {
                 _logBoth($"<color=#FFAA00>Conflict markers still exist:</color> {path}");
@@ -250,8 +254,6 @@ namespace SVN.Core
             var conflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
             conflicts = SVNPathUtilities.SortConflictsDeepestFirst(conflicts);
 
-            // === FIX 7: bulk text pomija tree konflikty — SVN resolve --accept
-            // mine-full na tree-conflicted dir NIE działa (W195024).
             var paths = new List<string>();
             foreach (var c in conflicts)
             {
@@ -275,7 +277,6 @@ namespace SVN.Core
                 token.ThrowIfCancellationRequested();
                 _logOverwrite($"<color=yellow>[{i + 1}/{total}] Resolving: {paths[i]}</color>");
 
-                // === FIX 3: bulk "working" — kontrola markerów (spójność z single).
                 if (strategy.Equals("working", StringComparison.OrdinalIgnoreCase))
                 {
                     string full = Path.Combine(_svnManager.WorkingDir, paths[i]);
@@ -395,7 +396,7 @@ namespace SVN.Core
             {
                 token.ThrowIfCancellationRequested();
                 var c = treeConflicts[i];
-                _logOverwrite($"<color=cyan>[TREE FORCE RESOLVE] {strategy} -> {c.Path}</color>");
+                _logOverwrite($"<color=green>[TREE FORCE RESOLVE] {strategy} -> {c.Path}</color>");
                 var result = await _core.ResolveTreeForceCoreAsync(c, strategy, token).ConfigureAwait(false);
                 if (result.success) successCount++;
                 else failedFiles.Add(c.Path);
@@ -440,7 +441,7 @@ namespace SVN.Core
                 return;
             }
 
-            _logOverwrite($"<color=cyan>[TREE FORCE RESOLVE] {strategy} -> {relativePath}</color>");
+            _logOverwrite($"<color=green>[TREE FORCE RESOLVE] {strategy} -> {relativePath}</color>");
             var result = await _core.ResolveTreeForceCoreAsync(conflictData, strategy, token).ConfigureAwait(false);
 
             await SafeCleanupAsync(token).ConfigureAwait(false);

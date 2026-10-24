@@ -63,10 +63,6 @@ namespace SVN.Core
                     continue;
                 }
 
-                // === FIX P4: usunięta heurystyka 'path.Contains("conflict")' —
-                // plik o nazwie zawierającej "conflict" był liczony jako konflikt.
-                // Konflikt rozpoznaje wyłącznie kolumna statusu ('C') powyżej.
-
                 switch (state)
                 {
                     case 'A': result.Added++; break;

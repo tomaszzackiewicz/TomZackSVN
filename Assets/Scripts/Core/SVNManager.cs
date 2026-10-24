@@ -224,6 +224,38 @@ namespace SVN.Core
             return null;
         }
 
+        /// <summary>
+        /// Jeśli istnieje marker przerwanego update'u, nadpisz CurrentSnapshot.Revision
+        /// wartością preRev z markera. 'svn info' po częściowym bumpie wc.db zwraca
+        /// wyższą rewizję niż faktyczna, ostatnia KOMPLETNA (np. 191 zamiast 190).
+        /// Zwraca true jeśli snapshot został faktycznie zmodyfikowany — przydatne do
+        /// decyzji o re-renderze bara.
+        /// </summary>
+        public bool ApplyInterruptedRevisionCorrection()
+        {
+            if (string.IsNullOrEmpty(UpdateInterruptedReason)) return false;
+
+            string preRev = GetUpdateInterruptedPreRev(WorkingDir);
+            if (string.IsNullOrEmpty(preRev) || preRev == "Unknown") return false;
+
+            var snap = CurrentSnapshot;
+            if (snap == null) return false;
+
+            bool changed = !string.Equals(snap.Revision, preRev, StringComparison.Ordinal);
+            snap.Revision = preRev;
+            snap.UpdateInterrupted = true;
+            snap.UpdateInterruptedReason = UpdateInterruptedReason;
+
+            if (changed)
+            {
+                SVNLogBridge.LogToOutput(
+                    $"<color=yellow>[SVN] Interrupted marker: forcing displayed revision to " +
+                    $"r{preRev} (svn info may report a bumped value).</color>");
+            }
+
+            return changed;
+        }
+
         public void SetCurrentStatus(Dictionary<string, (string status, string size)> data)
         {
             CurrentStatusDict = data;
@@ -697,12 +729,10 @@ namespace SVN.Core
                     $"  <color=#FFAA00>{interruptedReason}</color>\n" +
                     "  → Uruchom <b>Update</b> ponownie, żeby dokończyć (svn sam dokończy brakujące pliki).");
 
-                // Świeży snapshot z markerem — bar pokaże badge od razu.
-                if (CurrentSnapshot != null)
-                {
-                    CurrentSnapshot.UpdateInterrupted = true;
-                    CurrentSnapshot.UpdateInterruptedReason = interruptedReason;
-                }
+                // Snapshot może tu jeszcze nie istnieć — to OK, korektę zrobią
+                // InitializeActiveProject / UpdateStatus po ShowProjectInfo.
+                // Jeśli jednak istnieje (hot-reload / re-load projektu), wyrównaj teraz.
+                ApplyInterruptedRevisionCorrection();
             }
 
             // === SEKCJA 2: UI + Enqueue poza lockiem. ===
@@ -757,6 +787,19 @@ namespace SVN.Core
             {
                 await barModule.ShowProjectInfo(project, WorkingDir);
                 if (this == null) return;
+
+                // === FIX: po przerwanym update'cie ShowProjectInfo mógł ustawić
+                // rewizję z 'svn info' (napompowaną po częściowym bumpie wc.db,
+                // np. 191 zamiast realnego 190). Wyrównaj do preRev z markera
+                // i przerenderuj snapshot.
+                if (ApplyInterruptedRevisionCorrection())
+                {
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                    {
+                        if (this == null || CurrentSnapshot == null) return;
+                        barModule.RenderSnapshot(CurrentSnapshot);
+                    });
+                }
             }
 
             await RefreshRepositoryInfo();
@@ -1026,6 +1069,19 @@ namespace SVN.Core
             if (barModule != null && CurrentProject != null)
             {
                 await barModule.ShowProjectInfo(CurrentProject, WorkingDir, isRefreshing: false);
+
+                // === FIX: ShowProjectInfo ustawił snapshot z 'svn info' (np. 191
+                // po częściowym bumpie wc.db). Przy przerwanym update'cie musimy
+                // pokazać preRev z markera (190). Bez tego każdy RefreshStatus
+                // przywracał "napompowaną" wartość.
+                if (ApplyInterruptedRevisionCorrection())
+                {
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                    {
+                        if (this == null || CurrentSnapshot == null) return;
+                        barModule.RenderSnapshot(CurrentSnapshot);
+                    });
+                }
             }
         }
 

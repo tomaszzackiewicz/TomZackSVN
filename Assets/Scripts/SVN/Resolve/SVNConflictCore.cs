@@ -36,16 +36,28 @@ namespace SVN.Core
         #region Single-file resolve
 
         public async Task<(bool success, string path, string error)> ResolveSingleCoreSilentAsync(
-            string rawPath, string strategy, CancellationToken token)
+    string rawPath, string strategy, CancellationToken token)
         {
             if (!SVNPathUtilities.TryGetRelativePath(_svnManager.WorkingDir, rawPath, out string path))
                 return (false, rawPath, "Invalid path");
 
-            // === FIX 3: "base" — weryfikacja po resolve + cache.Remove (spójność
-            // z tree force). Wcześniej zwracał true bez sprawdzenia czy konflikt
-            // realnie zniknął — edge-case (obstruction/tree) dawał fałszywy sukces.
             if (strategy.Equals("base", StringComparison.OrdinalIgnoreCase))
             {
+                var baseCached = _cache.Get(path);
+                if (baseCached != null)
+                {
+                    _cache.AddOrUpdate(new SVNConflictData
+                    {
+                        Path = path,
+                        Type = baseCached.Type,
+                        State = SVNConflictState.Resolving,
+                        TreeConflictReason = baseCached.TreeConflictReason,
+                        TreeConflictAction = baseCached.TreeConflictAction,
+                        TreeConflictVictim = baseCached.TreeConflictVictim,
+                        TreeConflictNodeKind = baseCached.TreeConflictNodeKind
+                    });
+                }
+
                 try
                 {
                     await SvnRunner.RunAsync($"revert \"{path}\"", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
@@ -57,15 +69,27 @@ namespace SVN.Core
                             SVNPathUtilities.NormalizePath(path), StringComparison.OrdinalIgnoreCase));
 
                     if (stillConflicted)
+                    {
+                        if (baseCached != null)
+                            _cache.AddOrUpdate(baseCached);
                         return (false, path, "Conflict still present after base resolve (possible tree/obstruction)");
+                    }
 
-                    // === FIX (spójność): reszta pliku używa NormalizePath przy Remove.
-                    // Bez tego zmiana TryGetRelativePath w przyszłości cicho zgubiłaby klucze.
                     _cache.Remove(SVNPathUtilities.NormalizePath(path));
                     return (true, path, null);
                 }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { return (false, path, ex.Message); }
+                catch (OperationCanceledException)
+                {
+                    if (baseCached != null)
+                        _cache.AddOrUpdate(baseCached);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    if (baseCached != null)
+                        _cache.AddOrUpdate(baseCached);
+                    return (false, path, ex.Message);
+                }
             }
 
             var data = _cache.Get(path);
@@ -91,7 +115,11 @@ namespace SVN.Core
                 await SvnRunner.RunAsync($"resolve --accept {strategy} \"{path}\"", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
                 resolved = true;
             }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException)
+            {
+                if (data != null) _cache.AddOrUpdate(data);
+                throw;
+            }
             catch (Exception ex) when ((ex.Message.Contains("W195024") || ex.Message.Contains("E155027"))
                                         && strategy.EndsWith("-full", StringComparison.OrdinalIgnoreCase))
             {
@@ -101,35 +129,29 @@ namespace SVN.Core
                     await SvnRunner.RunAsync($"resolve --accept {fallbackStrategy} \"{path}\"", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
                     resolved = true;
                 }
-                catch (OperationCanceledException) { throw; }
+                catch (OperationCanceledException)
+                {
+                    if (data != null) _cache.AddOrUpdate(data);
+                    throw;
+                }
                 catch (Exception fallbackEx) { errorMsg = fallbackEx.Message; }
             }
             catch (Exception ex) { errorMsg = ex.Message; }
 
             if (resolved)
             {
+                _cache.Remove(SVNPathUtilities.NormalizePath(path));
+
                 try
                 {
                     await SvnRunner.RunAsync("cleanup", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
-                    _cache.Remove(path);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { }
             }
             else if (data != null)
             {
-                // === FIX 13: przywrócenie stanu sprzed "Resolving" — bez tego
-                // nieudany resolve zostawiał wpis w stanie Resolving na zawsze.
-                _cache.AddOrUpdate(new SVNConflictData
-                {
-                    Path = path,
-                    Type = data.Type,
-                    State = data.State,
-                    TreeConflictReason = data.TreeConflictReason,
-                    TreeConflictAction = data.TreeConflictAction,
-                    TreeConflictVictim = data.TreeConflictVictim,
-                    TreeConflictNodeKind = data.TreeConflictNodeKind
-                });
+                _cache.AddOrUpdate(data);
             }
 
             return (resolved, path, errorMsg);
@@ -140,9 +162,9 @@ namespace SVN.Core
         #region Tree force resolve
 
         public async Task<(bool success, string error)> ResolveTreeForceCoreAsync(
-            SVNConflictData conflict, string strategy, CancellationToken token)
+    SVNConflictData conflict, string strategy, CancellationToken token)
         {
-            _logBoth($"<color=magenta>[FORCE CORE] strategy={strategy} path={conflict.Path}</color>");
+            _logBoth($"<color=green>[FORCE CORE] strategy={strategy} path={conflict.Path}</color>");
 
             string path = conflict.Path;
             string fullPath = Path.Combine(_svnManager.WorkingDir, path);
@@ -153,12 +175,11 @@ namespace SVN.Core
 
             try
             {
-                // === FAZA 1: Standard resolve — zachowuje ancestry tracking
                 try
                 {
                     await SvnRunner.RunAsync($"resolve --accept {strategy} \"{path}\"",
                         _svnManager.WorkingDir, true, token).ConfigureAwait(false);
-                    _cache.Remove(path);
+                    _cache.Remove(SVNPathUtilities.NormalizePath(path));
                     return (true, null);
                 }
                 catch (OperationCanceledException) { throw; }
@@ -167,7 +188,6 @@ namespace SVN.Core
                     _logBoth($"<color=yellow>  -> Standard resolve not applicable ({SVNErrorHelper.GetShortError(ex)}). Forcing structural fix...</color>");
                 }
 
-                // === FAZA 2: Fallback -conflict (SVN 1.8+ tree conflict handling)
                 if (strategy.EndsWith("-full", StringComparison.OrdinalIgnoreCase))
                 {
                     string conflictVariant = strategy.Replace("-full", "-conflict");
@@ -175,24 +195,13 @@ namespace SVN.Core
                     {
                         await SvnRunner.RunAsync($"resolve --accept {conflictVariant} \"{path}\"",
                             _svnManager.WorkingDir, true, token).ConfigureAwait(false);
-                        _cache.Remove(path);
+                        _cache.Remove(SVNPathUtilities.NormalizePath(path));
                         return (true, null);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch { }
                 }
 
-                // === FAZA 3: Structural fix (asymetria celowa — SVN semantics)
-                //
-                // THEIRS = "chcę to co jest w repo"
-                //   → backup lokalnych → svn delete --force → cleanup → resolve working → update
-                //
-                // MINE = "chcę zachować to co mam lokalnie"
-                //   → svn revert (jeśli brak na dysku) → cleanup → resolve working
-                //
-                // BASE = "reset do przodka"
-                //   → svn revert → cleanup → resolve working
-                //
                 bool itemExists = File.Exists(fullPath) || Directory.Exists(fullPath);
 
                 if (isTheirs)
@@ -214,9 +223,6 @@ namespace SVN.Core
                     {
                         _logBoth($"<color=#FFAA00>  -> svn delete failed: {SVNErrorHelper.GetShortError(delEx)}</color>");
 
-                        // === FIX P1: rozróżnienie błędów — obstruction vs inne.
-                        // Tylko przy obstruction (plik blokuje) idziemy w structural delete.
-                        // Inne błędy (permissions, wc.db lock) → przerwij, nie kasuj.
                         if (SVNErrorHelper.IsInapplicableOrObstruction(delEx))
                         {
                             if (backupPath != null)
@@ -231,7 +237,6 @@ namespace SVN.Core
                             }
                             else
                             {
-                                // Brak backupu → SafeDeleteAsync (który teraz NIE kasuje gdy backup fail)
                                 await _backup.SafeDeleteAsync(fullPath, token).ConfigureAwait(false);
                                 if (File.Exists(fullPath) || Directory.Exists(fullPath))
                                 {
@@ -242,7 +247,6 @@ namespace SVN.Core
                         }
                         else
                         {
-                            // NIE obstruction (permissions, lock itp.) → nie kasuj na ślepo
                             _logBoth("<color=#FF4444>  -> Non-obstruction error — aborting (file preserved).</color>");
                             return (false, $"svn delete failed: {SVNErrorHelper.GetShortError(delEx)}");
                         }
@@ -284,7 +288,11 @@ namespace SVN.Core
                                 _svnManager.WorkingDir, true, token).ConfigureAwait(false);
                         }
                         catch (OperationCanceledException) { throw; }
-                        catch { }
+                        catch (Exception revEx)
+                        {
+                            _logBoth($"<color=#FF4444>  -> revert failed: {SVNErrorHelper.GetShortError(revEx)} — aborting (cannot restore base for MINE).</color>");
+                            return (false, $"revert failed: {SVNErrorHelper.GetShortError(revEx)}");
+                        }
                     }
 
                     await SvnRunner.RunAsync("cleanup", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
@@ -310,7 +318,6 @@ namespace SVN.Core
                     return (false, $"Unknown strategy: {strategy}");
                 }
 
-                // === FAZA 4: Weryfikacja — czy konflikt realnie zniknął?
                 await SvnRunner.RunAsync("cleanup", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
 
                 var remaining = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
@@ -320,7 +327,7 @@ namespace SVN.Core
                 if (stillConflicted)
                     return (false, "Conflict still present after force structural fix");
 
-                _cache.Remove(path);
+                _cache.Remove(SVNPathUtilities.NormalizePath(path));
                 return (true, null);
             }
             catch (OperationCanceledException) { throw; }
@@ -341,7 +348,6 @@ namespace SVN.Core
 
             await _svnManager.CancelBackgroundTasksAsync().ConfigureAwait(false);
 
-            // === FIX 2: pre-check chroniony — porażka ostrzeżenia nie ubija operacji.
             try
             {
                 var allConflicts = await _parser.GetConflictsAsync(_svnManager.WorkingDir, token).ConfigureAwait(false);
@@ -376,7 +382,6 @@ namespace SVN.Core
                 {
                     _logBoth($"<color=#FFAA00>svn delete --force failed:</color> {ex.Message}");
 
-                    // === FIX P0: backup fail → NIE kasuj.
                     if (backupPath != null)
                     {
                         bool deleted = PermanentDelete(fullPath, _logBoth);
@@ -388,7 +393,6 @@ namespace SVN.Core
                     }
                     else
                     {
-                        // Brak backupu → SafeDeleteAsync (który teraz NIE kasuje gdy backup fail)
                         await _backup.SafeDeleteAsync(fullPath, token).ConfigureAwait(false);
 
                         if (File.Exists(fullPath) || Directory.Exists(fullPath))
@@ -424,12 +428,10 @@ namespace SVN.Core
                 catch (Exception workingEx) { _logBoth($"<color=#FFAA00>resolve working failed:</color> {workingEx.Message}"); }
             }
 
-            // === FIX 2: bezpieczny cleanup.
             try { await SvnRunner.RunAsync("cleanup", _svnManager.WorkingDir, true, token).ConfigureAwait(false); }
             catch (OperationCanceledException) { throw; }
             catch { }
 
-            // === FIX 2 + FIX 6: weryfikacja chroniona.
             bool stillExists;
             try
             {
@@ -469,10 +471,16 @@ namespace SVN.Core
             {
                 string backupPath = await _backup.BackupAsync(fullPath, token).ConfigureAwait(false);
 
-                try { await SvnRunner.RunAsync($"delete \"{path}\" --force", _svnManager.WorkingDir, true, token).ConfigureAwait(false); }
-                catch (OperationCanceledException) { throw; }
-                catch
+                try
                 {
+                    await SvnRunner.RunAsync($"delete \"{path}\" --force", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception delEx)
+                {
+                    if (!SVNErrorHelper.IsInapplicableOrObstruction(delEx))
+                        return (false, path);
+
                     if (backupPath != null)
                     {
                         PermanentDelete(fullPath);
@@ -483,10 +491,14 @@ namespace SVN.Core
                         catch { }
                     }
 
+                    if (File.Exists(fullPath) || Directory.Exists(fullPath))
+                        return (false, path);
+
                     try
                     {
                         await SvnRunner.RunAsync($"resolve --accept working \"{path}\"", _svnManager.WorkingDir, true, token).ConfigureAwait(false);
                     }
+                    catch (OperationCanceledException) { throw; }
                     catch { }
                     return (false, path);
                 }
@@ -532,9 +544,6 @@ namespace SVN.Core
 
         #region Conflict markers check
 
-        // === FIX P0: brak limitu 5MB (fałszywe false na dużych plikach),
-        // streaming scan (ReadLine = nie ładuje całości do RAM),
-        // CancellationToken per-linia (cancel podczas skanu).
         public async Task<bool> HasConflictMarkersAsync(string fullPath, CancellationToken token = default)
         {
             if (!File.Exists(fullPath)) return false;
@@ -580,8 +589,6 @@ namespace SVN.Core
 
         #region Utility
 
-        // === FIX P0 + FIX (display): zwraca bool + loguje błędy (wcześniej catch{}
-        // połykał wyjątki) + normalizuje ścieżki w logu (sekwencja "\t" → TAB).
         private static bool PermanentDelete(string path, Action<string> log = null)
         {
             try
@@ -602,7 +609,7 @@ namespace SVN.Core
                     Directory.Delete(path, true);
                     return true;
                 }
-                return true; // nie istnieje = sukces
+                return true;
             }
             catch (Exception ex)
             {

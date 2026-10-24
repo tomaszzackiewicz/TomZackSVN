@@ -278,22 +278,40 @@ namespace SVN.Core
                 bool isRevisionTarget = !string.IsNullOrEmpty(targetRevision);
                 string commandLabel = isRevisionTarget ? $"update to revision {targetRevision}" : "update";
 
-                // === Zawsze re-query WC rev z dysku PRZED update — zapamiętujemy ją jako
-                // pre-update. Używana przy cancelu: svn client może częściowo bumpnąć
-                // wc.db w trakcie transferu, więc późniejsze svn info zwraca nowszą rev
-                // niż faktyczny stan WC (np. 186 zamiast 185).
-                try
+                // === FIX: pre-update rewizja WC.
+                // Priorytet ma marker przerwanego update'u — po cancelu svn client
+                // częściowo bumpuje wc.db (np. do 191), więc 'svn info' zwraca
+                // wyższą rewizję niż faktyczny, ostatni KOMPLETNY stan WC. Marker
+                // trzyma poprawny preRev (190). Używamy go, żeby nie zafałszować
+                // oldRevision ani kolejnego zapisu do markera (MarkUpdateRunning
+                // zapisuje CurrentSnapshot.Revision).
+                string markerReason = svnManager.GetUpdateInterruptedReason(svnManager.WorkingDir);
+                string markerPreRev = svnManager.GetUpdateInterruptedPreRev(svnManager.WorkingDir);
+
+                if (!string.IsNullOrEmpty(markerReason)
+                    && !string.IsNullOrEmpty(markerPreRev)
+                    && markerPreRev != "Unknown")
                 {
-                    string infoBefore = await SvnRunner.GetInfoAsync(targetPath, token);
-                    token.ThrowIfCancellationRequested();
-                    string probedRev = ParseRevisionFromInfo(infoBefore);
-                    if (!string.IsNullOrEmpty(probedRev) && probedRev != "Unknown")
-                        oldRevision = probedRev;
+                    oldRevision = markerPreRev;
+                    SVNLogBridge.LogToOutput(
+                        $"<color=yellow>[SVN] Interrupted marker detected — using pre-update revision " +
+                        $"r{markerPreRev} from marker (skipping svn info; WC may be mixed-revision).</color>");
                 }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
+                else
                 {
-                    SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Could not determine current revision: {ex.Message}</color>");
+                    try
+                    {
+                        string infoBefore = await SvnRunner.GetInfoAsync(targetPath, token);
+                        token.ThrowIfCancellationRequested();
+                        string probedRev = ParseRevisionFromInfo(infoBefore);
+                        if (!string.IsNullOrEmpty(probedRev) && probedRev != "Unknown")
+                            oldRevision = probedRev;
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        SVNLogBridge.LogToOutput($"<color=yellow>[SVN] Could not determine current revision: {ex.Message}</color>");
+                    }
                 }
 
                 // === Wstrzyknij świeżo odczytaną pre-update rev do snapshotu ZANIM

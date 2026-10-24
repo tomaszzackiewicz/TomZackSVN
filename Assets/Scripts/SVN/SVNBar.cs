@@ -35,19 +35,13 @@ namespace SVN.Core
 
         public BarState CurrentState => _state;
 
-        // === KOLORY STANÓW (lokalne — używane tylko w tym pliku) ===
-        //   Normal     → 🟢 green    "4ca74c"
-        //   Refreshing → 🔵 cyan     SVNColors.Header  (#4FC3F7)
-        //   Updating   → 🟡 gold     SVNColors.StatusModified  (#FFD700)
-        //   Interrupted→ 🟠 orange   "#FF8C00" (dark orange)
-        //   Outdated   → 🔴 red      SVNColors.Error  (#FF5555)
-        //   Broken     → ⚫ black     "#000000"
         private const string BarColorNormal = "#4ca74c";
-        private const string BarColorRefreshing = "#4FC3F7";   // SVNColors.Header
-        private const string BarColorUpdating = "#FFD700";     // SVNColors.StatusModified
-        private const string BarColorInterrupted = "#FF8C00";  // dark orange
-        private const string BarColorOutdated = "#FF5555";     // SVNColors.Error
+        private const string BarColorRefreshing = "#4FC3F7";
+        private const string BarColorUpdating = "#FFD700";
+        private const string BarColorInterrupted = "#FF8C00";
+        private const string BarColorOutdated = "#FF5555";
         private const string BarColorBroken = "#000000";
+        private const string BarColorProject = "#FFA500";
 
         public SVNBar(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
@@ -74,39 +68,27 @@ namespace SVN.Core
             }
         }
 
-        // ===================================================================
-        //  STANY SPECJALNE
-        // ===================================================================
-
         public void SetLoadingContent(string projectName)
         {
             string content =
                 $"<size=150%><color={BarColorUpdating}>●</color></size> " +
-                $"<color=orange><b>{projectName}</b></color> | " +
+                $"<color={BarColorProject}><b>{projectName}</b></color> | " +
                 $"<color={BarColorUpdating}>Loading project...</color>";
 
             SetContent(content, "SetLoadingContent");
         }
 
-        /// <summary>
-        /// Brak working copy / repo niedostępne — CZARNA kropka.
-        /// Rysowane gdy manager explicit mówi "nie ma z czym pracować".
-        /// </summary>
         public void ShowNoWorkingCopy(string projectName = null)
         {
             string name = string.IsNullOrWhiteSpace(projectName) ? "Project" : projectName;
 
             string content =
                 $"<size=150%><color={BarColorBroken}>●</color></size> " +
-                $"<color=orange><b>{name}</b></color> | " +
+                $"<color={BarColorProject}><b>{name}</b></color> | " +
                 $"<color={SVNColors.Dim}>No working copy / repo unavailable</color>";
 
             SetContent(content, "ShowNoWorkingCopy");
         }
-
-        // ===================================================================
-        //  SNAPSHOT: budowanie / render
-        // ===================================================================
 
         public async Task ShowProjectInfo(
             SVNProject svnProject,
@@ -116,9 +98,6 @@ namespace SVN.Core
         {
             if (_state != BarState.Idle) return;
 
-            // === FIX (cache wersji SVN per projekt): jeśli poprzedni projekt
-            // miał sfaultowane wykrycie wersji ("?.?.?"), zostawało na stałe.
-            // Reset przy zmianie ścieżki projektu.
             if (!string.Equals(_wcRootCache.path, path, StringComparison.OrdinalIgnoreCase))
             {
                 _svnVersionTask = null;
@@ -144,8 +123,6 @@ namespace SVN.Core
 
                 svnManager.CurrentSnapshot = snapshot;
 
-                // === BuildNormalContent sam sprawdzi IsValid / repoBroken
-                // i narysuje czarną kropkę jeśli trzeba. Zero ifów tutaj.
                 SetContent(BuildNormalContent(snapshot, isRefreshing), "ShowProjectInfo");
             }
             catch (OperationCanceledException) { }
@@ -181,10 +158,6 @@ namespace SVN.Core
         {
             RenderSnapshot(snapshot);
         }
-
-        // ===================================================================
-        //  UPDATE / CHECKOUT: stany
-        // ===================================================================
 
         public void BeginUpdate(string projectName)
         {
@@ -328,10 +301,6 @@ namespace SVN.Core
             catch { }
         }
 
-        // ===================================================================
-        //  TREŚĆ: updating / normal
-        // ===================================================================
-
         private string BuildUpdatingContent(string projectName, string workingSize, string totalSize)
         {
             var snapshot = svnManager.CurrentSnapshot;
@@ -342,7 +311,7 @@ namespace SVN.Core
 
             return
                 $"<size=150%><color={BarColorUpdating}>●</color></size> " +
-                $"<color=orange><b>{projectName}</b> ({FormatSizeDisplay(workingSize, totalSize)})</color> | " +
+                $"<color={BarColorProject}><b>{projectName}</b> ({FormatSizeDisplay(workingSize, totalSize)})</color> | " +
                 $"<color={SVNColors.Header}>User:</color> <color={SVNColors.Info}>{user}</color> | " +
                 $"<color={SVNColors.Header}>Branch:</color> <color={SVNColors.Info}>{branch}</color> | " +
                 $"<color={SVNColors.Header}>Rev:</color> <color={SVNColors.Info}>{rev}</color> | " +
@@ -350,28 +319,12 @@ namespace SVN.Core
                 $" | <color={BarColorUpdating}>Updating...</color>";
         }
 
-        /// <summary>
-        /// Render normalnego stanu. Cała informacja o stanie jest w KOLORZE
-        /// kropki i kolorze rewizji — zero dodatkowych napisów.
-        ///
-        /// Priorytet: broken > refreshing > interrupted > outdated > normal.
-        ///
-        /// Paleta:
-        ///   Broken      → ⚫ black          (#000000)
-        ///   Refreshing  → 🔵 cyan           (#4FC3F7)
-        ///   Interrupted → 🟠 dark orange    (#FF8C00)
-        ///   Outdated    → 🔴 red            (#FF5555)
-        ///   Normal      → 🟢 green          (#4ca74c)
-        /// </summary>
         private string BuildNormalContent(SVNProjectInfoSnapshot snapshot, bool isRefreshing)
         {
-            // === WorkingDir: preferuj wartość ze snapshotu (zamrożona w czasie
-            // budowania), fallback na aktualny WorkingDir managera.
             string workingDir = !string.IsNullOrEmpty(snapshot.WorkingDir)
                 ? snapshot.WorkingDir
                 : svnManager?.WorkingDir;
 
-            // === BROKEN: brak WC, brak .svn, snapshot nieprawidłowy, brak rewizji.
             bool repoBroken =
                 string.IsNullOrEmpty(workingDir)
                 || !Directory.Exists(workingDir)
@@ -388,20 +341,14 @@ namespace SVN.Core
 
                 return
                     $"<size=150%><color={BarColorBroken}>●</color></size> " +
-                    $"<color=orange><b>{projectName}</b></color> | " +
+                    $"<color={BarColorProject}><b>{projectName}</b></color> | " +
                     $"<color={SVNColors.Dim}>No working copy / repo unavailable</color>";
             }
 
-            // === INTERRUPTED: marker w PlayerPrefs (persist między sesjami).
             bool interrupted = !string.IsNullOrEmpty(
                 svnManager?.GetUpdateInterruptedReason(workingDir))
                 || snapshot.UpdateInterrupted;
 
-            // === KOLORY KROPKI (priorytet malejąco):
-            //   refreshing   → 🔵 cyan      (aktywność)
-            //   interrupted  → 🟠 orange    (dokończ update)
-            //   outdated     → 🔴 red       (zrób update)
-            //   normal       → 🟢 green     (OK)
             string statusColor;
             if (isRefreshing) statusColor = BarColorRefreshing;
             else if (interrupted) statusColor = BarColorInterrupted;
@@ -417,11 +364,6 @@ namespace SVN.Core
                 ? snapshot.RemoteRevision
                 : null;
 
-            // === Rewizja WC: przy interrupted używamy pre-update rev z markera,
-            // NIE snapshot.Revision. Powód: svn client może częściowo bumpnąć
-            // wc.db w trakcie przerwanego transferu, przez co svn info zwraca
-            // np. 186 mimo że WC jest mixed 185/186 — user oczekuje zobaczyć
-            // 185 (stan sprzed update), nie 186.
             string displayRevision = snapshot.Revision;
             if (interrupted)
             {
@@ -433,24 +375,21 @@ namespace SVN.Core
             string revDisplay;
             if (interrupted)
             {
-                // 🟠 pomarańczowy rev (pre-update!) + pomarańczowy HEAD
                 string headPart = headValue != null ? $" (HEAD: {headValue})" : "";
                 revDisplay = $"<color={BarColorInterrupted}><b>{displayRevision}</b>{headPart}</color>";
             }
             else if (snapshot.IsOutdated)
             {
-                // 🔴 czerwony rev + czerwony HEAD
                 revDisplay = $"<color={BarColorOutdated}><b>{snapshot.Revision}</b> (HEAD: {snapshot.RemoteRevision})</color>";
             }
             else
             {
-                // 🟢 normalny — bez HEAD
                 revDisplay = snapshot.Revision;
             }
 
             return
                 $"<size=150%><color={statusColor}>●</color></size> " +
-                $"<color=orange><b>{snapshot.ProjectName}</b> ({FormatSizeDisplay(snapshot.WorkingCopySize, snapshot.RepoTotalSize)})</color> | " +
+                $"<color={BarColorProject}><b>{snapshot.ProjectName}</b> ({FormatSizeDisplay(snapshot.WorkingCopySize, snapshot.RepoTotalSize)})</color> | " +
                 $"<color={SVNColors.Header}>User:</color> <color={SVNColors.Info}>{snapshot.CurrentUser}</color> | " +
                 $"<color={SVNColors.Header}>Branch:</color> <color={SVNColors.Info}>{snapshot.Branch}</color> | " +
                 $"<color={SVNColors.Header}>Rev:</color> <color={SVNColors.Info}>{revDisplay}</color> | " +
@@ -465,8 +404,6 @@ namespace SVN.Core
         {
             lock (_sizeCacheLock) _sizeCache.Clear();
         }
-
-        // ==================== ROZMIARY ====================
 
         public async Task<(string WorkingSize, string TotalSize)> GetFolderSizesAsync(
             string path, CancellationToken token = default)
@@ -604,7 +541,6 @@ namespace SVN.Core
         private static string FormatSizeDisplay(string workingSize, string totalSize)
         {
             string working = string.IsNullOrWhiteSpace(workingSize) ? "..." : workingSize;
-            // Tylda tylko przy realnej liczbie, nie przy placeholderze "...".
             string workingDisplay = working == "..." ? working : "~" + working;
 
             if (string.IsNullOrWhiteSpace(totalSize) ||
@@ -664,8 +600,6 @@ namespace SVN.Core
             }
             _svnVersionCached = await _svnVersionTask;
         }
-
-        // ==================== SNAPSHOT ====================
 
         public async Task<SVNProjectInfoSnapshot> BuildSnapshotAsync(SVNProject svnProject, string path, CancellationToken token = default)
         {
@@ -742,11 +676,6 @@ namespace SVN.Core
                     return snapshot;
 
                 snapshot.ProjectName = projectName;
-
-                // === FIX: zapamiętaj ścieżkę — BuildNormalContent musi wiedzieć
-                // dla JAKIEGO katalogu sprawdzić marker przerwanego update.
-                // Bez tego render starego snapshotu po przełączeniu projektu
-                // pytałby o marker dla NOWEGO WorkingDir i pokazywał zły stan.
                 snapshot.WorkingDir = path;
 
                 snapshot.WorkingCopySize = cachedWorking ?? "...";
@@ -775,9 +704,6 @@ namespace SVN.Core
                 snapshot.SvnVersion = _svnVersionCached;
                 snapshot.CurrentUser = svnManager.CurrentUserName ?? "Unknown";
 
-                // === Marker: przerwany update z poprzedniej sesji (per working dir).
-                // Odczytujemy przy KAŻDYM snapshot — marker mógł się zmienić
-                // (sukces go wyczyścił, cancel/error go ustawił).
                 string interruptReason = svnManager.GetUpdateInterruptedReason(path);
                 snapshot.UpdateInterrupted = !string.IsNullOrEmpty(interruptReason);
                 snapshot.UpdateInterruptedReason = interruptReason;
@@ -807,10 +733,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Background "ciężkie dane" — best effort, bez timeoutu. Jeśli svn
-        /// utknie, SvnProcessTracker killuje proces na shutdown.
-        /// </summary>
         private async Task FillHeavySnapshotDataAsync(
             SVNProjectInfoSnapshot snapshot, string path, string cacheKey)
         {
@@ -866,8 +788,6 @@ namespace SVN.Core
                 snapshot.CheckoutIncomplete = incomplete;
                 if (incomplete) changed = true;
 
-                // === Marker: odśwież w tle na wypadek gdyby zmienił się
-                // między BuildSnapshotAsync a tym callbackiem (rzadkie, ale tanie).
                 string interruptReason = svnManager.GetUpdateInterruptedReason(path);
                 bool wasInterrupted = snapshot.UpdateInterrupted;
                 snapshot.UpdateInterrupted = !string.IsNullOrEmpty(interruptReason);
@@ -882,8 +802,6 @@ namespace SVN.Core
             }
             catch { }
         }
-
-        // ==================== CHECKOUT ====================
 
         public void BeginCheckout(string projectName, string workingDir)
         {
