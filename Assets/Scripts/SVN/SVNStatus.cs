@@ -40,9 +40,11 @@ namespace SVN.Core
         private static readonly object _cacheLock = new object();
 
         public bool ShowUnversionedFiles { get; set; } = true;
+        public static SVNStatus Current { get; private set; }
 
         public SVNStatus(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
+            Current = this;
             UnityMainThreadDispatcher.EnsureExists();
             manager.OnProjectChanged += HandleProjectChanged;
         }
@@ -565,6 +567,15 @@ namespace SVN.Core
 
         public List<SvnTreeElement> GetCurrentData() => _flatTreeData;
 
+        public int CountAllUnversionedInTree()
+        {
+            if (_flatTreeData == null || _flatTreeData.Count == 0) return 0;
+            int n = 0;
+            foreach (var e in _flatTreeData)
+                if (e != null && e.Status == "?") n++;
+            return n;
+        }
+
         public async Task<Dictionary<string, SVNLockDetails>> GetLocksDictionaryAsync(
             string root, CancellationToken token = default)
         {
@@ -695,6 +706,8 @@ namespace SVN.Core
 
         public void Dispose()
         {
+            if (Current == this) Current = null;
+
             if (svnManager != null)
                 svnManager.OnProjectChanged -= HandleProjectChanged;
 
@@ -1467,7 +1480,7 @@ namespace SVN.Core
                                               displayStatus == "!" ||
                                               displayStatus == "R";
 
-                    bool isChecked = isCommitableStatus;
+                    bool isChecked = isCommitableStatus && displayStatus != "?";
 
                     if (isCommitableStatus && previousSelectionStates.TryGetValue(currentPath, out bool prev))
                         isChecked = prev;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,19 +12,15 @@ namespace SVN.Core
         private readonly object _ctsSync = new();
         private CancellationTokenSource _cts;
 
-        // === FIX: atomowa flaga (było: volatile bool check-then-set — benign
-        // race przy podwójnym Dispose; wzorzec Interlocked jak w reszcie modułów).
-        private int _disposedFlag;   // 0/1
+        private int _disposedFlag;
 
-        // === FIX (dialog → double-click): potwierdzenia jak w SVNRevert/SVNUpdate/
-        // SVNBranchTag/SVNMerge. Pola per operacja; Time.unscaledTime czytane
-        // WYŁĄCZNIE na main thread (publiczne metody wołane z przycisków UI,
-        // przed pierwszym await). Zero dialogów — działa identycznie w edytorze
-        // i player-buildzie.
         private float _lastDeepRepairClickTime = -10f;
         private float _lastDiscardUnversionedClickTime = -10f;
         private float _lastHardResetClickTime = -10f;
         private float _lastRepairStructureClickTime = -10f;
+
+        private string _pendingDiscardFingerprint;
+        private List<string> _pendingDiscardPaths;
 
         private const float ConfirmationWindow = 5f;
         private const float MinDoubleClickDelay = 0.30f;
@@ -33,7 +30,6 @@ namespace SVN.Core
             UnityMainThreadDispatcher.EnsureExists();
         }
 
-        // === FIX (log przez dispatcher — wołane z puli wątków):
         private void LogClean(string msg, bool append = true)
         {
             UnityMainThreadDispatcher.Enqueue(() =>
@@ -60,8 +56,6 @@ namespace SVN.Core
                 : "<color=yellow>[SVN] No active operation to cancel.</color>");
         }
 
-        // === Entry points: confirm NA MAIN THREAD (przed pierwszym await),
-        // potem operacja asynchroniczna. Zero dialogów.
         public void LightCleanup() => _ = StartAsync(LightCleanupAsync);
         public void VacuumCleanup() => _ = StartAsync(VacuumCleanupAsync);
 
@@ -78,12 +72,42 @@ namespace SVN.Core
 
         public void DiscardUnversioned()
         {
-            if (!ConfirmAction(ref _lastDiscardUnversionedClickTime,
-                    "<color=#FFAA00><b>[Discard Unversioned]</b></color> ALL unversioned files (?) will be <b>PERMANENTLY DELETED</b>!\n" +
-                    "Press the button again within <b>5 seconds</b> to confirm."))
-                return;
+            var (selectedPaths, nonUnversionedCount) = SnapshotDiscardSelection();
+            string fingerprint = BuildSelectionFingerprint(selectedPaths);
 
-            _ = StartAsync(DiscardUnversionedAsync);
+            if (_pendingDiscardFingerprint != null &&
+                !string.Equals(_pendingDiscardFingerprint, fingerprint, StringComparison.Ordinal))
+            {
+                _lastDiscardUnversionedClickTime = -10f;
+                _pendingDiscardFingerprint = null;
+                _pendingDiscardPaths = null;
+            }
+
+            bool selective = selectedPaths.Count > 0;
+
+            string warningMessage = selective
+                ? $"<color=#FFAA00><b>[Discard Unversioned]</b></color> {selectedPaths.Count} SELECTED unversioned item(s) will be <b>PERMANENTLY DELETED</b>!" +
+                  (nonUnversionedCount > 0
+                      ? $"\n<i>({nonUnversionedCount} other selected item(s) will be ignored — only '?' are deleted.)</i>"
+                      : "") +
+                  "\nPress the button again within <b>5 seconds</b> to confirm."
+                : "<color=#FFAA00><b>[Discard Unversioned]</b></color> ALL unversioned files (?) will be <b>PERMANENTLY DELETED</b>!\n" +
+                  "Press the button again within <b>5 seconds</b> to confirm.";
+
+            if (!ConfirmAction(ref _lastDiscardUnversionedClickTime, warningMessage))
+            {
+                _pendingDiscardFingerprint = fingerprint;
+                _pendingDiscardPaths = selectedPaths;
+                return;
+            }
+
+            var toDelete = _pendingDiscardPaths ?? selectedPaths;
+            _pendingDiscardFingerprint = null;
+            _pendingDiscardPaths = null;
+
+            _ = StartAsync(t => toDelete.Count > 0
+                ? DiscardSelectedUnversionedAsync(toDelete, t)
+                : DiscardUnversionedAsync(t));
         }
 
         public void HardReset()
@@ -108,8 +132,6 @@ namespace SVN.Core
             _ = StartAsync(RepairStructureAsync);
         }
 
-        // === Wzorzec double-click (spójny z SVNRevert.ConfirmAction).
-        // Wołane WYŁĄCZNIE z main thread — jawnie odmawia z puli (fail-safe).
         private bool ConfirmAction(ref float lastClickTime, string warningMessage)
         {
             if (!UnityMainThreadDispatcher.IsMainThread)
@@ -139,15 +161,6 @@ namespace SVN.Core
             return true;
         }
 
-        // === FIX (kaskada): StartAsync czeka na RunAsync; cleanup należy WYŁĄCZNIE
-        // do RunAsync. Kolejność w finally: _cts=null PRZED End() (niezmiennik
-        // "_cts != null ⟹ IsProcessing").
-        //
-        // === FIX (End pod lockiem): wyjście z _ctsSync PRZED wywołaniem End().
-        // End() w SVNBase dziś nie dotyka _ctsSync, ale to kontrakt niejawny —
-        // każda przyszła zmiana w SVNBase (np. dodanie logu wołającego callback)
-        // mogłaby wywołać deadlock. Bezpieczniej: trzymać lock tylko na czas
-        // mutacji _cts.
         private async Task StartAsync(Func<CancellationToken, Task> op)
         {
             if (op == null || Volatile.Read(ref _disposedFlag) == 1) return;
@@ -173,7 +186,6 @@ namespace SVN.Core
                 }
             }
 
-            // === End() POZA lockiem — patrz komentarz wyżej.
             if (initFailed)
             {
                 try { End(); } catch (Exception ex) { SVNLogBridge.LogException(ex); }
@@ -212,8 +224,6 @@ namespace SVN.Core
 
                 try { End(); } catch (Exception ex) { SVNLogBridge.LogException(ex); }
 
-                // Dispose bezpieczny: _cts zdjęte pod lockiem (Cancel nie sięgnie),
-                // operacja zakończona (token nieużywany), refresh niżej własnym guardem.
                 try { cts.Dispose(); } catch { }
 
                 PostUIFinish();
@@ -225,8 +235,6 @@ namespace SVN.Core
 
         public void Dispose()
         {
-            // === FIX: atomowo (Interlocked) — check-then-set na volatile bool
-            // miał benign race przy podwójnym Dispose
             if (Interlocked.Exchange(ref _disposedFlag, 1) == 1) return;
 
             CancellationTokenSource opCts;
@@ -240,7 +248,7 @@ namespace SVN.Core
         }
 
         // ===================================================================
-        //  Operacje
+        //  Operations
         // ===================================================================
 
         public async Task LightCleanupAsync(CancellationToken t)
@@ -265,11 +273,6 @@ namespace SVN.Core
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                // === FIX: WARNING zamiast ERROR — to próba, nie porażka; sukces
-                // retry zaloguje "Success!". Wcześniej user widział sekwencję
-                // "Cleanup failed..." → "Success!" w jednej operacji.
-                // (Retry po KAŻDYM błędzie jest naciągany — sensowny głównie
-                // dla błędów externals; zostaje, z komunikatem nie mylącym.)
                 UnityMainThreadDispatcher.Enqueue(() =>
                     SVNLogBridge.LogWarning($"[SVN] Cleanup retrying with --include-externals ({ex.Message})..."));
                 t.ThrowIfCancellationRequested();
@@ -293,18 +296,6 @@ namespace SVN.Core
                 LogClean(output);
         }
 
-        /// <summary>
-        /// Vacuum z fallbackiem dla klientów SVN &lt; 1.10 (brak --vacuum-pristines).
-        ///
-        /// === FIX (locale): dopasowanie po 'invalid option' / 'unrecognized option'
-        /// łapie tylko angielskie komunikaty SVN. Na polskim systemie SVN zwraca
-        /// "nieprawidłowa opcja" — fallback nie odpalał, user dostawał twardy błąd.
-        /// Dodano kod błędu SVN (E200007), który jest niezależny od locale.
-        ///
-        /// (UWAGA: fallback 'invalid option' jest TYLKO tu — HardReset/RepairStructure
-        /// używają --remove-unversioned/--vacuum-pristines bez fallbacku; na kliencie
-        /// &lt; 1.10 padną twardym błędem, co łapie RunAsync jako "Error". Świadome.)
-        /// </summary>
         public static async Task<string> ExecuteVacuumCleanupAsync(string wd, CancellationToken t = default)
         {
             try
@@ -322,11 +313,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Detekcja błędu "nieznana opcja" — odporny na locale.
-        /// - angielski:  "invalid option" / "unrecognized option"
-        /// - kod SVN:    E200007 (niezależny od języka)
-        /// </summary>
         private static bool IsInvalidOptionError(string message)
         {
             if (string.IsNullOrEmpty(message)) return false;
@@ -354,9 +340,6 @@ namespace SVN.Core
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                // === FIX (podwójny log): komunikat wrzucamy DO wyjątku, żeby
-                // RunAsync (catch Exception) zalogował go raz — bez duplikatu
-                // "Synchronization failed." + "Error: svn: ...".
                 throw new InvalidOperationException(
                     $"Synchronization failed. Repair aborted. {ex.Message}", ex);
             }
@@ -384,16 +367,151 @@ namespace SVN.Core
                 LogClean($"<color=#FFAA00>Completed with {remaining} unversioned item(s) remaining — some files may be locked by another process.</color>");
         }
 
-        /// <summary>
-        /// SVN-only usuwanie unversioned. `svn cleanup --remove-unversioned` na Windows
-        /// ma bug kolejności kasowania (E720145 "directory is not empty" na zagnieżdżonych
-        /// folderach). Każdy przebieg usuwa część; powtarzamy aż status nie pokaże '?'.
-        ///
-        /// Zabezpieczenia:
-        ///  - MAX_PASSES: twardy limit (nie ma sensu więcej niż głębokość drzewa)
-        ///  - early-exit gdy przebieg nic nie usunął (jesteśmy w pętli)
-        ///  - każdy błąd cleanup logowany jako warning, nie przerywa pętli
-        /// </summary>
+        private async Task DiscardSelectedUnversionedAsync(List<string> selectedRelPaths, CancellationToken t)
+        {
+            var path = ValidatePath();
+            if (path == null) return;
+
+            ClearLog();
+
+            var normalized = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rel in selectedRelPaths)
+            {
+                if (string.IsNullOrEmpty(rel)) continue;
+                if (rel == ".svn-root" || rel == ".") continue;
+                string n = rel.Replace('\\', '/').Trim('/');
+                if (!string.IsNullOrEmpty(n)) normalized.Add(n);
+            }
+
+            if (normalized.Count == 0)
+            {
+                LogClean("<color=#FFAA00>No valid unversioned items selected.</color>");
+                return;
+            }
+
+            var topLevel = new List<string>(normalized.Count);
+            foreach (var rel in normalized)
+            {
+                bool hasSelectedParent = false;
+                string parent = rel;
+                int slash;
+                while ((slash = parent.LastIndexOf('/')) > 0)
+                {
+                    parent = parent.Substring(0, slash);
+                    if (normalized.Contains(parent)) { hasSelectedParent = true; break; }
+                }
+                if (!hasSelectedParent) topLevel.Add(rel);
+            }
+
+            LogClean($"<b>Verifying {topLevel.Count} selected item(s)...</b>");
+
+            var verifiedSafe = new List<string>(topLevel.Count);
+            int newlyVersioned = 0;
+
+            foreach (var rel in topLevel)
+            {
+                t.ThrowIfCancellationRequested();
+                bool versioned = await IsVersionedAsync(path, rel, t).ConfigureAwait(false);
+
+                if (versioned)
+                {
+                    newlyVersioned++;
+                    string capturedRel = rel;
+                    UnityMainThreadDispatcher.Enqueue(() =>
+                        SVNLogBridge.LogWarning(
+                            $"[SVNClean] Skipping '{capturedRel}' — now versioned (added between confirmation clicks)."));
+                }
+                else
+                {
+                    verifiedSafe.Add(rel);
+                }
+            }
+
+            if (verifiedSafe.Count == 0)
+            {
+                LogClean($"<color=#FFAA00>No items deleted — all {newlyVersioned} selected path(s) are now versioned.</color>");
+                return;
+            }
+
+            if (newlyVersioned > 0)
+                LogClean($"<color=#FFAA00>Skipped {newlyVersioned} newly-versioned item(s).</color>");
+
+            LogClean($"<b>Removing {verifiedSafe.Count} selected unversioned item(s)...</b>");
+
+            string rootFull = Path.GetFullPath(path);
+            if (!rootFull.EndsWith(Path.DirectorySeparatorChar.ToString()))
+                rootFull += Path.DirectorySeparatorChar;
+
+            int deleted = 0, failed = 0, skipped = 0;
+
+            await Task.Run(() =>
+            {
+                foreach (var relPath in verifiedSafe)
+                {
+                    t.ThrowIfCancellationRequested();
+
+                    string nativeRel = relPath.Replace('/', Path.DirectorySeparatorChar);
+                    string fullPath;
+                    try
+                    {
+                        fullPath = Path.GetFullPath(Path.Combine(rootFull, nativeRel));
+                    }
+                    catch (Exception ex)
+                    {
+                        string capturedRel = relPath;
+                        UnityMainThreadDispatcher.Enqueue(() =>
+                            SVNLogBridge.LogWarning($"[SVNClean] Invalid path '{capturedRel}': {ex.Message}"));
+                        failed++;
+                        continue;
+                    }
+
+                    if (!fullPath.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string capturedRel = relPath;
+                        UnityMainThreadDispatcher.Enqueue(() =>
+                            SVNLogBridge.LogWarning($"[SVNClean] Refused unsafe path: {capturedRel}"));
+                        skipped++;
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (Directory.Exists(fullPath))
+                        {
+                            ClearReadOnlyRecursive(fullPath);
+                            Directory.Delete(fullPath, true);
+                            deleted++;
+                        }
+                        else if (File.Exists(fullPath))
+                        {
+                            File.SetAttributes(fullPath, FileAttributes.Normal);
+                            File.Delete(fullPath);
+                            deleted++;
+                        }
+                        else
+                        {
+                            skipped++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        string capturedRel = relPath;
+                        UnityMainThreadDispatcher.Enqueue(() =>
+                            SVNLogBridge.LogWarning($"[SVNClean] Failed to delete '{capturedRel}': {ex.Message}"));
+                        failed++;
+                    }
+                }
+            }, t).ConfigureAwait(false);
+
+            if (failed == 0 && skipped == 0)
+                LogClean($"<color=green>Deleted {deleted} item(s).</color>");
+            else if (failed == 0)
+                LogClean($"<color=green>Deleted {deleted} item(s).</color> <color=#FFAA00>({skipped} already gone)</color>");
+            else
+                LogClean($"<color=#FFAA00>Deleted {deleted}, failed {failed}, skipped {skipped} — " +
+                         "some files may be locked by Unity/IDE/antivirus.</color>");
+        }
+
         private async Task<int> RunCleanupRemoveUnversionedUntilDoneAsync(string wcRoot, CancellationToken t)
         {
             const int MaxPasses = 20;
@@ -405,7 +523,6 @@ namespace SVN.Core
             {
                 t.ThrowIfCancellationRequested();
 
-                // Policz '?' przed przebiegiem (szybkie — svn status na WC 17GB to ~6s).
                 lastCount = await CountUnversionedAsync(wcRoot, t).ConfigureAwait(false);
                 if (lastCount == 0) return 0;
 
@@ -418,12 +535,9 @@ namespace SVN.Core
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    // SVN rzucił E720145 — ale i tak usunął część. Logujemy i lecimy dalej.
                     SVNLogBridge.LogWarning($"[SVNClean] cleanup pass {pass} warning: {ex.Message}");
                 }
 
-                // Early-exit: jeśli poprzednia liczba == obecna, nie ma postępu.
-                // (Musimy porównać z liczbą PO przebiegu — stąd dodatkowy status.)
                 int afterCount = await CountUnversionedAsync(wcRoot, t).ConfigureAwait(false);
                 if (afterCount == 0) return 0;
 
@@ -464,7 +578,6 @@ namespace SVN.Core
 
             await SvnRunner.RunAsync("revert -R .", path, true, t).ConfigureAwait(false);
 
-            // === SVN-only: pętla cleanup zamiast pojedynczego wywołania (bug Windows).
             LogClean("Removing unversioned files...");
             int remaining = await RunCleanupRemoveUnversionedUntilDoneAsync(path, t).ConfigureAwait(false);
             if (remaining > 0)
@@ -487,7 +600,6 @@ namespace SVN.Core
             if (string.IsNullOrWhiteSpace(url))
                 throw new InvalidOperationException("Failed to retrieve repository URL.");
 
-            // === SVN-only: pętla cleanup (bug Windows E720145).
             LogClean("Removing unversioned files...");
             int remaining = await RunCleanupRemoveUnversionedUntilDoneAsync(path, t).ConfigureAwait(false);
             if (remaining > 0)
@@ -519,8 +631,6 @@ namespace SVN.Core
                 return null;
             }
 
-            // === FIX: było ciche return null (pozostałe ścieżki walidacji
-            // logują — niespójność)
             try { p = Path.GetFullPath(p); }
             catch (Exception ex)
             {
@@ -579,7 +689,7 @@ namespace SVN.Core
 
         private void PostUIFinish()
         {
-            // celowo puste (utrzymane dla symetrii — status końcowy logują operacje)
+           
         }
 
         private static void TryCancel(CancellationTokenSource cts, ref bool flag)
@@ -593,6 +703,93 @@ namespace SVN.Core
                 }
             }
             catch (ObjectDisposedException) { }
+        }
+
+        // ===================================================================
+        //  Selective Discard — helpers
+        // ===================================================================
+
+        private (List<string> selectedUnversioned, int nonUnversionedSelected) SnapshotDiscardSelection()
+        {
+            var statusModule = svnManager?.GetModule<SVNStatus>();
+            if (statusModule == null)
+            {
+                SVNLogBridge.LogWarning(
+                    "[SVNClean] SVNStatus module unavailable — falling back to global unversioned discard. " +
+                    "Selective discard disabled.");
+                return (new List<string>(), 0);
+            }
+
+            var currentData = statusModule.GetCurrentData();
+            if (currentData == null || currentData.Count == 0)
+                return (new List<string>(), 0);
+
+            var paths = new List<string>();
+            int nonUnv = 0;
+
+            foreach (var e in currentData)
+            {
+                if (!e.IsChecked || string.IsNullOrEmpty(e.FullPath)) continue;
+                if (e.FullPath == ".svn-root" || e.FullPath == ".") continue;
+
+                if (e.Status == "?")
+                    paths.Add(e.FullPath);
+                else
+                    nonUnv++;
+            }
+
+            return (paths, nonUnv);
+        }
+
+        private static string BuildSelectionFingerprint(List<string> paths)
+        {
+            if (paths == null || paths.Count == 0) return "";
+
+            var sorted = new List<string>(paths);
+            sorted.Sort(StringComparer.OrdinalIgnoreCase);
+
+            var sb = new System.Text.StringBuilder(sorted.Count * 32);
+            foreach (var p in sorted) sb.Append(p).Append('\n');
+            return sb.ToString();
+        }
+
+        private static async Task<bool> IsVersionedAsync(string root, string relPath, CancellationToken t)
+        {
+            try
+            {
+                string kind = await SvnRunner.RunAsync(
+                    $"info --show-item kind \"{relPath}\"", root, false, t).ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(kind)) return false;
+
+                var k = kind.Trim();
+                return k == "file" || k == "dir";
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void ClearReadOnlyRecursive(string dir)
+        {
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir))
+                {
+                    try
+                    {
+                        var attrs = File.GetAttributes(f);
+                        if ((attrs & FileAttributes.ReadOnly) != 0)
+                            File.SetAttributes(f, attrs & ~FileAttributes.ReadOnly);
+                    }
+                    catch { }
+                }
+                foreach (var d in Directory.EnumerateDirectories(dir))
+                    ClearReadOnlyRecursive(d);
+            }
+            catch { }
         }
     }
 }

@@ -77,5 +77,31 @@ namespace SVN.Core
             if (string.IsNullOrEmpty(text)) return text;
             return text.Replace('\\', '/');
         }
+
+        public static bool IsBinaryFile(string fullPath)
+        {
+            if (string.IsNullOrEmpty(fullPath) || !File.Exists(fullPath)) return false;
+
+            try
+            {
+                using var fs = File.OpenRead(fullPath);
+                byte[] buffer = new byte[8000];
+                int read = fs.Read(buffer, 0, buffer.Length);
+                if (read == 0) return false;
+
+                if (read >= 2 && buffer[0] == 0xFF && buffer[1] == 0xFE) return false; // UTF-16 LE / UTF-32 LE (starts FF FE)
+                if (read >= 2 && buffer[0] == 0xFE && buffer[1] == 0xFF) return false; // UTF-16 BE
+                if (read >= 4 && buffer[0] == 0 && buffer[1] == 0 && buffer[2] == 0xFE && buffer[3] == 0xFF) return false; // UTF-32 BE
+
+                for (int i = 0; i < read; i++)
+                    if (buffer[i] == 0) return true;
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }

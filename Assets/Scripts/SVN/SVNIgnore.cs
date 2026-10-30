@@ -14,6 +14,7 @@ namespace SVN.Core
     {
         private List<string> _cachedIgnoreRules = new List<string>();
         private readonly object _cacheLock = new object();
+        private bool _rulesLoadAttempted;                 // FIX: zapobiega wielokrotnemu ładowaniu / retry-storm
         private int _processingFlag;
         private static readonly Dictionary<string, Regex> _regexCache = new Dictionary<string, Regex>();
         private static readonly object _regexCacheLock = new object();
@@ -28,6 +29,34 @@ namespace SVN.Core
 
         public SVNIgnore(SVNUI ui, SVNManager manager) : base(ui, manager)
         {
+            // FIX: pre-load rules at startup so the very first status filter works
+            //      (previously _cachedIgnoreRules stayed empty until user opened Ignored panel).
+            if (!string.IsNullOrEmpty(manager?.WorkingDir))
+            {
+                try { LoadIgnoreRulesFromFile(manager.WorkingDir); }
+                catch (Exception ex) { SVNLogBridge.LogToOutput($"[SVN] Preload rules failed: {ex.Message}"); }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // FIX #1: lazy load of .svnignore rules
+        // ---------------------------------------------------------------
+        private bool EnsureRulesLoaded()
+        {
+            string root = svnManager?.WorkingDir;
+            if (string.IsNullOrEmpty(root))
+                return false;
+
+            bool needsLoad;
+            lock (_cacheLock) { needsLoad = !_rulesLoadAttempted; }
+
+            if (needsLoad)
+            {
+                try { LoadIgnoreRulesFromFile(root); }
+                catch (Exception ex) { SVNLogBridge.LogToOutput($"[SVN] EnsureRulesLoaded failed: {ex.Message}"); }
+            }
+
+            lock (_cacheLock) { return _cachedIgnoreRules.Count > 0; }
         }
 
         private bool TryEnterProcessing()
@@ -158,13 +187,19 @@ namespace SVN.Core
             TriggerStatusRefresh();
         }
 
+        // ---------------------------------------------------------------
+        // FIX #1: use EnsureRulesLoaded so filtering works even before
+        //         the Ignored panel was ever opened this session.
+        // ---------------------------------------------------------------
         public bool IsPathIgnoredLocally(string relativePath)
         {
             if (string.IsNullOrWhiteSpace(relativePath))
                 return false;
 
+            if (!EnsureRulesLoaded())
+                return false;
+
             relativePath = relativePath.Replace("\\", "/").TrimStart('/');
-            string name = Path.GetFileName(relativePath);
 
             List<string> rulesCopy;
             lock (_cacheLock)
@@ -175,12 +210,15 @@ namespace SVN.Core
                 rulesCopy = new List<string>(_cachedIgnoreRules);
             }
 
-            return IsIgnoredByRules(name, relativePath, rulesCopy);
+            return IsIgnoredByRules(Path.GetFileName(relativePath), relativePath, rulesCopy);
         }
 
         public void FilterOutLocallyIgnored<T>(Dictionary<string, T> statusDict)
         {
             if (statusDict == null || statusDict.Count == 0)
+                return;
+
+            if (!EnsureRulesLoaded())
                 return;
 
             List<string> rulesSnapshot;
@@ -212,6 +250,9 @@ namespace SVN.Core
         public void FilterOutLocallyIgnored(List<string> paths)
         {
             if (paths == null || paths.Count == 0)
+                return;
+
+            if (!EnsureRulesLoaded())
                 return;
 
             List<string> rulesSnapshot;
@@ -830,6 +871,8 @@ namespace SVN.Core
             lock (_cacheLock)
             {
                 _cachedIgnoreRules.Clear();
+                _rulesLoadAttempted = true;   // FIX: mark attempt (prevents retry storms)
+
                 string ignoreFilePath = Path.Combine(workingDir, ".svnignore");
 
                 if (File.Exists(ignoreFilePath))

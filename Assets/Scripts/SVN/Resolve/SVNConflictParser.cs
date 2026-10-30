@@ -108,18 +108,47 @@ namespace SVN.Core
                                 string path = NormalizePath(currentPath);
                                 if (seen.Add(path))
                                 {
-                                    var type = (tree == "true" || sawTreeConflictElement)
-                                        ? SVNConflictType.Tree
-                                        : SVNConflictType.Text;
+                                    bool isTree = tree == "true" || sawTreeConflictElement;
                                     var cached = _cache.Get(path);
-                                    if (cached?.State == SVNConflictState.ManualEditing)
-                                        type = SVNConflictType.Manual;
 
+                                    SVNConflictType type;
                                     SVNConflictState state;
-                                    if (cached == null || cached.State == SVNConflictState.Resolving)
-                                        state = SVNConflictState.Pending;
+
+                                    if (isTree)
+                                    {
+                                        type = SVNConflictType.Tree;
+                                        // Tree conflicts are never "manual editing" — reset stale state.
+                                        state = (cached == null || cached.State == SVNConflictState.Resolving)
+                                            ? SVNConflictState.Pending
+                                            : cached.State;
+                                    }
                                     else
-                                        state = cached.State;
+                                    {
+                                        // Non-tree: decide binary vs text from the actual file.
+                                        string fullPath = Path.Combine(root, path.Replace('/', Path.DirectorySeparatorChar));
+                                        bool isBinary = SVNPathUtilities.IsBinaryFile(fullPath);
+
+                                        if (isBinary)
+                                        {
+                                            // Binary files cannot be text-edited — force Binary type
+                                            // and reset any stale ManualEditing (which would otherwise
+                                            // re-classify the DLL as "Manual" on the next parse).
+                                            type = SVNConflictType.Binary;
+                                            state = SVNConflictState.Pending;
+                                        }
+                                        else if (cached?.State == SVNConflictState.ManualEditing)
+                                        {
+                                            type = SVNConflictType.Manual;
+                                            state = SVNConflictState.ManualEditing;
+                                        }
+                                        else
+                                        {
+                                            type = SVNConflictType.Text;
+                                            state = (cached == null || cached.State == SVNConflictState.Resolving)
+                                                ? SVNConflictState.Pending
+                                                : cached.State;
+                                        }
+                                    }
 
                                     var data = new SVNConflictData
                                     {

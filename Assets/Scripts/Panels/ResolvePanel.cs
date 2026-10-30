@@ -25,10 +25,6 @@ public class ResolvePanel : MonoBehaviour
         if (_svnManager == null || _resolveModule == null)
             ResolveReferences();
 
-        // === FIX K1: delayed dispose poprzedniego CTS — natychmiastowy
-        // Cancel+Dispose przy szybkim disable→enable rzucał ODE (nie-OCE!)
-        // w wiszącym Task.Delay(100, token) i leciał poza catch(OCE) jako
-        // nieobsłużony wyjątek async void.
         var oldCts = _panelLifecycleCts;
         _panelLifecycleCts = new CancellationTokenSource();
         if (oldCts != null)
@@ -49,7 +45,6 @@ public class ResolvePanel : MonoBehaviour
 
     private void OnDisable()
     {
-        // === FIX K1: jw. — cancel + delayed dispose.
         var cts = _panelLifecycleCts;
         _panelLifecycleCts = null;
         if (cts != null)
@@ -137,36 +132,26 @@ public class ResolvePanel : MonoBehaviour
         _externalModule?.BrowseResolveFilePath();
     }
 
+    // Tree — single reliable action per strategy. Under the hood each of these
+    // delegates to the force core (Phase 1: standard resolve, Phase 3: structural
+    // fallback). There is no separate "Force" variant — the old non-force path
+    // silently failed on W195024 tree conflicts, so both have been unified here.
     public void Button_ResolveAllTreeMine() { if (CanExecute()) _resolveModule.ResolveAllTreeMine(); }
     public void Button_ResolveAllTreeTheirs() { if (CanExecute()) _resolveModule.ResolveAllTreeTheirs(); }
     public void Button_ResolveAllTreeBase() { if (CanExecute()) _resolveModule.ResolveAllTreeBase(); }
     public void Button_CancelResolve() { _resolveModule?.CancelResolve(); }
-    public void Button_ResolveAllTreeTheirsForce() { if (CanExecute()) _resolveModule.ResolveAllTreeTheirsForce(); }
-    public void Button_ResolveAllTreeMineForce() { if (CanExecute()) _resolveModule.ResolveAllTreeMineForce(); }
-    public void Button_ResolveAllTreeBaseForce() { if (CanExecute()) _resolveModule.ResolveAllTreeBaseForce(); }
 
     #region Backup controls
 
-    // === Backup policy = INPUT FIELDY (zamiast cykli):
-    //   - BackupRetentionInput: dni retencji (0 / "off" = wiekowa retencja off)
-    //   - BackupCapInput:       cap w GB         (0 / "off" = bez limitu)
-    //   - BackupEnabledToggle:  master toggle    (default ON)
     [SerializeField] private UnityEngine.UI.Toggle BackupEnabledToggle;
     [SerializeField] private TMPro.TMP_InputField BackupRetentionInput;
     [SerializeField] private TMPro.TMP_InputField BackupCapInput;
 
-    // Sanity limity — blokują literówki (np. "10000" dni / "999" GB).
-    private const int BackupRetentionMaxDays = 3650;   // 10 lat
-    private const double BackupCapMaxGB = 1024;        // 1 TB
+    private const int BackupRetentionMaxDays = 3650;
+    private const double BackupCapMaxGB = 1024;
 
     private float _purgeArmedUntil = -1f;
 
-    /// <summary>
-    /// Idempotentny wiring eventów (Remove+Add) — bezpieczny nawet gdy ktoś
-    /// podpiął te same metody w inspectorze. Awake = main thread, prefs OK.
-    /// Strzelamy na EndEdit (Enter / utrata focusu) — nie per-keystroke,
-    /// żeby nie zapisywać prefs przy każdej literze.
-    /// </summary>
     private void WireBackupControls()
     {
         if (BackupEnabledToggle != null)
@@ -204,9 +189,6 @@ public class ResolvePanel : MonoBehaviour
         _resolveModule?.OpenBackupFolder();
     }
 
-    // === Purge: potwierdzenie dwuklikiem w 5s (brak dialogów w runtime UI).
-    // Guard CanExecute: purge NIE może startować w trakcie resolve — backup
-    // właśnie tworzony przez resolve nie może zniknąć spod niego.
     public void Button_PurgeAllBackups()
     {
         if (!CanExecute()) return;
@@ -225,18 +207,12 @@ public class ResolvePanel : MonoBehaviour
         }
     }
 
-    // === TOGGLE: działa natychmiast, nawet mid-resolve (każdy plik czyta
-    // pref osobno — zmiana dotyczy tylko kolejnych plików).
     public void Toggle_BackupEnabled(bool enabled)
     {
         if (_resolveModule == null) { ResolveReferences(); if (_resolveModule == null) return; }
         _resolveModule.SetBackupEnabled(enabled);
     }
 
-    /// <summary>
-    /// Retencja z inputa — jednostka: DNI (np. "14", "90"). 0 / "off" / "none"
-    /// = retencja wiekowa off. Puste / śmieciowe → revert do bieżącej wartości + log.
-    /// </summary>
     public void Input_BackupRetentionEndEdit(string raw)
     {
         if (_resolveModule == null) { ResolveReferences(); if (_resolveModule == null) return; }
@@ -245,7 +221,7 @@ public class ResolvePanel : MonoBehaviour
 
         if (string.IsNullOrEmpty(text))
         {
-            SyncBackupControls(); // revert
+            SyncBackupControls();
             return;
         }
 
@@ -268,13 +244,9 @@ public class ResolvePanel : MonoBehaviour
         if (days > BackupRetentionMaxDays) days = BackupRetentionMaxDays;
 
         _resolveModule.SetBackupRetentionDays((int)Math.Round(days));
-        SyncBackupControls(); // normalizuje tekst (np. "14.0" → "14")
+        SyncBackupControls();
     }
 
-    /// <summary>
-    /// Cap z inputa — jednostka: GB (np. "10", "0.5"). 0 / "off" / "none" =
-    /// no cap. Puste / śmieciowe → revert do bieżącej wartości + log.
-    /// </summary>
     public void Input_BackupCapEndEdit(string raw)
     {
         if (_resolveModule == null) { ResolveReferences(); if (_resolveModule == null) return; }
@@ -283,7 +255,7 @@ public class ResolvePanel : MonoBehaviour
 
         if (string.IsNullOrEmpty(text))
         {
-            SyncBackupControls(); // revert
+            SyncBackupControls();
             return;
         }
 
@@ -306,10 +278,9 @@ public class ResolvePanel : MonoBehaviour
         if (gb > BackupCapMaxGB) gb = BackupCapMaxGB;
 
         _resolveModule.SetBackupMaxSizeMB((int)Math.Round(gb * 1024));
-        SyncBackupControls(); // normalizuje tekst (np. "10.0" → "10")
+        SyncBackupControls();
     }
 
-    // Invariant (kropka) najpierw, potem current culture (przecinek PL).
     private static bool TryParseFlexible(string text, out double value)
     {
         if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
@@ -317,11 +288,6 @@ public class ResolvePanel : MonoBehaviour
         return double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
     }
 
-    /// <summary>
-    /// Odświeża kontrolki z prefs (bez odpalania eventów — *WithoutNotify).
-    /// Wywoływane: Awake / ResolveReferences / po każdym EndEdit (normalizacja).
-    /// Nie strzela per-frame, więc nie walczy z użytkownikiem piszącym w polu.
-    /// </summary>
     private void SyncBackupControls()
     {
         if (_resolveModule == null) return;

@@ -1,6 +1,6 @@
 namespace SVN.Core
 {
-    public enum SVNConflictType { Text, Manual, Tree }
+    public enum SVNConflictType { Text, Manual, Tree, Binary }
     public enum SVNConflictState { Pending, ManualEditing, Resolving, Resolved }
 
     public class SVNConflictData

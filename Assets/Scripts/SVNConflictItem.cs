@@ -9,11 +9,16 @@ public class SVNConflictItem : MonoBehaviour
     [SerializeField] private TMP_Text fileNameText;
     [SerializeField] private TMP_Text conflictTypeText;
 
-    [Header("Buttons - Text / Manual")]
+    [Header("Buttons - Text / Manual / Binary")]
     [SerializeField] private Button mineButton;
     [SerializeField] private Button theirsButton;
     [SerializeField] private Button resolvedButton;
     [SerializeField] private Button openButton;
+
+    [Header("Resolved Button Label (optional)")]
+    [Tooltip("TMP_Text shown on the resolved button. The label changes per conflict type " +
+             "(Manual: 'Mark resolved', Binary: 'Keep current file'). Leave empty to use the prefab's default text.")]
+    [SerializeField] private TMP_Text resolvedButtonLabel;
 
     [Header("Buttons - Tree")]
     [SerializeField] private Button treeMineButton;
@@ -21,14 +26,9 @@ public class SVNConflictItem : MonoBehaviour
     [SerializeField] private Button treeBaseButton;
     [SerializeField] private Button treeDeleteButton;
 
-    [Header("Buttons - Tree Force")]
-    [SerializeField] private Button treeMineForceButton;
-    [SerializeField] private Button treeTheirsForceButton;
-    [SerializeField] private Button treeBaseForceButton;
-
     private string _path;
 
-    public enum ConflictType { Text, Manual, Tree }
+    public enum ConflictType { Text, Manual, Tree, Binary }
 
     public void Setup(string path, ConflictType type, bool hasMarkers, string treeReason = null)
     {
@@ -43,6 +43,7 @@ public class SVNConflictItem : MonoBehaviour
                 ConflictType.Tree => string.IsNullOrEmpty(treeReason)
                                         ? "Tree conflict"
                                         : $"Tree: {treeReason}",
+                ConflictType.Binary => "Binary conflict (no text merge)",
                 _ => "Unknown"
             };
 
@@ -63,9 +64,6 @@ public class SVNConflictItem : MonoBehaviour
         ClearAndHide(treeTheirsButton);
         ClearAndHide(treeBaseButton);
         ClearAndHide(treeDeleteButton);
-        ClearAndHide(treeMineForceButton);
-        ClearAndHide(treeTheirsForceButton);
-        ClearAndHide(treeBaseForceButton);
 
         if (type == ConflictType.Text)
         {
@@ -73,9 +71,18 @@ public class SVNConflictItem : MonoBehaviour
             Show(theirsButton);
             Show(openButton);
 
-            SetTooltip(mineButton, "Keep YOUR local version (mine-full).\nDiscards all server changes for this file.");
-            SetTooltip(theirsButton, "Take the SERVER version (theirs-full).\nDiscards all your local changes for this file.");
-            SetTooltip(openButton, "Open in external 3-way merge tool.\nManually combine both versions.");
+            SetTooltip(mineButton,
+                "Keep YOUR local version (mine-full).\n" +
+                "Discards all server changes for this file.");
+
+            SetTooltip(theirsButton,
+                "Take the SERVER version (theirs-full).\n" +
+                "Discards all your local changes for this file.");
+
+            SetTooltip(openButton,
+                "Open the conflicted file.\n" +
+                "Uses 3-way merge tool if configured,\n" +
+                "otherwise opens in a text editor with conflict markers.");
 
             mineButton.onClick.AddListener(async () =>
             {
@@ -100,8 +107,17 @@ public class SVNConflictItem : MonoBehaviour
             Show(openButton);
             Show(resolvedButton);
 
-            SetTooltip(openButton, "Open in external 3-way merge tool.\nManually resolve conflicts.");
-            SetTooltip(resolvedButton, "Mark as manually resolved.\nFile must NOT contain conflict markers.");
+            SetResolvedButtonLabel("Mark resolved");
+
+            SetTooltip(openButton,
+                "Open the conflicted file.\n" +
+                "Uses 3-way merge tool if configured,\n" +
+                "otherwise opens in a text editor with conflict markers.");
+
+            SetTooltip(resolvedButton,
+                "Keep the CURRENT contents of the working file.\n" +
+                "Use this AFTER manually resolving markers in your editor.\n" +
+                "Disabled while conflict markers are still present.");
 
             openButton.onClick.AddListener(async () =>
             {
@@ -116,36 +132,79 @@ public class SVNConflictItem : MonoBehaviour
                 catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
         }
+        else if (type == ConflictType.Binary)
+        {
+            Show(mineButton);
+            Show(theirsButton);
+            Show(resolvedButton);
+
+            SetResolvedButtonLabel("Keep current file");
+
+            SetTooltip(mineButton,
+                "Keep YOUR local binary (mine-full).\n" +
+                "Restores the .mine copy over the working file.\n" +
+                "Use this to undo a manual replacement.");
+
+            SetTooltip(theirsButton,
+                "Take the SERVER binary (theirs-full).\n" +
+                "Overwrites the working file with the repository version.\n" +
+                "Discards your local binary for this file.");
+
+            SetTooltip(resolvedButton,
+                "Keep the CURRENT file on disk unchanged.\n" +
+                "Use this if you ALREADY copied the correct binary\n" +
+                "over the working file (from a backup, branch, or build).\n" +
+                "SVN will mark the conflict resolved without touching the file.");
+
+            mineButton.onClick.AddListener(async () =>
+            {
+                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleMine(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
+            });
+
+            theirsButton.onClick.AddListener(async () =>
+            {
+                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveSingleTheirs(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
+            });
+
+            resolvedButton.interactable = true;
+            resolvedButton.onClick.AddListener(async () =>
+            {
+                try { await SVNManager.Instance.GetModule<SVNResolve>().MarkSingleResolved(_path); }
+                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
+            });
+        }
         else if (type == ConflictType.Tree)
         {
+            // Tree conflicts resolve via the unified force-core path, which runs
+            // Phase 1 (standard resolve) then Phase 3 (structural fix if needed).
+            // No "FORCE" variants are exposed — the same button always works.
             Show(treeMineButton);
             Show(treeTheirsButton);
             Show(treeBaseButton);
             Show(treeDeleteButton);
-            Show(treeMineForceButton);
-            Show(treeTheirsForceButton);
-            Show(treeBaseForceButton);
 
             SetTooltip(treeMineButton,
-                "Keep YOUR local directory/file.\nIf missing on disk, reverts to base.\nDoes NOT delete anything from repository.");
+                "Keep YOUR local version.\n" +
+                "Tries the standard SVN resolve first; if SVN rejects it,\n" +
+                "falls back to a structural fix (revert + resolve working).\n" +
+                "Does NOT touch the repository.");
 
             SetTooltip(treeTheirsButton,
-                "Take the SERVER version.\nBackups local files, then removes them\nand updates from repository.");
+                "Take the SERVER version.\n" +
+                "Backs up local files, removes them, then updates from repository.\n" +
+                "⚠ DESTRUCTIVE — discards local changes for this item!");
 
             SetTooltip(treeBaseButton,
-                "Reset to BASE (common ancestor).\nReverts local changes and resolves.");
+                "Reset to BASE (common ancestor).\n" +
+                "Reverts local changes and resolves.\n" +
+                "Safe — does not delete anything from the repository.");
 
             SetTooltip(treeDeleteButton,
-                "Remove unversioned obstruction files.\nBackups first, then schedules for deletion.\nUse when local files block SVN operations.");
-
-            SetTooltip(treeMineForceButton,
-                "FORCE: Keep local.\nTries standard resolve first.\nIf fails: reverts + resolves working.\nUse when normal 'Mine' doesn't work.");
-
-            SetTooltip(treeTheirsForceButton,
-                "FORCE: Take server version.\nTries standard resolve first.\nIf fails: backups → deletes → cleans → resolves → updates.\n⚠ DESTRUCTIVE — removes local version!");
-
-            SetTooltip(treeBaseForceButton,
-                "FORCE: Reset to base.\nTries standard resolve first.\nIf fails: reverts + resolves working.");
+                "Remove unversioned obstruction files.\n" +
+                "Backs up first, then schedules for deletion.\n" +
+                "Use when local files block SVN operations.");
 
             treeMineButton.onClick.AddListener(async () =>
             {
@@ -170,33 +229,15 @@ public class SVNConflictItem : MonoBehaviour
                 try { await SVNManager.Instance.GetModule<SVNResolve>().DeleteObstruction(_path); }
                 catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
             });
-
-            treeMineForceButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeMineForce(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            treeTheirsForceButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeTheirsForce(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
-
-            treeBaseForceButton.onClick.AddListener(async () =>
-            {
-                try { await SVNManager.Instance.GetModule<SVNResolve>().ResolveTreeBaseForce(_path); }
-                catch (System.Exception ex) { SVNLogBridge.LogException(ex); }
-            });
         }
     }
 
-    /// <summary>
-    /// === FIX: jeśli prefab nie ma SVNHoverHandler na przycisku, dodaj go
-    /// runtime'owo (spójnie z SvnLineController.Awake). Bez tego tooltipy
-    /// Mine/Theirs/Tree były CICHO ignorowane i użytkownik nie widział
-    /// ostrzeżeń o strategiach (destructive theirs-force!).
-    /// </summary>
+    private void SetResolvedButtonLabel(string label)
+    {
+        if (resolvedButtonLabel != null)
+            resolvedButtonLabel.text = label;
+    }
+
     private static void SetTooltip(Button btn, string tooltip)
     {
         if (btn == null) return;

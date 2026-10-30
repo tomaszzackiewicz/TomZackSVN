@@ -16,36 +16,46 @@ namespace SVN.Core
         private readonly Action<string> _log;
         private readonly string _projectName;
 
-        // === RETENCJA: klucze prefs + domyślna polityka ===
         private const string KEY_RETENTION_DAYS = "SVN_BackupRetentionDays";
         private const string KEY_MAX_SIZE_MB = "SVN_BackupMaxSizeMB";
         private const string KEY_AUTO_CLEAN = "SVN_BackupAutoClean";
         private const string KEY_LAST_AUTOCLEAN = "SVN_BackupLastAutoCleanTicks";
-        private const string KEY_BACKUP_ENABLED = "SVN_BackupEnabled";          // NOWE: master toggle
-        private const string KEY_PREFS_VERSION = "SVN_BackupPrefsVersion";      // NOWE: migracja
+        private const string KEY_BACKUP_ENABLED = "SVN_BackupEnabled";
+        private const string KEY_PREFS_VERSION = "SVN_BackupPrefsVersion";
 
-        public const int DefaultRetentionDays = 14;       // 0 = retencja wiekowa wyłączona
-        public const int DefaultMaxSizeMB = 10240;        // 10 GB; 0 = bez limitu (ZMIANA: było 2048)
-        public const bool DefaultBackupEnabled = true;    // NOWE: backup domyślnie ON
+        public const int DefaultRetentionDays = 14;
+        public const int DefaultMaxSizeMB = 10240;
+        public const bool DefaultBackupEnabled = true;
 
-        // Backupy młodsze niż 24h NIGDY nie są usuwane automatycznie —
-        // okno na odkrycie pomyłkowego resolve jeszcze tego samego dnia.
         private static readonly TimeSpan MinProtectedAge = TimeSpan.FromHours(24);
-
-        // Auto-clean najwyżej raz na 12h (per instalacja, znacznik w prefs).
         private static readonly TimeSpan AutoCleanInterval = TimeSpan.FromHours(12);
 
         private static readonly Regex TimestampFolderRegex = new Regex(@"^\d{8}_\d{6}$", RegexOptions.Compiled);
         private static readonly object AutoCleanLock = new object();
 
+        private int _retentionDaysCache;
+        private int _maxSizeMBCache;
+        private bool _autoCleanCache;
+        private bool _backupEnabledCache;
+
         public SVNBackupManager(SVNManager manager, Action<string> log)
         {
             _svnManager = manager;
             _log = log;
-            // Application.productName is a Unity API — must be read on the main thread,
-            // not from the worker pool that BackupAsync/SafeDeleteAsync run on.
+
+            // Application.productName is a Unity API — read once on the main thread,
+            // never from the Task.Run worker pool that BackupAsync/SafeDeleteAsync use.
             _projectName = ResolveProjectName();
+
             MigratePrefsOnce();
+
+            // Cache prefs on ctor thread. SVNPrefs.GetString from a worker silently
+            // falls back to the default if the dispatcher is busy >100ms — which
+            // would re-enable backups the user explicitly disabled.
+            _retentionDaysCache = Math.Max(0, GetPrefInt(KEY_RETENTION_DAYS, DefaultRetentionDays));
+            _maxSizeMBCache = Math.Max(0, GetPrefInt(KEY_MAX_SIZE_MB, DefaultMaxSizeMB));
+            _autoCleanCache = GetPrefInt(KEY_AUTO_CLEAN, 1) != 0;
+            _backupEnabledCache = GetPrefInt(KEY_BACKUP_ENABLED, DefaultBackupEnabled ? 1 : 0) != 0;
         }
 
         private static string ResolveProjectName()
@@ -75,10 +85,8 @@ namespace SVN.Core
             SetPrefInt(KEY_PREFS_VERSION, 1);
         }
 
-        #region Konfiguracja (prefs)
+        #region Configuration (prefs)
 
-        // === FIX (prefs): GetString/SetString gwarantowane w SVNPrefs; jeśli Twoja
-        // wersja ma GetInt/SetInt — podmień GetPrefInt/SetPrefInt na nie 1:1.
         private static int GetPrefInt(string key, int fallback) =>
             int.TryParse(SVNPrefs.GetString(key, fallback.ToString(CultureInfo.InvariantCulture)),
                 NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v : fallback;
@@ -88,32 +96,44 @@ namespace SVN.Core
 
         public int RetentionDays
         {
-            get { int v = GetPrefInt(KEY_RETENTION_DAYS, DefaultRetentionDays); return v < 0 ? 0 : v; }
-            set { SetPrefInt(KEY_RETENTION_DAYS, Math.Max(0, value)); }
+            get => Volatile.Read(ref _retentionDaysCache);
+            set
+            {
+                int v = Math.Max(0, value);
+                Volatile.Write(ref _retentionDaysCache, v);
+                SetPrefInt(KEY_RETENTION_DAYS, v);
+            }
         }
 
         public int MaxSizeMB
         {
-            get { int v = GetPrefInt(KEY_MAX_SIZE_MB, DefaultMaxSizeMB); return v < 0 ? 0 : v; }
-            set { SetPrefInt(KEY_MAX_SIZE_MB, Math.Max(0, value)); }
+            get => Volatile.Read(ref _maxSizeMBCache);
+            set
+            {
+                int v = Math.Max(0, value);
+                Volatile.Write(ref _maxSizeMBCache, v);
+                SetPrefInt(KEY_MAX_SIZE_MB, v);
+            }
         }
 
         public bool AutoCleanEnabled
         {
-            get => GetPrefInt(KEY_AUTO_CLEAN, 1) != 0;
-            set => SetPrefInt(KEY_AUTO_CLEAN, value ? 1 : 0);
+            get => Volatile.Read(ref _autoCleanCache);
+            set
+            {
+                Volatile.Write(ref _autoCleanCache, value);
+                SetPrefInt(KEY_AUTO_CLEAN, value ? 1 : 0);
+            }
         }
 
-        /// <summary>
-        /// Master toggle backupów. OFF = BackupAsync natychmiast zwraca null
-        /// (SVNConflictCore traktuje to jak "brak backupu" → gałąź
-        /// SafeDeleteAsync), a SafeDeleteAsync usuwa TRWALE zamiast przenosić
-        /// do backupu. Default: ON.
-        /// </summary>
         public bool BackupEnabled
         {
-            get => GetPrefInt(KEY_BACKUP_ENABLED, DefaultBackupEnabled ? 1 : 0) != 0;
-            set => SetPrefInt(KEY_BACKUP_ENABLED, value ? 1 : 0);
+            get => Volatile.Read(ref _backupEnabledCache);
+            set
+            {
+                Volatile.Write(ref _backupEnabledCache, value);
+                SetPrefInt(KEY_BACKUP_ENABLED, value ? 1 : 0);
+            }
         }
 
         #endregion
@@ -129,10 +149,6 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
 
-            // === TOGGLE: backup OFF → nic nie kopiujemy (szybki resolve przy
-            // dużej liczbie konfliktów). Null jest spójny z istniejącymi
-            // fallbackami w SVNConflictCore (gałąź SafeDeleteAsync).
-            // Celowo BEZ logu — przy 200 konfliktach byłby spam.
             if (!BackupEnabled) return null;
 
             try
@@ -151,11 +167,6 @@ namespace SVN.Core
 
                 string relative = GetRelativeToWorkingDir(path);
 
-                // === NOWY LAYOUT: każdy backup = jeden top-level folder ze stampem.
-                // Rationale: File.Copy zachowuje LastWriteTime ŹRÓDŁA (3-letni asset
-                // ma LastWriteTime sprzed 3 lat nawet w świeżym backupie) → timestampy
-                // plików NIE NADAJĄ SIĘ do age-cleanupu. Nazwa folderu = jedyne
-                // wiarygodne źródło czasu backupu + backup usuwalny atomowo.
                 string stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
                 string destPath = Path.Combine(backupRoot, stamp, relative);
                 destPath = MakeUniquePath(destPath);
@@ -175,7 +186,7 @@ namespace SVN.Core
                     CopyDirectory(path, destPath, token);
                 }
 
-                _log($"<color=00FF88><b>[Backup]</b></color> Backup created:");
+                _log($"<color=#00FF88><b>[Backup]</b></color> Backup created:");
                 _log($"<color=yellow>  Source :</color> {SVNPathUtilities.ForDisplay(path)}");
                 _log($"<color=yellow>  Backup :</color> <color=yellow>{SVNPathUtilities.ForDisplay(destPath)}</color>");
                 _log($"<color=yellow>  Backup folder: {SVNPathUtilities.ForDisplay(backupRoot)}</color>");
@@ -199,10 +210,6 @@ namespace SVN.Core
         {
             if (string.IsNullOrWhiteSpace(path)) return;
 
-            // === TOGGLE: backup OFF → usuwamy TRWALE (szybkość kosztem siatki
-            // bezpieczeństwa — jawna decyzja użytkownika). Callerzy sprawdzają
-            // File.Exists/Directory.Exists po SafeDelete → porażka usunięcia
-            // = abort, identycznie jak dotychczas.
             if (!BackupEnabled)
             {
                 DeletePermanentlyCore(path, token);
@@ -246,7 +253,7 @@ namespace SVN.Core
                     Directory.Move(path, destPath);
                 }
 
-                _log($"<color=00FF88><b>[Backup]</b></color> File moved to backup:");
+                _log($"<color=#00FF88><b>[Backup]</b></color> File moved to backup:");
                 _log($"<color=yellow>  Source :</color> {SVNPathUtilities.ForDisplay(path)}");
                 _log($"<color=yellow>  Backup :</color> <color=yellow>{SVNPathUtilities.ForDisplay(destPath)}</color>");
                 _log($"<color=yellow>  Backup folder: {SVNPathUtilities.ForDisplay(backupRoot)}</color>");
@@ -261,7 +268,6 @@ namespace SVN.Core
             }
         }
 
-        // === TOGGLE OFF: trwałe usunięcie obstructionu (bez backupu).
         private void DeletePermanentlyCore(string path, CancellationToken token)
         {
             try
@@ -297,20 +303,15 @@ namespace SVN.Core
 
         #region Janitor: cleanup / info / auto
 
-        /// <summary>Manualne sprzątanie (natychmiast, polityka z prefs).</summary>
         public Task<SVNBackupCleanupResult> CleanupAsync(CancellationToken token = default)
         {
             return Task.Run(() => CleanupCore(token), token);
         }
 
-        /// <summary>Auto-clean z throttlem raz/12h (znacznik w prefs).</summary>
         public Task AutoCleanupIfNeededAsync(CancellationToken token = default)
         {
             if (!AutoCleanEnabled) return Task.CompletedTask;
 
-            // === FIX: odczyt/zapis prefs POZA lockiem. SVNPrefs z puli czeka do
-            // 100 ms na dispatcher; trzymanie AutoCleanLock przez ten czas było
-            // niepotrzebną serializacją dwóch niezależnych wywołań.
             long lastTicks = 0;
             long.TryParse(SVNPrefs.GetString(KEY_LAST_AUTOCLEAN, "0"), out lastTicks);
             var last = new DateTime(lastTicks, DateTimeKind.Utc);
@@ -319,8 +320,6 @@ namespace SVN.Core
 
             lock (AutoCleanLock)
             {
-                // Re-check pod lockiem — dwa równoległe wywołania mogły już minąć
-                // pierwszy check.
                 long recheckTicks = 0;
                 long.TryParse(SVNPrefs.GetString(KEY_LAST_AUTOCLEAN, "0"), out recheckTicks);
                 var recheckLast = new DateTime(recheckTicks, DateTimeKind.Utc);
@@ -328,13 +327,12 @@ namespace SVN.Core
                     return Task.CompletedTask;
 
                 SVNPrefs.SetString(KEY_LAST_AUTOCLEAN,
-                    DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    DateTime.UtcNow.Ticks.ToString(CultureInfo.InvariantCulture));
             }
 
             return Task.Run(() => CleanupCore(token), token);
         }
 
-        /// <summary>Info o zajętości backupów do UI.</summary>
         public Task<string> DescribeBackupsAsync(CancellationToken token = default)
         {
             return Task.Run(() =>
@@ -392,10 +390,9 @@ namespace SVN.Core
                     .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
                 DateTime nowUtc = DateTime.UtcNow;
-                int retentionDays = RetentionDays;                 // 0 = wiek off
-                long capBytes = (long)MaxSizeMB * 1024L * 1024L;   // 0 = bez limitu
+                int retentionDays = RetentionDays;
+                long capBytes = (long)MaxSizeMB * 1024L * 1024L;
 
-                // --- 1. Klasyfikacja top-level: eventy (stamp) vs legacy ---
                 var events = new List<(string path, DateTime ts, long bytes)>();
                 var legacyDirs = new List<string>();
                 var legacyUnits = new List<(string path, long size, DateTime createdUtc)>();
@@ -419,7 +416,6 @@ namespace SVN.Core
                     events[i] = (e.path, e.ts, GetTreeSizeBytes(e.path));
                 }
 
-                // Legacy = stary layout. Znacznik: CreationTimeUtc.
                 foreach (var ld in legacyDirs)
                 {
                     token.ThrowIfCancellationRequested();
@@ -439,7 +435,6 @@ namespace SVN.Core
                     catch { }
                 }
 
-                // --- 2. Retencja wiekowa: całe backupy (foldery stamp) ---
                 var survivors = new List<(string path, DateTime ts, long bytes)>();
                 foreach (var e in events)
                 {
@@ -452,10 +447,9 @@ namespace SVN.Core
                         bytesFreed += freed;
                         backupsRemoved++;
                     }
-                    else survivors.Add(e); // nie udało się → zostaje na następny raz
+                    else survivors.Add(e);
                 }
 
-                // --- 3. Retencja wiekowa: pliki legacy ---
                 if (retentionDays > 0)
                 {
                     DateTime cutoffUtc = nowUtc - TimeSpan.FromDays(retentionDays);
@@ -471,12 +465,11 @@ namespace SVN.Core
                     }
                 }
 
-                // --- 4. Limit rozmiaru (najstarsze pierwsze, ochrona 24h) ---
                 var units = new List<(string path, long size, DateTime timeUtc, bool isEvent)>();
                 foreach (var s in survivors)
                     units.Add((s.path, s.bytes, s.ts, true));
                 foreach (var u in legacyUnits)
-                    if (File.Exists(u.path)) // odfiltruj usunięte w kroku 3
+                    if (File.Exists(u.path))
                         units.Add((u.path, u.size, u.createdUtc, false));
 
                 long total = 0;
@@ -490,7 +483,6 @@ namespace SVN.Core
                     {
                         if (total <= capBytes) break;
 
-                        // Posortowane rosnąco: pierwsza chroniona = wszystkie dalsze młodsze.
                         if (nowUtc - u.timeUtc < MinProtectedAge) break;
 
                         if (u.isEvent)
@@ -515,10 +507,8 @@ namespace SVN.Core
                     overCap = total > capBytes;
                 }
 
-                // --- 5. Sprzątanie pustych katalogów (legacy po kasowaniu plików) ---
                 PruneEmptyDirectories(rootFull);
 
-                // --- 6. Podsumowanie ---
                 try
                 {
                     foreach (var d in Directory.GetDirectories(rootFull))
@@ -529,7 +519,7 @@ namespace SVN.Core
                 bytesRemaining = GetTreeSizeBytes(rootFull);
                 try { diskFree = new DriveInfo(rootFull).AvailableFreeSpace; } catch { }
 
-                _log($"<color=00FF88><b>[Backup] Cleanup complete:</b></color> removed {backupsRemoved} backup(s) + {legacyFilesRemoved} legacy file(s) — {FormatBytes(bytesFreed)} freed.");
+                _log($"<color=#00FF88><b>[Backup] Cleanup complete:</b></color> removed {backupsRemoved} backup(s) + {legacyFilesRemoved} legacy file(s) — {FormatBytes(bytesFreed)} freed.");
                 _log($"<color=yellow>  Remaining : {FormatBytes(bytesRemaining)} in {backupsRemaining} backup(s) | Disk free: {FormatBytes(diskFree)}</color>");
                 _log($"<color=yellow>  Policy    : backup {(BackupEnabled ? "on" : "OFF")}, retention {retentionDays} d, cap {(capBytes <= 0 ? "unlimited" : FormatBytes(capBytes))}, protected < {MinProtectedAge.TotalHours:0} h</color>");
                 if (overCap)
@@ -551,13 +541,6 @@ namespace SVN.Core
 
         #region Purge (explicit, user-confirmed)
 
-        /// <summary>
-        /// Usuwa CAŁOŚĆ zawartości backup root (foldery-stampy + legacy pliki).
-        /// Nie dotyka samego folderu root ani NICZEGO poza nim (containment
-        /// sprawdzany per-item). Celowo IGNORUJE ochronę 24h — to jawna,
-        /// dwukrotnie potwierdzona akcja użytkownika. Pliki źródłowe w working
-        /// copy pozostają nietknięte (backup to kopie/przeniesienia, nie źródła).
-        /// </summary>
         public Task<SVNBackupCleanupResult> PurgeAllAsync(CancellationToken token = default)
         {
             return Task.Run(() => PurgeAllCore(token), token);
@@ -619,7 +602,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>Backup root dla UI (Open Folder).</summary>
         public string GetBackupRootForUi() => GetBackupRoot();
 
         #endregion
@@ -667,7 +649,6 @@ namespace SVN.Core
             return total;
         }
 
-        // === BEZPIECZEŃSTWO: nic poza backup root nigdy nie jest usuwane.
         private static bool IsUnderRoot(string rootFull, string path)
         {
             try
@@ -683,7 +664,7 @@ namespace SVN.Core
             bytes = 0;
             try
             {
-                if (!Directory.Exists(dir)) return true; // już nie ma = sukces (0 B)
+                if (!Directory.Exists(dir)) return true;
                 if (!IsUnderRoot(rootFull, dir))
                 {
                     _log($"<color=#FF4444>[Backup] Cleanup: path outside backup root — SKIPPED: {SVNPathUtilities.ForDisplay(dir)}</color>");
@@ -705,7 +686,7 @@ namespace SVN.Core
                 Directory.Delete(dir, true);
 
                 if (Directory.Exists(dir)) return false;
-                bytes = size; // licz tylko po udanym usunięciu
+                bytes = size;
                 return true;
             }
             catch (Exception ex)
@@ -823,8 +804,10 @@ namespace SVN.Core
             string name = Path.GetFileNameWithoutExtension(path);
             string ext = Path.GetExtension(path);
 
+            // UTC to match the folder stamp — local time in the filename suffix
+            // produces "future-looking" names on UTC+X machines.
             string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss",
-                System.Globalization.CultureInfo.InvariantCulture);
+                CultureInfo.InvariantCulture);
 
             string candidate = Path.Combine(dir, $"{name}_{timestamp}{ext}");
             int counter = 1;

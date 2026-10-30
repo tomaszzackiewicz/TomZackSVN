@@ -21,6 +21,7 @@ namespace SVN.Core
         private int _processingFlag;
         private int _uiRefreshingFlag;
         private int _disposed;
+        private static readonly object PreviewLock = new object();
 
         public bool IsResolveBusy => Volatile.Read(ref _processingFlag) == 1;
 
@@ -95,17 +96,15 @@ namespace SVN.Core
         public void OpenInEditor() => SafeFireAndForget(OpenInEditorAsync);
         public void ResolveAllMine() => SafeFireAndForget(() => ResolveAllConflictsAsync("mine-full"));
         public void ResolveAllTheirs() => SafeFireAndForget(() => ResolveAllConflictsAsync("theirs-full"));
+
+        // Tree conflicts — single reliable action per strategy. The underlying
+        // implementation (ResolveAllTreeAsync -> force core per item) tries the
+        // standard resolve first, then falls back to structural fix. There is no
+        // separate "Force" variant — the old non-force path silently failed on
+        // W195024 tree conflicts, so it has been consolidated into this one.
         public void ResolveAllTreeMine() => SafeFireAndForget(() => ResolveAllTreeAsync("mine-full"));
         public void ResolveAllTreeTheirs() => SafeFireAndForget(() => ResolveAllTreeAsync("theirs-full"));
         public void ResolveAllTreeBase() => SafeFireAndForget(() => ResolveAllTreeAsync("base"));
-
-        public void ResolveAllTreeTheirsForce() => SafeFireAndForget(() => ResolveAllTreeForceAsync("theirs-full"));
-        public void ResolveAllTreeMineForce() => SafeFireAndForget(() => ResolveAllTreeForceAsync("mine-full"));
-        public void ResolveAllTreeBaseForce() => SafeFireAndForget(() => ResolveAllTreeForceAsync("base"));
-
-        public async Task ResolveTreeTheirsForce(string path) => await ResolveTreeForceAsync(path, "theirs-full").ConfigureAwait(false);
-        public async Task ResolveTreeMineForce(string path) => await ResolveTreeForceAsync(path, "mine-full").ConfigureAwait(false);
-        public async Task ResolveTreeBaseForce(string path) => await ResolveTreeForceAsync(path, "base").ConfigureAwait(false);
 
         public void CancelResolve()
         {
@@ -144,9 +143,6 @@ namespace SVN.Core
         public async Task RefreshConflictUI() =>
             await RefreshConflictUIAsync(CancellationToken.None).ConfigureAwait(false);
 
-        // === FIX P1: normalizacja path przez TryGetRelativePath (jak ResolveTree...).
-        // Path.Combine(root, absolutePath) na Windows POMIJA root — plik mógłby
-        // być otwierany z poza working copy lub w złym miejscu.
         public async Task OpenSingle(string path)
         {
             if (!SVNPathUtilities.TryGetRelativePath(svnManager.WorkingDir, path, out string relativePath))
@@ -155,7 +151,7 @@ namespace SVN.Core
                 return;
             }
 
-            string editorPath = svnManager.MergeToolPath ?? PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
+            string textEditorPath = ResolveTextEditorPath();
             string resolveToolPath = GetResolveToolPath();
 
             await RunWithLockAsync(async token =>
@@ -167,28 +163,25 @@ namespace SVN.Core
                     return;
                 }
 
-                if (!TryLaunchExternalResolveTool(full, relativePath, resolveToolPath))
+                if (SVNPathUtilities.IsBinaryFile(full))
                 {
-                    if (string.IsNullOrEmpty(editorPath))
-                    {
-                        LogBoth("<color=#FFAA00>Merge tool path missing!</color>");
-                        return;
-                    }
+                    LogBoth($"<color=#FFAA00>Binary file — cannot be resolved by text editing:</color> {relativePath}");
+                    LogBoth("<color=yellow>  Use Mine / Theirs / Base buttons in the conflict list.</color>");
+                    LogBoth($"<color=yellow>  Current size: {new FileInfo(full).Length:N0} bytes</color>");
+                    return;
+                }
 
-                    try
+                bool launched = TryLaunchExternalResolveTool(full, relativePath, resolveToolPath);
+                if (!launched)
+                {
+                    if (!TryOpenFileInEditor(full, relativePath, textEditorPath, token))
                     {
-                        LogBoth($"Opening editor for: <color=green>{relativePath}</color>");
-                        Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\"") { UseShellExecute = true });
-                    }
-                    catch (Exception ex)
-                    {
-                        LogBoth($"<color=#FFAA00>Failed to launch editor:</color> {ex.Message}");
+                        LogBoth("<color=#FFAA00>Could not open the file — configure a text editor in settings or check file associations.</color>");
                         return;
                     }
                 }
 
                 var existing = _conflictCache.Get(relativePath) ?? new SVNConflictData { Path = relativePath };
-
                 _conflictCache.AddOrUpdate(new SVNConflictData
                 {
                     Path = existing.Path,
@@ -213,6 +206,8 @@ namespace SVN.Core
                 return ok;
             }).ConfigureAwait(false);
 
+        // Tree per-item — single reliable action per strategy, backed by the
+        // same force-core path as bulk. No separate Force wrapper needed.
         public async Task<bool> ResolveTreeMine(string path) =>
             await RunWithLockAsync(async token =>
             {
@@ -307,10 +302,8 @@ namespace SVN.Core
                 {
                     token.ThrowIfCancellationRequested();
 
-                    // === FIX (konsolidacja): użyj wspólnej implementacji z Core (przez resolver)
-                    // (wraz z token dla cancel w trakcie skanu)
                     bool markers = await _resolver.HasConflictMarkersAsync(Path.Combine(root, c.Path), token).ConfigureAwait(false);
-                    infos.Add((c.Path, ConvertConflictType(c.Type), markers, c.TreeConflictReason));
+                    infos.Add((c.Path, ConvertConflictType(c), markers, c.TreeConflictReason));
                 }
 
                 var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -349,7 +342,6 @@ namespace SVN.Core
                     }
                 });
 
-                // === FIX 10: delay bez tokenu — bez fałszywego timeout przy cancel.
                 Task completed = await Task.WhenAny(tcs.Task, Task.Delay(2000)).ConfigureAwait(false);
                 if (completed != tcs.Task && !token.IsCancellationRequested)
                     LogBoth("<color=#FFAA00>UI Refresh timeout (main thread unresponsive).</color>");
@@ -371,7 +363,7 @@ namespace SVN.Core
 
         private async Task OpenInEditorAsync()
         {
-            string editorPath = svnManager.MergeToolPath ?? PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
+            string textEditorPath = ResolveTextEditorPath();
             string targetFromUI = svnUI?.ResolveTargetFileInput?.text;
             string resolveToolPath = GetResolveToolPath();
 
@@ -383,15 +375,25 @@ namespace SVN.Core
                 if (string.IsNullOrEmpty(targetFile))
                 {
                     targetFile = _conflictCache.Values
+                        .Where(x => x.State != SVNConflictState.Resolved && x.Type != SVNConflictType.Binary)
                         .OrderBy(x => x.Path)
-                        .FirstOrDefault(x => x.State != SVNConflictState.Resolved)?.Path;
+                        .FirstOrDefault()?.Path;
 
                     if (string.IsNullOrEmpty(targetFile))
                     {
                         var conflicts = await _parser.GetConflictsAsync(root, token).ConfigureAwait(false);
                         foreach (var c in conflicts)
                             _conflictCache.AddOrUpdate(c);
-                        targetFile = conflicts.FirstOrDefault()?.Path;
+
+                        targetFile = conflicts
+                            .Where(c => c.Type != SVNConflictType.Binary)
+                            .FirstOrDefault()?.Path;
+
+                        if (string.IsNullOrEmpty(targetFile) && conflicts.Count > 0)
+                        {
+                            LogBoth("<color=#FFAA00>All current conflicts are binary — use Mine/Theirs/Base buttons.</color>");
+                            return;
+                        }
                     }
                 }
 
@@ -401,7 +403,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // === FIX P1: normalizacja przez TryGetRelativePath
                 if (!SVNPathUtilities.TryGetRelativePath(root, targetFile, out string normalizedTarget))
                 {
                     LogBoth($"<color=#FFAA00>Invalid path (outside working copy):</color> {targetFile}");
@@ -415,28 +416,24 @@ namespace SVN.Core
                     return;
                 }
 
-                if (!TryLaunchExternalResolveTool(full, normalizedTarget, resolveToolPath))
+                if (SVNPathUtilities.IsBinaryFile(full))
                 {
-                    if (string.IsNullOrEmpty(editorPath))
-                    {
-                        LogBoth("<color=#FFAA00>Merge tool path missing!</color>");
-                        return;
-                    }
+                    LogBoth($"<color=#FFAA00>Binary file — cannot be resolved by text editing:</color> {normalizedTarget}");
+                    LogBoth("<color=yellow>  Use Mine / Theirs / Base buttons in the conflict list.</color>");
+                    return;
+                }
 
-                    try
+                bool launched = TryLaunchExternalResolveTool(full, normalizedTarget, resolveToolPath);
+                if (!launched)
+                {
+                    if (!TryOpenFileInEditor(full, normalizedTarget, textEditorPath, token))
                     {
-                        LogBoth($"Opening editor for: <color=green>{normalizedTarget}</color>");
-                        Process.Start(new ProcessStartInfo(editorPath, $"\"{full}\"") { UseShellExecute = true });
-                    }
-                    catch (Exception ex)
-                    {
-                        LogBoth($"<color=#FFAA00>Failed to launch editor:</color> {ex.Message}");
+                        LogBoth("<color=#FFAA00>Could not open the file — configure a text editor in settings or check file associations.</color>");
                         return;
                     }
                 }
 
                 var existing = _conflictCache.Get(normalizedTarget) ?? new SVNConflictData { Path = normalizedTarget };
-
                 _conflictCache.AddOrUpdate(new SVNConflictData
                 {
                     Path = existing.Path,
@@ -476,35 +473,26 @@ namespace SVN.Core
             await RefreshAfterResolveAsync().ConfigureAwait(false);
         }
 
-        private async Task ResolveAllTreeForceAsync(string strategy)
-        {
-            await RunWithLockAsync(token => _resolver.ResolveAllTreeForceAsync(strategy, token)).ConfigureAwait(false);
-            await RefreshAfterResolveAsync().ConfigureAwait(false);
-        }
-
-        private async Task ResolveTreeForceAsync(string path, string strategy)
-        {
-            await RunWithLockAsync(token => _resolver.ResolveTreeForceAsync(path, strategy, token)).ConfigureAwait(false);
-            await RefreshAfterResolveAsync().ConfigureAwait(false);
-        }
-
         private async Task RefreshAfterResolveAsync()
         {
             await svnManager.RefreshStatus().ConfigureAwait(false);
             svnManager.GetModule<SVNExternal>()?.RefreshWindowsShellIcons(svnManager.WorkingDir);
             await RefreshConflictUIAsync(CancellationToken.None).ConfigureAwait(false);
+
+            _ = _backup.AutoCleanupIfNeededAsync();
         }
 
         #endregion
 
         #region Utility
 
-        private SVNConflictItem.ConflictType ConvertConflictType(SVNConflictType type)
+        private SVNConflictItem.ConflictType ConvertConflictType(SVNConflictData data)
         {
-            return type switch
+            return data.Type switch
             {
                 SVNConflictType.Tree => SVNConflictItem.ConflictType.Tree,
                 SVNConflictType.Manual => SVNConflictItem.ConflictType.Manual,
+                SVNConflictType.Binary => SVNConflictItem.ConflictType.Binary,
                 _ => SVNConflictItem.ConflictType.Text
             };
         }
@@ -526,10 +514,6 @@ namespace SVN.Core
             }
         }
 
-        // === FIX P1 (Dispose): usunięty task.Wait(3s) — nie blokuj main thread.
-        // Problem: Dispose z main thread Unity + task czeka na UnityMainThreadDispatcher
-        // → deadlock. Teraz: Cancel + fire-and-forget — task skończy się naturalnie.
-        // Delayed dispose CTS (zgodnie z patternem projektowym).
         private async Task RunWithLockAsync(Func<CancellationToken, Task> action)
         {
             if (IsDisposed) return;
@@ -627,9 +611,229 @@ namespace SVN.Core
             return path?.Trim().Trim('"');
         }
 
+        private string ResolveTextEditorPath()
+        {
+            string editor = PlayerPrefs.GetString(SVNManager.KEY_TEXTEDITOR_TOOL, "");
+            if (!string.IsNullOrWhiteSpace(editor))
+                return editor.Trim().Trim('"');
+
+            return svnManager.MergeToolPath?.Trim().Trim('"') ?? "";
+        }
+
+        private bool TryOpenFileInEditor(
+            string fullPath,
+            string relativePath,
+            string editorPath,
+            CancellationToken token)
+        {
+            if (!string.IsNullOrEmpty(editorPath) && File.Exists(editorPath))
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(editorPath, $"\"{fullPath}\"") { UseShellExecute = true });
+                    LogBoth($"<color=green>Opening editor for:</color> {relativePath}");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LogBoth($"<color=#FFAA00>Configured editor failed: {ex.Message} — trying system default...</color>");
+                }
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(fullPath) { UseShellExecute = true });
+                LogBoth($"<color=green>Opening file (system default):</color> {relativePath}");
+                if (string.IsNullOrEmpty(editorPath))
+                    LogBoth("<color=yellow>Note: no text editor configured. Set one in settings to edit working file directly.</color>");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=#FFAA00>System default open failed: {ex.Message} — falling back to combined preview...</color>");
+            }
+
+            try
+            {
+                string previewPath = BuildConflictPreviewFile(fullPath, relativePath, token);
+                if (!string.IsNullOrEmpty(previewPath))
+                {
+                    Process.Start(new ProcessStartInfo(previewPath) { UseShellExecute = true });
+                    LogBoth($"<color=green>Opened conflict preview (read-only):</color> {relativePath}");
+                    LogBoth($"<color=yellow>  Preview :</color> {SVNPathUtilities.ForDisplay(previewPath)}");
+                    LogBoth("<color=yellow>  This is a snapshot of MERGED/MINE/BASE/THEIRS. Edit the working file to resolve.</color>");
+                    LogBoth("<color=yellow>  Tip: configure a text editor in settings for direct editing.</color>");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogBoth($"<color=#FFAA00>Conflict preview failed: {ex.Message}</color>");
+            }
+
+            return false;
+        }
+
+        private static string BuildConflictPreviewFile(
+            string conflictedFullPath,
+            string relativePath,
+            CancellationToken token)
+        {
+            string dir = Path.GetDirectoryName(conflictedFullPath);
+            if (string.IsNullOrEmpty(dir)) return null;
+
+            string fileName = Path.GetFileName(conflictedFullPath);
+            string safeName = relativePath.Replace('/', '_').Replace('\\', '_');
+
+            var revFiles = Directory.GetFiles(dir)
+                .Where(f =>
+                {
+                    string fn = Path.GetFileName(f);
+                    return fn.StartsWith(fileName + ".r", StringComparison.OrdinalIgnoreCase)
+                           && !fn.EndsWith(".mine", StringComparison.OrdinalIgnoreCase);
+                })
+                .Select(f => new { Path = f, Rev = ExtractRevisionNumber(f) })
+                .Where(x => x.Rev.HasValue)
+                .OrderBy(x => x.Rev.Value)
+                .ToList();
+
+            string mineFile = conflictedFullPath + ".mine";
+            bool hasMine = File.Exists(mineFile);
+            bool hasMerged = File.Exists(conflictedFullPath);
+
+            if (!hasMerged && !hasMine && revFiles.Count == 0)
+                return null;
+
+            string previewRoot = Path.Combine(SVNPrefs.TemporaryCachePath, "SVNConflictPreviews");
+            Directory.CreateDirectory(previewRoot);
+            CleanupOldPreviews(previewRoot);
+
+            string stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+            string previewPath = Path.Combine(previewRoot, $"{safeName}_{stamp}.txt");
+
+            var sb = new System.Text.StringBuilder(64 * 1024);
+
+            sb.AppendLine("============================================================");
+            sb.AppendLine($"CONFLICT PREVIEW: {relativePath}");
+            sb.AppendLine($"Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            sb.AppendLine("============================================================");
+            sb.AppendLine();
+            sb.AppendLine("Read-only snapshot for review. Edit the original working file");
+            sb.AppendLine("(not this preview) to resolve the conflict.");
+            sb.AppendLine();
+
+            if (hasMerged)
+            {
+                sb.AppendLine("============================================================");
+                sb.AppendLine("MERGED (working file — contains conflict markers)");
+                sb.AppendLine("============================================================");
+                AppendFileContentSafe(sb, conflictedFullPath, token);
+                sb.AppendLine();
+            }
+
+            if (hasMine)
+            {
+                sb.AppendLine("============================================================");
+                sb.AppendLine("MINE (local changes)");
+                sb.AppendLine("============================================================");
+                AppendFileContentSafe(sb, mineFile, token);
+                sb.AppendLine();
+            }
+
+            if (revFiles.Count >= 2)
+            {
+                sb.AppendLine("============================================================");
+                sb.AppendLine($"BASE (common ancestor, r{revFiles.First().Rev})");
+                sb.AppendLine("============================================================");
+                AppendFileContentSafe(sb, revFiles.First().Path, token);
+                sb.AppendLine();
+
+                sb.AppendLine("============================================================");
+                sb.AppendLine($"THEIRS (repository, r{revFiles.Last().Rev})");
+                sb.AppendLine("============================================================");
+                AppendFileContentSafe(sb, revFiles.Last().Path, token);
+                sb.AppendLine();
+            }
+            else if (revFiles.Count == 1)
+            {
+                sb.AppendLine("============================================================");
+                sb.AppendLine($"REVISION r{revFiles.First().Rev}");
+                sb.AppendLine("============================================================");
+                AppendFileContentSafe(sb, revFiles.First().Path, token);
+                sb.AppendLine();
+            }
+
+            string tempPath = previewPath + ".tmp";
+            lock (PreviewLock)
+            {
+                File.WriteAllText(tempPath, sb.ToString(), new System.Text.UTF8Encoding(true));
+                if (File.Exists(previewPath)) File.Delete(previewPath);
+                File.Move(tempPath, previewPath);
+            }
+
+            return previewPath;
+        }
+
+        private static void AppendFileContentSafe(
+            System.Text.StringBuilder sb,
+            string path,
+            CancellationToken token)
+        {
+            try
+            {
+                byte[] buffer = new byte[4096];
+                int read;
+                using (var fs = File.OpenRead(path))
+                    read = fs.Read(buffer, 0, buffer.Length);
+
+                for (int i = 0; i < read; i++)
+                {
+                    if (buffer[i] == 0)
+                    {
+                        sb.AppendLine($"(binary content — {new FileInfo(path).Length} bytes, not shown)");
+                        return;
+                    }
+                }
+
+                using var reader = new StreamReader(path, System.Text.Encoding.UTF8, true, 8192);
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    token.ThrowIfCancellationRequested();
+                    sb.AppendLine(line);
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"(failed to read: {ex.Message})");
+            }
+        }
+
+        private static void CleanupOldPreviews(string previewDir)
+        {
+            try
+            {
+                var cutoff = DateTime.UtcNow.AddHours(-24);
+                foreach (var f in Directory.GetFiles(previewDir, "*.txt"))
+                {
+                    try
+                    {
+                        if (File.GetLastWriteTimeUtc(f) < cutoff)
+                            File.Delete(f);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
         private bool TryLaunchExternalResolveTool(string conflictedFullPath, string relativePath, string toolPath)
         {
             if (string.IsNullOrEmpty(toolPath) || !File.Exists(toolPath))
+                return false;
+
+            if (SVNPathUtilities.IsBinaryFile(conflictedFullPath))
                 return false;
 
             try
@@ -638,8 +842,6 @@ namespace SVN.Core
                 string fileName = Path.GetFileName(conflictedFullPath);
                 string mineFile = conflictedFullPath + ".mine";
 
-                // === FIX 16: Directory.GetFiles z patternem puszczał znaki glob
-                // ([, *, ?) z nazwy pliku. Ręczny filtr jest odporny na dowolne nazwy.
                 var revFiles = Directory.GetFiles(dir ?? ".")
                     .Where(f =>
                     {
@@ -690,8 +892,6 @@ namespace SVN.Core
             return int.TryParse(numStr, out int num) ? num : (int?)null;
         }
 
-        // === FIX P1 (Dispose): bez task.Wait() — nie blokuj main thread Unity.
-        // Cancel + fire-and-forget. Task skończy się naturalnie (SvnRunner kill na cancel).
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
@@ -745,19 +945,12 @@ namespace SVN.Core
             }
         }));
 
-        /// <summary>Purge: panel musi potwierdzić dwuklikiem — moduł dostaje
-        /// już decyzję użytkownika. Guard przed resolve w toku robi panel
-        /// (CanExecute), bo purge nie może ścigać się z backupiem tworzonym
-        /// przez aktywny resolve.</summary>
         public void PurgeAllBackups() => SafeFireAndForget(async () =>
         {
             LogOverwrite("<color=#FF4444>[Backup] PURGING ALL BACKUPS...</color>");
             await _backup.PurgeAllAsync().ConfigureAwait(false);
         });
 
-        // === TOGGLE backupów (default ON). OFF = resolve bez kopiowania
-        // + trwałe usuwanie obstructionów — szybciej przy dużej liczbie
-        // konfliktów. Prefs (PlayerPrefs) → sync na main thread.
         public bool IsBackupEnabled => _backup.BackupEnabled;
 
         public bool SetBackupEnabled(bool enabled)
@@ -774,10 +967,8 @@ namespace SVN.Core
         public bool ToggleBackupEnabled() => SetBackupEnabled(!_backup.BackupEnabled);
         public string DescribeBackupEnabled() => _backup.BackupEnabled ? "on" : "off";
 
-        // === INPUT FIELD API: retencja (dni). 0 = off.
         public int GetBackupRetentionDays() => _backup.RetentionDays;
 
-        /// <summary>Dni retencji wiekowej. ≤0 = off (clamp ≥0 robi manager).</summary>
         public string SetBackupRetentionDays(int days)
         {
             _backup.RetentionDays = days;
