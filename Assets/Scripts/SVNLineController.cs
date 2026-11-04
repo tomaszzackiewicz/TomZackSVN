@@ -171,9 +171,6 @@ public class SvnLineController : MonoBehaviour
     {
         bool isRoot = IsRootElement(_element.FullPath);
 
-        // === FIX (spójność marków): status mark ([M], [A], [D], ...) zawsze w kolorze
-        // SVNColors.GetStatusHex(status). Marki typu ([DIR]/[ROOT]/[FILE]) zostają na
-        // DirHex/FileHex. Nazwy: folder → DirNameColor, plik → FileNameColor (= FileHex).
         string statusHex = SVNColors.GetStatusHex(_element.Status);
         bool hasStatus = !string.IsNullOrEmpty(_element.Status)
                          && _element.Status != " "
@@ -227,8 +224,6 @@ public class SvnLineController : MonoBehaviour
             if (nameText != null)
             {
                 nameText.text = _element.Name;
-                // === FIX: nazwa pliku w kolorze [FILE] (#ADD8E6). Wcześniej
-                // brak ustawienia → dziedziczyła `Color.white` z Resetu wyżej.
                 nameText.color = SVNColors.FileNameColor;
             }
 
@@ -273,6 +268,13 @@ public class SvnLineController : MonoBehaviour
         if (selectionToggle == null || _onToggleChangedDelegate == null) return;
 
         selectionToggle.onValueChanged.RemoveListener(_onToggleChangedDelegate);
+
+        bool canCheck = _element.IsCheckable;
+        selectionToggle.interactable = canCheck;
+
+        if (!canCheck && _element.IsChecked)
+            _element.IsChecked = false;
+
         selectionToggle.SetIsOnWithoutNotify(_element.IsChecked);
 
         if (nameText != null)
@@ -288,10 +290,17 @@ public class SvnLineController : MonoBehaviour
         if (nameText != null)
             nameText.alpha = val ? 1f : 0.6f;
 
-        if (_element.IsFolder && _svnStatus != null)
-            _svnStatus.ToggleChildrenSelection(_element, val);
+        if (_svnStatus == null) return;
 
-        _svnStatus?.NotifySelectionChanged();
+        if (_element.IsFolder)
+        {
+            _svnStatus.ToggleChildrenSelection(_element, val);
+        }
+        else
+        {
+            _svnStatus.UpdateParentSelection(_element.FullPath);
+            _svnStatus.NotifySelectionChanged();
+        }
     }
 
     private void SetupFullRowButton()

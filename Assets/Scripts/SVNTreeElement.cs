@@ -24,6 +24,7 @@ namespace SVN.Core
         public int AddedLines;
         public int RemovedLines;
         public bool DiffStatsLoaded;
+        public bool IsCheckable = true;
 
         public SvnTreeElement Clone()
         {

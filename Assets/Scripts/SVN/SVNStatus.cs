@@ -21,14 +21,9 @@ namespace SVN.Core
         private const bool ENABLE_FILE_SIZES = true;
         private CancellationTokenSource _projectSwitchDebounceCts;
 
-        // === FIX (miganie): fingerprint ostatnio wyrenderowanego drzewa.
-        // Reprezentuje DANE Z SERWERA (status, bytes, locki, ochronę), NIE
-        // stan UI (IsChecked/IsExpanded). Zapisywany WYŁĄCZNIE na main thread.
         private string _lastFlatTreeFingerprint;
+        private bool _viewWasCleared;
 
-        // === FIX (perf): cache ścieżek svn:needs-lock — `propget -R` na dużym WC
-        // trwa kilka sekund, a był wołany przy KAŻDYM refreshu (commit, edit, focus).
-        // TTL 2 min, tak samo jak lock cache; oba unieważniane razem przy ClearLockCache.
         private static readonly Dictionary<string, (DateTime time, HashSet<string> data)> _protectionCacheMap
             = new Dictionary<string, (DateTime, HashSet<string>)>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan ProtectionCacheDuration = TimeSpan.FromMinutes(2);
@@ -540,10 +535,75 @@ namespace SVN.Core
 
         public void ToggleChildrenSelection(SvnTreeElement parentFolder, bool isChecked)
         {
+            if (parentFolder == null || string.IsNullOrEmpty(parentFolder.FullPath)) return;
+
             UpdateListSelection(_flatTreeData, parentFolder.FullPath, isChecked);
             if (_commitTreeData != null)
                 UpdateListSelection(_commitTreeData, parentFolder.FullPath, isChecked);
+
+            // Odznaczenie folderu może spowodować, że jego rodzic też powinien
+            // się odznaczyć (jeśli nie ma własnych zmian ani innych zaznaczonych dzieci).
+            if (!isChecked)
+            {
+                UpdateParentSelection(_flatTreeData, parentFolder.FullPath);
+                UpdateParentSelection(_commitTreeData, parentFolder.FullPath);
+            }
+
             NotifySelectionChanged();
+        }
+
+        public void UpdateParentSelection(string path)
+        {
+            UpdateParentSelection(_flatTreeData, path);
+            UpdateParentSelection(_commitTreeData, path);
+        }
+
+        private void UpdateParentSelection(List<SvnTreeElement> list, string path)
+        {
+            if (list == null || list.Count == 0 || string.IsNullOrEmpty(path)) return;
+
+            var byPath = new Dictionary<string, SvnTreeElement>(list.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var e in list)
+            {
+                if (!string.IsNullOrEmpty(e.FullPath))
+                    byPath[e.FullPath] = e;
+            }
+
+            string current = GetParentPath(path);
+            while (!string.IsNullOrEmpty(current))
+            {
+                if (!byPath.TryGetValue(current, out var parent) || !parent.IsFolder) break;
+
+                bool hasOwnChange =
+                    parent.Status == "M" || parent.Status == "A" ||
+                    parent.Status == "D" || parent.Status == "R" ||
+                    parent.Status == "!";
+
+                if (hasOwnChange)
+                {
+                    parent.IsChecked = true;
+                }
+                else
+                {
+                    string prefix = parent.FullPath + "/";
+                    bool anyChildFileChecked = false;
+
+                    foreach (var e in list)
+                    {
+                        if (string.IsNullOrEmpty(e.FullPath)) continue;
+                        if (!e.FullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (!e.IsFolder && e.IsChecked)
+                        {
+                            anyChildFileChecked = true;
+                            break;
+                        }
+                    }
+
+                    parent.IsChecked = anyChildFileChecked;
+                }
+
+                current = GetParentPath(current);
+            }
         }
 
         private void UpdateListSelection(List<SvnTreeElement> list, string path, bool isChecked)
@@ -691,6 +751,12 @@ namespace SVN.Core
 
                     e.LockedByMe = isMine;
                     e.LockedByOther = !isMine;
+
+                    if (e.LockedByOther)
+                    {
+                        e.IsCheckable = false;
+                        e.IsChecked = false;
+                    }
                 }
             }
         }
@@ -1021,17 +1087,12 @@ namespace SVN.Core
             catch (OperationCanceledException) { }
             catch (Exception e)
             {
-                SVNLogBridge.LogErrorToOutput($"[SVN] Błąd podczas odświeżania: {e.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] Error during refresh: {e.Message}");
             }
         }
 
         public async Task RefreshModifiedInternal()
         {
-            // === FIX (miganie tekstu): pokaż "Refreshing..." TYLKO gdy drzewo
-            // jest puste (brak cache). Gdy drzewo już jest widoczne, tekst
-            // "Refreshing..." renderowałby się NA WIERZCHU plików (TreeDisplay
-            // i drzewo dzielą obszar UI). ExecuteRefreshWithAutoExpand ma ten
-            // sam guard dla "Scanning..." — tutaj brakowało go dla "Refreshing...".
             bool hasCache = _flatTreeData != null && _flatTreeData.Count > 0;
 
             if (!hasCache)
@@ -1075,10 +1136,6 @@ namespace SVN.Core
                     }
                 }
 
-                // === FIX (miganie): jeśli mamy już drzewo (hasCache), nie
-                // czyścimy widoku i nie pokazujemy "Scanning..." — user nie
-                // widzi migotania. Tekst pojawia się tylko przy pierwszym
-                // załadowaniu.
                 bool hasCache = _flatTreeData != null && _flatTreeData.Count > 0;
                 WriteTreeStatus(
                     myId,
@@ -1169,7 +1226,6 @@ namespace SVN.Core
                 var localCommitData = newCommitData;
                 var localTotalBytes = buildResult.TotalBytes;
 
-                // === FIX (miganie): fingerprint liczony POZA main thread.
                 string newFingerprint = BuildFlatTreeFingerprint(localFlatData);
 
                 RunOnMainThread(() =>
@@ -1183,8 +1239,8 @@ namespace SVN.Core
                     if (legacyStatusDict != null)
                         svnManager.SetCurrentStatus(legacyStatusDict);
 
-                    // === FIX (miganie): pomiń re-render gdy dane logicznie identyczne.
-                    if (newFingerprint == _lastFlatTreeFingerprint &&
+                    if (!_viewWasCleared &&
+                        newFingerprint == _lastFlatTreeFingerprint &&
                         _flatTreeData != null && _flatTreeData.Count > 0)
                     {
                         _flatTreeData = localFlatData;
@@ -1195,6 +1251,7 @@ namespace SVN.Core
                         return;
                     }
 
+                    _viewWasCleared = false;
                     _lastFlatTreeFingerprint = newFingerprint;
 
                     _flatTreeData = localFlatData;
@@ -1383,9 +1440,9 @@ namespace SVN.Core
         }
 
         private (List<SvnTreeElement> Elements, long TotalBytes) BuildFlatTreeStructureText(
-            string root,
-            Dictionary<string, SvnChangeInfo> statusDict,
-            Dictionary<string, bool> previousSelectionStates)
+    string root,
+    Dictionary<string, SvnChangeInfo> statusDict,
+    Dictionary<string, bool> previousSelectionStates)
         {
             bool hasRootChange = statusDict.ContainsKey(".");
             int estimatedCount = statusDict.Count * 2;
@@ -1413,6 +1470,7 @@ namespace SVN.Core
                     IsFolder = true,
                     IsCommitDelegate = true,
                     IsChecked = true,
+                    IsCheckable = true,
                     IsExpanded = true,
                     IsVisible = true,
                     Size = "",
@@ -1485,6 +1543,11 @@ namespace SVN.Core
                     if (isCommitableStatus && previousSelectionStates.TryGetValue(currentPath, out bool prev))
                         isChecked = prev;
 
+                    // Conflict and obstructed cannot be checked — committing them is
+                    // forbidden by SVN and would be silently dropped by ExecuteCommitSelected.
+                    bool isCheckable = displayStatus != "C" && displayStatus != "~";
+                    if (!isCheckable) isChecked = false;
+
                     if (isChecked && !isActuallyFolder && isLastPart)
                         localTotalBytes += bytes;
 
@@ -1498,6 +1561,7 @@ namespace SVN.Core
                         Status = displayStatus,
                         IsFolder = isActuallyFolder,
                         IsChecked = isChecked,
+                        IsCheckable = isCheckable,
                         IsExpanded = false,
                         IsVisible = true,
                         Size = fileSize,
@@ -1663,7 +1727,7 @@ namespace SVN.Core
             catch (OperationCanceledException) { }
             catch (Exception e)
             {
-                SVNLogBridge.LogErrorToOutput($"[SVN] Błąd podczas odświeżania widoku ignored: {e.Message}");
+                SVNLogBridge.LogErrorToOutput($"[SVN] Error during ignored view refresh: {e.Message}");
             }
         }
 
@@ -1708,6 +1772,7 @@ namespace SVN.Core
                         _isCurrentViewIgnored = true;
 
                         _lastFlatTreeFingerprint = null;
+                        _viewWasCleared = true;
 
                         svnUI.SvnTreeView?.ClearView();
                         svnUI.SVNCommitTreeDisplay?.ClearView();
@@ -1756,7 +1821,8 @@ namespace SVN.Core
                     if (svnUI.TreeDisplay != null)
                         svnUI.TreeDisplay.text = "";
 
-                    if (newFingerprint == _lastFlatTreeFingerprint &&
+                    if (!_viewWasCleared &&
+                        newFingerprint == _lastFlatTreeFingerprint &&
                         _flatTreeData != null && _flatTreeData.Count > 0)
                     {
                         _flatTreeData = localFlatData;
@@ -1767,6 +1833,7 @@ namespace SVN.Core
                         return;
                     }
 
+                    _viewWasCleared = false;
                     _lastFlatTreeFingerprint = newFingerprint;
 
                     _flatTreeData = localFlatData;
@@ -1849,6 +1916,30 @@ namespace SVN.Core
             }
 
             return stats;
+        }
+
+        public void ClearTreeAndCache()
+        {
+            RunOnMainThread(() =>
+            {
+                _flatTreeData?.Clear();
+                _commitTreeData?.Clear();
+                totalCommitBytes = 0;
+
+                _lastFlatTreeFingerprint = null;
+                _viewWasCleared = true;
+
+                if (svnManager?.CurrentStatusDict != null)
+                    svnManager.CurrentStatusDict.Clear();
+
+                svnUI?.SvnTreeView?.ClearView();
+                svnUI?.SVNCommitTreeDisplay?.ClearView();
+
+                if (svnUI?.TreeDisplay != null)
+                    svnUI.TreeDisplay.text = "";
+                if (svnUI?.CommitTreeDisplay != null)
+                    svnUI.CommitTreeDisplay.text = "";
+            });
         }
     }
 }

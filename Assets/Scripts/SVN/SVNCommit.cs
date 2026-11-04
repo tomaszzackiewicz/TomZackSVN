@@ -42,15 +42,8 @@ namespace SVN.Core
         private const double BytesConversionFactor = 1024.0;
         private const int RefreshStatusTimeoutMs = 5000;
 
-        // === FIX (konflikty): widok listy pokazuje TERAZ również C (konflikt)
-        // i ~ (obstructed). NIE idą do commitu (patrz PreProcessStatuses) —
-        // svn commit i tak zwróciłby E155015, a SVN zabrania commitować
-        // nierozwiązane konflikty. Ale user MUSI je widzieć, żeby wiedzieć
-        // co zrobić przed commitem.
-        private const string DisplayStatuses = "MADR?!C~";   // co widzimy w liście
-
-        // Bez zmian — co faktycznie idzie do svn commit. C i ~ celowo pominięte.
-        private const string PreProcessStatuses = "MADR?!";  // co commit-ujemy
+        private const string DisplayStatuses = "MADR?!C~";
+        private const string PreProcessStatuses = "MADR?!";
 
         private static readonly Regex CommittedRevisionRegex = new(@"Committed revision\s+(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SanitizeMessageRegex = new(@"[\uFEFF\u200B-\u200D\u202A-\u202E\u2060-\u2069\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", RegexOptions.Compiled);
@@ -152,6 +145,7 @@ namespace SVN.Core
                 return null;
             }
         }
+
         #endregion
 
         #region General Helpers
@@ -215,11 +209,6 @@ namespace SVN.Core
             return size;
         }
 
-        /// <summary>
-        /// Szybka detekcja nierozwiązanych konfliktów w WC — czyta CurrentStatusDict
-        /// (świeżo wypełniany przez SVNStatus refresh), bez dodatkowego 'svn status'.
-        /// Zwraca listę ścieżek ze statusem 'C' (item lub prop).
-        /// </summary>
         private List<string> GetUnresolvedConflicts()
         {
             var result = new List<string>();
@@ -238,19 +227,10 @@ namespace SVN.Core
             return result;
         }
 
-        /// <summary>
-        /// Blokada commitu przy nierozwiązanych konfliktach. Loguje banner z listą
-        /// plików i zwraca true gdy commit ma zostać PRZERWANY.
-        ///
-        /// === FIX: ASYNC — z fallbackiem na 'svn status' gdy cache managera
-        /// jest pusty (user nie odświeżył drzewa). Fallback jest async, żeby
-        /// nie blokować wątku na czas 'svn status'.
-        /// </summary>
         private async Task<bool> AbortIfConflictsPresentAsync(string operationName)
         {
             var conflicts = GetUnresolvedConflicts();
 
-            // Fallback: cache managera pusty → zrób 'svn status' by upewnić się.
             if (conflicts.Count == 0 &&
                 (svnManager?.CurrentStatusDict == null || svnManager.CurrentStatusDict.Count == 0))
             {
@@ -279,8 +259,6 @@ namespace SVN.Core
                 }
                 catch (Exception ex)
                 {
-                    // Nie blokujemy commitu gdy pre-check padł — svn commit
-                    // i tak zwróci E155015, mamy to obsłużone w catch.
                     SVNLogBridge.LogWarning($"[Commit] Conflict pre-check failed ({ex.Message}) — proceeding.");
                     return false;
                 }
@@ -307,7 +285,6 @@ namespace SVN.Core
             LogToConsole(sb.ToString());
             SVNLogBridge.LogErrorToOutput($"[Commit] {operationName} aborted: {conflicts.Count} unresolved conflict(s).");
 
-            // Otwórz panel Resolve — user może od razu rozwiązać.
             PostToMainThread(() =>
             {
                 try { svnManager?.PanelHandler?.Button_OpenResolve(); } catch { }
@@ -346,13 +323,8 @@ namespace SVN.Core
 
         #endregion
 
-        #region Conflict Pre-Resolve (E155015 fix) — OPENS OPTION FOR RESOLVE PANEL
+        #region Conflict Pre-Resolve
 
-        /// <summary>
-        /// Auto-resolve konfliktów z '--accept working'. NIE jest wołane w ścieżce
-        /// commitu (twarda blokada AbortIfConflictsPresentAsync wygrywa) — zostaje
-        /// jako świadoma akcja z panelu Resolve ("Resolve + Retry") w przyszłości.
-        /// </summary>
         private async Task<int> AutoResolveConflictsAsync(string root, CancellationToken token)
         {
             try
@@ -464,8 +436,6 @@ namespace SVN.Core
             var sb = new StringBuilder(commitables.Count * 48 + 256);
             sb.AppendLine("<b>Current working copy changes:</b>");
 
-            // === FIX (konflikty): banner + sortowanie — konflikty i obstructed
-            // lądują na górze, żeby user od razu widział co blokuje commit.
             int conflicts = commitables.Count(x => x.Value.status == "C");
             int obstructed = commitables.Count(x => x.Value.status == "~");
 
@@ -581,9 +551,6 @@ namespace SVN.Core
             {
                 var sb = new StringBuilder(items.Count * 48 + 256);
 
-                // === FIX (konflikty): banner na górze — konflikty i obstructed NIE
-                // wejdą do commitu (patrz PreProcessStatuses), ale user musi wiedzieć,
-                // że są i że blokują commit zanim cokolwiek wyśle.
                 int conflicts = items.Count(i => i.Status == "C");
                 int obstructed = items.Count(i => i.Status == "~");
 
@@ -601,7 +568,6 @@ namespace SVN.Core
 
                 sb.AppendLine($"<b>Files to be committed</b> (Payload: <color={SVNColors.Header}>{FormatCommitSize(totalSize)}</color>):");
 
-                // Sortowanie: konflikty na górze, potem obstructed, potem reszta.
                 var sorted = items
                     .OrderBy(i => i.Status == "C" ? 0 : i.Status == "~" ? 1 : 2)
                     .ThenBy(i => i.FullPath, StringComparer.OrdinalIgnoreCase);
@@ -727,8 +693,6 @@ namespace SVN.Core
                 return;
             }
 
-            // === FIX (konflikty): twarda blokada PRZED jakąkolwiek operacją SVN.
-            // Async wersja — może zrobić fallback 'svn status' gdy cache pusty.
             try
             {
                 if (await AbortIfConflictsPresentAsync("Commit Selected").ConfigureAwait(false))
@@ -775,8 +739,6 @@ namespace SVN.Core
                     return;
                 }
 
-                // === FIX (konflikty): twarda blokada PRZED cleanupem i PRZED
-                // jakąkolwiek operacją SVN.
                 if (await AbortIfConflictsPresentAsync("Commit All").ConfigureAwait(false))
                     return;
 
@@ -843,12 +805,6 @@ namespace SVN.Core
                         LogToConsole($"<color={SVNColors.Success}>No new files to add.</color>");
                     }
 
-                    // === UWAGA: AutoResolveConflictsAsync CELOWO USUNIĘTE z tej
-                    // ścieżki. Blokada AbortIfConflictsPresentAsync wyżej gwarantuje,
-                    // że tu nie ma już żadnych 'C'. Gdyby jednak jakiś konflikt pojawił
-                    // się w międzyczasie (np. równoległy update z innego wątku), svn
-                    // commit sam zwróci E155015 — obsłużone w catch niżej.
-
                     LogToConsole("<b>[4/4]</b> Sending to server...");
                     Interlocked.Exchange(ref _commitFilesProcessed, 0);
                     Interlocked.Exchange(ref _commitFilesTotal, 0);
@@ -866,11 +822,10 @@ namespace SVN.Core
                         svnManager.DiskChangesDetected = true;
 
                         var statusModuleAfter = svnManager.GetModule<SVNStatus>();
-                        statusModuleAfter?.ClearCurrentData();
+                        statusModuleAfter?.ClearTreeAndCache();
 
                         PostToMainThread(() =>
                         {
-                            ClearCommitUI();
                             if (svnUI.CommitMessageInput != null)
                                 svnUI.CommitMessageInput.text = "";
                         });
@@ -1129,8 +1084,6 @@ namespace SVN.Core
                         TryDeleteFile(addTargetsFile);
                     }
 
-                    // === UWAGA: AutoResolveConflictsAsync CELOWO USUNIĘTE.
-
                     ShowProgressBar(0.02f);
 
                     try
@@ -1140,11 +1093,11 @@ namespace SVN.Core
 
                         SVNStatus.ClearLockCache();
                         svnManager.DiskChangesDetected = true;
-                        statusModule.ClearCurrentData();
+
+                        statusModule.ClearTreeAndCache();
 
                         PostToMainThread(() =>
                         {
-                            ClearCommitUI();
                             if (svnUI.CommitMessageInput != null)
                                 svnUI.CommitMessageInput.text = "";
                         });
@@ -1180,9 +1133,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Post-cancel cleanup WC — best effort, bez timeoutu.
-        /// </summary>
         private void RunPostCancelCleanup(string root)
         {
             if (string.IsNullOrWhiteSpace(root)) return;
@@ -1653,16 +1603,26 @@ namespace SVN.Core
                 svnUI.CommitConsoleContent.text = "";
         });
 
-        private void ClearCommitUI() => PostToMainThread(() =>
+        private void ClearCommitUI()
         {
-            svnUI?.SvnTreeView?.ClearView();
-            svnUI?.SVNCommitTreeDisplay?.ClearView();
+            var statusModule = svnManager?.GetModule<SVNStatus>();
+            if (statusModule != null)
+            {
+                statusModule.ClearTreeAndCache();
+                return;
+            }
 
-            if (svnUI?.TreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-            if (svnUI?.CommitTreeDisplay != null)
-                SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
-        });
+            PostToMainThread(() =>
+            {
+                svnUI?.SvnTreeView?.ClearView();
+                svnUI?.SVNCommitTreeDisplay?.ClearView();
+
+                if (svnUI?.TreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
+                if (svnUI?.CommitTreeDisplay != null)
+                    SVNLogBridge.UpdateUIField(svnUI.CommitTreeDisplay, "", "COMMIT_TREE", append: false);
+            });
+        }
 
         private void ShowProgressBar(float initialValue) => PostToMainThread(() =>
         {
@@ -1707,15 +1667,37 @@ namespace SVN.Core
 
         private async Task SafeRefreshStatusAsync()
         {
+            if (svnManager == null || string.IsNullOrWhiteSpace(svnManager.WorkingDir)) return;
+
             try
             {
                 var refreshTask = svnManager.RefreshStatus();
                 var timeoutTask = Task.Delay(RefreshStatusTimeoutMs);
-                await Task.WhenAny(refreshTask, timeoutTask);
+                var completed = await Task.WhenAny(refreshTask, timeoutTask).ConfigureAwait(false);
+
+                if (completed == timeoutTask && !refreshTask.IsCompleted)
+                {
+                    SVNLogBridge.LogError(
+                        $"[Commit] Background refresh exceeded {RefreshStatusTimeoutMs}ms — cancelling so SVNStatus is not left stuck.");
+
+                    try
+                    {
+                        var statusModule = svnManager.GetModule<SVNStatus>();
+                        statusModule?.CancelCurrentRefresh();
+                    }
+                    catch { }
+
+                    await Task.WhenAny(refreshTask, Task.Delay(3000)).ConfigureAwait(false);
+
+                    if (!refreshTask.IsCompleted)
+                        SVNLogBridge.LogError(
+                            "[Commit] Background refresh did not acknowledge cancellation — status may be stale until next Refresh.");
+                }
 
                 if (refreshTask.IsFaulted)
                 {
-                    SVNLogBridge.LogError($"[Commit] Background refresh failed: {refreshTask.Exception?.GetBaseException().Message}");
+                    SVNLogBridge.LogError(
+                        $"[Commit] Background refresh failed: {refreshTask.Exception?.GetBaseException().Message}");
                 }
             }
             catch (Exception ex)

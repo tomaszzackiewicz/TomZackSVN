@@ -1,23 +1,4 @@
-﻿// ============================================================================
-//  SVNUpdate.cs — pełna, samodzielna implementacja
-//
-//  Zachowanie jak w dojrzałych klientach SVN (TortoiseSVN / RapidSVN):
-//   * update --force --accept postpone (bezpieczny default),
-//   * post-update: build-artefakty i incoming-deletes rozwiązywane auto,
-//     tekstowe/property/tree konflikty w źródłach RAPORTOWANE (do SVNResolve /
-//     ręcznego merge) — NIGDY nie nadpisujemy decyzji użytkownika,
-//   * lokalne usunięcie + zmiana w repo → domyślnie RAPORT (decyzja usera);
-//     opcjonalnie auto-restore (opt-in),
-//   * incoming delete + plik na dysku w źródłach → RAPORT (nie kasujemy
-//     potencjalnych lokalnych zmian); w build-artefaktach → auto,
-//   * resztki unversioned pod ścieżkami usuniętymi z repo → fizycznie usuwane,
-//   * puste unversioned katalogi domywane po drodze,
-//   * retry na E155004 / E7200xx po svn cleanup,
-//   * błędy svn NIE są wycinane z live logu (raport nie kłamie),
-//   * remote-check (status -u + log -v + list --xml -R) — anulowalny przez Update.
-// ============================================================================
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -295,12 +276,13 @@ namespace SVN.Core
                     waitCount++;
                 }
 
-                UnityMainThreadDispatcher.Enqueue(() =>
-                {
-                    svnUI?.SvnTreeView?.ClearView();
-                    if (svnUI?.TreeDisplay != null && svnUI.TreeDisplay.text.Contains("Scanning"))
-                        SVNLogBridge.UpdateUIField(svnUI.TreeDisplay, "", "TREE", append: false);
-                });
+                // === FIX (puste drzewo po commit→update): ClearTreeAndCache robi
+                // atomowo na main-thread to, co wcześniej robiły 2-3 osobne akcje:
+                // czyści dane, widok ORAZ unieważnia fingerprint w SVNStatus.
+                // Bez unieważnienia fingerprintu kolejny RefreshModifiedInternal
+                // widział "dane bez zmian" i pomijał re-render — drzewo zostawało
+                // puste do restartu aplikacji.
+                statusModule?.ClearTreeAndCache();
 
                 if (string.IsNullOrWhiteSpace(targetPath) || !Directory.Exists(targetPath))
                 {
