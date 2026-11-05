@@ -23,6 +23,7 @@ namespace SVN.Core
 
         private string _lastFlatTreeFingerprint;
         private bool _viewWasCleared;
+        private int _pendingSelectionRefresh;
 
         private static readonly Dictionary<string, (DateTime time, HashSet<string> data)> _protectionCacheMap
             = new Dictionary<string, (DateTime, HashSet<string>)>(StringComparer.OrdinalIgnoreCase);
@@ -43,14 +44,6 @@ namespace SVN.Core
             UnityMainThreadDispatcher.EnsureExists();
             manager.OnProjectChanged += HandleProjectChanged;
         }
-
-        // ===================================================================
-        //  INVARIANT TEKSTÓW STATUSU: "Scanning/Refreshing/Loading" + wypełnione
-        //  drzewo = NIGDY. Wcześniej czyszczenie tekstu i render drzewa były
-        //  OSOBNYMI akcjami w kolejce dispatchera (a UpdateUIField dokładał
-        //  drugi hop) — każde opóźnienie/zgubienie jednej z nich dawało oba
-        //  naraz (objaw po mergu). Teraz: atomowo.
-        // ===================================================================
 
         private static bool IsTransientStatus(string text) =>
             text != null && (text.Contains("Scanning") ||
@@ -103,16 +96,11 @@ namespace SVN.Core
                     svnUI.SvnTreeView?.ClearView();
                     svnUI.SVNCommitTreeDisplay?.ClearView();
 
-                    // === FIX (miganie): po ClearView fingerprint jest nieaktualny
-                    // — UI jest puste, więc następny refresh MUSI re-renderować.
                     _lastFlatTreeFingerprint = null;
                 }
             });
         }
 
-        // ===================================================================
-        //  FINGERPRINT — reprezentuje DANE Z SERWERA, nie stan UI.
-        // ===================================================================
         private static string BuildFlatTreeFingerprint(List<SvnTreeElement> elements)
         {
             if (elements == null) return "null";
@@ -133,10 +121,6 @@ namespace SVN.Core
             }
             return sb.ToString();
         }
-
-        // ===================================================================
-        //  STATYSTYKI UI
-        // ===================================================================
 
         public void UpdateAllStatisticsUI(SvnStats stats, bool isIgnoredView)
         {
@@ -201,10 +185,6 @@ namespace SVN.Core
             }
         }
 
-        // ===================================================================
-        //  POBIERANIE STATUSU
-        // ===================================================================
-
         public static async Task<Dictionary<string, SvnChangeInfo>> GetChangesDictionaryAsync(
             string workingDir,
             bool expandUnversioned = true,
@@ -230,9 +210,10 @@ namespace SVN.Core
             var statusDict = await Task.Run(() =>
             {
                 var dict = new Dictionary<string, SvnChangeInfo>(2048, StringComparer.OrdinalIgnoreCase);
-                string[] lines = output.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
-
-                foreach (var line in lines)
+                using var lineReader = new StringReader(output);
+                
+                string line;
+                while ((line = lineReader.ReadLine()) != null)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
@@ -541,8 +522,6 @@ namespace SVN.Core
             if (_commitTreeData != null)
                 UpdateListSelection(_commitTreeData, parentFolder.FullPath, isChecked);
 
-            // Odznaczenie folderu może spowodować, że jego rodzic też powinien
-            // się odznaczyć (jeśli nie ma własnych zmian ani innych zaznaczonych dzieci).
             if (!isChecked)
             {
                 UpdateParentSelection(_flatTreeData, parentFolder.FullPath);
@@ -709,13 +688,23 @@ namespace SVN.Core
 
         public void NotifySelectionChanged()
         {
+            if (Interlocked.Exchange(ref _pendingSelectionRefresh, 1) == 1) return;
+
+            RunOnMainThread(() =>
+            {
+                Interlocked.Exchange(ref _pendingSelectionRefresh, 0);
+                RenderSelectionViews();
+            });
+
+            OnSelectionChanged?.Invoke();
+        }
+
+        private void RenderSelectionViews()
+        {
             HealTreeStatusTextsOnRender();
 
-            if (svnUI.SvnTreeView != null &&
-                svnUI.SvnTreeView.gameObject.activeInHierarchy)
-            {
+            if (svnUI.SvnTreeView != null && svnUI.SvnTreeView.gameObject.activeInHierarchy)
                 svnUI.SvnTreeView.RefreshUI(_flatTreeData, this);
-            }
 
             bool commitPanelVisible =
                 svnUI.SVNCommitTreeDisplay != null &&
@@ -725,7 +714,6 @@ namespace SVN.Core
                 svnUI.SVNCommitTreeDisplay.RefreshUI(_commitTreeData, this);
 
             UpdateSelectedSizeDisplay();
-            OnSelectionChanged?.Invoke();
         }
 
         public void ApplyLockColors(List<SvnTreeElement> elements, Dictionary<string, SVNLockDetails> lockDict)
@@ -787,9 +775,6 @@ namespace SVN.Core
             UnityMainThreadDispatcher.Enqueue(action);
         }
 
-        // ===================================================================
-        //  HANDLE PROJECT CHANGED
-        // ===================================================================
         private async void HandleProjectChanged(SVNProject project)
         {
             if (project == null) return;
@@ -851,11 +836,6 @@ namespace SVN.Core
             }
         }
 
-        /// <summary>
-        /// Przełącza rozwinięcie folderu. Identyfikacja po FullPath (nie po referencji),
-        /// dzięki czemu działa niezależnie z którego widoku (główny/commit) przyszło kliknięcie.
-        /// Zawsze synchronizuje oba widoki i oba drzewa danych.
-        /// </summary>
         public void ToggleFolderVisibility(SvnTreeElement folder)
         {
             if (folder == null)
@@ -1070,10 +1050,6 @@ namespace SVN.Core
             return lastSlash > 0 ? path.Substring(0, lastSlash) : "";
         }
 
-        // ===================================================================
-        //  REFRESH
-        // ===================================================================
-
         public async Task RefreshAfterAction()
         {
             SVNIgnore.InvalidateSvnRulesCache();
@@ -1225,6 +1201,7 @@ namespace SVN.Core
                 var localFlatData = buildResult.Elements;
                 var localCommitData = newCommitData;
                 var localTotalBytes = buildResult.TotalBytes;
+                var localStats = CalculateStats(statusDict);
 
                 string newFingerprint = BuildFlatTreeFingerprint(localFlatData);
 
@@ -1247,7 +1224,7 @@ namespace SVN.Core
                         _commitTreeData = localCommitData;
                         totalCommitBytes = localTotalBytes;
 
-                        UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
+                        UpdateAllStatisticsUI(localStats, _isCurrentViewIgnored);
                         return;
                     }
 
@@ -1276,7 +1253,7 @@ namespace SVN.Core
                         UpdateSelectedSizeDisplay();
                     }
 
-                    UpdateAllStatisticsUI(CalculateStats(statusDict), _isCurrentViewIgnored);
+                    UpdateAllStatisticsUI(localStats, _isCurrentViewIgnored);
                 });
             }
             catch (OperationCanceledException)
@@ -1294,6 +1271,8 @@ namespace SVN.Core
                 {
                     IsProcessing = false;
                 }
+
+                _viewWasCleared = false;
             }
         }
 
@@ -1543,8 +1522,6 @@ namespace SVN.Core
                     if (isCommitableStatus && previousSelectionStates.TryGetValue(currentPath, out bool prev))
                         isChecked = prev;
 
-                    // Conflict and obstructed cannot be checked — committing them is
-                    // forbidden by SVN and would be silently dropped by ExecuteCommitSelected.
                     bool isCheckable = displayStatus != "C" && displayStatus != "~";
                     if (!isCheckable) isChecked = false;
 
@@ -1716,10 +1693,6 @@ namespace SVN.Core
                     svnManager.ExpandedPaths.Add(e.FullPath);
             }
         }
-
-        // ===================================================================
-        //  WIDOK IGNORED
-        // ===================================================================
 
         public async void ShowOnlyIgnored()
         {

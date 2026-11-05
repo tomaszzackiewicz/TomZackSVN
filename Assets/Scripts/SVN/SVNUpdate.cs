@@ -530,6 +530,8 @@ namespace SVN.Core
                 SvnSyncReport sync = null;
                 if (syncAfterUpdate)
                 {
+                    SVNLogBridge.LogToOutput("<b>[SVN]</b> Post-update sync...");
+
                     try
                     {
                         sync = await SyncWithServerAsync(deletedPaths, targetPath, token);
@@ -575,7 +577,7 @@ namespace SVN.Core
                 stopwatch.Stop();
                 svnManager.LastUpdateSucceeded = svnCommandCompleted;
 
-                if (!svnCommandCompleted) svnManager.MarkUpdateInterrupted("Update anulowany przez użytkownika.");
+                if (!svnCommandCompleted) if (!svnCommandCompleted) svnManager.MarkUpdateInterrupted("Update canceled by user.");
                 else svnManager.ClearUpdateInterrupted();
 
                 svnManager.OperationInfo = NewOperationInfo(new SVNOperationInfo
@@ -632,7 +634,7 @@ namespace SVN.Core
                 }
 
                 svnManager.LastUpdateSucceeded = svnCommandCompleted;
-                if (!svnCommandCompleted) svnManager.MarkUpdateInterrupted($"Błąd update'u: {ex.Message}");
+                if (!svnCommandCompleted) if (!svnCommandCompleted) svnManager.MarkUpdateInterrupted($"Update error: {ex.Message}");
                 else svnManager.ClearUpdateInterrupted();
 
                 svnManager.OperationInfo = NewOperationInfo(new SVNOperationInfo
@@ -869,8 +871,7 @@ namespace SVN.Core
                     }
                     else
                     {
-                        report.TreeConflictsManual.Add(
-                            $"{rel} (nie dało się usunąć — plik zajęty, zamknij edytor)");
+                        report.TreeConflictsManual.Add($"{rel} (could not remove — file in use, close the editor)");
                     }
                 }
             }

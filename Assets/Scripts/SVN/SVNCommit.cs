@@ -323,98 +323,6 @@ namespace SVN.Core
 
         #endregion
 
-        #region Conflict Pre-Resolve
-
-        private async Task<int> AutoResolveConflictsAsync(string root, CancellationToken token)
-        {
-            try
-            {
-                string statusOutput = await SvnRunner.RunAsync("status", root, false, token).ConfigureAwait(false);
-                if (string.IsNullOrWhiteSpace(statusOutput)) return 0;
-
-                var conflictedPaths = new List<string>();
-
-                foreach (string rawLine in statusOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    if (rawLine.Length < 8) continue;
-
-                    char itemStatus = rawLine[0];
-                    char propStatus = rawLine.Length > 1 ? rawLine[1] : ' ';
-                    char treeConflict = rawLine.Length > 6 ? rawLine[6] : ' ';
-
-                    if (itemStatus != 'C' && propStatus != 'C' && treeConflict != 'C') continue;
-
-                    string path = rawLine.Substring(8).Trim();
-                    if (string.IsNullOrWhiteSpace(path)) continue;
-
-                    conflictedPaths.Add(path);
-                }
-
-                conflictedPaths = conflictedPaths
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                if (conflictedPaths.Count == 0) return 0;
-
-                LogToConsole($"<color={SVNColors.Warning}>Found {conflictedPaths.Count} unresolved conflict(s) — auto-resolving (accept working)...</color>");
-
-                if (conflictedPaths.Count > 1)
-                {
-                    string targetsFile = Path.Combine(Path.GetTempPath(), $"svn_resolve_{Guid.NewGuid():N}.txt");
-                    try
-                    {
-                        await Task.Run(() => File.WriteAllLines(targetsFile, conflictedPaths, new UTF8Encoding(false)), token)
-                                  .ConfigureAwait(false);
-
-                        await SvnRunner.RunAsync(
-                            $"resolve --accept working --targets \"{targetsFile}\"",
-                            root, true, token).ConfigureAwait(false);
-
-                        foreach (var p in conflictedPaths)
-                            LogToConsole($"<color={SVNColors.Success}>Resolved:</color> {p}");
-
-                        return conflictedPaths.Count;
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex)
-                    {
-                        LogToConsole($"<color={SVNColors.Warning}>Batch resolve failed ({ex.Message}). Retrying individually...</color>");
-                    }
-                    finally
-                    {
-                        try { if (File.Exists(targetsFile)) File.Delete(targetsFile); } catch { }
-                    }
-                }
-
-                int resolved = 0;
-                foreach (var cpath in conflictedPaths)
-                {
-                    try
-                    {
-                        await SvnRunner.RunAsync(
-                            $"resolve --accept working \"{cpath}\"",
-                            root, true, token).ConfigureAwait(false);
-                        resolved++;
-                        LogToConsole($"<color={SVNColors.Success}>Resolved:</color> {cpath}");
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception singleEx)
-                    {
-                        LogToConsole($"<color={SVNColors.Warning}>Failed to resolve {cpath}: {singleEx.Message}</color>");
-                    }
-                }
-
-                return resolved;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch
-            {
-                return 0;
-            }
-        }
-
-        #endregion
-
         #region Preview / List
 
         public async void ShowWhatWillBeCommitted()
@@ -522,13 +430,7 @@ namespace SVN.Core
                             continue;
 
                         if (File.Exists(fullPhysicalPath))
-                        {
                             size += new FileInfo(fullPhysicalPath).Length;
-                        }
-                        else if (Directory.Exists(fullPhysicalPath))
-                        {
-                            size += CalculateDirectorySize(fullPhysicalPath);
-                        }
                     }
                     catch { }
                 }
@@ -662,7 +564,7 @@ namespace SVN.Core
             }
 
             var statusModule = svnManager.GetModule<SVNStatus>();
-            statusModule?.ClearCurrentData();
+            statusModule?.ClearTreeAndCache();
 
             PostToMainThread(() =>
             {
@@ -869,8 +771,12 @@ namespace SVN.Core
         private List<string> InjectMissingParentPaths(HashSet<string> selectedPaths, List<SvnTreeElement> allElements)
         {
             var result = new List<string>(selectedPaths);
-            var elementDict = allElements.Where(e => e != null && !string.IsNullOrEmpty(e.FullPath))
-                                      .ToDictionary(e => e.FullPath.Replace('\\', '/'), StringComparer.OrdinalIgnoreCase);
+            var elementDict = new Dictionary<string, SvnTreeElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in allElements)
+            {
+                if (e == null || string.IsNullOrEmpty(e.FullPath)) continue;
+                elementDict.TryAdd(e.FullPath.Replace('\\', '/'), e);
+            }
 
             foreach (var path in selectedPaths)
             {
@@ -932,8 +838,8 @@ namespace SVN.Core
                     return;
                 }
 
-                var allElements = statusModule.GetCurrentData();
-                var selectedItems = allElements?.Where(e => e.IsChecked).ToList() ?? new List<SvnTreeElement>();
+                var allElements = statusModule.GetCurrentData()?.ToList() ?? new List<SvnTreeElement>();
+                var selectedItems = allElements.Where(e => e.IsChecked).ToList();
 
                 if (allElements == null || allElements.Count == 0)
                 {

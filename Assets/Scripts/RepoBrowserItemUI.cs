@@ -32,18 +32,8 @@ namespace SVN.Core
         private static readonly Color DirNameColor = new(0f, 0.2f, 0.4f);
         private static readonly Color FileNameColor = new(0.7f, 0.85f, 1f);
 
-        // === FIX (perf): cache indent-stringów per głębokość — bez tego rebuild
-        // 198 itemów alokuje 198 StringBuilder + 198 string per filtr change.
-        // Klucz: int depth. Wartość: niemutowalny string.
         private static readonly System.Collections.Generic.Dictionary<int, string> IndentCache = new();
 
-        // === FIX (perf, dispatcher): cache UnityAction per przycisk — eliminuje
-        // ~1200 closures per rebuild. Wcześniej każdy ActivateButton robił
-        // `onClick.AddListener(() => action())` (nowy closure) + sam action
-        // (kolejny closure dla export). Rebuild 198 itemów × 6 buttonów = ~1200
-        // closures → GC pressure, alokacje w hot path zmiany filtra.
-        // Teraz: delegaty tworzone RAZ w Awake (method-group assignment, bez
-        // closures), Setup tylko podmienia listener.
         private UnityAction _onCopyUrlClick;
         private UnityAction _onCopyRelPathClick;
         private UnityAction _onLogClick;
@@ -55,15 +45,38 @@ namespace SVN.Core
 
         private void Awake()
         {
-            // Method-group assignment — brak closures, delegate instances stałe
-            // na całe życie instancji. RemoveListener porównuje target+method,
-            // więc zadziała poprawnie przy każdym Setup.
             _onCopyUrlClick = CopyUrlToClipboard;
             _onCopyRelPathClick = CopyRelativePath;
             _onLogClick = ShowLog;
             _onExportClick = OnExportClick;
             _onBlameClick = ShowBlame;
             _onCheckoutFolderClick = CheckoutFolderAction;
+
+            // Initial arrow state = COLLAPSED (▶ visually), matching the most
+            // common case at first render. Awake runs synchronously during
+            // Instantiate, so this state is what frame 0 shows before
+            // UpdateArrowVisual runs. Without this, the prefab's default
+            // arrow (or our previous attempt at 0°) would flash wrong for
+            // one frame.
+            if (foldArrowText != null)
+            {
+                if (HasTriangleGlyph())
+                {
+                    foldArrowText.text = "▼";
+                    foldArrowText.rectTransform.localEulerAngles = new Vector3(0f, 0f, 90f);
+                }
+                else
+                {
+                    foldArrowText.text = ">";
+                    foldArrowText.rectTransform.localEulerAngles = Vector3.zero;
+                }
+            }
+        }
+
+        private bool HasTriangleGlyph()
+        {
+            var font = foldArrowText != null ? foldArrowText.font : null;
+            return font != null && font.HasCharacter('▼');
         }
 
         public void Initialize(RepoNode node, SVNRepoBrowser browser)
@@ -75,8 +88,6 @@ namespace SVN.Core
             RenderName();
             SetupFoldButton();
             SetupActionButtons();
-
-            UpdateArrowVisual(node.IsExpanded);
         }
 
         private void RenderIndent()
@@ -127,8 +138,6 @@ namespace SVN.Core
         {
             if (foldButton == null) return;
 
-            // W filtrach (flat) węzeł nie ma Parent ani Children — rozwijanie
-            // nie ma sensu i tylko miga bez efektu. Ukryj strzałkę.
             bool isFlatFilterResult =
                 _node.IsDirectory &&
                 _node.Parent == null &&
@@ -156,10 +165,6 @@ namespace SVN.Core
             SetButtonActive(exportBtn, false); SetButtonActive(copyPathBtn, false);
             SetButtonActive(checkoutFolderBtn, false); SetButtonActive(copyRelPathBtn, false);
 
-            // === FIX: ActivateButton przyjmuje UnityAction — bez `() => action()`
-            // wrappowania. Delegaty są cache'owane w polach, więc RemoveListener
-            // usuwa KONKRETNY delegat (nie wszystkich), a AddListener nie tworzy
-            // nowej closure.
             if (copyPathBtn != null) ActivateButton(copyPathBtn, _onCopyUrlClick, "Copy full URL.");
             if (copyRelPathBtn != null) ActivateButton(copyRelPathBtn, _onCopyRelPathClick, "Copy relative path (without server URL).");
             if (logBtn != null) ActivateButton(logBtn, _onLogClick, "View Log.");
@@ -187,19 +192,19 @@ namespace SVN.Core
 
         private void ShowLog() => SVNManager.Instance?.GetModule<SVNLog>()?.ShowLogForPath(_node.FullUrl);
         private void ShowBlame() => SVNManager.Instance?.GetModule<SVNBlame>()?.ShowBlameInMainConsole(_node.FullUrl);
-        private void CopyUrlToClipboard() { GUIUtility.systemCopyBuffer = _node.FullUrl; }
 
-        // === FIX (perf): method-group wrapper dla exportu — poprzednio
-        // `() => SafeFireAndForget(ExportItemAsync)` alokowało closure per
-        // Setup call. Teraz delegate jest przypisany raz w Awake.
+        private void CopyUrlToClipboard()
+        {
+            if (_node == null) return;
+            GUIUtility.systemCopyBuffer = _node.FullUrl;
+        }
+
         private void OnExportClick() => SafeFireAndForget(ExportItemAsync);
 
         private async Task ExportItemAsync()
         {
             try
             {
-                // === FIX drobiazg: guard przed niezaładowanym projektem (SvnRunner
-                // rzuciłby "Working Directory is null" z głębi).
                 string workingDir = SVNManager.Instance?.WorkingDir;
                 if (string.IsNullOrWhiteSpace(workingDir))
                 {
@@ -210,10 +215,6 @@ namespace SVN.Core
                 string cacheFolder = Path.Combine(SVNPrefs.TemporaryCachePath, "SVN_Exports");
                 if (!Directory.Exists(cacheFolder)) Directory.CreateDirectory(cacheFolder);
 
-                // === FIX K2: unikalna nazwa docelowa — '{_node.Name}' kolidowało
-                // dla elementów o tej samej nazwie z różnych gałęzi/katalogów
-                // (/branches/A/Assets i /branches/B/Assets → jedno miejsce, drugi
-                // eksport CICHO nadpisywał pierwszy przez --force).
                 string safeName = _node.Name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
                     ? Guid.NewGuid().ToString("N").Substring(0, 8)
                     : _node.Name;
@@ -235,8 +236,6 @@ namespace SVN.Core
                     SVNLogBridge.LogError("Failed to export item.");
                 }
 
-                // === FIX drobiazg: sprzątanie starych eksportów (spójnie z Diff/
-                // Blame/Cache — 24 h), folder inaczej rósł w nieskończoność.
                 CleanupOldExports(cacheFolder);
             }
             catch (Exception ex)
@@ -272,19 +271,26 @@ namespace SVN.Core
 
         public void UpdateArrowVisual(bool isExpanded)
         {
-            if (foldArrowText != null && _node != null && _node.IsDirectory)
-            {
-                foldArrowText.text = "▼";
+            if (foldArrowText == null || _node == null || !_node.IsDirectory) return;
 
-                // === FIX: expanded = ▼ (0°, tip w dół), collapsed = ▶ (90° CCW, tip w prawo).
-                // Wcześniej -90f (CW) dawało ◀ (tip w lewo) — odwrotnie niż w changes tree
-                // (SvnLineController używa +90f).
-                foldArrowText.rectTransform.localRotation =
-                    Quaternion.Euler(0, 0, isExpanded ? 0f : 90f);
+            if (HasTriangleGlyph())
+            {
+                // Text stays "▼" (same glyph), only rotation differs.
+                // This matches SvnLineController behaviour — one glyph,
+                // two visual states via rotation.
+                foldArrowText.text = "▼";
+                foldArrowText.rectTransform.localEulerAngles =
+                    new Vector3(0f, 0f, isExpanded ? 0f : 90f);
+            }
+            else
+            {
+                foldArrowText.text = isExpanded ? "v" : ">";
+                foldArrowText.rectTransform.localEulerAngles = Vector3.zero;
             }
         }
 
         private void SafeFireAndForget(Func<Task> operation) { _ = FireAndForget(operation); }
+
         private async Task FireAndForget(Func<Task> operation)
         {
             try { await operation(); }
@@ -296,12 +302,6 @@ namespace SVN.Core
             if (btn != null) btn.gameObject.SetActive(active);
         }
 
-        /// <summary>
-        /// === FIX (perf): przyjmuje UnityAction bezpośrednio — brak wrappowania
-        /// w `() => action()`. RemoveListener usuwa konkretny delegat (nie
-        /// wszystkich), co jest bezpieczniejsze przy ewentualnych innych
-        /// listener'ach na tym samym przycisku.
-        /// </summary>
         private static void ActivateButton(Button btn, UnityAction action, string tooltip)
         {
             if (btn == null || action == null) return;
@@ -323,9 +323,6 @@ namespace SVN.Core
             }
             else
             {
-                // === FIX K1: SVNLogBridge.LogWarning(msg, bool append) — drugi
-                // parametr to nie kontekst-Object (to sygnatura Debug.LogWarning);
-                // przekazanie 'btn' = CS1503. Kontekst tylko przez Debug.
                 Debug.LogWarning($"[RepoBrowser] SVNHoverHandler component is missing on button: {btn.name}", btn);
             }
         }

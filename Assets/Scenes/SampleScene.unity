@@ -646,6 +646,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SvnTreeView
   linePrefab: {fileID: 7216960981951965409, guid: 5bfe7cc15a73ce244ab4f1d7e47e1240, type: 3}
   isCommitView: 0
+  itemsPerFrame: 4
 --- !u!114 &14857769
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -30423,6 +30424,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SvnTreeView
   linePrefab: {fileID: 7216960981951965409, guid: 5bfe7cc15a73ce244ab4f1d7e47e1240, type: 3}
   isCommitView: 0
+  itemsPerFrame: 4
 --- !u!114 &586432110
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -51249,6 +51251,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SvnTreeView
   linePrefab: {fileID: 7216960981951965409, guid: 5bfe7cc15a73ce244ab4f1d7e47e1240, type: 3}
   isCommitView: 0
+  itemsPerFrame: 4
 --- !u!114 &998701575
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -100804,6 +100807,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SvnTreeView
   linePrefab: {fileID: 7216960981951965409, guid: 5bfe7cc15a73ce244ab4f1d7e47e1240, type: 3}
   isCommitView: 0
+  itemsPerFrame: 4
 --- !u!114 &1952620779
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -104509,6 +104513,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SvnTreeView
   linePrefab: {fileID: 2664693275656595296, guid: f563e3ec762c86a479f7af51fd49e1b2, type: 3}
   isCommitView: 1
+  itemsPerFrame: 4
 --- !u!1 &2042169101
 GameObject:
   m_ObjectHideFlags: 0

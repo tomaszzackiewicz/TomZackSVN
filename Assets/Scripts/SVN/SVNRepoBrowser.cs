@@ -10,45 +10,21 @@ using UnityEngine.UI;
 
 namespace SVN.Core
 {
-    /// <summary>
-    /// Repo Browser — drzewo katalogów z SERWERA (svn list).
-    ///
-    /// === FILTR: szuka WYŁĄCZNIE NA SERWERZE, w NAZWACH (ostatni segment
-    /// ścieżki) — plików i folderów. Baza = svnManager.RepositoryUrl.
-    /// Cache 1 min, ale KLUCZOWANY URL-em — zmiana repo natychmiast
-    /// unieważnia cache (bez tego filtr zwracał wyniki ze starego repo).
-    ///
-    /// === RENDER: koalescencja + fingerprint + hard cap. Bez tego szybkie
-    /// zmiany filtra (pisać / kasować) potrafiły wywołać kilka renderów
-    /// w jednej klatce i zawiesić UI na layout rebuild loop.
-    /// Kolor logów: #4FC3F7.
-    ///
-    /// === LAZY TAB: drzewo NIE jest ładowane przy starcie projektu.
-    /// ViewTabsController wywołuje statyczne zdarzenie RepoBrowserTabOpened
-    /// w momencie przełączenia na zakładkę Repo Browser.
-    /// </summary>
     public class SVNRepoBrowser : SVNBase, IDisposable
     {
-        // ===== LAZY TAB =====
-        /// <summary>
-        /// Wywoływane przez ViewTabsController, gdy user przełącza się na
-        /// zakładkę Repo Browser. Dzięki temu NIE ładujemy drzewa z serwera
-        /// na starcie projektu — dopiero gdy user faktycznie tego chce.
-        /// </summary>
         public static event Action RepoBrowserTabOpened;
 
-        // ===== LAZY TREE =====
         private CancellationTokenSource _cts;
         private readonly object _ctsLock = new object();
         private RepoNode _rootNode;
+        private SVNProject _pendingProject;
         private int _fetchGeneration;
         private int _disposed;
         private int _ensureLoadingFlag;
 
-        // ===== FLAT PATH CACHE (filtr) =====
         private List<PathEntry> _allPaths;
         private DateTime _allPathsLoadedAt = DateTime.MinValue;
-        private string _allPathsSourceUrl;   // z jakiego URL-a zbudowano _allPaths
+        private string _allPathsSourceUrl;
         private int _allPathsLoadingFlag;
         private CancellationTokenSource _allPathsCts;
         private readonly object _allPathsCtsLock = new object();
@@ -56,10 +32,9 @@ namespace SVN.Core
         private const double PathsCacheMinutes = 1.0;
         private const int PathListTimeoutMinutes = 10;
 
-        // ===== UI RENDER COALESCING / SAFETY =====
-        private int _refreshUiPendingFlag;       // 1 = render już zakolejkowany
-        private int _isRenderingFlag;            // 1 = RefreshUICore właśnie trwa
-        private string _lastRenderFingerprint;   // ostatnio wyrenderowany widok
+        private int _refreshUiPendingFlag;
+        private int _isRenderingFlag;
+        private string _lastRenderFingerprint;
         private const int MaxRenderedNodes = 800;
 
         public SVNRepoBrowser(SVNUI ui, SVNManager manager) : base(ui, manager)
@@ -70,23 +45,38 @@ namespace SVN.Core
                 ui.RepoBrowserFilterInput.onValueChanged.AddListener(OnFilterChanged);
             }
 
-            // Subskrypcja zdarzenia przełączenia zakładki.
-            // -= przed += chroni przed duplikatami przy ponownej inicjalizacji modułu.
             RepoBrowserTabOpened -= HandleTabOpened;
             RepoBrowserTabOpened += HandleTabOpened;
-        }
 
-        // ================= LAZY TAB HANDLER =================
+            manager.OnProjectChanged -= HandleProjectChanged;
+            manager.OnProjectChanged += HandleProjectChanged;
+        }
 
         private void HandleTabOpened()
         {
-            // Ładuj drzewo tylko raz — EnsureLoadedAsync sam pilnuje flagami,
-            // że drugie wywołanie nie odpali kolejnego svn list.
             if (IsTreeLoaded) return;
             _ = EnsureLoadedAsync();
         }
 
-        // ================= FILTR =================
+        private void HandleProjectChanged(SVNProject project)
+        {
+            if (project == null) return;
+
+            string newUrl = (project.repoUrl ?? "").TrimEnd('/');
+            string currentRoot = (_rootNode?.FullUrl ?? "").TrimEnd('/');
+            string currentPaths = (_allPathsSourceUrl ?? "").TrimEnd('/');
+
+            bool rootStale = !string.IsNullOrEmpty(currentRoot) &&
+                             !string.Equals(currentRoot, newUrl, StringComparison.OrdinalIgnoreCase);
+            bool pathsStale = !string.IsNullOrEmpty(currentPaths) &&
+                              !string.Equals(currentPaths, newUrl, StringComparison.OrdinalIgnoreCase);
+
+            if (rootStale || pathsStale)
+            {
+                _pendingProject = project;
+                InvalidatePathCache();
+            }
+        }
 
         private void OnFilterChanged(string filter)
         {
@@ -109,21 +99,28 @@ namespace SVN.Core
                 (svnManager?.RepositoryUrl ?? "").TrimEnd('/'),
                 StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>
-        /// Wywoływane z SVNManager przy każdej zmianie RepositoryUrl — cache
-        /// ścieżek jest per-URL, więc nowe repo = twarde unieważnienie.
-        /// </summary>
         public void InvalidatePathCache()
         {
+            bool wasLoaded = _rootNode != null;
+
             _allPaths = null;
             _allPathsLoadedAt = DateTime.MinValue;
             _allPathsSourceUrl = null;
-
-            // Fingerprint widoku zależał od _allPaths — unieważnij też jego.
             _lastRenderFingerprint = null;
-        }
+            _rootNode = null;
 
-        // ================= ŁADOWANIE LISTY ŚCIEŻEK Z SERWERA =================
+            CancelOperations();
+            CancelPathsLoad();
+
+            Interlocked.Exchange(ref _ensureLoadingFlag, 0);
+
+            RefreshUI();
+
+            if (wasLoaded)
+            {
+                _ = EnsureLoadedAsync();
+            }
+        }
 
         private async Task EnsurePathsAsync()
         {
@@ -143,7 +140,7 @@ namespace SVN.Core
 
             try
             {
-                string url = (svnManager.RepositoryUrl ?? "").TrimEnd('/');
+                string url = ((_pendingProject?.repoUrl ?? svnManager.RepositoryUrl) ?? "").TrimEnd('/');
                 if (string.IsNullOrEmpty(url))
                 {
                     SVNLogBridge.LogError("[RepoBrowser] RepositoryUrl is empty — cannot search server.");
@@ -173,7 +170,7 @@ namespace SVN.Core
 
                 var entries = new List<PathEntry>();
 
-                int exitCode = await SvnRunner.RunStreamedAsync(
+                await SvnRunner.RunStreamedAsync(
                     $"list -R \"{EscapeSvnArg(url)}\"",
                     svnManager.WorkingDir,
                     (line) =>
@@ -223,8 +220,6 @@ namespace SVN.Core
                 _allPaths = entries;
                 _allPathsLoadedAt = DateTime.UtcNow;
                 _allPathsSourceUrl = url;
-
-                // Nowa lista = nowy widok — fingerprint ze starej listy już nieaktualny.
                 _lastRenderFingerprint = null;
 
                 SVNLogBridge.LogLine(
@@ -260,8 +255,6 @@ namespace SVN.Core
 
         private static string EscapeSvnArg(string arg) => SVNShared.EscapeSvnArg(arg);
 
-        // ================= STATUS LABEL =================
-
         private void UpdateStatusLabel(string status)
         {
             if (svnUI?.RepoBrowserCurrentPathText == null) return;
@@ -275,8 +268,6 @@ namespace SVN.Core
                     svnUI.RepoBrowserCurrentPathText.text = text;
             });
         }
-
-        // ================= LAZY-LOAD API =================
 
         public bool IsTreeLoaded => _rootNode != null && _rootNode.IsLoaded;
 
@@ -302,13 +293,14 @@ namespace SVN.Core
         {
             CancelOperations();
 
-            // Reset cache filtrów razem z drzewem — nowe repo = nowa baza.
             _allPaths = null;
             _allPathsLoadedAt = DateTime.MinValue;
             _allPathsSourceUrl = null;
             _lastRenderFingerprint = null;
 
-            string repoUrl = svnManager.RepositoryUrl;
+            string repoUrl = ((_pendingProject?.repoUrl ?? svnManager.RepositoryUrl) ?? "").TrimEnd('/');
+            _pendingProject = null;
+
             if (string.IsNullOrEmpty(repoUrl))
             {
                 SVNLogBridge.LogError("[RepoBrowser] RepositoryUrl is empty. Cannot load tree.");
@@ -321,7 +313,7 @@ namespace SVN.Core
             _rootNode = new RepoNode
             {
                 Name = "Root",
-                FullUrl = repoUrl.TrimEnd('/'),
+                FullUrl = repoUrl,
                 IsDirectory = true,
                 IsLoaded = false,
                 IsExpanded = true,
@@ -332,8 +324,6 @@ namespace SVN.Core
             await FetchChildrenAsync(_rootNode).ConfigureAwait(false);
             RefreshUI();
 
-            // Jeśli user ma aktywny filtr (pisał w trakcie ładowania drzewa),
-            // dokończ szukanie na ŚWIEŻYM URL-u.
             string activeFilter = svnUI?.RepoBrowserFilterInput?.text;
             if (!string.IsNullOrWhiteSpace(activeFilter))
             {
@@ -374,8 +364,6 @@ namespace SVN.Core
             node.IsExpanded = true;
             RefreshUI();
         }
-
-        // ================= FETCH LAZY =================
 
         private async Task FetchChildrenAsync(RepoNode parentNode)
         {
@@ -471,7 +459,6 @@ namespace SVN.Core
                 parentNode.Children = newChildren;
                 parentNode.IsLoaded = true;
 
-                // Struktura drzewa się zmieniła — fingerprint widoku nieaktualny.
                 _lastRenderFingerprint = null;
             }
             catch (OperationCanceledException) { }
@@ -492,20 +479,10 @@ namespace SVN.Core
             }
         }
 
-        // ================= UI =================
-
-        /// <summary>
-        /// Publiczne wejście — KOALESCUJE wywołania z tej samej klatki w jeden
-        /// render. Bez tego szybkie pisanie/kasowanie filtra generowało kilka
-        /// pełnych renderów na klatkę (ClearRoot + Instantiate x N) i zawieszało
-        /// UI na layout rebuild.
-        /// </summary>
         public void RefreshUI()
         {
             if (Volatile.Read(ref _disposed) == 1) return;
 
-            // Jeśli render jest już zakolejkowany — nic nie rób. Kolejka
-            // wykona się z AKTUALNYM stanem filtra (i tak czytamy go w RefreshUICore).
             if (Interlocked.CompareExchange(ref _refreshUiPendingFlag, 1, 0) == 1)
                 return;
 
@@ -579,8 +556,6 @@ namespace SVN.Core
                 GetVisibleNodesNormal(_rootNode, nodesToDisplay);
             }
 
-            // === FIX (freeze): fingerprint — pomiń re-render gdy nic się nie zmieniło.
-            // To ucina całą kaskadę renderów z EnsurePathsAsync + OnFilterChanged.
             string fingerprint = BuildFingerprint(nodesToDisplay, isFiltering);
             if (fingerprint == _lastRenderFingerprint &&
                 svnUI.RepoBrowserContentRoot.childCount > 0)
@@ -588,7 +563,6 @@ namespace SVN.Core
 
             _lastRenderFingerprint = fingerprint;
 
-            // === FIX (freeze): twardy cap — ochrona przed eksplozją prefabów.
             bool capped = false;
             if (nodesToDisplay.Count > MaxRenderedNodes)
             {
@@ -622,9 +596,6 @@ namespace SVN.Core
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Szuka w NAZWACH (ostatni segment ścieżki) — plików i folderów.
-        /// </summary>
         private List<RepoNode> BuildFilteredNodes(string filter)
         {
             var result = new List<RepoNode>();
@@ -636,7 +607,6 @@ namespace SVN.Core
 
             foreach (var entry in _allPaths)
             {
-                // Cap wcześniej — nie zbieraj 10k węzłów tylko po to, żeby je odciąć.
                 if (result.Count >= MaxRenderedNodes) break;
 
                 string name = GetLastSegment(entry.Path);
@@ -671,8 +641,6 @@ namespace SVN.Core
         {
             if (node == null) return;
 
-            // Hard cap na traversal — jeśli ktoś ma drzewo z 100k węzłów i wszystko
-            // rozwinięte, nie zamrażamy main thread rekurencją.
             if (result.Count >= MaxRenderedNodes * 2) return;
 
             if (node.Depth >= 0)
@@ -690,9 +658,6 @@ namespace SVN.Core
 
         private void RenderNodeList(List<RepoNode> nodesToDisplay, bool isFiltering)
         {
-            // === FIX (freeze): wyłącz obie składowe layoutu na czas renderu.
-            // VerticalLayoutGroup + ContentSizeFitter + masowe Instantiate
-            // w jednej klatce potrafi wejść w layout-rebuild loop i zamrozić UI.
             var layoutGroup = svnUI.RepoBrowserContentRoot.GetComponent<VerticalLayoutGroup>();
             var sizeFitter = svnUI.RepoBrowserContentRoot.GetComponent<ContentSizeFitter>();
 
@@ -891,16 +856,8 @@ namespace SVN.Core
             }
         }
 
-        public void Dispose()
+        private void CancelPathsLoad()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
-
-            // Odsubskrybuj zdarzenie zakładki — bez tego przy re-init modułu
-            // zostałby wisiący delegate trzymający this w pamięci.
-            RepoBrowserTabOpened -= HandleTabOpened;
-
-            CancelOperations();
-
             lock (_allPathsCtsLock)
             {
                 var oldCts = _allPathsCts;
@@ -911,12 +868,23 @@ namespace SVN.Core
                     _ = Task.Delay(1000).ContinueWith(_ => { try { oldCts.Dispose(); } catch { } });
                 }
             }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
+            RepoBrowserTabOpened -= HandleTabOpened;
+
+            if (svnManager != null)
+                svnManager.OnProjectChanged -= HandleProjectChanged;
+
+            CancelOperations();
+            CancelPathsLoad();
 
             if (svnUI?.RepoBrowserFilterInput != null)
                 svnUI.RepoBrowserFilterInput.onValueChanged.RemoveListener(OnFilterChanged);
         }
-
-        // ================= POMOCNICZE =================
 
         private sealed class PathEntry
         {

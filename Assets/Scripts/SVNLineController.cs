@@ -94,6 +94,7 @@ public class SvnLineController : MonoBehaviour
         if (cts != null)
             _ = Task.Delay(1000).ContinueWith(_ => { try { cts.Dispose(); } catch { } });
 
+        Interlocked.Exchange(ref _commitBusy, 0);
         RemoveAllButtonListeners();
     }
 
@@ -321,7 +322,6 @@ public class SvnLineController : MonoBehaviour
             fullRowButton.interactable = true;
             fullRowButton.onClick.AddListener(_onFullRowClickDelegate);
             BindHover(fullRowButton, "Repository root change (M .)");
-            if (statusText != null) statusText.text = "[ROOT]";
             return;
         }
 

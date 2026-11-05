@@ -10,17 +10,13 @@ namespace SVN.Core
     public abstract class SVNBase
     {
         private const int MaxConsoleLines = 400;
+        private const int MaxConsoleBufferChars = 128 * 1024;
 
-        // '*' i '?' NIE są w Path.GetInvalidPathChars (nielegalne tylko w
-        // nazwach plików) — przechodziły przez walidację i wybuchały głęboko
-        // w operacji. Tylko Windows (na unixach legalne).
         private static readonly char[] ExtraInvalidPathChars = { '*', '?' };
 
         private static readonly Regex BannerRegex =
             new Regex(@"\*+\s*WARNING![\s\S]*?@{5,}", RegexOptions.IgnoreCase);
 
-        // Bufor koaleskujący: każdy Append = pełny re-layout TMP per LINIA
-        // (merge loguje blokami). Teraz: JEDEN flush na tick dispatchera.
         private readonly object _consoleLock = new object();
         private readonly StringBuilder _consoleBuffer = new StringBuilder(1024);
         private int _consoleFlushQueued;
@@ -28,19 +24,17 @@ namespace SVN.Core
         public SVNManager svnManager;
         public SVNUI svnUI;
 
-        private int _isProcessing; // 0 = false, 1 = true
+        private int _isProcessing;
 
         public bool IsProcessing
         {
-            get => Interlocked.CompareExchange(ref _isProcessing, 0, 0) == 1;
-            // Setter celowo publiczny (niezbadane moduły mogą go używać);
-            // preferuj TryStart()/End().
+            get => Volatile.Read(ref _isProcessing) != 0;
             set => Interlocked.Exchange(ref _isProcessing, value ? 1 : 0);
         }
 
         public bool TryStart() => Interlocked.CompareExchange(ref _isProcessing, 1, 0) == 0;
 
-        public void End() => Interlocked.Exchange(ref _isProcessing, 0);
+        public bool End() => Interlocked.Exchange(ref _isProcessing, 0) == 1;
 
         protected SVNBase(SVNUI ui, SVNManager manager)
         {
@@ -81,11 +75,24 @@ namespace SVN.Core
 
         protected virtual TMP_Text GetConsole() => null;
 
-        // Thread-safe (lock) — wołane także z puli wątków po ConfigureAwait(false).
         protected void Append(string msg, string color)
         {
+            if (string.IsNullOrEmpty(msg)) return;
+
             lock (_consoleLock)
             {
+                if (_consoleBuffer.Length + msg.Length + 16 > MaxConsoleBufferChars)
+                {
+                    int half = _consoleBuffer.Length / 2;
+                    int cut = -1;
+                    for (int i = 0; i < half; i++)
+                    {
+                        if (_consoleBuffer[i] == '\n') { cut = i + 1; break; }
+                    }
+                    if (cut > 0) _consoleBuffer.Remove(0, cut);
+                    else _consoleBuffer.Clear();
+                }
+
                 _consoleBuffer.Append("<color=").Append(color).Append('>')
                               .Append(msg).AppendLine("</color>");
             }
@@ -96,6 +103,13 @@ namespace SVN.Core
 
         private void FlushConsoleBuffer()
         {
+            var console = GetConsole();
+            if (console == null)
+            {
+                Interlocked.Exchange(ref _consoleFlushQueued, 0);
+                return;
+            }
+
             string chunk;
             lock (_consoleLock)
             {
@@ -106,18 +120,15 @@ namespace SVN.Core
                 }
                 chunk = _consoleBuffer.ToString();
                 _consoleBuffer.Clear();
-                _consoleFlushQueued = 0; // appendy po tym punkcie zaqueue'ują nowy flush
+                _consoleFlushQueued = 0;
             }
-
-            var console = GetConsole();
-            if (console == null) return;
 
             try
             {
                 console.text += chunk;
                 TrimConsole(console);
             }
-            catch { /* UI zniszczone w teardown */ }
+            catch { }
         }
 
         private static void TrimConsole(TMP_Text console)
@@ -159,8 +170,6 @@ namespace SVN.Core
             SVNLogBridge.LogToFile(msg, "MODULE");
         }
 
-        // UWAGA: LogInfo nie trafia do pliku (Success/Warning/Error tak) —
-        // sprawdź, czy zamierzone.
         public void LogInfo(string msg) => Append(msg, "#0400ff");
 
         public void LogErrorLocal(string msg)
@@ -218,7 +227,6 @@ namespace SVN.Core
             return keyPath;
         }
 
-        // DEPRECATED — ostatnie żywe użycie: SVNCheckout; usuń razem z nim.
         protected string BuildSshConfigOption(string keyPath)
         {
             if (string.IsNullOrWhiteSpace(keyPath)) return string.Empty;
@@ -230,22 +238,35 @@ namespace SVN.Core
 
         protected void HandleOperationException(Exception ex)
         {
-            // UWAGA: End() bezwarunkowo — wywołane spoza własnego finally może
-            // zgasić flagę równoległej operacji. Docelowo End() w finally operacji.
-            End();
-            SVNLogBridge.LogErrorToOutput($"[SVN] Unhandled operation exception:\n{ex}");
+            bool wasRunning = End();
+
+            SVNLogBridge.LogErrorToOutput(
+                $"[SVN][{GetType().Name}] Unhandled operation exception:\n{ex}");
             ShowError(ex.Message);
+
+            if (!wasRunning)
+            {
+                SVNLogBridge.LogErrorToOutput(
+                    "[SVN] Note: processing flag was already clear — exception occurred " +
+                    "outside active operation (or was already handled). No flag consumed.");
+            }
         }
 
-        // Pole statusu było zahardkodowane do CheckoutStatusInfoText — błędy
-        // innych modułów lądowały w panelu checkoutu. Wirtualny target.
         protected virtual TextMeshProUGUI GetStatusText() => svnUI?.CheckoutStatusInfoText;
 
         protected void ShowError(string message)
         {
             PostToMainThread(() =>
-                SVNLogBridge.UpdateUIField(GetStatusText(),
-                    $"<color=#FFAA00>Error:</color> {message}", "Checkout"));
+            {
+                var text = GetStatusText();
+                if (text == null)
+                {
+                    SVNLogBridge.LogErrorToOutput($"[SVN][{GetType().Name}] {message}");
+                    return;
+                }
+                SVNLogBridge.UpdateUIField(text,
+                    $"<color=#FFAA00>Error:</color> {message}", "Checkout");
+            });
         }
 
         protected bool IsValidSvnUrl(string url)
@@ -264,8 +285,6 @@ namespace SVN.Core
 
             bool isWindows = Environment.OSVersion.Platform == PlatformID.Win32NT;
 
-            // Jawny filtr znaków (GetFullPath nie waliduje na .NET Core/Unity) —
-            // teraz także '*' i '?' (tylko Windows).
             if (string.IsNullOrWhiteSpace(inputPath) ||
                 inputPath.IndexOfAny(Path.GetInvalidPathChars()) >= 0 ||
                 (isWindows && inputPath.IndexOfAny(ExtraInvalidPathChars) >= 0))
@@ -277,31 +296,33 @@ namespace SVN.Core
             try { fullPath = Path.GetFullPath(inputPath); }
             catch (Exception ex) { ShowError($"Invalid destination path: {ex.Message}"); return false; }
 
-            // Nazwy zarezerwowane (CON, PRN, AUX, NUL, COM1-9, LPT1-9 — także
-            // "CON.txt") + końcowe kropki/spacje przechodzą przez GetFullPath,
-            // a potem Win32 cicho obcina lub CreateDirectory failuje enigmatycznie.
             if (isWindows && HasReservedOrMalformedSegment(fullPath))
             {
                 ShowError("Invalid destination path (reserved device name or trailing dot/space).");
                 return false;
             }
 
-            // UWAGA (Windows-centryzm, paritet): DriveInfo na unixowym rootzie
-            // może rzucać → catch odrzuca POPRAWNĄ ścieżkę.
-            try
+            if (isWindows)
             {
-                string root = Path.GetPathRoot(fullPath);
-                if (!string.IsNullOrEmpty(root))
+                try
                 {
-                    DriveInfo drive = new DriveInfo(root);
-                    if (!drive.IsReady)
+                    string root = Path.GetPathRoot(fullPath);
+                    if (!string.IsNullOrEmpty(root) && root.Length <= 3)
                     {
-                        ShowError($"The drive {root} is not ready. Please choose a valid location.");
-                        return false;
+                        DriveInfo drive = new DriveInfo(root);
+                        if (!drive.IsReady)
+                        {
+                            ShowError($"The drive {root} is not ready. Please choose a valid location.");
+                            return false;
+                        }
                     }
                 }
+                catch (Exception ex)
+                {
+                    SVNLogBridge.LogErrorToOutput(
+                        $"[SVN] Drive check for '{fullPath}' skipped: {ex.Message}");
+                }
             }
-            catch (Exception ex) { ShowError($"Cannot access destination drive: {ex.Message}"); return false; }
 
             return true;
         }

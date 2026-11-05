@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using SVN.Core;
@@ -9,26 +10,16 @@ public class SvnTreeView : MonoBehaviour
     public GameObject linePrefab;
     public bool isCommitView;
 
+    [SerializeField] private int itemsPerFrame = 4;
+
     private List<SvnLineController> _pool = new List<SvnLineController>();
-    private VerticalLayoutGroup _layoutGroup;
 
     private int _currentVisibleCount = 0;
 
     private Coroutine _refreshCoroutine;
 
-    private const int ItemsPerFrame = 4;
-
-    private void Awake()
-    {
-        _layoutGroup = GetComponent<VerticalLayoutGroup>();
-    }
-
     public void RefreshUI(List<SvnTreeElement> elements, SVNStatus manager)
     {
-        // === FIX (kolejność): najpierw StopCoroutine, potem deaktywacja puli.
-        // Wcześniej deaktywacja biegła PRZED Stop, co przy re-entrant wywołaniu
-        // z innego wątku (dziś nie, ale kontrakt jest niejasny) mogło dopuścić
-        // korutynę do ponownego Setup na nieaktywnych kontrolerach.
         if (_refreshCoroutine != null)
         {
             StopCoroutine(_refreshCoroutine);
@@ -49,6 +40,8 @@ public class SvnTreeView : MonoBehaviour
             return;
         }
 
+        if (elements == null) return;
+
         _refreshCoroutine = StartCoroutine(RefreshUIRoutine(elements, manager));
     }
 
@@ -58,13 +51,19 @@ public class SvnTreeView : MonoBehaviour
 
         int processedInThisFrame = 0;
         int poolIndex = 0;
+        int perFrame = Math.Max(1, itemsPerFrame);
 
         for (int i = 0; i < elementsSnapshot.Count; i++)
         {
             var element = elementsSnapshot[i];
-            if (!element.IsVisible) continue;
+            if (element == null || !element.IsVisible) continue;
 
             var controller = GetOrCreateControllerByIndex(poolIndex);
+            if (controller == null)
+            {
+                _refreshCoroutine = null;
+                yield break;
+            }
 
             if (!controller.gameObject.activeSelf)
             {
@@ -72,12 +71,21 @@ public class SvnTreeView : MonoBehaviour
             }
 
             element.IsCommitDelegate = isCommitView;
-            controller.Setup(element, manager);
+
+            try
+            {
+                controller.Setup(element, manager);
+            }
+            catch (Exception ex)
+            {
+                SVNLogBridge.LogError(
+                    $"[SvnTreeView] Setup failed for '{element.FullPath}': {ex.Message}");
+            }
 
             poolIndex++;
             processedInThisFrame++;
 
-            if (processedInThisFrame >= ItemsPerFrame)
+            if (processedInThisFrame >= perFrame)
             {
                 processedInThisFrame = 0;
                 yield return null;
@@ -103,7 +111,17 @@ public class SvnTreeView : MonoBehaviour
         while (index >= _pool.Count)
         {
             GameObject newObj = Instantiate(linePrefab, transform);
-            _pool.Add(newObj.GetComponent<SvnLineController>());
+            var ctrl = newObj != null ? newObj.GetComponent<SvnLineController>() : null;
+
+            if (ctrl == null)
+            {
+                SVNLogBridge.LogError(
+                    "[SvnTreeView] linePrefab has no SvnLineController component!");
+                if (newObj != null) Destroy(newObj);
+                return null;
+            }
+
+            _pool.Add(ctrl);
         }
 
         return _pool[index];
