@@ -3,24 +3,8 @@ using System.Collections.Generic;
 
 namespace SVN.Core
 {
-    /// <summary>
-    /// Postęp update'u/checkoutu — dwie linie podmieniane in-place:
-    ///
-    ///   (pusta)
-    ///   ████████████░░░░░░░░░░░░░░ ~2.3 / 5.4 GB (42%) C:1
-    ///   (pusta)
-    ///   [SVN] = Updated: Assets/Scenes/Main.unity (105/172)
-    ///
-    /// LINIA 1: pasek + % WAŻONE BAJTAMI (rozmiary z svn list --xml -R);
-    ///   gdy rozmiary niedostępne — tryb INDETERMINISTYCZNY (pusta ramka +
-    ///   licznik items) — używany m.in. przez Force Repair, gdy prefetch
-    ///   rozmiarów nie zdążył / nie został odpalony.
-    /// LINIA 2: aktualny plik NIEBIESKI + (x/y) LICZBA PLIKÓW — format
-    ///   oryginalny (displayLine + progressStr).
-    /// </summary>
     public sealed class SvnUpdateProgressUI
     {
-        // Jeśli font nie ma █/░ (pokażą się kwadraty) — podmień na '#'/'.'
         private const char BarFilled = '█';
         private const char BarEmpty = '░';
         private const int BarWidth = 40;
@@ -28,24 +12,18 @@ namespace SVN.Core
 
         private readonly TMPro.TMP_Text _target;
 
-        // === tryb ważony bajtami (aktywny, gdy _totalBytes > 0) ===
-        private Dictionary<string, long> _sizes;   // ścieżka → bajty (z svn list)
+        private Dictionary<string, long> _sizes;
         private long _totalBytes;
         private long _doneBytes;
 
-        // === liczniki plików (linia 2 + fallback trybu bajtowego) ===
         private int _done;
-        private int _total = -1;                    // -1 = estymacja niedostępna
+        private int _total = -1;
         private int _conflicts;
         private string _lastDisplayLine = "";
         private string _lastProgressStr = "";
         private bool _finished;
         private int _lastRenderMs = Environment.TickCount;
 
-        // === FIX: ostatnia treść napisana przez nas — do bezpiecznego clearu
-        // (RemoveAfterDelayAsync czyści TYLKO gdy nikt inny nie nadpisał pola,
-        // np. raportem końcowym operacji; wcześniej bezwarunkowy clear po 2.5 s
-        // wymazywał ten raport).
         private string _lastContent = "";
 
         public SvnUpdateProgressUI(TMPro.TMP_Text target)
@@ -53,16 +31,9 @@ namespace SVN.Core
             _target = target;
         }
 
-        /// <summary>
-        /// totalItems — estymacja z status -u ('*'); totalBytes + sizes — wagi
-        /// bajtowe. totalBytes <= 0 → tryb INDETERMINISTYCZNY (pusta ramka).
-        ///
-        /// Po Finish()/Clear() wywołanie SetTotal jest ignorowane — chroni przed
-        /// sytuacją, gdy prefetch rozmiarów wraca PO zakończeniu operacji.
-        /// </summary>
         public void SetTotal(int totalItems, long totalBytes, Dictionary<string, long> sizes)
         {
-            if (_finished) return;   // === GUARD: nie zmieniaj trybu po Finish/Clear
+            if (_finished) return;
 
             if (totalItems > 0) _total = totalItems;
             _totalBytes = totalBytes > 0 ? totalBytes : 0;
@@ -70,19 +41,12 @@ namespace SVN.Core
             Render(force: true);
         }
 
-        /// <summary>
-        /// Per przetworzona pozycja update'u.
-        /// path — ścieżka znormalizowana (jak w displayLine) do wagi bajtowej;
-        /// displayLine + progressStr — identyczne ze starym LogLine.
-        /// </summary>
         public void OnItem(string path, string displayLine, string progressStr, bool isConflict = false)
         {
             if (_finished) return;
             _done++;
             if (isConflict) _conflicts++;
 
-            // === waga bajtowa: brak w mapie (D/deletion/external/nieznany) = 0 B —
-            // te pozycje są szybkie; pasek domknie snap w Finish().
             if (_sizes != null && !string.IsNullOrEmpty(path) &&
                 _sizes.TryGetValue(path, out long size))
             {
@@ -94,8 +58,6 @@ namespace SVN.Core
             Render(force: false);
         }
 
-        /// <summary>Sukces — snap do 100% (pliki i bajty), po 2.5 s tekst znika
-        /// (o ile nikt inny nie napisał w międzyczasie do pola).</summary>
         public void Finish()
         {
             if (_total > 0 && _done < _total) _done = _total;
@@ -106,7 +68,6 @@ namespace SVN.Core
             _ = RemoveAfterDelayAsync(2500);
         }
 
-        /// <summary>Cancel/błąd — natychmiastowe wyczyszczenie (raport w LogLine).</summary>
         public void Clear()
         {
             _finished = true;
@@ -118,21 +79,15 @@ namespace SVN.Core
             try { await System.Threading.Tasks.Task.Delay(delayMs).ConfigureAwait(false); }
             catch { }
 
-            // === FIX: czyść TYLKO gdy nikt nie nadpisał pola po nas — porównujemy
-            // z ostatnią treścią, którą sami napisaliśmy. FIFO dispatchera
-            // zachowuje kolejność, więc raport (jeśli był) zdążył się zapisać
-            // i to porównanie go ochroni.
             string mine = _lastContent;
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 var text = _target;
-                if (text == null) return;   // obejmuje zniszczony (Unity null)
+                if (text == null) return;
                 if (string.Equals(text.text, mine, StringComparison.Ordinal))
                     text.text = "";
             });
         }
-
-        // ==================== render ====================
 
         private void Render(bool force)
         {
@@ -149,11 +104,9 @@ namespace SVN.Core
                 ? $" <color=#FF4444><b>C:{_conflicts}</b></color>"
                 : "";
 
-            // --- LINIA 1: pasek + procent (żółty — czytelność przy pasku) ---
             string line1;
             if (_totalBytes > 0)
             {
-                // === TRYB BAJTOWY: % i wypełnienie ważone rozmiarami plików ===
                 long doneBytes = Math.Min(_doneBytes, _totalBytes);
                 int pct = (int)Math.Min(100, _doneBytes * 100 / _totalBytes);
                 int filled = (int)Math.Round(BarWidth * doneBytes / (double)_totalBytes);
@@ -167,7 +120,6 @@ namespace SVN.Core
             }
             else if (_total > 0)
             {
-                // === FALLBACK: rozmiary niedostępne — liczenie per plik ===
                 int pct = (int)Math.Min(100, (long)_done * 100 / _total);
                 int filled = (int)Math.Round(BarWidth * Math.Min(_done, _total) / (double)_total);
                 if (filled < 0) filled = 0;
@@ -179,10 +131,6 @@ namespace SVN.Core
             }
             else
             {
-                // === TRYB INDETERMINISTYCZNY ===
-                // Brak znanej sumy — pusta ramka + licznik przetworzonych pozycji.
-                // Bez procentu, bo bez total każdy % byłby kłamstwem.
-                // Jeśli prefetch rozmiarów zdąży, SetTotal() przełączy na %.
                 string bar = $"<color=#777777>{new string(BarEmpty, BarWidth)}</color>";
                 string count = _done > 0
                     ? $" <color=#FFFF00>{_done} items</color>"
@@ -190,26 +138,22 @@ namespace SVN.Core
                 line1 = $"{bar}{count}{conflict}";
             }
 
-            // --- LINIA 2: aktualny plik na niebiesko + (x/y) plików ---
             string filePart = string.IsNullOrEmpty(_lastDisplayLine)
                 ? "<color=#FFFF00>Preparing...</color>"
                 : $"<b>[SVN]</b> <color=blue>{_lastDisplayLine}{_lastProgressStr}</color>";
 
-            // === SEPARATORY: pusta linia nad paskiem i między paskiem a plikiem
-            return "\n" + line1 + "\n\n" + filePart;
+            return "\n" + line1 + "\n" + filePart;
         }
-
-        // ==================== zapis ====================
 
         private void SetText(string content)
         {
             UnityMainThreadDispatcher.Enqueue(() =>
             {
                 var text = _target;
-                if (text == null) return;   // obejmuje zniszczony (Unity null)
+                if (text == null) return;
                 text.text = content;
             });
-            _lastContent = content ?? "";   // === pamiętamy, co napisaliśmy
+            _lastContent = content ?? "";
         }
 
         private static string FormatBytes(long bytes)
@@ -221,11 +165,6 @@ namespace SVN.Core
             return (mb / 1024.0).ToString("F2") + " GB";
         }
 
-        /// <summary>
-        /// === CHECKOUT/REPAIR: przerwanie — ostatnia podmieniana linia jasno mówi,
-        /// że to NIE jest całe repo (katalog częściowy, wznowienie przez Resume).
-        /// Zamiast czyszczenia (Clear) — zostaje widoczny komunikat.
-        /// </summary>
         public void FinishIncomplete(string reason)
         {
             _finished = true;

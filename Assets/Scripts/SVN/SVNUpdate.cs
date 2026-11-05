@@ -33,10 +33,10 @@ namespace SVN.Core
         // ===================================================================
 
         /// <summary>Wagi bajtowe = 'svn list -R' na całym repo. Wolne przy dużym repo — opt-in.</summary>
-        public bool fetchByteWeights = false;
+        public bool fetchByteWeights = true;
 
         /// <summary>Estymacja x/y = pełne 'svn status -u' przed update. Podwaja fazę sieciową — opt-in.</summary>
-        public bool progressEstimation = false;
+        public bool progressEstimation = true;
 
         /// <summary>Cleanup WC przed każdym update.</summary>
         public bool preUpdateCleanup = true;
